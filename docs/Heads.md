@@ -236,6 +236,7 @@ A **pack** bundles what one kind of work needs: **roles** for lanes, heads and p
   - **Skip in this project** turns one off.
   - Chips say "From the Coding pack". Settings → Gates lists them under **From packs**.
 - **Windows:** a server command such as `npx` runs through `cmd.exe`, as Claude Code's docs advise.
+- **Pinned downloads:** a server run by `npx`, `bunx` or `pnpx` must name an exact version, like `name@1.2.3`. A pack with a range, a tag or a bare name doesn't load. A server may also pin `integrity`, npm's `sha512-…` hash. Before it first starts, Hydra checks that hash against the npm registry and leaves the server out if it differs, saying why; the rest of the role still starts. A match is remembered, so later starts don't ask again. The review panel shows the pin, and the Coding pack pins its Playwright server.
 
 ## Security
 

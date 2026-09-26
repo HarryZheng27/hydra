@@ -76,11 +76,11 @@ async function repository(root: string, gates?: unknown): Promise<string> {
   return repo;
 }
 /** A lead folder with the kit pack built in and turned on, and the pack service that reads it. */
-async function packWorld(options: { manifest?: unknown; extra?: Record<string, string>; gates?: unknown; userServers?: Partial<Record<'claude' | 'codex', string[]>> } = {}) {
+async function packWorld(options: { manifest?: unknown; extra?: Record<string, string>; gates?: unknown; userServers?: Partial<Record<'claude' | 'codex', string[]>>; npxRegistryFetch?: (name: string, version: string) => Promise<string> } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-roles-'));
   const repo = await repository(root, options.gates);
   await writeFolder(path.join(root, 'builtin', 'kit'), kitFiles(options.manifest, options.extra));
-  const packs = new PackService({ builtin: path.join(root, 'builtin'), userFolder: () => path.join(root, 'user'), storage: path.join(root, 'storage', 'packs'), version: '0.24.0', nodeExecutable: hydraExe, userServers: async () => options.userServers ?? {} });
+  const packs = new PackService({ builtin: path.join(root, 'builtin'), userFolder: () => path.join(root, 'user'), storage: path.join(root, 'storage', 'packs'), version: '0.24.0', nodeExecutable: hydraExe, userServers: async () => options.userServers ?? {}, ...(options.npxRegistryFetch ? { npxRegistryFetch: options.npxRegistryFetch } : {}) });
   const state = (await packs.state(repo)).packs.find(pack => pack.id === 'kit')!;
   assert.equal(state.state, 'off', state.reason);
   await packs.turnOn(repo, 'kit', state.pack!.hash!);
@@ -193,6 +193,25 @@ test('roleLaunch for Codex: -c servers with env_vars and approval, variables in 
 });
 
 // ---- Heads: arguments, the first message, and the service ----
+
+test('a pinned npx server the registry doesn\'t match is left out, naming both values; a match starts and is asked for once', async () => {
+  const pinned = 'sha512-' + 'A'.repeat(86) + '==';
+  const manifest = kit([{ id: 'pinner', title: 'Pinner', description: 'Uses a pinned server.', provider: 'claude', instructions: 'roles/builder.md', mcpServers: ['pinned'] }]);
+  (manifest.mcpServers as Record<string, unknown>).pinned = { type: 'stdio', command: 'npx', args: ['-y', '@kit/pinned-mcp@2.0.1'], integrity: pinned };
+  let registry = 'sha512-' + 'B'.repeat(86) + '==';
+  const asked: string[] = [];
+  const world = await packWorld({ manifest, npxRegistryFetch: async (name, version) => { asked.push(`${name}@${version}`); return registry; } });
+  try {
+    const refused = roleLaunch(await world.packs.resolve(world.repo, 'kit/pinner'), { provider: 'claude', target: 'head', env: secrets });
+    assert.deepEqual(Object.keys(refused.mcpServers), []);
+    assert.deepEqual(refused.notes, [`The kit-pinned server was left out: @kit/pinned-mcp@2.0.1 is pinned to ${pinned}, but the npm registry has ${registry}.`]);
+    registry = pinned;
+    const started = roleLaunch(await world.packs.resolve(world.repo, 'kit/pinner'), { provider: 'claude', target: 'head', env: secrets });
+    assert.deepEqual(Object.keys(started.mcpServers), ['kit-pinned']);
+    await world.packs.resolve(world.repo, 'kit/pinner');
+    assert.deepEqual(asked, ['@kit/pinned-mcp@2.0.1', '@kit/pinned-mcp@2.0.1'], 'a match is remembered; a mismatch never is');
+  } finally { await world.close(); }
+});
 
 const runSpec = (extra: Partial<HelperRunSpec> = {}): HelperRunSpec => ({ provider: 'claude', executable: 'claude', worktree: 'W', prompt: 'P', maxTurns: 7, maxBudgetUsd: 2, bridge: { command: 'Hydra.exe', args: ['b.cjs'], env: { HYDRA_HELPER_TOKEN: 'tok', HYDRA_HELPER_PORT: '1' } }, logFile: 'l', confine: { settingsFile: 'S.settings.json', addDirs: [], shell: false, env: {} }, ...extra });
 test('head arguments: a role adds its --mcp-config file, allowed tools and --plugin-dir for Claude, and its -c servers and web_search for Codex; nothing without one', () => {

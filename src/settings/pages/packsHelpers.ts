@@ -38,6 +38,8 @@ export interface ReviewServerView {
   roles: string[];
   claudeOnly?: string;
   downloads?: string;
+  /** 5.4: "Pinned: name@version, integrity sha512-…" or "Not pinned to an integrity hash", for an npx/bunx/pnpx server. */
+  pin?: string;
   note: string;
 }
 export interface ReviewRoleView {
@@ -88,6 +90,7 @@ export function buildPackContents(manifest: PackManifest, valid: Pick<ValidPack,
         id, kind: 'stdio', command: { parts: [masked.command, ...masked.args], text: [masked.command, ...masked.args].join(' ') },
         env: Object.entries(masked.env).map(([name, value]) => ({ name, value })), roles, note,
         ...(info?.claudeOnly ? { claudeOnly: info.claudeOnly } : {}), ...(info?.downloads ? { downloads: info.downloads } : {}),
+        ...(info?.pinLabel ? { pin: info.pinLabel } : {}),
       };
     }
     return {

@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { Provider } from '../model';
 import { parseGate, type Gate } from '../gates/config';
 import { looksLikeSecret, validateServerName, validateServerSpec, type McpServerSpec } from '../mcpServers';
+import { integrityPattern, npxPackageArg, npxRunner, parsePackageSpec, pinLabel, requireExactVersion, type PackageSpec } from './npxPin';
 
 /**
  * The pack format (docs/Packs_Plan.md, section 2): pack.json, each skill's
@@ -45,6 +46,8 @@ export interface PackManifest {
   /** Parsed by the same parseGate as gates.json. `{pack}` and `{node}` are still unresolved. */
   gates: Gate[];
   mcpServers: Record<string, McpServerSpec>;
+  /** 5.4: an npm integrity hash pinned for an npx/bunx/pnpx server, by server id. */
+  integrity?: Record<string, string>;
 }
 export interface PackSkill {
   id: string; description: string;
@@ -60,6 +63,10 @@ export interface PackServerInfo {
   downloads?: string;
   /** The `${NAME}` variables it reads from your environment. */
   variables: string[];
+  /** 5.4: the npx/bunx/pnpx package this server is pinned to, when it is one. */
+  pin?: PackageSpec;
+  /** The review panel's line for the pin (npxPin.ts's pinLabel), when `pin` is set. */
+  pinLabel?: string;
 }
 /** A pack whose files all check out. */
 export interface ValidPack {
@@ -241,20 +248,30 @@ export function serverDownloads(spec: McpServerSpec): string | undefined {
   return undefined;
 }
 
-const stdioKeys = ['type', 'command', 'args', 'env'];
+const stdioKeys = ['type', 'command', 'args', 'env', 'integrity'];
 const httpKeys = ['type', 'url', 'headers', 'bearerTokenEnvVar'];
-function parseServer(value: unknown, what: string): McpServerSpec {
+/** One MCP server from pack.json: its spec, and its pinned integrity hash, when it has one (5.4). */
+function parseServer(value: unknown, what: string): { spec: McpServerSpec; integrity?: string } {
   const source = record(value, what);
   onlyKeys(source, source.type === 'stdio' ? stdioKeys : httpKeys, what);
+  const rawIntegrity = source.integrity;
   let spec: McpServerSpec;
   try { spec = validateServerSpec(source); } catch (error) { throw new Error(`${what}: ${error instanceof Error ? error.message : String(error)}`); }
   if (spec.type === 'stdio') {
     if (spec.args.length > 64 || spec.args.some(arg => arg.length > 4000)) throw new Error(`${what}: "args" must be up to 64 arguments.`);
     if (Object.keys(spec.env).length > 32) throw new Error(`${what}: "env" can set up to 32 variables.`);
     checkPlaceholders([spec.command, ...spec.args], what);
+    // 5.4: a range, a dist-tag or a bare name is refused here, at pack load, for any npx/bunx/pnpx server.
+    requireExactVersion(spec.command, spec.args, what);
   }
   checkServerValues(spec, what);
-  return spec;
+  let integrity: string | undefined;
+  if (rawIntegrity !== undefined) {
+    if (spec.type !== 'stdio' || !npxRunner(spec.command)) throw new Error(`${what}: "integrity" only applies to a server run with npx, bunx or pnpx.`);
+    if (typeof rawIntegrity !== 'string' || !integrityPattern.test(rawIntegrity)) throw new Error(`${what}: "integrity" must be an npm integrity hash, like "sha512-...".`);
+    integrity = rawIntegrity;
+  }
+  return { spec, ...(integrity ? { integrity } : {}) };
 }
 
 // ---- pack.json ----
@@ -304,10 +321,13 @@ export function parsePackManifest(value: unknown): PackManifest {
   const serverIds = Object.keys(rawServers);
   if (serverIds.length > packCaps.servers) throw new Error(`A pack has at most ${packCaps.servers} MCP servers (found ${serverIds.length}).`);
   const mcpServers: Record<string, McpServerSpec> = {};
+  const integrity: Record<string, string> = {};
   for (const serverId of serverIds) {
     identifier(serverId, `The MCP server id "${serverId}"`);
     validateServerName(`${id}-${serverId}`);
-    mcpServers[serverId] = parseServer(rawServers[serverId], `MCP server "${serverId}"`);
+    const parsed = parseServer(rawServers[serverId], `MCP server "${serverId}"`);
+    mcpServers[serverId] = parsed.spec;
+    if (parsed.integrity) integrity[serverId] = parsed.integrity;
   }
 
   if (source.gates !== undefined && !Array.isArray(source.gates)) throw new Error('"gates" must be a list.');
@@ -326,7 +346,7 @@ export function parsePackManifest(value: unknown): PackManifest {
     const missing = role.mcpServers.find(server => !(server in mcpServers));
     if (missing) throw new Error(`Role "${role.id}" uses the MCP server "${missing}", which the pack doesn't have.`);
   }
-  return { version: 1, id, title, description, ...(publisher ? { publisher } : {}), roles, gates, mcpServers };
+  return { version: 1, id, title, description, ...(publisher ? { publisher } : {}), roles, gates, mcpServers, ...(Object.keys(integrity).length ? { integrity } : {}) };
 }
 
 // ---- Skills ----
@@ -417,7 +437,12 @@ export function checkPackContents(manifest: PackManifest, files: ReadonlyMap<str
     if (spec.type === 'stdio') checkPlaceholders([spec.command, ...spec.args], `MCP server "${id}"`, names);
     const values = spec.type === 'stdio' ? [...spec.args, ...Object.values(spec.env)] : [spec.url, ...Object.values(spec.headers)];
     const claudeOnly = codexProblem(spec), downloads = serverDownloads(spec);
-    servers[id] = { ...(claudeOnly ? { claudeOnly } : {}), ...(downloads ? { downloads } : {}), variables: [...new Set(values.flatMap(variableNames))].sort() };
+    const pin = spec.type === 'stdio' && npxRunner(spec.command) ? parsePackageSpec(npxPackageArg(spec.args) ?? '') : undefined;
+    const integrity = manifest.integrity?.[id];
+    servers[id] = {
+      ...(claudeOnly ? { claudeOnly } : {}), ...(downloads ? { downloads } : {}), variables: [...new Set(values.flatMap(variableNames))].sort(),
+      ...(pin ? { pin, pinLabel: pinLabel(pin, integrity) } : {}),
+    };
   }
   return { manifest, skills, instructions, servers };
 }

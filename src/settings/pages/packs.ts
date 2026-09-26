@@ -136,6 +136,7 @@ export const packsPage: SettingsPage = {
           box.appendChild(el('div', 'row-desc', server.note));
           if (server.claudeOnly) box.appendChild(el('div', 'row-desc', 'Claude only: ' + server.claudeOnly));
           if (server.downloads) box.appendChild(el('div', 'row-desc', server.downloads));
+          if (server.pin) box.appendChild(el('div', 'row-desc', server.pin));
           const test = el('button', null, 'Test');
           const result = el('span', 'mcp-test-result');
           test.addEventListener('click', () => {
