@@ -3,10 +3,13 @@ import path from 'node:path';
 import { loadGates } from '../gates/config';
 import type { GatesLoader } from '../gates';
 import type { Provider } from '../model';
+import type { McpServerSpec } from '../mcpServers';
 import { allowPack, allowState, canonicalProject, readAllowed, revokePack } from './allowed';
 import { buildRolePlugin } from './cache';
+import type { PackServerInfo } from './format';
 import { effectiveGates, overGateCap, type EffectiveGates } from './gates';
-import { RoleUnavailable, activeRolesSentence, findRole, parseRoleRef, roleRefPattern, roleSummaries, roleUnavailableReason, type ResolvedRole, type RoleSource, type RoleSummary } from './launch';
+import { RoleUnavailable, activeRolesSentence, findRole, parseRoleRef, roleRefPattern, roleSummaries, roleUnavailableReason, type ResolvedRole, type ResolvedServer, type RoleSource, type RoleSummary } from './launch';
+import { checkNpxPin, fetchRegistryIntegrity, fileCache, npxPackageArg, parsePackageSpec, type PinCache, type RegistryFetcher } from './npxPin';
 import { addUserPack, choosePack, listPacks, type InstalledPack } from './registry';
 import { activePacks, projectPacks, projectPacksFolder, readPacksFile, withPack, withSkipGate, writePacksFile, type PackPlaces, type ProjectPack } from './project';
 import { mkdir } from 'node:fs/promises';
@@ -37,13 +40,20 @@ export interface PackServiceOptions {
    * reads them): a pack server with the same name is left out. Missing: none.
    */
   userServers?: () => Promise<Partial<Record<Provider, readonly string[]>>>;
+  /** 5.4: how a pinned server's integrity is checked against the registry. Tests inject a fake. */
+  npxRegistryFetch?: RegistryFetcher;
 }
 
 /** Decision 1: your packs live in ~/.hydra/packs unless hydra.packs.folder names another absolute folder. */
 export const defaultUserPacksFolder = (): string => path.join(homedir(), '.hydra', 'packs');
 
 export class PackService implements RoleSource {
-  constructor(private readonly options: PackServiceOptions) {}
+  /** 5.4: name@version → integrity, matches only, so a repeat launch never asks the registry twice for the same pin. */
+  private readonly npxPinCache: PinCache;
+
+  constructor(private readonly options: PackServiceOptions) {
+    this.npxPinCache = fileCache(path.join(options.storage, 'npx-pin-cache.json'));
+  }
 
   places(): PackPlaces {
     return {
@@ -151,15 +161,34 @@ export class PackService implements RoleSource {
       ? await buildRolePlugin(this.places().cacheRoot, { id: packId, hash: listed.pack.hash, files: listed.pack.files, title: listed.title }, role).catch(() => undefined)
       : undefined;
     const userServers = await this.options.userServers?.().catch(() => ({})) ?? {};
+    const servers = await Promise.all(
+      role.mcpServers.flatMap(id => valid.manifest.mcpServers[id] && valid.servers[id]
+        ? [this.resolveServer(id, valid.manifest.mcpServers[id]!, valid.servers[id]!, valid.manifest.integrity?.[id])]
+        : []),
+    );
     return {
       ref: `${packId}/${roleId}`, pack: packId, packTitle: listed.title, role, copy: listed.copy,
       instructions: valid.instructions[roleId] ?? '',
       skills: role.skills.map(id => ({ id, description: valid.skills.find(skill => skill.id === id)?.description ?? '' })),
-      servers: role.mcpServers.flatMap(id => valid.manifest.mcpServers[id] && valid.servers[id] ? [{ id, spec: valid.manifest.mcpServers[id]!, info: valid.servers[id]! }] : []),
+      servers,
       ...(plugin ? { plugin } : {}),
       nodeExecutable: this.options.nodeExecutable ?? process.execPath,
       userServers,
     };
+  }
+
+  /**
+   * One role server, checked against its integrity pin when it has one (5.4).
+   * Only a stdio server pinned to a package (an npx/bunx/pnpx server, checked
+   * exact-version at pack load) can carry a pin; anything else passes through.
+   */
+  private async resolveServer(id: string, spec: McpServerSpec, info: PackServerInfo, integrity: string | undefined): Promise<ResolvedServer> {
+    if (spec.type !== 'stdio' || !integrity) return { id, spec, info };
+    const target = npxPackageArg(spec.args);
+    const pin = target && parsePackageSpec(target);
+    if (!pin) return { id, spec, info };
+    const result = await checkNpxPin(pin, integrity, this.options.npxRegistryFetch ?? fetchRegistryIntegrity, this.npxPinCache);
+    return result.ok ? { id, spec, info } : { id, spec, info, pinProblem: result.reason };
   }
 
   /** Why a pack's role can't be used here, with its title when the pack can still be read. */
