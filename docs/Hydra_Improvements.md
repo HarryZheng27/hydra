@@ -432,3 +432,44 @@ Installing from inside Hydra also isn't built: the native helper refuses every r
   - give the default permissions `contents: write`;
   - put the signing key in the job's environment;
   - sign when the installer's signature isn't Valid.
+
+### Step 5 (2026-09-26)
+
+#### 5.4 Integrity checks for `npx` pack servers
+
+Built by one Sonnet subagent (`hydra-wt/npx-pin`). The main session reviewed the diff line by line, fixed what it found and ran the live checks.
+
+**What it does:**
+- **Exact versions, at pack load:** a server whose command is `npx`, `bunx` or `pnpx` must name `name@1.2.3`, scoped names and prereleases included.
+  - A range, a tag, a bare name, or a git, URL or file spec stops the pack from loading, naming the server.
+  - So does any flag other than `-y`/`--yes` or `-p`/`--package` before the package name, because Hydra can't tell which package would run.
+- **The `integrity` pin:** an optional per-server field, npm's `sha512-…`, and only on those servers.
+  - Before a launch, `PackService.resolve` asks registry.npmjs.org for that version's `dist.integrity`.
+  - A mismatch, or a registry that can't be read, leaves that server out with a note naming both values. The rest of the role still starts.
+  - A match is remembered in `<globalStorage>/packs/npx-pin-cache.json`, so later launches don't ask again. A mismatch is never remembered.
+- **Review panel:** it shows "Pinned: name@version, integrity sha512-…" or "Not pinned to an integrity hash".
+- **Coding pack:** it now pins `@playwright/mcp@0.0.82`.
+
+**Fixed in review:**
+- The pin label was worked out for any stdio server, so a `node` server with an `@` in an argument could show one. It now applies only to the three runners.
+- A refused pin's note ended in two full stops.
+- The only test of a refused pin went through the module, not a launch. `tests/packsLaunch.test.ts` now resolves a pinned role through the real `PackService` with a fake registry: a mismatch is left out naming both hashes, a match starts, and only the match is remembered.
+
+**Live checks:**
+- **Registry:** a direct check against the real registry. The shipped pin matches, a different version is refused with both hashes, and a missing version is refused with the registry's 404.
+- **Probe window:**
+  1. The Packs review panel shows "Pinned: @playwright/mcp@0.0.82, integrity sha512-OCqftfb8H4dn…".
+  2. After turning Coding on, a UI builder lane checked the pin against the live registry. It wrote the match to the cache, and the lane's MCP config included `coding-playwright`.
+  3. With the pin changed to a wrong value, a second lane had no MCP config. Hydra's log said: "The coding-playwright server was left out: @playwright/mcp@0.0.82 is pinned to sha512-XXqf…, but the npm registry has sha512-OCqf…". The lane still started.
+  4. Nico's Claude and Codex settings and his Claude Hydra server entry were unchanged, and no trust entries were added.
+- **Where the note appears:** a lane's "left out" notes go to the Hydra output channel only, as they did before this change. The lane tile doesn't show them.
+
+**Threat model:**
+- HSEC-49 covers the exact-version rule and the pin check.
+- HR-16 records that `npx` downloads from the registry your `.npmrc` names, while Hydra checks the pin against registry.npmjs.org. With a mirror configured, npm checks the download against the mirror's record.
+
+**Tests:**
+- `tests/npxPin.test.ts`: 15.
+- `tests/packsLaunch.test.ts`: 19, including the new end-to-end test.
+- `tests/packs.test.ts`: 25.
+- `tests/packsPage.test.ts`: 13.
