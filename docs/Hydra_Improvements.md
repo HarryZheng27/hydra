@@ -373,3 +373,51 @@ Drafted by one Sonnet subagent from the code and docs. The main session (Opus) t
 **Tests:**
 - `tests/threatModel.test.ts`, 1 test, passing (with `hardening.test.ts`: 13 of 13).
 - `npx tsc --noEmit` passes.
+
+### Step 4 (2026-09-26)
+
+The plan put this step with Opus, in the main session. An Opus subagent wrote the two signing scripts and their tests. The main session wrote the release job and the docs, then checked the scripts against the app's verifier and the update service.
+
+**What a release now does (4.1):** see `docs/Releases.md`.
+- **When:** only a manual run of the Windows desktop workflow given a `release_tag`, after the build job's build, smoke, installer, upgrade and MSIX checks all pass. The tag must be `v<package.json version>` and not already a release.
+- **What it publishes:** the tested `HydraSetup.exe`, a `SHA256SUMS` in `sha256sum` format, and a GitHub build-provenance attestation for the installer (`actions/attest-build-provenance`). The notes say how to check both with `Get-FileHash` and `gh attestation verify`.
+- **Permissions:** only the release job may write (contents, attestations, id-token). The workflow's default and the build job stay read-only.
+- **Prereleases:** on by default until installers are code-signed.
+
+**Signed update metadata (4.2): tooling built, not turned on.**
+- **`scripts/desktop-update-sign.mjs`** signs `user.json` for one release:
+  - it takes the key only from the environment, refuses one on the command line, and never prints it;
+  - it refuses an installer that isn't validly code-signed;
+  - it signs the inventory of what the installer actually installed;
+  - it checks its own output with the app's real verifier before writing, and never overwrites a file.
+- **`scripts/desktop-update-key.mjs`** makes the Ed25519 key. It writes an owner-only file outside any git working tree and prints the `gh secret set` commands and the `hydraUpdateTrust` block to paste.
+- **The release job** signs only when the key secrets are set and the installer's Authenticode status is Valid; otherwise it leaves a notice. The secrets reach only the signing step.
+  - The sequence number is the signing time in seconds, so re-runs still increase it.
+  - The issue time is set five minutes back, for clients whose clocks run slow.
+  - The signed `user.json` is kept as a run artifact, because clients follow no redirects and GitHub release assets redirect.
+
+**Why 4.2 stops there:** the update trust needs three things only the release owner can provide:
+- a code-signing certificate (the trust refuses to turn on without an `authenticodeSigners` entry);
+- an HTTPS update host serving the two fixed paths without redirects;
+- custody of the update-signing key.
+
+Installing from inside Hydra also isn't built: the native helper refuses every request, so a verified download is saved but not run. So the plan's "on by default only after a signed-to-signed upgrade test passes" can't be met yet, and `hydraUpdateTrust` stays disabled. `docs/Releases.md` lists the owner's steps in order. `THREAT_MODEL.md` records this as HR-14.
+
+**Found while checking, and fixed before commit:**
+- **The first release job was unsafe:**
+  - it put the signing secrets in the whole job's environment;
+  - it would have signed metadata for an unsigned installer, which clients refuse;
+  - it used `run_number` as the sequence, which a re-run doesn't raise;
+  - it published `user.json` as a release asset, which clients can't fetch through the redirect;
+  - it didn't create the output folder.
+- **The first draft of `docs/Releases.md` overstated the update service.** It said Hydra checks the installer's code signature before installing. The code verifies the record, asks, downloads and checks the size and SHA-256, and `applyUpdate` refuses. The doc now says so.
+- **The threat model's diagram said the download wasn't built.** It is: `stageDesktopUpdateArtifact`, with no redirects and a hash check. The diagram now shows releases and the download as built.
+
+**Threat model:** HSEC-47 (releases) and HSEC-48 (update-metadata signing) were added, with HR-14 (unsigned installers, updates off) and HR-15 (actions pinned by tag, not commit). HR-10 now points at HR-14. A script confirmed that all 68 test names cited by the 48 controls exist.
+
+**Tests:**
+- `tests/desktopUpdateSign.test.ts`: 9 tests. They sign with a throwaway key and check the result with the real verifier, including tampering, the wrong key, rotation, an unsigned installer and key handling.
+- `tests/releaseWorkflow.test.ts`: 3 tests that read the release job. Each was shown to fail when the workflow is changed to:
+  - give the default permissions `contents: write`;
+  - put the signing key in the job's environment;
+  - sign when the installer's signature isn't Valid.

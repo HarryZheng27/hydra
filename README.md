@@ -21,7 +21,7 @@ npm.cmd run desktop:verify
 npm.cmd run desktop:smoke
 ```
 
-The build lives in `.desktop/VSCode-win32-x64/`. The Windows CI job builds the same standalone app and runs the existing acceptance suite against its built-in Hydra module, using a separate empty test harness. A source `.vsix` does not satisfy the standalone release gate.
+The build lives in `.desktop/VSCode-win32-x64/`. The Windows CI job builds the same standalone app and runs the existing acceptance suite against its built-in Hydra module, using a separate empty test harness. A source `.vsix` does not satisfy the standalone release gate. Releases are published from that same CI run, with a `SHA256SUMS` file and a build-provenance attestation; see [Releasing Hydra](docs/Releases.md).
 
 ## Available features
 
