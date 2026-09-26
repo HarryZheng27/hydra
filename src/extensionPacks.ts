@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import path from 'node:path';
 import { defaultMcpContext, listMcpServers } from './core/mcpServers';
 import { PackService, defaultUserPacksFolder } from './core/packs/service';
+import type { AuditEvent } from './core/audit';
 
 /**
  * Packs in the window (docs/Packs_Plan.md): the PackService built from the
@@ -15,9 +16,10 @@ import { PackService, defaultUserPacksFolder } from './core/packs/service';
  * `turnOn` must be the review panel's own button: VS Code commands can be run
  * by any extension, so a public command must never allow a pack by itself.
  */
-export function createPackService(context: vscode.ExtensionContext, log: (line: string) => void): PackService {
+export function createPackService(context: vscode.ExtensionContext, log: (line: string) => void, audit?: (event: AuditEvent) => void): PackService {
   let warned = '';
   return new PackService({
+    audit,
     builtin: path.join(context.extensionPath, 'packs'),
     userFolder: () => {
       const configured = (vscode.workspace.getConfiguration('hydra').get<string>('packs.folder') ?? '').trim();

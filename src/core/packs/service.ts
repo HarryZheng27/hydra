@@ -13,6 +13,7 @@ import { checkNpxPin, fetchRegistryIntegrity, fileCache, npxPackageArg, parsePac
 import { addUserPack, choosePack, listPacks, type InstalledPack } from './registry';
 import { activePacks, projectPacks, projectPacksFolder, readPacksFile, withPack, withSkipGate, writePacksFile, type PackPlaces, type ProjectPack } from './project';
 import { mkdir } from 'node:fs/promises';
+import type { AuditEvent } from '../audit';
 
 /**
  * Packs for one Hydra window (docs/Packs_Plan.md): where they live, each
@@ -42,6 +43,9 @@ export interface PackServiceOptions {
   userServers?: () => Promise<Partial<Record<Provider, readonly string[]>>>;
   /** 5.4: how a pinned server's integrity is checked against the registry. Tests inject a fake. */
   npxRegistryFetch?: RegistryFetcher;
+  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  /** Without it, a pack server refused by 5.4's integrity pin and a pack turned on aren't recorded. */
+  audit?: (event: AuditEvent) => void;
 }
 
 /** Decision 1: your packs live in ~/.hydra/packs unless hydra.packs.folder names another absolute folder. */
@@ -118,6 +122,8 @@ export class PackService implements RoleSource {
   async turnOn(folder: string, id: string, reviewedHash: string): Promise<void> {
     await this.allow(folder, id, reviewedHash);
     await this.setEnabled(folder, id, true);
+    // 5.2: an approval — turning on a pack with its reviewed hash.
+    this.options.audit?.({ kind: 'approval', what: 'pack turned on', pack: id, detail: reviewedHash });
   }
 
   /** Forget your OK for a pack in this project. */
@@ -163,7 +169,7 @@ export class PackService implements RoleSource {
     const userServers = await this.options.userServers?.().catch(() => ({})) ?? {};
     const servers = await Promise.all(
       role.mcpServers.flatMap(id => valid.manifest.mcpServers[id] && valid.servers[id]
-        ? [this.resolveServer(id, valid.manifest.mcpServers[id]!, valid.servers[id]!, valid.manifest.integrity?.[id])]
+        ? [this.resolveServer(packId, id, valid.manifest.mcpServers[id]!, valid.servers[id]!, valid.manifest.integrity?.[id])]
         : []),
     );
     return {
@@ -182,12 +188,13 @@ export class PackService implements RoleSource {
    * Only a stdio server pinned to a package (an npx/bunx/pnpx server, checked
    * exact-version at pack load) can carry a pin; anything else passes through.
    */
-  private async resolveServer(id: string, spec: McpServerSpec, info: PackServerInfo, integrity: string | undefined): Promise<ResolvedServer> {
+  private async resolveServer(packId: string, id: string, spec: McpServerSpec, info: PackServerInfo, integrity: string | undefined): Promise<ResolvedServer> {
     if (spec.type !== 'stdio' || !integrity) return { id, spec, info };
     const target = npxPackageArg(spec.args);
     const pin = target && parsePackageSpec(target);
     if (!pin) return { id, spec, info };
     const result = await checkNpxPin(pin, integrity, this.options.npxRegistryFetch ?? fetchRegistryIntegrity, this.npxPinCache);
+    if (!result.ok) this.options.audit?.({ kind: 'denial', what: 'pack server refused', detail: `${id}: ${result.reason}`, pack: packId });
     return result.ok ? { id, spec, info } : { id, spec, info, pinProblem: result.reason };
   }
 

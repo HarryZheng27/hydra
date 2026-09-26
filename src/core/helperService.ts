@@ -18,6 +18,7 @@ import { headLimitReason } from './limitDetection';
 import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
+import type { AuditEvent } from './audit';
 
 /**
  * Hydra helpers, end to end (docs/Official_Extensions_Plan.md, Phases 4 and 6).
@@ -77,6 +78,9 @@ export interface HelperServiceOptions {
   // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
   /** Without it, heads never refuse to start and dispatch always runs (as before 5.3). */
   stop?: StopSwitch;
+  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  /** Without it, a head cancelled and a hydra_done refused for changed git settings aren't recorded. */
+  audit?: (event: AuditEvent) => void;
 }
 
 interface Active {
@@ -337,6 +341,8 @@ export class HelperService {
     }
     if (this.active.has(id)) await this.finish(id, 'cancelled', reason);
     else await this.options.store.transition(id, 'cancelled', reason);
+    // 5.2: a head cancelled (a stop), including each one Stop All Agents cancels through stopAll.
+    this.options.audit?.({ kind: 'stop', what: 'head cancelled', detail: reason, jobId: id });
     this.changed();
     void this.dispatch();
     return { job_id: id, state: 'cancelled' };
@@ -387,6 +393,8 @@ export class HelperService {
     if (job.gitMetaAtStart) {
       const changedMeta = await gitMetaFingerprint(worktree).then(now => gitMetaChanges(job.gitMetaAtStart!, now), () => []);
       if (changedMeta.length) {
+        // 5.2: a denial — hydra_done refused for changed git settings or hooks.
+        this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: git settings or hooks changed', detail: changedMeta.join(', '), jobId });
         return { accepted: false, message: `The repository's git settings or hooks changed while you worked: ${changedMeta.join(', ')}. Hydra won't accept work while they differ, because git runs them outside your worktree. If you changed them, put them back exactly as they were, then call hydra_done again. If you didn't, don't try to fix them: call hydra_stuck with this message and wait for the lead.` };
       }
     }
