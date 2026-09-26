@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { gateBlocks, gateKind, gateState, type GateFinding, type JobCheckResult } from './jobs';
+import { evidenceLabel, gateBlocks, gateKind, gateState, type EvidenceStatus, type GateFinding, type JobCheckResult } from './jobs';
 import { providerName } from './gates/types';
 
 /**
@@ -21,6 +21,12 @@ export interface EvidenceSubject {
   /** Where the .md file is written; every link is relative to it. */
   baseDirectory: string;
   results: readonly JobCheckResult[];
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status this document describes, when one was recorded. */
+  status?: EvidenceStatus;
+  /** The commit `status` describes; shown with `status` on the top line. */
+  commit?: string;
+  /** The subject's HEAD has moved past `commit`: "Checks are for an older commit." */
+  stale?: boolean;
 }
 
 const stateLabel: Record<'passed' | 'failed' | 'notRun', string> = { passed: '✓ Passed', failed: '✗ Failed', notRun: '– Not run' };
@@ -81,9 +87,18 @@ function resultSection(result: JobCheckResult, worktree: string, logDirectories:
   return lines.join('\n');
 }
 
-/** The whole document: a heading, then one section per gate, in the order the gates ran. */
+/** Step A: the top status line, when a status was recorded — never guessed for an older result that has none. */
+function statusLine(subject: EvidenceSubject): string | undefined {
+  if (!subject.status) return undefined;
+  const at = subject.commit ? ` (${subject.commit.slice(0, 7)})` : '';
+  const stale = subject.stale ? ' — Checks are for an older commit.' : '';
+  return `**${evidenceLabel(subject.status)}${at}**${stale}`;
+}
+
+/** The whole document: a heading, Step A's status line, then one section per gate, in the order the gates ran. */
 export function buildEvidenceMarkdown(subject: EvidenceSubject): string {
-  if (!subject.results.length) return `# ${subject.title} — gate evidence\n\nNo gates have run.\n`;
+  const status = statusLine(subject);
+  if (!subject.results.length) return [`# ${subject.title} — gate evidence`, '', ...(status ? [status, ''] : []), 'No gates have run.', ''].join('\n');
   const sections = subject.results.map(result => resultSection(result, subject.worktree, subject.logDirectories, subject.baseDirectory));
-  return [`# ${subject.title} — gate evidence`, '', ...sections, ''].join('\n');
+  return [`# ${subject.title} — gate evidence`, '', ...(status ? [status, ''] : []), ...sections, ''].join('\n');
 }
