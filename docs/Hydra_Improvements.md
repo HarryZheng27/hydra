@@ -1,6 +1,6 @@
 # Hydra improvements: security hardening
 
-Status: **plan** (2026-09-26).
+Status: Step 1 built and merged; Step 2 built (2026-09-26, see "As built"); Steps 3 and 4 planned.
 
 ## Goal
 
@@ -41,7 +41,7 @@ Make Hydra's security as strong as it claims, then write it down. Four steps, in
   - head tokens revoked when the head ends.
 - A lead is identified by the process that connected (`leadVerification.ts`), so no lead token is kept on disk.
 
-**Heads (`src/core/helperRunner.ts`):**
+**Heads (`src/core/helperRunner.ts`), before Step 2:**
 - **Claude:** `--permission-mode dontAsk` with `claudeHelperTools`, which includes `Bash` and `PowerShell`. It inherits Hydra's whole environment (`{ ...process.env }`). Research R8 showed it can write outside its worktree.
 - **Codex:** `-s workspace-write` with approval `never`. Reads aren't limited.
 
@@ -94,6 +94,16 @@ Tests use real temp repos.
 | R3 | What is the smallest environment a Claude head and a Codex head need to start, sign in and run tools on Windows? For example `PATH`, `PATHEXT`, `SystemRoot`, `ComSpec`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`/`TMP`, `HOMEDRIVE`/`HOMEPATH`, proxy and locale. Where does each keep its sign-in? | Trimming the environment keeps other tools' keys away from heads. |
 | R4 | With the elevated Windows sandbox, does Codex's `workspace-write` block writes to the lead's `.hydra`, `.git` and other worktrees? Can reads be denied at all? | This sets how far a Codex head is confined. |
 | R5 | Can a Claude head keep `Bash` and `PowerShell` while writes outside the worktree are blocked? If not, which tools can it lose, and does a typical head still work? | This is the cost of confining heads. |
+
+**Research settled for Step 2** (2026-09-26; native Windows 11, Claude Code 2.1.282 with `--model haiku`, Codex 0.154.0, in a scratch fixture with a lead, two worktrees, a fake home with dummy secrets and a fake Hydra storage folder):
+
+| # | What was run | What was seen | The approach |
+| --- | --- | --- | --- |
+| R1 | `claude -p` with `--settings <file>` and `--setting-sources`, under `dontAsk`, asked to read and write denied paths in 8 spellings, with rule syntax variants, allow-versus-deny, `--add-dir`, and one invalid value. | `Read(...)`/`Edit(...)` denies on `//c/...` paths block Read, Edit and Write (`Edit` covers Write). With a bare `Read` allowed, the 8.3 name, `\\?\C:\...` and `\\localhost\C$\...` still read the secret. `blockReadsOutsideWorkingDirectories` blocks every outside read, any spelling, junctions included. `Edit(/**)`/`Write(/**)`/`NotebookEdit(/**)` with no bare Edit or Write block every outside write. A Read deny on a parent beats `--add-dir`. One invalid value makes `-p` ignore the whole file, silently. | A per-head settings file with the read block and Read/Edit deny pairs, built from typed code and checked by a unit test; scoped write rules; the role's pack copy through `--add-dir`, never under a Read deny. |
+| R2 | `{"sandbox":{"enabled":true}}`, with and without `failIfUnavailable`. | "Sandbox disabled … Commands will run WITHOUT sandboxing"; with `failIfUnavailable` Claude refuses to start. A gated preview needs a UAC install. | Don't use Claude's sandbox on Windows. |
+| R3 | Claude and Codex (exe and `.cmd` shim) started with shrinking environments; the variables a child actually gets from Node. | Node re-adds 11 Windows variables from its parent when missing. Claude runs on that floor. Codex's `.cmd` shim needs `PATHEXT`, and without it exits 0 with no output. Sign-in lives in `~/.claude/.credentials.json` and `~/.codex/auth.json`, which the CLIs read themselves. `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` forces permission mode `default`, so a head would hang. | An allowlisted environment per head and gate command, the provider's own sign-in variables, never `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`. |
+| R4 | `codex sandbox` (no model) with `-P :workspace` and with deny profiles, writing and reading across the fixture; `git add`/`commit` inside. | `workspace-write` makes the worktree plus TEMP/TMP writable; with a per-head TEMP, writes to the sibling worktree, the lead's `.hydra`, `.git/hooks`, Hydra's data and the home are refused. `git add`/`commit` fail (the linked worktree's admin folder isn't writable). Reads can be denied only by a profile, and each deny leaves a lasting `CodexSandboxUsers:(DENY)(R)` entry that applies to every Codex sandbox on the machine; it even broke another worktree's session. | Codex heads keep `workspace-write` with a per-head TEMP; no read-deny profiles; Hydra commits for heads. |
+| R5 | Shell tools under deny rules and the read block; command patterns; project settings with a planted hook; `CLAUDE_CODE_SHELL_PREFIX` pointing at a wrapper around `codex sandbox`. | Deny rules stop direct file commands, but `npm test`, `node script.js`, git aliases and `git config` still got out; command patterns confine nothing. With project/local settings loaded, a head wrote a hook into `.claude/settings.local.json` and it ran unsandboxed. Through the wrapper (about 1 s a command, no model), `npm test`, `git status` and `git diff` worked and outside writes and `git config` on the lead got EPERM. The wrapper doesn't cover PowerShell. `--allowedTools` alone leaves 32 tools; `--tools` limits them. | `--setting-sources user`; `--tools` and scoped `--allowedTools`; no PowerShell; Bash only through Codex's Windows sandbox, and only when a self-test shows it works. |
 
 **Build, after the research:**
 - **Claude heads:**
@@ -230,3 +240,77 @@ Built in `hydra-wt/hardening` (branch `feat/hardening`), one Sonnet subagent, pe
 - "Send to lane" with colored/ANSI test output: confirm it lands as plain text with no stray escape sequences, and that a lane's own keystrokes (arrow keys, etc.) still work normally through `input`.
 - A lane's Merge and Mark job done after a planted hook: confirm the interactive modal names the file with Cancel as the default, and that `hydra.lanes.action` refuses outright instead of asking.
 - The endpoint with real tokens end to end (not just the unit test): a lead and a head token both still work through the real bridge.
+
+### Step 2 (2026-09-26)
+
+Built in `hydra-wt/confine` (branch `feat/confine`), one Opus subagent, from the main session's chosen design (Step 2 research notes, "Chosen design" 1–8).
+
+**Where it lives:**
+- `src/core/confine.ts` (pure): `rulePath` and `denyPairs` (the `//c/...` rule form), `storageReadDeny` (Hydra's storage minus a role's pack copy), `headSettings`, `laneSettings` and `settingsProblems` (the only way a settings file is built, and its check), `claudeHeadTools`, `confinedEnvironment` and `headEnvironment`, `headShellSentence`, and the wrapper scripts (`wrapperScript`, `insideScript`, `guardScript`, `treeScript`).
+- `src/core/headSandbox.ts`: `codexSandboxExecutable` (Codex's own `codex.exe` from `hydra.codexPath` or the npm shim), `findGitBash` (respects `CLAUDE_CODE_GIT_BASH_PATH`), and `HeadSandbox`, which writes the scripts to `<storage>/workspaces/<key>/sandbox/`, runs the check once per window when first needed (again after `hydra.codexPath` changes), and wraps gate commands.
+- `src/core/confineFiles.ts`: the storage listing and `otherWorktrees` (`git worktree list`).
+- Heads: `claudeHelperArguments` and `HeadConfinement` in `helperRunner.ts`; `HelperService.confine`, `headShell`, the per-launch settings and TEMP cleanup in `exited`, and `commitAll`/`noHooks` in `helperService.ts`; `RoleLaunch.packCopy` and `.variables` in `packs/launch.ts`.
+- Gates: `GateContext.sandbox` (`gates/types.ts`), `runCommandGate` (`gates/command.ts`), `startApp` (`gates/screenshots.ts`), `CheckCommand.environment` (`checkCommand.ts`).
+- Lanes: `LaneLaunchInput.settingsFile` and `LaneService.writeLaneSettings` (`laneService.ts`).
+- Window: one `HeadSandbox` in `extension.ts`, given to heads, lanes and their gates; the `hydra.headShellStatus` command; the "Head shells" line in Settings → Heads (`settings/pages/heads.ts`).
+
+**What each launcher passes now:**
+- **Claude head, sandbox check passed:** `-p … --permission-mode dontAsk --setting-sources user --settings <logs>/<jobId>-<8 hex>.settings.json --tools Read,Edit,Write,NotebookEdit,Glob,Grep,Bash[,Skill,WebSearch,WebFetch] --allowedTools Glob,Grep,Edit(/**),Write(/**),NotebookEdit(/**),Bash,mcp__hydra__hydra_done,mcp__hydra__hydra_stuck,mcp__hydra__hydra_progress[,role's] --max-turns … --max-budget-usd … --mcp-config=<inline Hydra entry> [--mcp-config=<role file>] --strict-mcp-config [--add-dir <pack copy>] [--plugin-dir …] [--model …]`.
+  - Environment: the allowlist, the Claude sign-in variables, the role's variables, `TEMP`/`TMP` = `<helpers>/temp/<jobId>-<random>`, `DISABLE_AUTOUPDATER=1`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, `CLAUDE_CODE_SHELL_PREFIX=<wrapper>`, `HYDRA_WT=<worktree>`, and `PATH` with Git's `bin` first.
+  - Hydra's bridge entry, and each stdio server in the role's file, carries `HYDRA_SHELL_DIRECT=1`.
+- **Claude head, check failed:** the same without `Bash`, `CLAUDE_CODE_SHELL_PREFIX`, `HYDRA_WT` or the marker. Its first message says "Your shell is off: Codex's Windows sandbox isn't available (<reason>). Hydra's gates run the tests.", and its result note says "This head had no shell: <reason>."
+- **Claude head, not Windows:** Bash as before (no wrapper); the settings file, tool lists and environment still apply.
+- **Codex head:** the same `codex exec … -s workspace-write` command line as before; the environment is the allowlist, the Codex sign-in variables, the role's values and its own `TEMP`/`TMP`.
+- **Claude lane:** your usual launch plus `--settings <storage>/workspaces/<key>/lanes/<laneId>.settings.json` (0600, rewritten at each launch, removed on close) with only Read/Edit denies for Hydra's storage (reads minus the lane's pack copy) and the other worktrees. Codex lanes are unchanged.
+- **Gate commands and the screenshots app, check passed:** `<Git>\bin\bash.exe <wrapper> '<command>' '<args>'…` with the allowlisted environment, the gate's own variables (and `PORT`), `HYDRA_WT=<worktree>` and a TEMP of their own under the run's log folder. Otherwise as before.
+- **Hydra's commit at `hydra_done`:** `git -c core.hooksPath=<fresh empty folder> status|add|commit`.
+- **The wrapper** runs `codex.exe sandbox -c windows.sandbox='elevated' -c permissions.hydra-confine=<:workspace, network on, the worktree's .claude and .hydra read-only> -c shell_environment_policy.*=… -P hydra-confine -C "$HYDRA_WT" -- <Git>\usr\bin\bash.exe <inside script> "$1" …`, and exits 126 without running anything when Codex or `HYDRA_WT` is missing.
+
+**Verified with `codex sandbox`** (no model, scratch folders only, never a deny profile; `~/.codex/config.toml` hashed before and after every run, unchanged): the check passes on this machine; writes inside the worktree and TEMP succeed and a sibling write, the worktree's `.claude` and `.hydra` are refused; a command containing a single quote is sandboxed; the folder Claude's shell was in is kept; exit codes pass through; `npm test` (through npm's extensionless script), `mktemp`, and a pack gate's Electron-as-Node run; a server started in the sandbox answers Hydra on 127.0.0.1 and is gone after it's stopped; after killing the wrapper's tree, an `npm run dev`-like tree (node → cmd → node holding a port) is gone within about 5 s; `PORT`, `JAVA_HOME` and the gate's variables arrive and `*TOKEN*` names don't.
+
+**Changes from the plan, and why:**
+- **Hydra's own MCP servers are told apart by an environment marker, not by the command line.** The prototype ran anything without `eval '` directly. Claude Code quotes a command that contains a single quote with double quotes, so `node -e 'require("fs")…'` would have run outside the sandbox. `HYDRA_SHELL_DIRECT=1` lives only in those servers' own environment, which a Bash command can't set; everything else, hooks included, runs in the sandbox.
+- **The MCP route needed Git's `bin` first on the head's PATH.** Claude Code starts stdio MCP servers through the prefix too, with cross-spawn, which runs a `.sh` through the `bash` it finds on PATH. On this machine PATH has only `Git\cmd`, so Hydra's bridge (and `hydra_done`) wouldn't have started. The check also runs this route.
+- **Codex's environment policy is pinned.** `codex sandbox` rebuilt the command's environment from `shell_environment_policy`: `PORT` and `JAVA_HOME` were dropped, and values from `config.toml`'s `set` arrived. The wrapper passes `inherit='all'`, `set={}` and the rest, so the allowlisted environment arrives whole (Codex still drops `*KEY*`, `*SECRET*`, `*TOKEN*`). Values your `config.toml` sets were still seen inside.
+- **A guard inside the sandbox ends a stopped command.** The sandbox's processes run as Codex's sandbox user: `taskkill` from Hydra gets "Access is denied", and they outlived the wrapper (a dev server would have run forever). The guard, started as its own program so Codex's cleanup doesn't take it, checks every 2 s that the wrapper still exists; when it doesn't, it ends the command's process group and every process under it (a PowerShell Toolhelp snapshot, since `taskkill` and WMI are denied inside). The wrapper stays Codex's parent rather than `exec`ing it, since an `exec`'d wrapper's process id didn't show reliably to the guard.
+- **`TMPDIR` is the command's own TEMP.** Git Bash's `/tmp` is shared by all of the sandbox user's processes and points at whichever command's TEMP came first, possibly a deleted one or another head's.
+- **The command runs in the folder Claude Code's shell was in**, while the sandbox's writable root stays the worktree.
+- **The profile is named `hydra-confine`**, since profiles with the same name merge across config layers.
+- **Settings and TEMP names are per launch** (`<jobId>-<8 hex>.settings.json`, `<jobId>-<random>`), and a run's files are removed after its state is settled. With the old order, a head continued after a usage limit was failed by its old run's exit handler (an existing test caught it).
+- **The Claude review gate now passes `--setting-sources user --strict-mcp-config`** (its own commit). The plan kept review gates unchanged because they run read-only, but `claude -p` in a folder nobody trusted still runs that folder's `.claude/settings.json` hooks and connects its `.mcp.json` servers, and a head can write both with its Edit tool.
+- **Hydra's storage is denied entry by entry** around a role's pack copy and plugin folder, since a rule can't say "except"; a folder on the way that can't be listed denies the whole storage folder. Edits are denied on all of it.
+- **A role's variables pass the allowlist, even secret-looking ones** (`RoleLaunch.variables`): its servers read them from the agent's environment, and you allowed the pack.
+- **The "Blocked: tried to read ~/.ssh" result line wasn't built.** A denial shows in the head's own log; its result says only when its shell was off.
+- `HelperService` without `hydraStorage` (tests) denies its log folder; the window passes the real global storage.
+
+**Accepted risks, for Step 3's threat model:**
+- **Codex heads' reads** (R4): no read denies, so a Codex head can read your home's secrets, and Codex's network setting decides whether it can send them.
+- **Claude heads' reads through Bash:** the sandbox confines writes, not reads. Claude's denies stop direct file commands, but a script a head writes and runs (`npm test`, `node x.js`) can read `~/.ssh` and the like.
+- **Network access for Claude heads:** the sandbox has the network on (installs, tests), so what a head reads it can send.
+- **Gate commands without the sandbox** (the check failed, or not Windows) run as before, with Hydra's whole environment.
+- **Lanes:** no read block, so the 8.3, `\\?\` and UNC spellings of a denied path still read it; the deny list names the worktrees open at launch; a lane's shells are yours, unconfined.
+- **Your Claude user settings apply to heads** (`--setting-sources user`): an allow rule there can let the Edit and Write tools write outside the worktree; your hooks run for heads (through the wrapper, so in the sandbox); your settings' `env` can change variables.
+- **A worktree's `.codex/config.toml`**: a Claude head can write one, and a Codex review gate or a Codex continuation in that worktree may load it if Codex trusts the repository. Not checked yet.
+- **One sandbox user for all heads:** every head's sandboxed commands run as Codex's sandbox user, so one head's command could signal another's, and `/tmp` is shared (see `TMPDIR` above).
+- **Stopping a sandboxed command takes up to about 5 s**, a process that leaves the command's tree isn't followed, and Hydra's own tree kill logs "could not confirm process-tree termination" when it meets the sandbox's processes.
+- **A head's other-worktree denies are fixed at launch** (the read block and the write rules still cover later ones).
+- **The first check may ask for Codex's elevated sandbox setup** (a UAC prompt) on a machine where it was never set up.
+
+**Tests** (a temporary esbuild runner outside `tests/`, never the full gate, `helperEndpoint` or the integration test):
+- `tests/confine.test.ts`: 20 tests, all passing: rule paths, homes, the head and lane settings exactly, the settings check, the storage carve-out, tool lists, head arguments with and without the sandbox and with a role, Codex arguments, the environment allowlist, a head's environment, the wrapper text, the wrapper's fail-closed branch in real Git Bash, finding Codex and Git Bash, the check's decisions, gate commands wrapped only when the sandbox is there, hooks-off commits against a planted pre-commit hook and a `core.hooksPath` hook, confined heads and lanes end to end with stand-ins for the CLIs, and the first message.
+- Updated and passing: `helperService.test.ts` (21), `packsLaunch.test.ts` (17), `hardening.test.ts` (12), `gates.test.ts` (16, the reviewer's arguments).
+- Unchanged and passing: `gatesUI`, `lanes`, `planLanes`, `laneGit`, `lanesView`, `packs`, `core`, `jobs`, `settingsShell`, `planner`.
+
+**What the live checks must look at:**
+- **Settings → Heads** says "Head shells run in Codex's Windows sandbox." (and, with Codex's path set to a missing file, why they're off).
+- **A Claude head told to reach out** (with dummy files in place of real secrets, for example a fake `~/.ssh/id_probe`):
+  - read it with Read, Grep and Glob, and in other spellings (8.3, `\\?\`, `\\localhost\C$`): refused;
+  - write into another head's or lane's worktree with Write and Edit: refused;
+  - edit the lead's `.hydra/gates.json` with Edit, and with Bash (`echo >`, `node -e`, `git -C <lead> config …`): refused (EPERM from the sandbox), and Step 1's checks still catch anything that slips through;
+  - `cat` the dummy key from Bash: refused by Claude; `node -e` reading it: expected to succeed (accepted risk above), which the check should confirm rather than assume.
+- **A normal Claude head** builds and tests code: `npm test` and `git status`/`git diff` through Bash, Hydra's tools (`hydra_done`) working through the wrapper (the bridge starts), a gate command passing, and the head's settings file and TEMP gone afterwards. `--tools` leaves out `ToolSearch`, so confirm Hydra's MCP tools (and a role's) still load and can be called; the research never ran `--tools` with an MCP server.
+- **A Claude head whose Bash command times out or that is cancelled mid-command** (for example `npm run dev`): the sandboxed processes are gone within seconds.
+- **A Codex head:** starts, works, its gates run, its TEMP is its own.
+- **A Claude lane:** works like your terminal with your settings; reading a file in another lane's worktree or in Hydra's storage is refused; its role's instructions and skills still load. A Codex lane is unchanged.
+- **The screenshots gate** (if a project has one): the app starts in the sandbox, is reachable, and is gone afterwards.
+- **`~/.codex/config.toml` is unchanged** after all of it.

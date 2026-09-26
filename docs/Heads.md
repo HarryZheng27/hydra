@@ -69,7 +69,7 @@ any unfinished state → failed or cancelled
 - **Starting point:** each head gets a new worktree and branch from the lead folder's **current HEAD**. If that folder has uncommitted changes, the lead is warned that the head won't see them.
 - **Limits** (the lead can change them per job): by default 30 minutes of work (time spent waiting for an answer doesn't count), 60 turns and 5 USD. Change the defaults in **Hydra Settings → Heads**. The turn and cost caps apply to Claude only.
 - **No permission prompts:** heads never ask anyone.
-  - **Claude:** `--permission-mode dontAsk` with an allowed-tools list (file tools, Bash/PowerShell, and Hydra's head actions; no web tools). Anything else is denied and the head carries on. Your user-level allow rules in `~/.claude/settings.json` also apply to heads.
+  - **Claude:** `--permission-mode dontAsk` with an explicit tool list: file tools that write only inside the worktree, Bash only in Codex's Windows sandbox (see Security), never PowerShell, and Hydra's head actions; web tools only for a role that has them. Anything else is denied and the head carries on. Only your user settings load (`--setting-sources user`), so your user-level allow rules in `~/.claude/settings.json` still apply to heads.
   - **Codex:** `codex exec` with the `workspace-write` sandbox and approval `never`. On Windows that sandbox blocks writes to a worktree's `.git` metadata, which is why Hydra does the commit.
 - **Stop everything:** **Hydra: Stop All Heads** in the command palette, **Stop all heads** in **Hydra Settings → Heads**, or **Stop all** on the dashboard.
 
@@ -252,6 +252,15 @@ A **pack** bundles what one kind of work needs: **roles** for lanes, heads and p
   - The token then lives only in that bridge's memory.
   - Verified live: a head's check process asking for a lead token was refused with "it runs inside a Hydra head".
   - On other platforms this check isn't implemented yet, and lead connections are accepted.
+- **Confined heads** (`src/core/confine.ts`; details in `docs/Hydra_Improvements.md`, "As built → Step 2"):
+  - A Claude head gets its own settings file: reads outside its worktree are blocked, whatever the spelling, and Read and Edit are denied on Hydra's data, the other worktrees, the lead's `.hydra` and `.git`, and `~/.ssh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.codex`, `~/.claude` and the like. Its role's pack copy stays readable.
+  - Its Bash runs through Hydra's wrapper in Codex's Windows sandbox: only its worktree and its own TEMP are writable. Hydra checks the sandbox once per window; if the check fails, heads have no shell, say why, and Settings → Heads shows the reason. PowerShell is never given.
+  - Heads and gate commands get a trimmed environment: system, locale, proxy and toolchain variables, the provider's own sign-in, and a role's variables. Other keys and tokens stay out.
+  - A Codex head keeps `workspace-write`, with its own TEMP. Its reads aren't limited.
+- **Gate commands** and the screenshots gate's app run in the same sandbox, with the network on, when the check passed.
+- **Hydra's commits** in a head's worktree run with git hooks off, so a hook a head edited can't run as Hydra.
+- **The Claude reviewer** loads only your user settings and no MCP servers, so hooks or servers a head wrote into its worktree don't run.
+- **Lanes** get light limits: a Claude lane can't read or edit Hydra's data or the other worktrees. Otherwise it's your terminal, with your settings.
 - **Logging:** every action, and every accepted or refused lead connection, is logged to the Hydra output channel.
 
 ## Supported versions
@@ -266,4 +275,5 @@ Hydra runs Claude Code 2.1.x from 2.1.270 and Codex 0.154.x from 0.154.0 (`src/c
 | "Hydra heads are not set up for this CLI" | The agent isn't connected | Connect it in Hydra Settings → Connectors |
 | "Hydra refused this lead: it was not started from this Hydra window" | The CLI runs outside Hydra (for example Windows Terminal) | Use the Claude Code or Codex extension, or a terminal inside Hydra |
 | A head "exited without finishing" | Its CLI failed to start or crashed | **Open log** on the dashboard |
+| A head says "Your shell is off" | Codex's Windows sandbox isn't available: Codex or Git Bash is missing, or the sandbox check failed | Settings → Heads gives the reason. Install Codex (and run it once so its sandbox is set up) or Git for Windows, then reload the window |
 | Claude reports failing SessionStart hooks | A plugin hook fails (for example claude-mem without Bun or its dependencies) | Press Connect on Claude again; it sets up Bun and claude-mem. Hydra records hook failures and carries on. |
