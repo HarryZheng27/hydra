@@ -7,8 +7,9 @@ const headsGuideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md
  * Heads: hydra.maxConcurrentHelpers, the default per-head caps
  * (hydra.heads.defaultMinutes/defaultMaxTurns/defaultBudgetUsd, applied to a
  * head started without its own limits — src/core/jobs.ts resolveHeadDefaults),
- * Stop all heads (the existing hydra.stopAllHelpers command), and a link to
- * the Heads guide.
+ * Stop all heads (the existing hydra.stopAllHelpers command), whether heads'
+ * shells run in Codex's Windows sandbox (hydra.headShellStatus, docs/Hydra_Improvements.md
+ * Step 2), and a link to the Heads guide.
  */
 export const headsPage: SettingsPage = {
   id: 'heads',
@@ -17,6 +18,7 @@ export const headsPage: SettingsPage = {
     { title: 'Heads at a time', description: 'Maximum Hydra heads running at once in this window. More wait in a queue.' },
     { title: 'Default caps', description: 'Minutes, turns, and budget a head gets when it is started without its own limits.' },
     { title: 'Stop all heads', description: 'Cancel every running head in this window.' },
+    { title: 'Head shells', description: 'Whether heads\' shells run in Codex\'s Windows sandbox, or why they\'re off.' },
     { title: 'Heads guide', description: 'How Hydra heads work and when to use them.' },
   ],
   html(): string {
@@ -34,6 +36,10 @@ export const headsPage: SettingsPage = {
           <label for="hd-default-budget" style="font-size:12px">Budget (USD)</label><input type="number" id="hd-default-budget" min="0.5" max="100" step="0.5" style="width:72px" aria-label="Default budget in USD">
         </div></div>
       <div class="row"><div class="row-text"><div class="row-title">Stop all heads</div><div class="row-desc">Cancel every running head in this window.</div></div><div class="row-action"><button class="danger" id="hd-stop-all">Stop all</button></div></div>
+    </div>
+    <div class="group">
+      <h2>Sandbox</h2>
+      <div class="row"><div class="row-text"><div class="row-title">Head shells</div><div class="row-desc" id="hd-shell">Checking…</div></div></div>
     </div>
     <div class="group">
       <h2>Learn more</h2>
@@ -55,6 +61,7 @@ export const headsPage: SettingsPage = {
   window.addEventListener('message', event => {
     const message = event.data;
     if (message?.type === 'maxConcurrentHelpers' && hdMax) hdMax.value = String(message.value);
+    if (message?.type === 'headShell') { const shell = document.getElementById('hd-shell'); if (shell) shell.textContent = String(message.text); }
     if (message?.type === 'defaultHeadCaps') {
       if (hdMinutes) hdMinutes.value = String(message.minutes);
       if (hdTurns) hdTurns.value = String(message.maxTurns);
@@ -72,6 +79,9 @@ export const headsPage: SettingsPage = {
       maxTurns: Math.max(1, Math.min(500, config.get<number>('heads.defaultMaxTurns', 60))),
       budgetUsd: Math.max(0.5, Math.min(100, config.get<number>('heads.defaultBudgetUsd', 5))),
     });
+    // Step 2: the head sandbox's check takes a few seconds the first time, so the line fills in when it's done.
+    void vscode.commands.executeCommand<{ text: string }>('hydra.headShellStatus')
+      .then(status => ctx.post({ type: 'headShell', text: status?.text ?? 'Head shells: unknown.' }), (error: unknown) => ctx.post({ type: 'headShell', text: `Head shells: couldn't check (${error instanceof Error ? error.message : String(error)}).` }));
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     switch (message.type) {
