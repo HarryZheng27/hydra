@@ -28,7 +28,13 @@ Installers aren't code-signed yet, so Windows SmartScreen may warn before one ru
 
 ## Turning on in-app updates
 
-Hydra already contains an update service, which runs in the desktop app's main process. It fetches a signed record, verifies it against a key built into the app, asks before downloading, and checks the downloaded installer's hash and its Windows code signature before installing. It stays off until the release owner provides the inputs below, and none of them can come from the repository alone.
+Hydra's update service runs in the desktop app's main process and stays off until the release owner provides the inputs below, none of which can come from the repository alone. Once on, it:
+- fetches the signed record over HTTPS without following redirects;
+- verifies the record against the key built into the app;
+- asks you before downloading;
+- keeps the installer only if its size and SHA-256 match the signed record.
+
+Installing from inside Hydra isn't built yet. The native helper that would check the installer's code signature and run it refuses every request (see [Desktop_Native_Update_Helper_Preflight.md](Desktop_Native_Update_Helper_Preflight.md)). So after a download, Hydra says installation is unavailable.
 
 1. **A code-signing certificate**, such as an OV certificate or Azure Trusted Signing.
    - Sign `Hydra.exe` and `HydraSetup.exe` in the desktop build; the prerequisites are in [Desktop_Signing_Preflight.md](Desktop_Signing_Preflight.md).
@@ -50,4 +56,4 @@ Once all four are in place:
   - Its sequence number is the signing time, so it always increases.
   - It expires after 30 days, so sign a fresh one before then.
 - The run keeps `user.json` as the `Hydra-signed-update-metadata` artifact. Upload it, unchanged, and the installer to the update host.
-- Before making updates the default, run an upgrade from one signed release to the next and check it.
+- Before making updates the default, finish the native install step and run an upgrade from one signed release to the next.
