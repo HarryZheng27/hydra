@@ -350,25 +350,26 @@ The test repository and its "outside" folder were in `Documents`, not `%TEMP%`. 
 
 ### Step 3 (2026-09-26)
 
-Built in `hydra-wt/threat` (branch `docs/threat-model`), one Sonnet subagent, from the code and the docs this step names (Heads.md "Security", Packs_Plan.md section 4 and its "As built", Gates_Plan.md, the desktop update/trust docs, and Steps 1–2 above). Docs and one new test file only; nothing under `src/`, `webview/`, `scripts/` or `desktop/` changed.
+Drafted by one Sonnet subagent from the code and docs. The main session (Opus) then checked it against the code.
 
-**Where it lives:** `docs/THREAT_MODEL.md`, linked from `README.md` (a new bullet after Packs) and from `docs/Heads.md`'s "Security" section.
+**Where it lives:** `docs/THREAT_MODEL.md`, linked from `README.md` and from `docs/Heads.md`'s "Security" section.
 
 **What it holds:**
-- Section 1: assets, adversaries and out-of-scope items, matching this file's "Goal" and "Out of scope".
-- Section 2: a text diagram of the boundaries (endpoint, lead/head/lane roles, a head's worktree and sandbox, the lead folder's `.hydra`/`.git`, pack cache copies, gates, the terminal input path, the desktop update path).
-- Section 3: **46 controls**, `HSEC-01`–`HSEC-46`, grouped as Endpoint and identity (8), Heads and confinement (11), Gates and review (9), Git (4), Lanes and terminals (3), Packs (6), Updates and releases (3), Data at rest and logs (2). Every one names its file and function and an exact `test('…')` name that was verified to exist by searching the test files before citing it.
-- Section 4: **14 accepted risks**, `HR-01`–`HR-14`: the Step 2 confinement risks listed there verbatim (Codex heads' reads, Claude heads' reads through Bash, network access for confined heads, unconfined gate commands, lanes' light limits, user settings applying to heads, an unchecked `.codex/config.toml`, one shared sandbox user, the sandbox's ~5s stop time, fixed-at-launch other-worktree denies, the elevated-sandbox first-run prompt — condensed into HR-01 through HR-09 with each's own fix), the Packs research R8 risk that a head can still write the lead's `gates.json`/`packs.json` through Bash or PowerShell (HR-11), a pack MCP server's rights in a lane (HR-12) and a role's unconfined skill scripts (HR-13) from `Packs_Plan.md` section 4, plus two found while writing this document: the desktop update trust value's renderer-unreachability resting on VS Code's own process separation rather than a test (HR-10), and a denied action (wrong role or an unknown token) never reaching the Hydra output channel's log, only the caller's own HTTP response (HR-14).
-- Section 5: since this repository has no `SECURITY.md`, says to use GitHub's security advisory feature on the repository rather than a public issue.
+- **Section 1:** assets, adversaries and what's out of scope.
+- **Section 2:** a text diagram of the boundaries: the endpoint; the lead, head and lane roles; a head's worktree and sandbox; the lead folder's `.hydra` and `.git`; pack copies; gates; the terminal input path; and the update path.
+- **Section 3:** **46 controls**, `HSEC-01`–`HSEC-46`, grouped by area. Each names its file and function and an exact `test('…')` name, and every cited test was checked to exist.
+- **Section 4:** **13 accepted risks**, `HR-01`–`HR-13`, each with what can happen, why it's accepted, and what would fix it.
+- **Section 5:** how to report a problem, through a private GitHub security advisory. The repository has no `SECURITY.md`.
 
-**Found while checking each control, and fixed with a test, not code:** `docs/Heads.md`'s "Logging" line ("every action, and every accepted or refused lead connection, is logged") had no test anywhere — the logging itself is inline `this.output.appendLine(...)` calls in `src/extension.ts`'s `HelperEndpoint` wiring, which needs a real VS Code extension host and so sits outside the `node:test` unit suite entirely. `tests/threatModel.test.ts` replicates that exact wrapping (a handler closure that logs before calling through, and a `verifyLead` wrapper that logs both outcomes) around a real `HelperEndpoint`, with a plain array standing in for the output channel. Running it surfaced a real, previously undocumented gap: `HelperEndpoint.serve` (`src/core/helperEndpoint.ts`) returns its 401/403 for an unrecognized token or a disallowed tool *before* it calls the wrapped handler that does the logging, so a denied action is never logged, only returned to the caller. That's `HR-14` above — listed as an accepted risk with a specific fix (log inside `serve` itself, or give it an `onRefuse` hook the way `extension.ts` already supplies `verifyLead`), not patched here, since this step's rules keep `src/` off limits.
+**Found by the check, and fixed:**
+- **Logging had no test.** It lives in `src/extension.ts`'s wiring around `HelperEndpoint`. `tests/threatModel.test.ts` now runs that wiring around a real endpoint.
+- **Refused calls weren't logged.** That test showed that `HelperEndpoint.serve` refused an unknown token, or a tool the caller's role may not use, before the logging handler ran. The draft listed this as a new accepted risk; the main session fixed it instead. The endpoint's new `onRefuse` hook, wired to the output channel, logs every refusal that isn't just malformed: a foreign Host or Origin, an unknown token, a tool the role may not use, too large, too many. It logs who, what and why, never a token. HSEC-45 and its test cover it.
+- **HR-11 was out of date.** It said a head can still write the lead's `gates.json` or `packs.json` through its shell. After Step 2, that's refused wherever Step 2 applies: the live check refused both `echo > <lead>/.hydra/…` and `git -C <lead> config`. The row now describes the one residual case, a lead folder inside `%TEMP%`, where Codex's own use can leave a lasting write grant for its sandbox user.
 
-**Tests** (a temporary esbuild+node:test runner outside `tests/`, deleted after; never the full gate, `helperEndpoint.test.ts` itself, or the integration test):
-- `tests/threatModel.test.ts`: 1 new test, passing — `'an accepted action and both outcomes of a lead connection are logged, in the same shape extension.ts wires them'`. It also asserts the HR-14 gap directly: a denied action and an unknown token both leave the log unchanged.
-- `npx tsc --noEmit` passes with no errors.
-- No other test file was changed; every other control's citation was checked by searching the existing suites (`tests/hardening.test.ts`, `tests/confine.test.ts`, `tests/helperEndpoint.test.ts`, `tests/gates.test.ts`, `tests/packs.test.ts`, `tests/laneGit.test.ts`, `tests/helperService.test.ts`, `tests/jobs.test.ts`, `tests/desktopMainTrust.test.ts`, `tests/desktopSignedUpdate.test.ts`) for the exact `test('…')` string cited, not run as a full suite.
+**Still open, and recorded as accepted risks:**
+- **HR-07:** whether Codex loads a head-written `.codex/config.toml` in a head's worktree. Hydra passes the sandbox and approval policy on the command line, so those can't be overridden, but other keys weren't checked.
+- **HR-01 and HR-02:** reads through scripts a head runs. A shell sandbox that confines reads on Windows, without Codex's lasting deny entries, would close them.
 
-**What should become a fix (not built here, code is out of scope for this step):**
-- **HR-14:** log a denied action (wrong role or unknown token) from inside `HelperEndpoint.serve`, or add an `onRefuse` hook alongside the existing `verifyLead` option, so a refusal is visible in the Hydra output channel the same way a refused lead connection already is.
-- **HR-07:** check whether a Codex review gate or continuation actually loads a head-written `.codex/config.toml` in that worktree, and confine or strip it if so — flagged in Step 2's build as "Not checked yet" and still open.
-- **HR-01/HR-02/HR-11:** the shared root cause behind three separate accepted risks (a Claude head's reads through Bash, a Codex head's reads generally, and a head rewriting the lead folder's `gates.json`/`packs.json`) is that neither sandbox confines reads or scripted writes, only a head's own direct file-tool calls. One fix — a read/write-confining shell sandbox on Windows that doesn't leave the lasting, machine-wide deny entries Step 2's research found — would close all three at once.
+**Tests:**
+- `tests/threatModel.test.ts`, 1 test, passing (with `hardening.test.ts`: 13 of 13).
+- `npx tsc --noEmit` passes.

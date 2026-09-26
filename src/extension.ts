@@ -408,7 +408,10 @@ class Manager {
       // Every action is logged, whoever calls it (plan, Phase 3 security note).
       this.output.appendLine(`[heads] ${caller.role}${caller.jobId ? ` ${caller.jobId}` : ''}: ${tool}`);
       return service.handle(caller, tool, args, signal);
-    }, { leadKey, laneExists: id => this.lanes.exists(id), verifyLead: async socket => {
+    }, { leadKey, laneExists: id => this.lanes.exists(id),
+      // Refusals are logged too (docs/THREAT_MODEL.md): who, what and why, never a token.
+      onRefuse: event => this.output.appendLine(`[heads] refused ${event.status}: ${event.reason}${event.role ? ` (${event.role}${event.jobId ? ` ${event.jobId}` : ''}${event.tool ? `, ${event.tool}` : ''})` : ''}`),
+      verifyLead: async socket => {
       const verdict = await verifyLead(socket);
       this.output.appendLine(`[heads] lead connection ${verdict.ok ? 'accepted' : `refused: ${verdict.reason}`}`);
       return verdict;

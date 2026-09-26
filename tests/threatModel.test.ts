@@ -14,7 +14,7 @@ import { HelperEndpoint, callHelperEndpoint, requestLeadSession } from '../src/c
  * unknown token) is never logged, because `HelperEndpoint.serve` (src/core/helperEndpoint.ts)
  * returns its 401/403 before ever calling the wrapped handler.
  */
-test('an accepted action and both outcomes of a lead connection are logged, in the same shape extension.ts wires them', async () => {
+test('every action, both outcomes of a lead connection, and every refusal are logged, in the shape extension.ts wires them; never a token', async () => {
   const log: string[] = [];
   let allowLead = false;
 
@@ -28,6 +28,8 @@ test('an accepted action and both outcomes of a lead connection are logged, in t
     },
     {
       leadKey: 'window',
+      // The refusal hook extension.ts wires to the same output channel (HSEC-47).
+      onRefuse: event => log.push(`[heads] refused ${event.status}: ${event.reason}${event.role ? ` (${event.role}${event.jobId ? ` ${event.jobId}` : ''}${event.tool ? `, ${event.tool}` : ''})` : ''}`),
       verifyLead: async () => {
         const verdict = allowLead ? { ok: true as const } : { ok: false as const, reason: 'it runs inside a Hydra head.' };
         log.push(`[heads] lead connection ${verdict.ok ? 'accepted' : `refused: ${verdict.reason}`}`);
@@ -54,20 +56,22 @@ test('an accepted action and both outcomes of a lead connection are logged, in t
     assert.deepEqual(called, { ok: true, result: { handled: 'hydra_list_heads' } });
     assert.deepEqual(log.slice(-1), ['[heads] lead: hydra_list_heads']);
 
-    // HR-14: a denied action is not logged anywhere -- only returned to the caller. A head
-    // token calling a lead-only tool never reaches the wrapped handler that does the logging.
+    // HSEC-47 (was HR-14): a denied action never reaches the wrapped handler, so the endpoint's own
+    // refusal hook logs it: who, what and why, never the token.
     const helperToken = endpoint.issue({ role: 'helper', leadKey: 'window', jobId: 'aaaaaaaaaaaa' });
     const before = log.length;
     const denied = await callHelperEndpoint(port, helperToken, 'hydra_start_head', {});
     assert.equal(denied.ok, false);
     assert.match(denied.error || '', /not available to a Hydra head/);
-    assert.equal(log.length, before, 'a denied action left the log untouched');
+    assert.deepEqual(log.slice(before), ['[heads] refused 403: a tool its role may not use (helper aaaaaaaaaaaa, hydra_start_head)']);
 
     // The same is true of an unrecognized token.
     const unknown = await callHelperEndpoint(port, 'x'.repeat(43), 'hydra_list_heads', {});
     assert.equal(unknown.ok, false);
     assert.match(unknown.error || '', /Unknown Hydra token/);
-    assert.equal(log.length, before, 'an unknown token also left the log untouched');
+    assert.deepEqual(log.slice(-1), ['[heads] refused 401: an unknown token']);
+    assert.ok(!log.join('\n').includes('x'.repeat(43)), 'a token never reaches the log');
+    assert.ok(!log.join('\n').includes(helperToken), 'nor does a real one');
   } finally {
     await endpoint.close();
   }

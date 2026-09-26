@@ -263,7 +263,7 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its b
 - **Hydra's commits** in a head's worktree run with git hooks off, so a hook a head edited can't run as Hydra.
 - **The Claude reviewer** loads only your user settings and no MCP servers, so hooks or servers a head wrote into its worktree don't run.
 - **Lanes** get light limits: a Claude lane can't read or edit Hydra's data or the other worktrees. Otherwise it's your terminal, with your settings.
-- **Logging:** every action, and every accepted or refused lead connection, is logged to the Hydra output channel.
+- **Logging:** every action, every accepted or refused lead connection, and every refused call (an unknown token, a tool the caller may not use, too large, too many) is logged to the Hydra output channel, never with a token.
 
 ## Supported versions
 
