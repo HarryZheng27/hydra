@@ -316,3 +316,34 @@ Built in `hydra-wt/confine` (branch `feat/confine`), one Opus subagent, from the
 - **A Claude lane:** works like your terminal with your settings; reading a file in another lane's worktree or in Hydra's storage is refused; its role's instructions and skills still load. A Codex lane is unchanged.
 - **The screenshots gate** (if a project has one): the app starts in the sandbox, is reachable, and is gone afterwards.
 - **`~/.codex/config.toml` is unchanged** after all of it.
+
+**Verified live** (main session, 2026-09-26, in an isolated probe window with the real Claude Code).
+
+The test repository and its "outside" folder were in `Documents`, not `%TEMP%`. The research had found that `%TEMP%` already carries a lasting write grant for Codex's sandbox user, from earlier Codex use, so a test there proves nothing about the sandbox.
+
+- **Settings → Heads** said "Head shells run in Codex's Windows sandbox."
+- **A Claude head asked to try each way out.** Every attempt was refused:
+  - the Read tool outside its worktree (blocked by `blockReadsOutsideWorkingDirectories`);
+  - the Write tool outside (refused under `dontAsk`);
+  - Bash `echo > <outside>` (the Codex sandbox answered "Permission denied");
+  - Bash `node -e` writing or reading an outside file (refused by Claude's permission layer, which sees the path in the command);
+  - Bash writing into the lead's `.hydra`;
+  - Bash `git -C <lead> config` (refused by the permission layer).
+- **The same head's normal work:**
+  - It wrote `notes.txt`.
+  - `npm test` and `git status` ran through the sandboxed shell. Git warned that it can't read `~/.config/git/ignore` in the sandbox, which is harmless.
+  - `hydra_done` reached Hydra through the wrapper, and the command gate passed.
+  - Its settings file and TEMP were gone afterwards.
+- **A Claude lane** started with `--settings` holding only four deny rules (Hydra's storage and the head's worktree), and its usual launch otherwise.
+- **Your Claude and Codex settings** were unchanged.
+
+**Found live and fixed:** a head failed to start with `ENAMETOOLONG`. Its TEMP sat deep in the workspace's helper folder, and Windows refuses `mkdtemp` paths past 260 characters; tools like npm nest deeper still.
+- Heads' TEMP and the hooks-off folder now live under `<globalStorage>/t`.
+- Gate commands' TEMP uses the same root (`GateContext.tempRoot`, `gateTemp`).
+- The sandbox scripts live under `<globalStorage>/sb/<window>`.
+
+**Not verified live:**
+- **A Codex head:** its only changes are its own TEMP and the allowlisted environment, which the research's `codex exec` runs 1 and 3 exercised. It was skipped to spare the Codex budget.
+- **A command cancelled mid-run:** the build checked with `codex sandbox` that an `npm run dev`-like process tree is gone within about 5 s.
+- **The screenshots gate:** no test project has one.
+- **The 8.3 and UNC read spellings:** these are covered by `blockReadsOutsideWorkingDirectories` in the research.
