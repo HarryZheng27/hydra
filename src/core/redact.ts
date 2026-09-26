@@ -103,12 +103,20 @@ const maskJsonPairs = (text: string): string => text.replace(jsonPairPattern, (w
 
 // A bare or quoted "key: value" line (YAML-ish). The value stops at end of line, a comma or a bracket
 // (never matching partway into an earlier "[redacted]" replacement).
-const colonPairPattern = /\b([A-Za-z][\w-]{1,60})[ \t]*:[ \t]+(?!\/\/)(['"]?)([^\s,;{}[\]"']+)\2/g;
-const maskColonPairs = (text: string): string => text.replace(colonPairPattern, (whole, key: string, quote: string, value: string) => secretKeyPattern.test(key) && qualifies(value) ? `${key}: ${quote}${replacement}${quote}` : whole);
+// A quoted value may hold spaces ("correct horse battery"); a bare one stops at whitespace.
+const pairValue = String.raw`(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s,;{}[\]"']+))`;
+const maskPair = (separator: string) => (whole: string, key: string, double?: string, single?: string, bare?: string): string => {
+  const value = double ?? single ?? bare ?? '';
+  if (!secretKeyPattern.test(key) || !qualifies(value)) return whole;
+  const quote = double !== undefined ? '"' : single !== undefined ? "'" : '';
+  return `${key}${separator}${quote}${replacement}${quote}`;
+};
+const colonPairPattern = new RegExp(String.raw`\b([A-Za-z][\w-]{1,60})[ \t]*:[ \t]+(?!\/\/)` + pairValue, 'g');
+const maskColonPairs = (text: string): string => text.replace(colonPairPattern, maskPair(': '));
 
 // key=value (env-file / CLI style), quoted or bare.
-const equalsPairPattern = /\b([A-Za-z_][\w-]{1,60})=(['"]?)([^\s,;{}[\]"']+)\2/g;
-const maskEqualsPairs = (text: string): string => text.replace(equalsPairPattern, (whole, key: string, quote: string, value: string) => secretKeyPattern.test(key) && qualifies(value) ? `${key}=${quote}${replacement}${quote}` : whole);
+const equalsPairPattern = new RegExp(String.raw`\b([A-Za-z_][\w-]{1,60})=` + pairValue, 'g');
+const maskEqualsPairs = (text: string): string => text.replace(equalsPairPattern, maskPair('='));
 
 /**
  * Mask secrets in free text: exact values (planted secrets, live tokens), environment

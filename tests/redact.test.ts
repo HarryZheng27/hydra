@@ -73,6 +73,9 @@ test('redactText: key=value, "key": "value" and key: value pairs, only when the 
   assert.equal(redactText('DB_PASSWORD="hunter2pass"'), 'DB_PASSWORD="[redacted]"');
   assert.equal(redactText('{"apiKey": "abcdefghij1234"}'), '{"apiKey": "[redacted]"}');
   assert.equal(redactText('client_secret: abcdefghij1234'), 'client_secret: [redacted]');
+  // A quoted value may hold spaces.
+  assert.equal(redactText('password: "correct horse battery"'), 'password: "[redacted]"');
+  assert.equal(redactText("DB_PASSWORD='correct horse battery' next"), "DB_PASSWORD='[redacted]' next");
   // Not secret-shaped keys, or values too short / purely numeric / an env reference: untouched.
   assert.equal(redactText('keyboard=mechanical'), 'keyboard=mechanical');
   assert.equal(redactText('session=short'), 'session=short');
