@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadGates, parseGatesConfig, type Gate, type GatesConfig } from '../../core/gates/config';
+import { detectTestScript, noGatesFile, starterTestGatesFile } from '../../core/starterGates';
 import { leadFolder } from '../leadFolder';
 import type { SettingsContext, SettingsPage } from '../types';
 
@@ -38,7 +39,8 @@ async function postConfig(ctx: SettingsContext): Promise<void> {
   try {
     const root = await leadFolder();
     const config = await loadGates(root);
-    await ctx.post({ type: 'gatesConfig', ...config });
+    const hasTestScript = await detectTestScript(root);
+    await ctx.post({ type: 'gatesConfig', ...config, hasTestScript });
     await postFromPacks(ctx, root);
   } catch (error) {
     await ctx.post({ type: 'gatesConfig', source: 'none', lanes: 'onMerge', gates: [], error: error instanceof Error ? error.message : String(error) });
@@ -52,6 +54,7 @@ export const gatesPage: SettingsPage = {
     { title: 'Gates', description: 'What has to pass before a head\'s work is accepted, or before a lane merges.' },
     { title: 'Add gate', description: 'A command, a screenshots check, or an independent review.' },
     { title: 'Attempts and lanes', description: 'How many times a head may retry, and whether Merge runs the gates.' },
+    { title: 'Starter gates', description: 'A deliberate choice for a project with no gates.json yet: a test gate, or none.' },
   ],
   html(): string {
     return `
@@ -101,6 +104,14 @@ export const gatesPage: SettingsPage = {
         </div>
       </div>
     </details>
+    <div class="group">
+      <h2>Starter gates</h2>
+      <p class="row-desc">A deliberate choice for a project with no <code>.hydra/gates.json</code> yet (docs/Hydra_Improvements_Pt_2.md, Step A). Choosing "No gates" writes a gates.json that says so, rather than leaving the project unconfigured.</p>
+      <div class="row"><div class="row-text"><div class="row-title">Add a test gate</div><div class="row-desc" id="gt-starter-test-desc">Detected from package.json's "test" script.</div></div>
+        <div class="row-action"><button id="gt-starter-test">Add a test gate</button></div></div>
+      <div class="row"><div class="row-text"><div class="row-title">No gates for this project</div><div class="row-desc">Writes gates.json with an empty list, a deliberate choice.</div></div>
+        <div class="row-action"><button id="gt-starter-none">No gates</button></div></div>
+    </div>
     <div class="group">
       <h2>Attempts and lanes</h2>
       <div class="row"><div class="row-text"><div class="row-title">Max attempts</div><div class="row-desc">How many times a head may retry after its gates fail.</div></div>
@@ -196,6 +207,8 @@ export const gatesPage: SettingsPage = {
       const lanes = document.getElementById('gt-lanes-policy').value;
       send({ type: 'setGates', maxAttempts, lanes, gates });
     });
+    document.getElementById('gt-starter-test')?.addEventListener('click', () => send({ type: 'setStarterGates', choice: 'test' }));
+    document.getElementById('gt-starter-none')?.addEventListener('click', () => send({ type: 'setStarterGates', choice: 'none' }));
     document.getElementById('gt-packs-link')?.addEventListener('click', () => showPage('packs'));
     function renderFromPacks(gates, dropped) {
       const group = document.getElementById('gt-packs-group');
@@ -224,6 +237,7 @@ export const gatesPage: SettingsPage = {
         const note = document.getElementById('gt-source-note');
         if (message.source === 'checks') { note.hidden = false; note.textContent = 'Showing .hydra/checks.json as command gates. Saving converts it to .hydra/gates.json.'; }
         else note.hidden = true;
+        document.getElementById('gt-starter-test-desc').textContent = message.hasTestScript ? 'Detected: npm test, from package.json\\'s "test" script.' : 'No "test" script found in package.json; still writes an npm test gate.';
         const errorEl = document.getElementById('gt-error');
         if (message.error) { errorEl.hidden = false; errorEl.textContent = message.error; } else errorEl.hidden = true;
         renderList();
@@ -239,6 +253,19 @@ export const gatesPage: SettingsPage = {
   `,
   async onReady(ctx: SettingsContext): Promise<void> { await postConfig(ctx); },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
+    if (message.type === 'setStarterGates') {
+      try {
+        const root = await leadFolder();
+        const file = gatesFile(root);
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, message.choice === 'test' ? starterTestGatesFile() : noGatesFile(), 'utf8');
+        await ctx.post({ type: 'status', text: message.choice === 'test' ? 'Added a test gate to .hydra/gates.json.' : 'Saved .hydra/gates.json with no gates, a deliberate choice.' });
+        await postConfig(ctx);
+      } catch (error) {
+        await ctx.post({ type: 'status', text: error instanceof Error ? error.message : String(error) });
+      }
+      return true;
+    }
     if (message.type !== 'setGates') return false;
     try {
       const root = await leadFolder();
