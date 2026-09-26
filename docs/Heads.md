@@ -115,6 +115,20 @@ No agent grades its own work. When a head calls `hydra_done`, its changes pass t
 
 **Compatibility:** an older `.hydra/checks.json` still works, read as command gates. With neither file, a head is accepted after the scope check.
 
+**Evidence status (docs/Hydra_Improvements_Pt_2.md, Step A):** a plain "done" can be read as "independently proven" even when it isn't, so every finished head, lane and plan job also carries one truthful label, worked out from its checks and how it was accepted:
+
+| Status | Shown as | When |
+| --- | --- | --- |
+| `passed` | Passed required gates | every required gate passed, and no gate was skipped |
+| `partial` | Some gates not run | required gates passed, but at least one gate didn't run |
+| `none` | No gates configured | the project has no gates file at all |
+| `none-chosen` | No gates (project choice) | `.hydra/gates.json` deliberately lists none |
+| `override` | Human override | Merge anyway or Mark done anyway after a failure |
+
+It's stored with the commit it describes, on the head's result, the lane's last gates record and merge, and the plan job's result. Results from before this change carry no status and are never relabelled. A lane whose HEAD has moved past its recorded commit shows "Checks are for an older commit" instead of a made-up one. The same label appears on the canvas node, the lane tile, the plan view, the Agents tree and View evidence's first line, and Open PR adds a short "### Checks" section (the status, each gate's ✓/✗/– result and the commit) to the pull request body through GitHub's compare page `body` parameter.
+
+**Starter gates:** a project with no `.hydra/gates.json` at all gets offered a deliberate choice once — from the first head that finishes, or the first lane merge, in it — between "Add a test gate" (`npm test`, detected from `package.json`'s `test` script), "No gates for this project" (writes `{"gates": []}`, so the project reads as a deliberate choice rather than unconfigured), and "Not now". The same choice is in **Settings → Gates → Starter gates**, any time.
+
 **What a head starts from:**
 - **Dependencies:** a head with `depends_on` starts from the finished work of the heads it waited on, merged into one commit when there are several. Its brief includes their summaries. If they conflict, it fails before starting and names the files.
 - **Lanes:** a head started from a lane starts from the lane's latest commit.
