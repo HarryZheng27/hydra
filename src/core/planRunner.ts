@@ -1,6 +1,7 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
 import type { JobState } from './jobs';
 import type { LaneCloseMode, LaneState } from './lanes';
+import type { StopSwitch } from './stopSwitch';
 import {
   cycleMessage, findCycle, jobRunAs, jobStarted, planOutcomeReasonMax, planResultFilesMax, planResultNoteMax, topologicalOrder,
   type Plan, type PlanJob, type PlanJobOutcome, type PlanJobRunAs, type PlanStore,
@@ -234,6 +235,9 @@ export interface PlanRunnerOptions {
   log?(line: string): void;
   now?(): Date;
   debounceMs?: number;
+  // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
+  /** Without it, a plan always advances (as before 5.3). */
+  stop?: StopSwitch;
 }
 
 /** What Mark job done records (docs/Plan_Lanes_Plan.md, "What done means for a lane job"). */
@@ -407,6 +411,8 @@ export class PlanRunner {
   }
 
   private async pass(planId: string, options: { startup?: boolean }): Promise<void> {
+    // 5.3: stopped means a plan starts nothing, head or lane, until Resume Agents.
+    if (this.options.stop?.isStopped()) return;
     try {
       // Each round records what happened and starts what is ready; a start can make more ready (a
       // chain of heads is started in one round), and a failure can skip more, so repeat until quiet.
