@@ -30,6 +30,8 @@ export type HelperHandler = (caller: HelperCaller, tool: string, args: Record<st
 export type LeadVerifier = (socket: import('node:net').Socket) => Promise<{ ok: true; provider?: Provider } | { ok: false; reason: string }>;
 const asProvider = (value: unknown): Provider | undefined => value === 'claude' || value === 'codex' ? value : undefined;
 export interface HelperCallResponse { ok: boolean; result?: unknown; error?: string }
+/** A refused call, for the log: never the token. */
+export interface HelperRefusal { status: number; reason: string; role?: HelperCaller['role']; jobId?: string; tool?: string }
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 /**
@@ -47,7 +49,15 @@ export class HelperEndpoint {
   private readonly calls = new Map<string, number[]>();
   private listening = 0;
   private sessionAttempts: number[] = [];
-  constructor(private readonly handler: HelperHandler, private readonly options: { maxBodyBytes?: number; callsPerMinute?: number; leadKey?: string; verifyLead?: LeadVerifier; laneExists?: (id: string) => boolean } = {}) {}
+  /**
+   * `onRefuse` hears every refused call that isn't simply malformed (a foreign Host or Origin, an
+   * unknown token, a tool the caller's role may not use, too large, too many), so refusals are
+   * logged like accepted actions (docs/THREAT_MODEL.md). It never receives a token.
+   */
+  constructor(private readonly handler: HelperHandler, private readonly options: { maxBodyBytes?: number; callsPerMinute?: number; leadKey?: string; verifyLead?: LeadVerifier; laneExists?: (id: string) => boolean; onRefuse?: (event: HelperRefusal) => void } = {}) {}
+  private refused(status: number, reason: string, caller?: Pick<HelperCaller, 'role' | 'jobId'>, tool?: string): void {
+    try { this.options.onRefuse?.({ status, reason, ...(caller ? { role: caller.role, ...(caller.jobId ? { jobId: caller.jobId } : {}) } : {}), ...(tool ? { tool } : {}) }); } catch { /* logging never breaks the endpoint */ }
+  }
 
   get port(): number { return this.listening; }
 
@@ -88,14 +98,14 @@ export class HelperEndpoint {
       if (request.method !== 'POST' || (request.url !== '/hydra/v1/call' && request.url !== '/hydra/v1/lead-session')) return reply(404, { ok: false, error: 'Not found.' });
       // Only local, non-browser clients: the Host must be this exact loopback address,
       // and any Origin (a web page) is refused, which blocks DNS rebinding.
-      if (request.headers.host !== `127.0.0.1:${this.listening}` || request.headers.origin !== undefined) return reply(403, { ok: false, error: 'Forbidden.' });
+      if (request.headers.host !== `127.0.0.1:${this.listening}` || request.headers.origin !== undefined) { this.refused(403, request.headers.origin !== undefined ? 'a request with an Origin (a web page)' : 'a foreign Host header'); return reply(403, { ok: false, error: 'Forbidden.' }); }
       if (request.url === '/hydra/v1/lead-session') {
         // A lead bridge asks for its token once. It gets one only if the connecting
         // process passes the window's lead check; the token then lives only in that
         // bridge's memory.
         const now = Date.now();
         this.sessionAttempts = this.sessionAttempts.filter(at => now - at < 60_000);
-        if (this.sessionAttempts.length >= 20) return reply(429, { ok: false, error: 'Too many Hydra lead requests; slow down.' });
+        if (this.sessionAttempts.length >= 20) { this.refused(429, 'too many lead connection requests'); return reply(429, { ok: false, error: 'Too many Hydra lead requests; slow down.' }); }
         this.sessionAttempts.push(now);
         if (!this.options.verifyLead || !this.options.leadKey) return reply(403, { ok: false, error: 'This Hydra window does not accept lead connections.' });
         const verdict = await this.options.verifyLead(request.socket);
@@ -116,18 +126,18 @@ export class HelperEndpoint {
       const auth = /^Bearer ([A-Za-z0-9_-]{20,200})$/.exec(request.headers.authorization || '');
       const key = auth ? digest(auth[1]!) : undefined;
       const caller = key ? this.callers.get(key) : undefined;
-      if (!key || !caller || !digestsMatch(key, caller.digest)) return reply(401, { ok: false, error: 'Unknown Hydra token.' });
+      if (!key || !caller || !digestsMatch(key, caller.digest)) { this.refused(401, key ? 'an unknown token' : 'no token'); return reply(401, { ok: false, error: 'Unknown Hydra token.' }); }
       const { digest: _callerDigest, ...publicCaller } = caller;
       const window = 60_000, limit = this.options.callsPerMinute ?? 120, now = Date.now();
       const recent = (this.calls.get(key) || []).filter(at => now - at < window);
-      if (recent.length >= limit) return reply(429, { ok: false, error: 'Too many Hydra calls; slow down.' });
+      if (recent.length >= limit) { this.refused(429, 'too many calls', caller); return reply(429, { ok: false, error: 'Too many Hydra calls; slow down.' }); }
       recent.push(now); this.calls.set(key, recent);
       const body = await readBody(request, this.options.maxBodyBytes ?? 256 * 1024);
-      if (body === undefined) return reply(413, { ok: false, error: 'Request too large.' });
+      if (body === undefined) { this.refused(413, 'a request too large', caller); return reply(413, { ok: false, error: 'Request too large.' }); }
       let parsed: { tool?: unknown; arguments?: unknown };
       try { parsed = JSON.parse(body); } catch { return reply(400, { ok: false, error: 'Invalid JSON.' }); }
       if (typeof parsed.tool !== 'string') return reply(400, { ok: false, error: 'Missing tool.' });
-      if (!toolAllowed(caller.role, parsed.tool)) return reply(403, { ok: false, error: `${parsed.tool} is not available to a Hydra ${caller.role === 'helper' ? 'head' : 'lead'}.` });
+      if (!toolAllowed(caller.role, parsed.tool)) { this.refused(403, 'a tool its role may not use', caller, parsed.tool.slice(0, 60)); return reply(403, { ok: false, error: `${parsed.tool} is not available to a Hydra ${caller.role === 'helper' ? 'head' : 'lead'}.` }); }
       const args = parsed.arguments && typeof parsed.arguments === 'object' && !Array.isArray(parsed.arguments) ? parsed.arguments as Record<string, unknown> : {};
       const controller = new AbortController();
       response.on('close', () => { if (!response.writableEnded) controller.abort(); });

@@ -347,3 +347,29 @@ The test repository and its "outside" folder were in `Documents`, not `%TEMP%`. 
 - **A command cancelled mid-run:** the build checked with `codex sandbox` that an `npm run dev`-like process tree is gone within about 5 s.
 - **The screenshots gate:** no test project has one.
 - **The 8.3 and UNC read spellings:** these are covered by `blockReadsOutsideWorkingDirectories` in the research.
+
+### Step 3 (2026-09-26)
+
+Drafted by one Sonnet subagent from the code and docs. The main session (Opus) then checked it against the code.
+
+**Where it lives:** `docs/THREAT_MODEL.md`, linked from `README.md` and from `docs/Heads.md`'s "Security" section.
+
+**What it holds:**
+- **Section 1:** assets, adversaries and what's out of scope.
+- **Section 2:** a text diagram of the boundaries: the endpoint; the lead, head and lane roles; a head's worktree and sandbox; the lead folder's `.hydra` and `.git`; pack copies; gates; the terminal input path; and the update path.
+- **Section 3:** **46 controls**, `HSEC-01`–`HSEC-46`, grouped by area. Each names its file and function and an exact `test('…')` name, and every cited test was checked to exist.
+- **Section 4:** **13 accepted risks**, `HR-01`–`HR-13`, each with what can happen, why it's accepted, and what would fix it.
+- **Section 5:** how to report a problem, through a private GitHub security advisory. The repository has no `SECURITY.md`.
+
+**Found by the check, and fixed:**
+- **Logging had no test.** It lives in `src/extension.ts`'s wiring around `HelperEndpoint`. `tests/threatModel.test.ts` now runs that wiring around a real endpoint.
+- **Refused calls weren't logged.** That test showed that `HelperEndpoint.serve` refused an unknown token, or a tool the caller's role may not use, before the logging handler ran. The draft listed this as a new accepted risk; the main session fixed it instead. The endpoint's new `onRefuse` hook, wired to the output channel, logs every refusal that isn't just malformed: a foreign Host or Origin, an unknown token, a tool the role may not use, too large, too many. It logs who, what and why, never a token. HSEC-45 and its test cover it.
+- **HR-11 was out of date.** It said a head can still write the lead's `gates.json` or `packs.json` through its shell. After Step 2, that's refused wherever Step 2 applies: the live check refused both `echo > <lead>/.hydra/…` and `git -C <lead> config`. The row now describes the one residual case, a lead folder inside `%TEMP%`, where Codex's own use can leave a lasting write grant for its sandbox user.
+
+**Still open, and recorded as accepted risks:**
+- **HR-07:** whether Codex loads a head-written `.codex/config.toml` in a head's worktree. Hydra passes the sandbox and approval policy on the command line, so those can't be overridden, but other keys weren't checked.
+- **HR-01 and HR-02:** reads through scripts a head runs. A shell sandbox that confines reads on Windows, without Codex's lasting deny entries, would close them.
+
+**Tests:**
+- `tests/threatModel.test.ts`, 1 test, passing (with `hardening.test.ts`: 13 of 13).
+- `npx tsc --noEmit` passes.
