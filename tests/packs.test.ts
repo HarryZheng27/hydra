@@ -84,7 +84,11 @@ test('pack.json: a valid pack parses with its defaults, skills, scripts and serv
   const valid = checkPackContents(manifest, seoFiles());
   assert.deepEqual(valid.skills, [{ id: 'meta-tags', description: 'How to write meta tags.', files: ['skills/meta-tags/SKILL.md', 'skills/meta-tags/check.mjs'], scripts: ['skills/meta-tags/check.mjs'] }]);
   assert.equal(valid.instructions['seo-writer'], 'Write good metadata.\n');
-  assert.deepEqual(valid.servers.lighthouse, { downloads: 'Downloads lighthouse-mcp@1.2.3 from npm on first use.', variables: ['CHROME_PATH'] });
+  assert.deepEqual(valid.servers.lighthouse, {
+    downloads: 'Downloads lighthouse-mcp@1.2.3 from npm on first use.', variables: ['CHROME_PATH'],
+    // 5.4: an exact-version npx server is always "pinned" to a package; no "integrity" here, so no hash label.
+    pin: { name: 'lighthouse-mcp', version: '1.2.3' }, pinLabel: 'Not pinned to an integrity hash',
+  });
   // Decision 4: a role may set a model, parsed now and used when it launches.
   const withModel = seo(); withModel.roles[0].model = 'claude-opus-5-5[1m]';
   assert.equal(parsePackManifest(withModel).roles[0]!.model, 'claude-opus-5-5[1m]');
@@ -175,16 +179,17 @@ test('pack.json: the caps', () => {
 test('pack.json: a secret literal is refused, and ${NAME} is allowed', () => {
   const withServer = (spec: unknown) => { const manifest = seo(); manifest.mcpServers.lighthouse = spec; return manifest; };
   const secret = /looks like a secret\. Put the secret in your environment and use \$\{NAME\}\./;
-  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'npx', env: { OPENAI_API_KEY: 'sk-proj-abcdefghijklmnopqrstuvwx' } })), secret);
-  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'npx', env: { API_KEY: 'abcd1234efgh5678' } })), /the value of API_KEY looks like a secret/);
-  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'npx', args: ['--api-key', 'abcd1234efgh5678'] })), /argument 2 looks like a secret/);
-  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'npx', args: ['--token=ghp_abcdefghijklmnopqrstuv'] })), secret);
+  // Plain "node" here, not "npx": the exact-version pin rule (5.4) is tested on its own, below.
+  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'node', env: { OPENAI_API_KEY: 'sk-proj-abcdefghijklmnopqrstuvwx' } })), secret);
+  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'node', env: { API_KEY: 'abcd1234efgh5678' } })), /the value of API_KEY looks like a secret/);
+  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'node', args: ['--api-key', 'abcd1234efgh5678'] })), /argument 2 looks like a secret/);
+  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'node', args: ['--token=ghp_abcdefghijklmnopqrstuv'] })), secret);
   assert.throws(() => parsePackManifest(withServer({ type: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer abcdef1234567890' } })), /the header Authorization looks like a secret/);
   assert.throws(() => parsePackManifest(withServer({ type: 'http', url: 'https://example.com/mcp?api_key=abcd1234efgh5678' })), /the URL's "api_key" looks like a secret/);
   assert.throws(() => parsePackManifest(withServer({ type: 'http', url: 'https://me:hunter2@example.com/mcp' })), /user name or password/);
-  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'npx', env: { TOKEN: '${HYDRA_HELPER_TOKEN}' } })), /one of Hydra's own variables/);
+  assert.throws(() => parsePackManifest(withServer({ type: 'stdio', command: 'node', env: { TOKEN: '${HYDRA_HELPER_TOKEN}' } })), /one of Hydra's own variables/);
   // References, and short plain values under a secret-sounding name, are fine.
-  assert.doesNotThrow(() => parsePackManifest(withServer({ type: 'stdio', command: 'npx', args: ['--api-key', '${OPENAI_API_KEY}'], env: { OPENAI_API_KEY: '${OPENAI_API_KEY}', SESSION_TIMEOUT: '30', AUTH_ENABLED: 'true' } })));
+  assert.doesNotThrow(() => parsePackManifest(withServer({ type: 'stdio', command: 'node', args: ['--api-key', '${OPENAI_API_KEY}'], env: { OPENAI_API_KEY: '${OPENAI_API_KEY}', SESSION_TIMEOUT: '30', AUTH_ENABLED: 'true' } })));
   assert.doesNotThrow(() => parsePackManifest(withServer({ type: 'http', url: 'https://example.com/mcp', headers: { Authorization: 'Bearer ${GITHUB_TOKEN}' } })));
 });
 
