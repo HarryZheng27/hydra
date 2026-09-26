@@ -147,7 +147,8 @@ class Manager {
     this.leadKey = key;
     // Its scripts live in Hydra's own storage, never in a worktree; Codex is the one Hydra would run (hydra.codexPath, else PATH).
     this.headSandbox = new HeadSandbox({
-      folder: path.join(this.storageDirectory, 'sandbox'),
+      // Short paths (Windows' 260-character limit): the sandbox's scripts and check folders, per window.
+      folder: path.join(this.context.globalStorageUri.fsPath, 'sb', path.basename(this.storageDirectory)),
       codex: async () => (await findProvider('codex', vscode.workspace.getConfiguration('hydra').get<string>('codexPath') || undefined)).executable,
       log: line => this.output.appendLine(line),
     });
@@ -431,6 +432,8 @@ class Manager {
       gates: this.packs.gates, roles: this.packs,
       // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
       sandbox: this.headSandbox, hydraStorage: this.context.globalStorageUri.fsPath,
+      // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
+      tempDirectory: path.join(this.context.globalStorageUri.fsPath, 't'),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));

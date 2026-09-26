@@ -2,7 +2,7 @@ import { access, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { JobCheckResult } from '../jobs';
 import type { CommandGate } from './config';
-import type { GateRun } from './types';
+import { gateTemp, type GateRun } from './types';
 
 /**
  * The command gate: today's head check, moved here unchanged (docs/Gates_Plan.md).
@@ -37,7 +37,7 @@ export async function runCommandGate(gate: CommandGate, run: GateRun): Promise<J
   const executable = await resolveCommand(gate.command[0]!);
   const command = { executable, args: gate.command.slice(1), ...(gate.env ? { env: gate.env } : {}) };
   // Step 2 (design 5): in Codex's sandbox when it's available, with its own TEMP beside the log; else as before.
-  const temp = path.join(run.logDirectory, `${gate.id}-temp`);
+  const temp = gateTemp(run, gate.id);
   const wrapped = run.sandbox ? await run.sandbox.wrap(command, run.worktree, temp) : undefined;
   let outcome;
   try { outcome = await run.runtime.runCommand(wrapped ? { executable: wrapped.executable, args: wrapped.args, environment: wrapped.environment } : command, run.worktree, logFile, gate.timeoutSeconds * 1000, run.signal, run.spawned); }

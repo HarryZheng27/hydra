@@ -8,7 +8,7 @@ import type { ScreenshotsGate } from './config';
 import type { BrowserSession } from './browser';
 import type { CommandSandbox } from '../headSandbox';
 import { resolveCommand } from './command';
-import { clip, notRun, tail, type GateRun, type GateRuntime } from './types';
+import { clip, gateTemp, notRun, tail, type GateRun, type GateRuntime } from './types';
 
 /**
  * The screenshots gate (docs/Gates_Plan.md). Hydra picks a free local port,
@@ -101,10 +101,11 @@ export async function runScreenshotsGate(gate: ScreenshotsGate, run: GateRun): P
   const port = await runtime.freePort();
   const url = substitutePort(gate.url, port);
   const serverLog = path.join(run.logDirectory, `${gate.id}-server.log`);
+  const appTemp = gateTemp(run, gate.id);
   const problems: string[] = [], pictures: string[] = [];
   let app: AppServer | undefined, session: BrowserSession | undefined, tooling: string | undefined;
   try {
-    app = await startApp(gate.start.map(part => substitutePort(part, port)), run.worktree, port, serverLog, runtime, run.spawned, gate.env, run.sandbox, path.join(run.logDirectory, `${gate.id}-temp`));
+    app = await startApp(gate.start.map(part => substitutePort(part, port)), run.worktree, port, serverLog, runtime, run.spawned, gate.env, run.sandbox, appTemp);
     const ready = await waitUntilReady(url, gate.readyTimeoutSeconds * 1000, app, runtime, run.signal);
     if (!ready.ok) problems.push(ready.reason);
     else {
@@ -127,7 +128,7 @@ export async function runScreenshotsGate(gate: ScreenshotsGate, run: GateRun): P
   } finally {
     await app?.stop();
     await session?.close();
-    if (run.sandbox) await rm(path.join(run.logDirectory, `${gate.id}-temp`), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
+    if (run.sandbox) await rm(appTemp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
   }
   const evidence = [...pictures, serverLog];
   if (run.signal?.aborted) return notRun(gate, 'Stopped before it finished.', elapsed(), { evidence });

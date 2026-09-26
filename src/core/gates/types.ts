@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+import path from 'node:path';
 import type { Provider } from '../model';
 import type { JobCheckResult } from '../jobs';
 import type { ProbeOutput } from '../process';
@@ -40,6 +42,16 @@ export interface GateContext {
    * or when it isn't available, they run as before. Review gates don't use it: they run read-only.
    */
   sandbox?: CommandSandbox;
+  /**
+   * Where a sandboxed gate command's own TEMP goes: a short folder, since Windows refuses paths
+   * past 260 characters and tools like npm nest deep inside TEMP. Without it, beside the gate's log.
+   */
+  tempRoot?: string;
+}
+
+/** A sandboxed gate command's own TEMP folder (see GateContext.tempRoot): short and unique per run. */
+export function gateTemp(run: Pick<GateContext, 'tempRoot' | 'logDirectory'>, gateId: string): string {
+  return run.tempRoot ? path.join(run.tempRoot, `g${randomBytes(5).toString('hex')}`) : path.join(run.logDirectory, `${gateId}-temp`);
 }
 
 export interface ReviewerSpec {

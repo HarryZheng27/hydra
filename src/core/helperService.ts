@@ -349,7 +349,8 @@ export class HelperService {
     // write its worktree's .git metadata, so it can't commit (R4). Hydra's own git calls in the head's
     // worktree run with hooks off (Step 2): a hook the head edited (a husky script, say) would otherwise
     // run as Hydra, outside any sandbox.
-    const hooksOff = await mkdtemp(path.join(path.dirname(this.options.logDirectory), 'no-hooks-'));
+    await mkdir(this.tempRoot, { recursive: true });
+    const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
     try {
       if ((await git(worktree, [...noHooks(hooksOff), 'status', '--porcelain=v1', '--untracked-files=all'])).trim()) await commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff);
     } finally { await rm(hooksOff, { recursive: true, force: true }).catch(() => undefined); }
@@ -430,7 +431,7 @@ export class HelperService {
       executable: provider => this.options.executable(provider),
       ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
       // Step 2 (design 5): command gates and the screenshots gate's app run in Codex's sandbox when it's available.
-      ...(this.options.sandbox ? { sandbox: this.options.sandbox } : {}),
+      ...(this.options.sandbox ? { sandbox: this.options.sandbox, tempRoot: this.tempRoot } : {}),
       spawned: pid => { this.helperPids.add(pid); },
       ...(signal ? { signal } : {}),
       ...(this.options.log ? { log: this.options.log } : {}),
