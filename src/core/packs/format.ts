@@ -437,7 +437,7 @@ export function checkPackContents(manifest: PackManifest, files: ReadonlyMap<str
     if (spec.type === 'stdio') checkPlaceholders([spec.command, ...spec.args], `MCP server "${id}"`, names);
     const values = spec.type === 'stdio' ? [...spec.args, ...Object.values(spec.env)] : [spec.url, ...Object.values(spec.headers)];
     const claudeOnly = codexProblem(spec), downloads = serverDownloads(spec);
-    const pin = spec.type === 'stdio' ? parsePackageSpec(npxPackageArg(spec.args) ?? '') : undefined;
+    const pin = spec.type === 'stdio' && npxRunner(spec.command) ? parsePackageSpec(npxPackageArg(spec.args) ?? '') : undefined;
     const integrity = manifest.integrity?.[id];
     servers[id] = {
       ...(claudeOnly ? { claudeOnly } : {}), ...(downloads ? { downloads } : {}), variables: [...new Set(values.flatMap(variableNames))].sort(),

@@ -333,7 +333,7 @@ export function roleLaunch(role: ResolvedRole, options: RoleLaunchOptions): Role
     const name = `${role.pack}-${server.id}`;
     const skip = (why: string) => { notes.push(`The ${name} server was left out: ${why}.`); };
     if (yours.has(name.toLowerCase())) { skip('you already have a server with that name'); continue; }
-    if (server.pinProblem) { skip(server.pinProblem); continue; }
+    if (server.pinProblem) { skip(server.pinProblem.replace(/\.$/, '')); continue; }
     if (provider === 'codex' && server.info.claudeOnly) { skip(`Codex can't use it. ${server.info.claudeOnly.replace(/\.$/, '')}`); continue; }
     const { spec } = server;
     const values = spec.type === 'stdio' ? [...spec.args, ...Object.values(spec.env)] : [spec.url, ...Object.values(spec.headers), ...(spec.bearerTokenEnvVar ? [`\${${spec.bearerTokenEnvVar}}`] : [])];
