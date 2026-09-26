@@ -516,3 +516,48 @@ It's applied in four places:
 - `hardening`: 12.
 - `confine`: 20.
 - `helperService`: 21.
+
+#### 5.3 Stop all
+
+Built by one Sonnet subagent (`hydra-wt/stopall`). The main session reviewed the diff, resolved the rebase onto 5.1 (keeping the redacted output channel), fixed what it found and ran the live checks. It was built before 5.2, so the audit log can record stops and resumes.
+
+**What it does:**
+- **`StopSwitch`** (`src/core/stopSwitch.ts`) holds the stopped flag, when it started and why. It's saved in the workspace's state, so it lasts through a reload.
+- **Hydra: Stop All Agents:**
+  1. It asks first ("Stop every head and lane in this window?").
+  2. It sets the switch before touching anything, so nothing new can start in between.
+  3. It cancels every running and queued head (their gates stop with them).
+  4. It ends every lane's process. The lanes and their worktrees stay, and they show as exited.
+  5. It reports what it stopped, for example "Hydra stopped: 1 lane."
+- **While stopped:** each of these is refused with the same message ("Hydra is stopped (since …): … is refused. Run "Hydra: Resume Agents" to allow it again."):
+  - starting a head, from a lead or a plan;
+  - dispatching a queued head;
+  - creating, resuming, restarting or switching a lane;
+  - advancing a plan, at startup too.
+- **Hydra: Resume Agents** clears the switch and lets plans advance. Lanes aren't relaunched; you resume each one as before.
+- **Where it shows:** a status bar item, "Hydra stopped", with the start time in its tooltip; clicking it resumes. Settings → Heads has a Stop all agents row that becomes Resume while stopped.
+- **Unchanged:** the existing "Stop all heads" command and buttons still stop heads only and aren't saved.
+
+**Fixed in review:** after Resume on Settings → Heads, the row kept saying "Hydra is stopped". It now shows the right text both ways.
+
+**Live check (probe window):**
+- **The first stop reported no lanes.** The lane had already exited: the probe's command helper pressed Escape at Claude's folder-trust prompt, which quits Claude. That also explains the lane that exited with code 0 in the 5.4 check. Repeating the stop with a lane that was really running ended its process (exit code 1), kept the lane and its worktree, and reported "Hydra stopped: 1 lane".
+- **While stopped:**
+  - resuming the lane was refused with the message above;
+  - so was creating a new lane, and no worktree was made;
+  - after Developer: Reload Window, the status bar still showed "Hydra stopped", with the time it started.
+- **Resume:** clicking the status bar item resumed ("Hydra resumed: heads, lanes and plans may start again."), and Start fresh then relaunched the lane.
+- **Settings → Heads:** Stop and Resume switch the row both ways.
+- **Setup:** Nico's Claude and Codex settings were unchanged.
+- **Not run live:** starting a head while stopped, and a stop with a head running. Both would spend a provider's usage. `tests/stopAll.test.ts` covers them with the real `HelperService`.
+
+**Threat model:** HSEC-51.
+
+**Tests:**
+- `tests/stopAll.test.ts`: 5.
+- `helperService`: 21.
+- `lanes`: 11.
+- `laneGit`: 9.
+- `planRunner`: 15.
+- `planLanes`: 11.
+- `packsLaunch`: 19.

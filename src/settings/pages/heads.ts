@@ -77,7 +77,7 @@ export const headsPage: SettingsPage = {
       const stopBtn = document.getElementById('hd-stop-agents'), resumeBtn = document.getElementById('hd-resume-agents'), desc = document.getElementById('hd-stop-agents-desc');
       if (stopBtn) stopBtn.style.display = message.stopped ? 'none' : '';
       if (resumeBtn) resumeBtn.style.display = message.stopped ? '' : 'none';
-      if (desc && message.stopped) desc.textContent = 'Hydra is stopped. Nothing new starts until you resume.';
+      if (desc) desc.textContent = message.stopped ? 'Hydra is stopped. Nothing new starts until you resume.' : "Cancel every head, end every lane's process, and hold off new starts, launches and plan advances until you resume.";
     }
   });
   `,
