@@ -473,3 +473,46 @@ Built by one Sonnet subagent (`hydra-wt/npx-pin`). The main session reviewed the
 - `tests/packsLaunch.test.ts`: 19, including the new end-to-end test.
 - `tests/packs.test.ts`: 25.
 - `tests/packsPage.test.ts`: 13.
+
+#### 5.1 One redactor
+
+Built by one Sonnet subagent (`hydra-wt/redact`). The main session reviewed the diff line by line, fixed what it found and ran the live check.
+
+**What it does:** `src/core/redact.ts`'s `redactText` replaces each secret it finds with `[redacted]`. The name and shape rules moved here from `mcpServers.ts`, which imports them back, so the MCP settings page and the redactor agree.
+
+It's applied in four places:
+- **The Hydra output channel:** a wrapper passes every line through the redactor.
+- **Head transcripts:** these used to mask only the head's own bridge token. They now mask everything the redactor finds, with that token as an exact value.
+- **Gate evidence:**
+  - the command gate's saved log, rewritten in place;
+  - the review prompt on disk and what the reviewer is actually sent, plus its reply;
+  - the screenshots gate's server log and the problems it reports.
+- **Gate results:** every result's output tail, summary and findings go through `redactGateResult` in `runGateList`, one place for all gate kinds. The UI, "Send to lane" and the log line all read those results.
+
+**Not done, by design:** Hydra's own endpoint tokens aren't passed to the redactor. The endpoint keeps only their SHA-256 digests (Step 1), and Hydra never logs one, so there is no raw token to match.
+
+**Fixed in review:** a quoted value with spaces, `password: "correct horse battery"`, wasn't masked, because the unquoted-value rule stopped at the first space. Quoted values are now read whole, in both `key: value` and `key=value` forms, with a test.
+
+**Checked by hand:** git log lines, Windows paths, npm's `"integrity": "sha512-…"`, test counts such as `input_tokens=5000`, and prose ("The auth flow uses a signature check") all pass through. The known over-match is `session_id` in head transcripts, which is masked because its key contains "session". Nothing reads transcripts back, so it costs only readability (HR-17).
+
+**Live check (probe window):**
+- **Fixture:** a repository whose command gate prints `token ghp_…` and `OPENAI_API_KEY=sk-proj-…`, then fails.
+- **Steps:** Merge on a lane ran the gate, and the dialog offered Send to lane, Merge anyway or Cancel. Cancel was chosen.
+- **Result:**
+  - The saved evidence `leaky.log` reads `token [redacted]` and `OPENAI_API_KEY=[redacted]`.
+  - A search of the probe's whole storage and log folders found neither planted value.
+  - The output channel logged the gate normally through the wrapper.
+  - Nico's Claude and Codex settings were unchanged.
+
+**Threat model:**
+- HSEC-50 covers the redactor.
+- HR-17 records what a pattern-based redactor can't catch, and what it over-masks.
+
+**Tests:**
+- `tests/redact.test.ts`: 11, including a head transcript and a real command gate.
+- `mcpServers`: 14.
+- `gates`: 16.
+- `gatesUI`: 16.
+- `hardening`: 12.
+- `confine`: 20.
+- `helperService`: 21.
