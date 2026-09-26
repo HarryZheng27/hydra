@@ -18,6 +18,9 @@ import { gateBlocks, type JobCheckResult } from './jobs';
 import type { HelperServerSpec } from './helperRegistration';
 import type { LimitEvent } from './limitEvents';
 import type { LaneSyncView, LaneView, Provider } from './model';
+import { laneSettings, storageReadDeny } from './confine';
+import { otherWorktrees, storageListing } from './confineFiles';
+import type { CommandSandbox } from './headSandbox';
 
 /**
  * Hydra lanes, end to end (docs/Lanes_And_Planner_Plan.md, section 1): this
@@ -51,6 +54,8 @@ export interface LaneLaunchInput {
   platform?: NodeJS.Platform;
   /** Packs (docs/Packs_Plan.md, section 5): the lane's role for this launch (roleLaunch), passed every time: fresh, Resume, Start fresh and Switch. */
   role?: RoleLaunch;
+  /** Step 2 (docs/Hydra_Improvements.md, design 6): a Claude lane's `--settings` file (laneSettings), which LaneService wrote (0600). */
+  settingsFile?: string;
 }
 export interface LaneLaunch { executable: string; args: string[]; env: Record<string, string>; mcpConfig?: string }
 
@@ -115,7 +120,9 @@ export function laneLaunch(input: LaneLaunchInput): LaneLaunch {
     const mcpConfig = file ? JSON.stringify({ mcpServers: { ...hydra, ...roleServers } }, null, 2) : undefined;
     // The role's instructions file and skills on every launch: Resume keeps the system prompt the conversation started with (R1).
     const roleArgs = role ? [...(role.systemPromptFile ? ['--append-system-prompt-file', role.systemPromptFile] : []), ...(role.pluginDir ? ['--plugin-dir', role.pluginDir] : []), ...(role.model ? ['--model', role.model] : [])] : [];
-    return { executable: input.executable, args: input.resume ? ['--continue', ...roleArgs, ...mcp] : [...roleArgs, ...mcp, ...(prompt ? [prompt] : [])], env, ...(mcpConfig ? { mcpConfig } : {}) };
+    // Step 2 (design 6): light limits, on every launch: Read and Edit denies for Hydra's data and the other worktrees, beside your own settings.
+    const settings = input.settingsFile ? ['--settings', input.settingsFile] : [];
+    return { executable: input.executable, args: input.resume ? ['--continue', ...roleArgs, ...settings, ...mcp] : [...roleArgs, ...settings, ...mcp, ...(prompt ? [prompt] : [])], env, ...(mcpConfig ? { mcpConfig } : {}) };
   }
   const config = (key: string, value: string) => ['-c', `mcp_servers.hydra.${key}=${value}`];
   const overrides = input.connected
@@ -192,6 +199,11 @@ export interface LaneServiceOptions {
    * override `home` with a temp fake home, never the real `~/.claude` or `~/.codex`.
    */
   conversation?: { home?: () => string; platform?: NodeJS.Platform; fs?: LaneConversationOptions['fs'] };
+  // ---- Step 2 (docs/Hydra_Improvements.md) ----
+  /** Hydra's global storage: a Claude lane may read none of it but its role's pack copy, and write none of it (design 6). Without it, no settings file. */
+  hydraStorage?: string;
+  /** Codex's sandbox for the lane's command gates and screenshots app (design 5). Without it, they run as before. */
+  sandbox?: CommandSandbox;
 }
 
 /** How a plan lane starts (docs/Plan_Lanes_Plan.md, "Starting a lane job"). */
@@ -457,6 +469,7 @@ export class LaneService {
         ...(this.options.gatesLimited ? { limited: this.options.gatesLimited } : {}),
         signal: controller.signal, ...(onProgress ? { onProgress } : {}), ...(this.options.log ? { log: this.options.log } : {}),
         ...(this.options.gatesRuntime ? { runtime: this.options.gatesRuntime } : {}),
+        ...(this.options.sandbox ? { sandbox: this.options.sandbox } : {}),
       }, this.options.gates);
       if (controller.signal.aborted) throw new Error('The gates run was cancelled.');
       const headAfter = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'])).stdout.trim();
@@ -559,6 +572,7 @@ export class LaneService {
       await this.terminals.get(lane.id)?.kill();
       const result = await closeLaneWorktree(lane, mode, this.roots(lane), this.lanes().map(open => open.worktree));
       await rm(this.mcpConfigFile(lane.id), { force: true }).catch(() => undefined);
+      await rm(this.settingsFile(lane.id), { force: true }).catch(() => undefined);
       await this.options.store.update(lane.id, { state: 'closed', closedAs: mode });
       this.terminals.delete(lane.id); this.sizes.delete(lane.id); this.results.delete(lane.id); this.roleNotes.delete(lane.id); this.resumeNotes.delete(lane.id);
       this.options.log?.(`[lanes] ${lane.id} closed (${mode})${result.unlinked.length ? `; unlinked ${result.unlinked.length} link(s) first` : ''}`);
@@ -635,7 +649,8 @@ export class LaneService {
       : resume ? undefined
       : lane.goal ? lanePreamble(withRole, this.others(lane.id))
       : promptRole?.text ? laneRolePrompt({ label: promptRole.label, text: promptRole.text }) : undefined;
-    const spec = laneLaunch({ lane, executable, resume, prompt, connected, bridge: this.options.bridge(lane.provider), mcpConfigFile: this.mcpConfigFile(lane.id), helpersDir: this.options.helpersDir, testCommand, env, ...(role ? { role } : {}) });
+    const settingsFile = lane.provider === 'claude' && !testCommand ? await this.writeLaneSettings(lane, role, executable) : undefined;
+    const spec = laneLaunch({ lane, executable, resume, prompt, connected, bridge: this.options.bridge(lane.provider), mcpConfigFile: this.mcpConfigFile(lane.id), helpersDir: this.options.helpersDir, testCommand, env, ...(role ? { role } : {}), ...(settingsFile ? { settingsFile } : {}) });
     if (spec.mcpConfig) {
       await mkdir(this.options.configDirectory, { recursive: true });
       await writeFile(this.mcpConfigFile(lane.id), spec.mcpConfig, { encoding: 'utf8', mode: 0o600 });
@@ -705,7 +720,7 @@ export class LaneService {
     await this.terminals.get(lane.id)?.kill();
     this.terminals.delete(lane.id);
     try { await closeLaneWorktree(lane, 'delete', this.roots(lane), [lane.worktree]); }
-    finally { await this.options.store.remove(lane.id); await rm(this.mcpConfigFile(lane.id), { force: true }).catch(() => undefined); }
+    finally { await this.options.store.remove(lane.id); await rm(this.mcpConfigFile(lane.id), { force: true }).catch(() => undefined); await rm(this.settingsFile(lane.id), { force: true }).catch(() => undefined); }
   }
 
   /** Where lane worktrees may live: the configured root and the default sibling folder. */
@@ -762,6 +777,27 @@ export class LaneService {
       platform: conversation?.platform ?? process.platform,
       ...(conversation?.fs ? { fs: conversation.fs } : {}),
     };
+  }
+  private settingsFile(id: string): string { return path.join(this.options.configDirectory, `${id}.settings.json`); }
+
+  /**
+   * A Claude lane's settings file (Step 2, design 6), written fresh at each launch (0600, beside its
+   * `.mcp.json`) so it names the worktrees open now. Without Hydra's storage folder (tests), none.
+   * Throws when it can't be built right, and the lane doesn't start.
+   */
+  private async writeLaneSettings(lane: Lane, role: RoleLaunch | undefined, executable: string): Promise<string | undefined> {
+    const storage = this.options.hydraStorage;
+    if (!storage) return undefined;
+    const file = this.settingsFile(lane.id);
+    if (isWindowsShim(executable) && /["%^&|<>!\u0000-\u001f\u007f]/.test(file)) throw new Error('Hydra can\'t pass the lane\'s settings file to Claude Code through its .cmd launcher: its path has characters cmd.exe reads as commands.');
+    const keep = role ? [role.packCopy, ...(role.pluginDir ? [role.pluginDir] : [])] : [];
+    const settings = laneSettings({
+      platform: process.platform, storage, storageRead: storageReadDeny(storage, keep, await storageListing(storage, keep)),
+      worktree: lane.worktree, readable: keep, otherWorktrees: await otherWorktrees(lane.repository, lane.worktree),
+    });
+    await mkdir(this.options.configDirectory, { recursive: true });
+    await writeFile(file, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 });
+    return file;
   }
   private planOf(id: string): { plan?: { title: string; job: string; dependents: number } } { const plan = this.options.planOf?.(id); return plan ? { plan } : {}; }
   private now(): Date { return this.options.now?.() ?? new Date(); }
