@@ -257,7 +257,7 @@ A **pack** bundles what one kind of work needs: **roles** for lanes, heads and p
   - Its Bash runs through Hydra's wrapper in Codex's Windows sandbox: only its worktree and its own TEMP are writable. Hydra checks the sandbox once per window; if the check fails, heads have no shell, say why, and Settings → Heads shows the reason. PowerShell is never given.
   - Heads and gate commands get a trimmed environment: system, locale, proxy and toolchain variables, the provider's own sign-in, and a role's variables. Other keys and tokens stay out.
   - A Codex head keeps `workspace-write`, with its own TEMP. Its reads aren't limited.
-- **Gate commands** and the screenshots gate's app run in the same sandbox, with the network on, when the check passed.
+- **A head's gate commands** and its screenshots gate's app run in the same sandbox, with the network on, when the check passed. A lane's gates run as before.
 - **Hydra's commits** in a head's worktree run with git hooks off, so a hook a head edited can't run as Hydra.
 - **The Claude reviewer** loads only your user settings and no MCP servers, so hooks or servers a head wrote into its worktree don't run.
 - **Lanes** get light limits: a Claude lane can't read or edit Hydra's data or the other worktrees. Otherwise it's your terminal, with your settings.

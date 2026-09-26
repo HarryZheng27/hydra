@@ -21,7 +21,6 @@ import type { Plan, PlanJob } from './core/plans';
 import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from './core/planRunner';
 // ---- Packs (docs/Packs_Plan.md) ----
 import type { RoleSource } from './core/packs/launch';
-import type { CommandSandbox } from './core/headSandbox';
 
 /**
  * The editor side of Hydra lanes (docs/Lanes_And_Planner_Plan.md): commands,
@@ -57,8 +56,6 @@ export interface LanesHost {
   // ---- Step 2 (docs/Hydra_Improvements.md) ----
   /** Hydra's global storage folder: a Claude lane's settings deny it (design 6). */
   hydraStorage?: string;
-  /** Codex's sandbox for the lanes' command gates (design 5). */
-  sandbox?: CommandSandbox;
 }
 /** Options for `hydra.lanes.action` (automation): no dialogs, so choices are passed in. */
 export interface LaneActionOptions { message?: string; close?: CloseMode }
@@ -155,7 +152,6 @@ export class LanesController implements vscode.Disposable {
       ...(this.host.gates ? { gates: this.host.gates } : {}),
       ...(this.host.roles ? { roles: this.host.roles } : {}),
       ...(this.host.hydraStorage ? { hydraStorage: this.host.hydraStorage } : {}),
-      ...(this.host.sandbox ? { sandbox: this.host.sandbox } : {}),
     });
     this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(baseScheme, { provideTextDocumentContent: uri => this.baseContent(uri) }));
     this.service.activate();

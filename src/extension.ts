@@ -164,8 +164,8 @@ class Manager {
       markJobDone: (laneId, result) => this.markPlanJobDone(laneId, result),
       cancelPlanJob: laneId => this.cancelPlanJobOfLane(laneId),
       gates: this.packs.gates, roles: this.packs,
-      // ---- Step 2 (docs/Hydra_Improvements.md): light limits for Claude lanes, and the sandbox for their gate commands ----
-      hydraStorage: context.globalStorageUri.fsPath, sandbox: this.headSandbox,
+      // ---- Step 2 (docs/Hydra_Improvements.md): light limits for Claude lanes ----
+      hydraStorage: context.globalStorageUri.fsPath,
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
     const storedDismissed = context.workspaceState.get<string[]>(this.dismissedTrayKey);

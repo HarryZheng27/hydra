@@ -252,7 +252,7 @@ Built in `hydra-wt/confine` (branch `feat/confine`), one Opus subagent, from the
 - Heads: `claudeHelperArguments` and `HeadConfinement` in `helperRunner.ts`; `HelperService.confine`, `headShell`, the per-launch settings and TEMP cleanup in `exited`, and `commitAll`/`noHooks` in `helperService.ts`; `RoleLaunch.packCopy` and `.variables` in `packs/launch.ts`.
 - Gates: `GateContext.sandbox` (`gates/types.ts`), `runCommandGate` (`gates/command.ts`), `startApp` (`gates/screenshots.ts`), `CheckCommand.environment` (`checkCommand.ts`).
 - Lanes: `LaneLaunchInput.settingsFile` and `LaneService.writeLaneSettings` (`laneService.ts`).
-- Window: one `HeadSandbox` in `extension.ts`, given to heads, lanes and their gates; the `hydra.headShellStatus` command; the "Head shells" line in Settings → Heads (`settings/pages/heads.ts`).
+- Window: one `HeadSandbox` in `extension.ts`, given to heads and their gates; the `hydra.headShellStatus` command; the "Head shells" line in Settings → Heads (`settings/pages/heads.ts`).
 
 **What each launcher passes now:**
 - **Claude head, sandbox check passed:** `-p … --permission-mode dontAsk --setting-sources user --settings <logs>/<jobId>-<8 hex>.settings.json --tools Read,Edit,Write,NotebookEdit,Glob,Grep,Bash[,Skill,WebSearch,WebFetch] --allowedTools Glob,Grep,Edit(/**),Write(/**),NotebookEdit(/**),Bash,mcp__hydra__hydra_done,mcp__hydra__hydra_stuck,mcp__hydra__hydra_progress[,role's] --max-turns … --max-budget-usd … --mcp-config=<inline Hydra entry> [--mcp-config=<role file>] --strict-mcp-config [--add-dir <pack copy>] [--plugin-dir …] [--model …]`.
@@ -262,7 +262,7 @@ Built in `hydra-wt/confine` (branch `feat/confine`), one Opus subagent, from the
 - **Claude head, not Windows:** Bash as before (no wrapper); the settings file, tool lists and environment still apply.
 - **Codex head:** the same `codex exec … -s workspace-write` command line as before; the environment is the allowlist, the Codex sign-in variables, the role's values and its own `TEMP`/`TMP`.
 - **Claude lane:** your usual launch plus `--settings <storage>/workspaces/<key>/lanes/<laneId>.settings.json` (0600, rewritten at each launch, removed on close) with only Read/Edit denies for Hydra's storage (reads minus the lane's pack copy) and the other worktrees. Codex lanes are unchanged.
-- **Gate commands and the screenshots app, check passed:** `<Git>\bin\bash.exe <wrapper> '<command>' '<args>'…` with the allowlisted environment, the gate's own variables (and `PORT`), `HYDRA_WT=<worktree>` and a TEMP of their own under the run's log folder. Otherwise as before.
+- **A head's gate commands and screenshots app, check passed:** `<Git>\bin\bash.exe <wrapper> '<command>' '<args>'…` with the allowlisted environment, the gate's own variables (and `PORT`), `HYDRA_WT=<worktree>` and a TEMP of their own under the run's log folder. Otherwise as before.
 - **Hydra's commit at `hydra_done`:** `git -c core.hooksPath=<fresh empty folder> status|add|commit`.
 - **The wrapper** runs `codex.exe sandbox -c windows.sandbox='elevated' -c permissions.hydra-confine=<:workspace, network on, the worktree's .claude and .hydra read-only> -c shell_environment_policy.*=… -P hydra-confine -C "$HYDRA_WT" -- <Git>\usr\bin\bash.exe <inside script> "$1" …`, and exits 126 without running anything when Codex or `HYDRA_WT` is missing.
 
@@ -279,6 +279,7 @@ Built in `hydra-wt/confine` (branch `feat/confine`), one Opus subagent, from the
 - **Settings and TEMP names are per launch** (`<jobId>-<8 hex>.settings.json`, `<jobId>-<random>`), and a run's files are removed after its state is settled. With the old order, a head continued after a usage limit was failed by its old run's exit handler (an existing test caught it).
 - **The Claude review gate now passes `--setting-sources user --strict-mcp-config`** (its own commit). The plan kept review gates unchanged because they run read-only, but `claude -p` in a folder nobody trusted still runs that folder's `.claude/settings.json` hooks and connects its `.mcp.json` servers, and a head can write both with its Edit tool.
 - **Hydra's storage is denied entry by entry** around a role's pack copy and plugin folder, since a rule can't say "except"; a folder on the way that can't be listed denies the whole storage folder. Edits are denied on all of it.
+- **A lane's gate commands stay outside the sandbox**, with your full environment, as before: decision 3 says a lane is your terminal, and its agent's own shells aren't confined, so sandboxing its gates would only break gates that need your tokens.
 - **A role's variables pass the allowlist, even secret-looking ones** (`RoleLaunch.variables`): its servers read them from the agent's environment, and you allowed the pack.
 - **The "Blocked: tried to read ~/.ssh" result line wasn't built.** A denial shows in the head's own log; its result says only when its shell was off.
 - `HelperService` without `hydraStorage` (tests) denies its log folder; the window passes the real global storage.

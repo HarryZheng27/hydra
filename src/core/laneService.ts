@@ -20,7 +20,6 @@ import type { LimitEvent } from './limitEvents';
 import type { LaneSyncView, LaneView, Provider } from './model';
 import { laneSettings, storageReadDeny } from './confine';
 import { otherWorktrees, storageListing } from './confineFiles';
-import type { CommandSandbox } from './headSandbox';
 
 /**
  * Hydra lanes, end to end (docs/Lanes_And_Planner_Plan.md, section 1): this
@@ -200,10 +199,12 @@ export interface LaneServiceOptions {
    */
   conversation?: { home?: () => string; platform?: NodeJS.Platform; fs?: LaneConversationOptions['fs'] };
   // ---- Step 2 (docs/Hydra_Improvements.md) ----
-  /** Hydra's global storage: a Claude lane may read none of it but its role's pack copy, and write none of it (design 6). Without it, no settings file. */
+  /**
+   * Hydra's global storage: a Claude lane may read none of it but its role's pack copy, and write none
+   * of it (design 6). Without it, no settings file. A lane's gate commands stay outside Codex's sandbox:
+   * a lane is your terminal, with your full environment (decision 3).
+   */
   hydraStorage?: string;
-  /** Codex's sandbox for the lane's command gates and screenshots app (design 5). Without it, they run as before. */
-  sandbox?: CommandSandbox;
 }
 
 /** How a plan lane starts (docs/Plan_Lanes_Plan.md, "Starting a lane job"). */
@@ -469,7 +470,6 @@ export class LaneService {
         ...(this.options.gatesLimited ? { limited: this.options.gatesLimited } : {}),
         signal: controller.signal, ...(onProgress ? { onProgress } : {}), ...(this.options.log ? { log: this.options.log } : {}),
         ...(this.options.gatesRuntime ? { runtime: this.options.gatesRuntime } : {}),
-        ...(this.options.sandbox ? { sandbox: this.options.sandbox } : {}),
       }, this.options.gates);
       if (controller.signal.aborted) throw new Error('The gates run was cancelled.');
       const headAfter = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'])).stdout.trim();
