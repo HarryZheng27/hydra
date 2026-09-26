@@ -7,9 +7,11 @@ const headsGuideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md
  * Heads: hydra.maxConcurrentHelpers, the default per-head caps
  * (hydra.heads.defaultMinutes/defaultMaxTurns/defaultBudgetUsd, applied to a
  * head started without its own limits — src/core/jobs.ts resolveHeadDefaults),
- * Stop all heads (the existing hydra.stopAllHelpers command), whether heads'
- * shells run in Codex's Windows sandbox (hydra.headShellStatus, docs/Hydra_Improvements.md
- * Step 2), and a link to the Heads guide.
+ * Stop all heads (the existing hydra.stopAllHelpers command), Stop all agents
+ * (5.3, docs/Hydra_Improvements.md: hydra.stopAllAgents, which also ends every
+ * lane's process and holds off new heads, launches and plan advances until
+ * Hydra: Resume Agents), whether heads' shells run in Codex's Windows sandbox
+ * (hydra.headShellStatus, Step 2), and a link to the Heads guide.
  */
 export const headsPage: SettingsPage = {
   id: 'heads',
@@ -18,6 +20,7 @@ export const headsPage: SettingsPage = {
     { title: 'Heads at a time', description: 'Maximum Hydra heads running at once in this window. More wait in a queue.' },
     { title: 'Default caps', description: 'Minutes, turns, and budget a head gets when it is started without its own limits.' },
     { title: 'Stop all heads', description: 'Cancel every running head in this window.' },
+    { title: 'Stop all agents', description: 'Cancel every head, end every lane\'s process, and hold off new starts, launches and plan advances until you resume.' },
     { title: 'Head shells', description: 'Whether heads\' shells run in Codex\'s Windows sandbox, or why they\'re off.' },
     { title: 'Heads guide', description: 'How Hydra heads work and when to use them.' },
   ],
@@ -36,6 +39,7 @@ export const headsPage: SettingsPage = {
           <label for="hd-default-budget" style="font-size:12px">Budget (USD)</label><input type="number" id="hd-default-budget" min="0.5" max="100" step="0.5" style="width:72px" aria-label="Default budget in USD">
         </div></div>
       <div class="row"><div class="row-text"><div class="row-title">Stop all heads</div><div class="row-desc">Cancel every running head in this window.</div></div><div class="row-action"><button class="danger" id="hd-stop-all">Stop all</button></div></div>
+      <div class="row"><div class="row-text"><div class="row-title">Stop all agents</div><div class="row-desc" id="hd-stop-agents-desc">Cancel every head, end every lane's process, and hold off new starts, launches and plan advances until you resume.</div></div><div class="row-action"><button class="danger" id="hd-stop-agents">Stop all agents</button><button id="hd-resume-agents" style="display:none">Resume</button></div></div>
     </div>
     <div class="group">
       <h2>Sandbox</h2>
@@ -51,6 +55,8 @@ export const headsPage: SettingsPage = {
   const hdMax = document.getElementById('hd-max');
   hdMax?.addEventListener('change', () => { const value = Math.max(1, Math.min(8, Number(hdMax.value) || 1)); hdMax.value = String(value); send({type:'setMaxConcurrentHelpers', value}); });
   document.getElementById('hd-stop-all')?.addEventListener('click', () => send({type:'stopAllHeads'}));
+  document.getElementById('hd-stop-agents')?.addEventListener('click', () => send({type:'stopAllAgents'}));
+  document.getElementById('hd-resume-agents')?.addEventListener('click', () => send({type:'resumeAgents'}));
   document.getElementById('hd-guide')?.addEventListener('click', () => send({type:'openHeadsGuide'}));
   const hdMinutes = document.getElementById('hd-default-minutes');
   const hdTurns = document.getElementById('hd-default-turns');
@@ -67,6 +73,12 @@ export const headsPage: SettingsPage = {
       if (hdTurns) hdTurns.value = String(message.maxTurns);
       if (hdBudget) hdBudget.value = String(message.budgetUsd);
     }
+    if (message?.type === 'stopState') {
+      const stopBtn = document.getElementById('hd-stop-agents'), resumeBtn = document.getElementById('hd-resume-agents'), desc = document.getElementById('hd-stop-agents-desc');
+      if (stopBtn) stopBtn.style.display = message.stopped ? 'none' : '';
+      if (resumeBtn) resumeBtn.style.display = message.stopped ? '' : 'none';
+      if (desc && message.stopped) desc.textContent = 'Hydra is stopped. Nothing new starts until you resume.';
+    }
   });
   `,
   async onReady(ctx: SettingsContext): Promise<void> {
@@ -82,6 +94,8 @@ export const headsPage: SettingsPage = {
     // Step 2: the head sandbox's check takes a few seconds the first time, so the line fills in when it's done.
     void vscode.commands.executeCommand<{ text: string }>('hydra.headShellStatus')
       .then(status => ctx.post({ type: 'headShell', text: status?.text ?? 'Head shells: unknown.' }), (error: unknown) => ctx.post({ type: 'headShell', text: `Head shells: couldn't check (${error instanceof Error ? error.message : String(error)}).` }));
+    const stopState = await vscode.commands.executeCommand<{ stopped: boolean }>('hydra.getStopState');
+    await ctx.post({ type: 'stopState', stopped: !!stopState?.stopped });
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     switch (message.type) {
@@ -116,6 +130,15 @@ export const headsPage: SettingsPage = {
       case 'stopAllHeads':
         await vscode.commands.executeCommand('hydra.stopAllHelpers');
         await ctx.post({ type: 'status', text: 'Stopped all running heads.' });
+        return true;
+      case 'stopAllAgents': {
+        const stopped = await vscode.commands.executeCommand<boolean>('hydra.stopAllAgents');
+        if (stopped) await ctx.post({ type: 'stopState', stopped: true });
+        return true;
+      }
+      case 'resumeAgents':
+        await vscode.commands.executeCommand('hydra.resumeAgents');
+        await ctx.post({ type: 'stopState', stopped: false });
         return true;
       case 'openHeadsGuide':
         await vscode.env.openExternal(vscode.Uri.parse(headsGuideUrl));
