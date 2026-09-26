@@ -169,7 +169,7 @@ export class PackService implements RoleSource {
     const userServers = await this.options.userServers?.().catch(() => ({})) ?? {};
     const servers = await Promise.all(
       role.mcpServers.flatMap(id => valid.manifest.mcpServers[id] && valid.servers[id]
-        ? [this.resolveServer(id, valid.manifest.mcpServers[id]!, valid.servers[id]!, valid.manifest.integrity?.[id])]
+        ? [this.resolveServer(packId, id, valid.manifest.mcpServers[id]!, valid.servers[id]!, valid.manifest.integrity?.[id])]
         : []),
     );
     return {
@@ -188,13 +188,13 @@ export class PackService implements RoleSource {
    * Only a stdio server pinned to a package (an npx/bunx/pnpx server, checked
    * exact-version at pack load) can carry a pin; anything else passes through.
    */
-  private async resolveServer(id: string, spec: McpServerSpec, info: PackServerInfo, integrity: string | undefined): Promise<ResolvedServer> {
+  private async resolveServer(packId: string, id: string, spec: McpServerSpec, info: PackServerInfo, integrity: string | undefined): Promise<ResolvedServer> {
     if (spec.type !== 'stdio' || !integrity) return { id, spec, info };
     const target = npxPackageArg(spec.args);
     const pin = target && parsePackageSpec(target);
     if (!pin) return { id, spec, info };
     const result = await checkNpxPin(pin, integrity, this.options.npxRegistryFetch ?? fetchRegistryIntegrity, this.npxPinCache);
-    if (!result.ok) this.options.audit?.({ kind: 'denial', what: 'pack server refused', detail: result.reason, pack: id });
+    if (!result.ok) this.options.audit?.({ kind: 'denial', what: 'pack server refused', detail: `${id}: ${result.reason}`, pack: packId });
     return result.ok ? { id, spec, info } : { id, spec, info, pinProblem: result.reason };
   }
 

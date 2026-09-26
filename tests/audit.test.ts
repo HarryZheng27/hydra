@@ -312,7 +312,7 @@ test('a pack server refused by the 5.4 integrity pin adds exactly one denial lin
     await packs.resolve(repo, 'kit/pinner');
     const denials = events.filter(event => event.kind === 'denial' && event.what === 'pack server refused');
     assert.equal(denials.length, 1);
-    assert.equal(denials[0]!.pack, 'pinned');
-    assert.match(denials[0]!.detail ?? '', /is pinned to/);
+    assert.equal(denials[0]!.pack, 'kit');
+    assert.match(denials[0]!.detail ?? '', /^pinned: .*is pinned to/);
   } finally { await f.close(); }
 });
