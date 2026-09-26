@@ -561,3 +561,38 @@ Built by one Sonnet subagent (`hydra-wt/stopall`). The main session reviewed the
 - `planRunner`: 15.
 - `planLanes`: 11.
 - `packsLaunch`: 19.
+
+#### 5.2 An audit log
+
+Built in `hydra-wt/audit` (branch `feat/audit-log`) by one Sonnet subagent. It was built after 5.1 (the redactor) and 5.3 (Stop all), per the plan's ordering, so it could redact and record both.
+
+**What it does:**
+- **`src/core/audit.ts`:** `AuditLog` appends one line per event to `<globalStorage>/audit/audit.jsonl`: `{"at": <ISO time>, ...event}`, every string field passed through the redactor (`redactText` by default). `record()` is fire-and-forget, serialized through a promise queue so lines never interleave, and never throws to its caller; `flush()` waits for the queue (tests, and before Open Audit Log reads the file). Before a write that would push the file over `maxBytes` (default 2 MB), the current file is renamed to its `.1` sibling, replacing any older one, and a fresh file is started. The folder is created on first write; each write is `chmod`'d to `0o600` (best effort: some filesystems ignore it).
+- **`laneOverrideEvent`**, also in `audit.ts`: the pure function that turns a lane override pick ("Merge anyway", "Merge with these changes", …) into an `AuditEvent`, factored out of `extensionLanes.ts`'s dialogs so it's testable without vscode.
+- **Wired as an optional sink** (`audit?: (event: AuditEvent) => void`) on `HelperServiceOptions`, `HeadSandboxOptions`, `PackServiceOptions` and `LanesHost`, so none of their existing tests needed to change:
+  - **Denials:** an endpoint refusal and a refused lead connection (`extension.ts`, the `onRefuse` and `verifyLead` wrappers around `HelperEndpoint`); `hydra_done` refused for changed git settings or hooks (`HelperService.done`, `helperService.ts`); a failed sandbox self-test, once per window (`HeadSandbox.selfCheck`, `headSandbox.ts` — only the self-test's own failure, not a missing prerequisite like Codex or Git Bash not being found); a pack server refused by 5.4's integrity pin (`PackService.resolveServer`, `packs/service.ts`).
+  - **Approvals:** "Merge with these changes" / "Mark done with these changes" (`LanesController.gitMetaBefore`) and "Merge anyway" / "Mark done anyway" (`LanesController.gatesBefore`), both in `extensionLanes.ts`, via `laneOverrideEvent`; a pack turned on with its reviewed hash (`PackService.turnOn`, `packs/service.ts`).
+  - **Stops:** a head cancelled (`HelperService.cancel`, which also fires once per head that Stop All Agents cancels through `stopAll`); Stop All Agents and Resume Agents, each their own line, in `extension.ts`'s commands.
+- **`Hydra: Open Audit Log`:** `flush()`es the log, then opens the file's current content as an untitled document (`vscode.workspace.openTextDocument({ content, language: 'json' })`) rather than the file itself, so the real log can't be edited in place. "No audit events yet." if the file doesn't exist.
+- **Docs:** `docs/Heads.md`'s Security section gets an "Audit log" line naming the file and what's recorded, next to the existing Logging line.
+
+**Changes from the spec, and why:**
+- **The spec's event `kind` union is `'denial' | 'approval' | 'stop' | 'resume'`; "Resume" is its own kind rather than a fourth `what` under `'stop'`,** matching the Design section's interface literally. `hydra.resumeAgents` records `{ kind: 'resume', what: 'Resume agents' }`.
+- **A Stop All Agents run produces more than one line by design:** one `{ kind: 'stop', what: 'Stop all agents' }` line for the action itself, plus one `{ kind: 'stop', what: 'head cancelled' }` line per head it cancels (through `HelperService.stopAll` → `cancel`). The spec's test only requires that a *direct* cancel and a *direct* "Merge anyway" each add exactly one line, which `tests/audit.test.ts` checks; it doesn't ask Stop All's cascade to collapse to one line, and collapsing it would have hidden which heads were actually running when it fired.
+- **The sandbox self-test denial fires only for `HeadSandbox.selfCheck`'s own test failing** (the command-and-refused-sibling-write check), not for "off" because Codex or Git Bash wasn't found — those are a missing prerequisite, not a failed self-test, matching the row's wording ("a failed sandbox self-test").
+- **`turnOn`'s approval `detail` is the reviewed hash**, not the pack's title, since the row says "turning on a pack with its reviewed hash."
+
+**Tests** (`tests/audit.test.ts`, run with a temporary esbuild+node:test runner, never the full gate): 11 tests — one line per event with `at`; `record()` never throws even when the file can't be written; a planted `ghp_…` token and an `sk-…` key in `detail` are redacted; rotation at a 100-byte cap keeps exactly one previous file, no third file, every line still valid JSON; `laneOverrideEvent`'s shape with and without a detail; a refused endpoint call (wired exactly as `tests/threatModel.test.ts` wraps a real `HelperEndpoint`) and a refused lead connection each add exactly one denial line; a head cancelled through a real `HelperService` (fake CLI, real git repo) adds exactly one stop line; `hydra_done` refused for a planted `.git/hooks/pre-commit` adds exactly one denial line, and the accepted retry after undoing it adds none; a pack turned on through a real `PackService` adds exactly one approval line naming the reviewed hash; a pack server refused by a mismatched integrity pin adds exactly one denial line.
+
+Also run and passing, unchanged: `helperService` (21), `packsLaunch` (19), `packs` (25), `stopAll` (5), `threatModel` (1), `lanes` (11), `hardening` (12).
+
+`npx tsc --noEmit` passes.
+
+**What the live checks must look at** (per the plan's "Step 5" row and this feature's own test row):
+- Refuse a call to the endpoint (an unknown or expired token from outside Hydra) and confirm one denial line appears in `audit.jsonl`, with no token in it.
+- Merge a lane with a planted git hook and a failing gate, choosing "Merge with these changes" then "Merge anyway": confirm two approval lines, each naming the lane.
+- Turn on a pack from its review panel: confirm one approval line with the pack id and the hash shown in the panel.
+- Run **Hydra: Stop All Agents** with a head and a lane running, then **Hydra: Resume Agents**: confirm a "Stop all agents" line, one "head cancelled" line per head stopped, and a "Resume agents" line.
+- **Hydra: Open Audit Log** with no prior events: "No audit events yet." With events: a read-only document, editing it doesn't touch the real file (confirmed by reopening).
+- Grow the file past 2 MB (or lower `maxBytes` for the check) and confirm `audit.1.jsonl` appears and the live file keeps growing from empty.
+

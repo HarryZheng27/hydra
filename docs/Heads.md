@@ -266,6 +266,7 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its b
 - **The Claude reviewer** loads only your user settings and no MCP servers, so hooks or servers a head wrote into its worktree don't run.
 - **Lanes** get light limits: a Claude lane can't read or edit Hydra's data or the other worktrees. Otherwise it's your terminal, with your settings.
 - **Logging:** every action, every accepted or refused lead connection, and every refused call (an unknown token, a tool the caller may not use, too large, too many) is logged to the Hydra output channel, never with a token.
+- **Audit log:** every denial (an endpoint refusal, a refused lead connection, `hydra_done` refused for changed git settings or hooks, a failed sandbox self-test, a pack server refused by its integrity pin), approval ("Merge with these changes", "Mark done with these changes", "Merge anyway" after a failed gate, turning on a pack) and stop (a head cancelled, Stop all, Resume) is appended, redacted, as one JSON line to `<globalStorage>/audit/audit.jsonl`, rotated at 2 MB with one previous file kept. **Hydra: Open Audit Log** opens a read-only snapshot of it.
 
 ## Supported versions
 
