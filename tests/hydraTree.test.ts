@@ -84,3 +84,12 @@ test('a plan lane\'s description names the plan it belongs to', () => {
   const tree = buildHydraTree([inPlan], [], []);
   assert.equal(tree.lanes[0]!.description, 'Claude · lane/111111111111 · Plan: Checkout');
 });
+
+test('Step A: a lane and a head show the same evidence label as the tiles, and a lane marks an older commit', () => {
+  const gated = lane('111111111111', 'Lane 1', { branch: 'lane/x', lastGates: { source: 'gates', at: at(1000), results: [], commit: 'b'.repeat(40), status: 'override' } });
+  const stale = lane('222222222222', 'Lane 2', { branch: 'lane/y', lastGates: { source: 'gates', at: at(1000), results: [], commit: 'c'.repeat(40), status: 'passed' }, gatesStale: true });
+  const tree = buildHydraTree([gated, stale], [head('h1', 'running', { status: 'partial' })], []);
+  assert.equal(tree.lanes.find(item => item.id === gated.id)!.description, 'Claude · lane/x · Human override');
+  assert.equal(tree.lanes.find(item => item.id === stale.id)!.description, 'Claude · lane/y · Passed required gates (older commit)');
+  assert.match(tree.heads[0]!.description, /· Some gates not run$/);
+});
