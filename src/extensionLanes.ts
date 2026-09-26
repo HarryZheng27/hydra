@@ -8,7 +8,7 @@ import { LaneStore, isLaneId, laneGoalMax, parseLaneName, type Lane } from './co
 import { LaneService, gatesPassNote, maxOpenLanes } from './core/laneService';
 import { defaultCommitMessage, laneDiffFiles, type CloseMode } from './core/laneFinish';
 import { flattenGateFailureMessage, loadGates, summarizeGateFailures, type GatesLoader, type GatesOutcome } from './core/gates';
-import type { JobCheckResult } from './core/jobs';
+import type { EvidenceStatus, JobCheckResult } from './core/jobs';
 import { laneActions, type AgentsView, type LaneAction, type LaneClientMessage, type LaneLimitOfferView, type LaneOfferButtonId, type LaneServerMessage, type LaneView, type Provider } from './core/model';
 import { otherProvider, type LimitEvent } from './core/limitEvents';
 import { buildHandoff } from './core/limitHandoff';
@@ -66,6 +66,8 @@ export interface LanesHost {
   // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
   /** Without it, a "Merge with these changes"/"Merge anyway" override and similar aren't recorded. */
   audit?: (event: AuditEvent) => void;
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): offer the one-time "Starter gates" choice for a project with no gates.json yet, after a lane merges into it. Never blocks the merge; fire-and-forget. */
+  offerStarterGates?: (repository: string) => void;
 }
 /** Options for `hydra.lanes.action` (automation): no dialogs, so choices are passed in. */
 export interface LaneActionOptions { message?: string; close?: CloseMode }
@@ -174,10 +176,11 @@ export class LanesController implements vscode.Disposable {
   exists(id: string): boolean { return !!this.service?.exists(id); }
   laneName(id: string): string | undefined { return this.service?.name(id); }
   /** For View evidence (docs/Gates_Plan.md): the lane's last gates run, or undefined when none has run yet. */
-  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[] } | undefined {
+  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean } | undefined {
     const lane = this.service?.get(id);
     if (!lane?.lastGates?.results.length) return undefined;
-    return { title: lane.name, worktree: lane.worktree, results: lane.lastGates.results };
+    const stale = this.viewOf(id)?.gatesStale;
+    return { title: lane.name, worktree: lane.worktree, results: lane.lastGates.results, ...(lane.lastGates.status ? { status: lane.lastGates.status, commit: lane.lastGates.commit, stale } : {}) };
   }
   /** Where this window's lane gate runs keep their logs and screenshots, for the evidence document's path check. */
   laneGatesLogRoot(): string | undefined { return this.storageDirectory ? path.join(this.storageDirectory, 'lanes', 'gates') : undefined; }
@@ -338,7 +341,7 @@ export class LanesController implements vscode.Disposable {
   /** A lane as the plan runner sees it, closed or not, while the store keeps it. */
   laneLook(id: string): PlanLaneLook | undefined {
     const lane = this.service?.record(id);
-    return lane && { name: lane.name, state: lane.state, branch: lane.branch, baseCommit: lane.baseCommit, ...(lane.mergedHead ? { mergedHead: lane.mergedHead } : {}), ...(lane.closedAs ? { closedAs: lane.closedAs } : {}) };
+    return lane && { name: lane.name, state: lane.state, branch: lane.branch, baseCommit: lane.baseCommit, ...(lane.mergedHead ? { mergedHead: lane.mergedHead } : {}), ...(lane.closedAs ? { closedAs: lane.closedAs } : {}), ...(lane.lastGates?.status && lane.lastGates.commit === lane.mergedHead ? { gatesStatus: lane.lastGates.status } : {}) };
   }
   /** Open lanes whose plan link names a job of this plan, for adopting a start whose record was never saved. */
   planLanes(planId: string): { laneId: string; jobKey: string; attempt: number }[] {
@@ -527,6 +530,7 @@ export class LanesController implements vscode.Disposable {
           if (pick !== 'Merge') return undefined;
         }
         const commit = await service.merge(lane.id);
+        this.host.offerStarterGates?.(lane.repository);
         if (interactive) {
           const next = await vscode.window.showInformationMessage(`Merged lane ${lane.name} into ${lane.target}.`, 'Close lane');
           if (next === 'Close lane' && service.get(lane.id)) await this.run(service, service.get(lane.id)!, 'close', true, {});
@@ -652,7 +656,9 @@ export class LanesController implements vscode.Disposable {
       });
       if (note === undefined) return undefined; // Esc cancels
     }
-    await this.host.markJobDone(lane.id, { commit: work.commit, ...(note?.trim() ? { note: note.trim() } : {}), changedFiles: work.changedFiles });
+    const current = service.get(lane.id);
+    const status = current?.lastGates?.commit === work.commit ? current.lastGates.status : undefined;
+    await this.host.markJobDone(lane.id, { commit: work.commit, ...(note?.trim() ? { note: note.trim() } : {}), changedFiles: work.changedFiles, ...(status ? { status } : {}) });
     this.postState(true);
     if (interactive) void vscode.window.showInformationMessage(`Job ${job.jobTitle} is done at ${work.commit.slice(0, 7)}.${gated.note} The jobs after it can start.`);
     return { commit: work.commit };
@@ -698,7 +704,13 @@ export class LanesController implements vscode.Disposable {
     const choice = await vscode.window.showWarningMessage(`Gates failed for lane ${lane.name}. ${question}`, { modal: true, detail: summarizeGateFailures(outcome.results) }, 'Send to lane', anyway);
     if (choice === 'Send to lane') { this.sendGatesToLane(service, lane, outcome.results); return undefined; }
     // 5.2: an approval — "Merge anyway" / "Mark done anyway" after a failed gate.
-    if (choice === anyway) this.host.audit?.(laneOverrideEvent(anyway, lane.id, summarizeGateFailures(outcome.results)));
+    if (choice === anyway) {
+      this.host.audit?.(laneOverrideEvent(anyway, lane.id, summarizeGateFailures(outcome.results)));
+      // Step A (docs/Hydra_Improvements_Pt_2.md): record the override so the tile, the plan view and
+      // the PR body all say "Human override" for this commit, instead of the plain failed run.
+      const commit = await git(lane.worktree, ['rev-parse', 'HEAD']).then(text => text.trim()).catch(() => undefined);
+      if (commit) await service.recordGatesOverride(lane.id, commit).catch(() => undefined);
+    }
     return choice === anyway ? { note: '' } : undefined; // Cancel
   }
 

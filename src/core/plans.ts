@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
+import type { EvidenceStatus } from './jobs';
 
 /**
  * Hydra plans (docs/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
@@ -44,7 +45,11 @@ export const planOutcomeReasonMax = 500;
 // ---- Plan jobs that run as lanes (docs/Plan_Lanes_Plan.md, section 1) ----
 export type PlanJobRunAs = 'head' | 'lane';
 /** What a lane job handed on: the lane's HEAD when it merged or was marked done. It never moves afterwards. */
-export interface PlanJobResult { commit: string; via: 'merged' | 'marked'; at: string; note?: string; changedFiles: string[] }
+export interface PlanJobResult {
+  commit: string; via: 'merged' | 'marked'; at: string; note?: string; changedFiles: string[];
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): the lane's evidence status at this commit, when one was recorded. */
+  status?: EvidenceStatus;
+}
 /** A job that won't finish. */
 export interface PlanJobOutcome { state: 'failed' | 'cancelled' | 'skipped'; reason: string; at: string }
 
@@ -100,6 +105,8 @@ function validateRunFields(job: PlanJob): void {
     if (!isTime(result.at)) throw new Error(`${where} has a result with an invalid time.`);
     if (result.note !== undefined && (typeof result.note !== 'string' || result.note.length > planResultNoteMax || result.note.includes('\0'))) throw new Error(`${where} has a note longer than ${planResultNoteMax} characters.`);
     if (!Array.isArray(result.changedFiles) || result.changedFiles.length > planResultFilesMax || result.changedFiles.some(file => typeof file !== 'string' || !file || file.length > 1000)) throw new Error(`${where} has a result with at most ${planResultFilesMax} changed files.`);
+    const statuses: readonly EvidenceStatus[] = ['passed', 'partial', 'none', 'none-chosen', 'override'];
+    if (result.status !== undefined && !statuses.includes(result.status)) throw new Error(`${where} has a result with an invalid evidence status.`);
   }
   if (job.outcome !== undefined) {
     const outcome = job.outcome as Partial<PlanJobOutcome>;

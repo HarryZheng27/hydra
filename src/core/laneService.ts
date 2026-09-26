@@ -14,7 +14,7 @@ import { isLaneId, isSafeBranchName, laneBranch, laneContinuePrompt, laneFolder,
 import { otherProvider } from './limitEvents';
 import { buildHandoff, defaultHandoffDeps, type HandoffDeps } from './limitHandoff';
 import { freshDirectory, loadGates, runGates as runGatesCore, type GateContext, type GatesConfig, type GatesLoader, type GatesOutcome } from './gates';
-import { gateBlocks, type JobCheckResult } from './jobs';
+import { evidenceStatus, gateBlocks, gatesConfigured, type JobCheckResult } from './jobs';
 import type { HelperServerSpec } from './helperRegistration';
 import type { LimitEvent } from './limitEvents';
 import type { LaneSyncView, LaneView, Provider } from './model';
@@ -290,7 +290,9 @@ export class LaneService {
   views(): LaneView[] {
     return this.lanes().map(lane => {
       const sync = this.results.get(lane.id), roleNote = this.roleNotes.get(lane.id), resumeNote = this.resumeNotes.get(lane.id);
-      return { ...lane, ...(sync ? { sync: structuredClone(sync) } : {}), running: !!this.terminals.get(lane.id)?.running, ...(roleNote ? { roleNote } : {}), ...(resumeNote ? { resumeNote } : {}) };
+      // Step A: the lane's HEAD moved past the commit its last gates describe.
+      const gatesStale = !!(lane.lastGates?.commit && sync?.head && sync.head !== lane.lastGates.commit);
+      return { ...lane, ...(sync ? { sync: structuredClone(sync) } : {}), running: !!this.terminals.get(lane.id)?.running, ...(roleNote ? { roleNote } : {}), ...(resumeNote ? { resumeNote } : {}), ...(gatesStale ? { gatesStale } : {}) };
     });
   }
 
@@ -482,7 +484,10 @@ export class LaneService {
       if (controller.signal.aborted) throw new Error('The gates run was cancelled.');
       const headAfter = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'])).stdout.trim();
       const commit = cleanBefore && headAfter === head && /^[a-f0-9]{40,64}$/.test(head) && !await laneDirty(lane).catch(() => true) ? head : undefined;
-      await this.options.store.update(lane.id, { lastGates: { source: outcome.source, at: this.now().toISOString(), results: outcome.results, ...(commit ? { commit } : {}), ...(config ? { config: gatesFingerprint(config) } : {}) } });
+      // Step A: a plain gates run has no override, so a failed required gate leaves status undefined
+      // (this run alone never accepts the work) until Merge anyway / Mark done anyway records one.
+      const status = evidenceStatus({ checks: outcome.results, configured: gatesConfigured(outcome.source, outcome.results.length) });
+      await this.options.store.update(lane.id, { lastGates: { source: outcome.source, at: this.now().toISOString(), results: outcome.results, ...(commit ? { commit } : {}), ...(config ? { config: gatesFingerprint(config) } : {}), ...(status ? { status } : {}) } });
       this.changed();
       return outcome;
     } finally {
@@ -502,6 +507,18 @@ export class LaneService {
     if (head !== record.commit || await laneDirty(lane).catch(() => true)) return undefined;
     const config = await (this.options.gates ?? loadGates)(lane.repository).catch(() => undefined);
     return config && gatesFingerprint(config) === record.config ? record : undefined;
+  }
+  /**
+   * Step A: after Merge anyway / Mark done anyway, records the human override on the lane's last
+   * gates so the tile, the plan view and the PR body all show the same "Human override" status for
+   * `commit`, instead of the plain failed run `runGates` left (which has no status of its own: a
+   * failure nobody overrode isn't accepted work). Keeps the failing results so the reason still shows.
+   */
+  async recordGatesOverride(id: unknown, commit: string): Promise<void> {
+    const lane = this.openLane(id);
+    const results = lane.lastGates?.results ?? [];
+    await this.options.store.update(lane.id, { lastGates: { source: lane.lastGates?.source ?? 'none', at: this.now().toISOString(), results, commit, status: 'override', ...(lane.lastGates?.config ? { config: lane.lastGates.config } : {}) } });
+    this.changed();
   }
 
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md) ----

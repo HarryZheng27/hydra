@@ -1,8 +1,8 @@
 import type { Lane } from './lanes';
 import type { Plan, PlanJobRunAs } from './plans';
 import type { PlanJobStatus, PlanJobView } from './planRunner';
-import type { HeadCheckView, JobCheckResult } from './jobs';
-export type { HeadCheckView } from './jobs';
+import type { EvidenceStatus, HeadCheckView, JobCheckResult } from './jobs';
+export type { HeadCheckView, EvidenceStatus } from './jobs';
 
 export type Provider = 'claude' | 'codex';
 export interface ProviderInfo { provider: Provider; executable?: string; available: boolean }
@@ -32,6 +32,8 @@ export interface HelperJobView {
   writeScope?: string[];
   /** Packs (docs/Packs_Plan.md): the role it works in, "coding/builder", with the titles it started with. */
   role?: { ref: string; title: string; packTitle: string };
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status at `commit`, when one was recorded. */
+  status?: EvidenceStatus;
 }
 /**
  * Packs (docs/Packs_Plan.md, "Picking a role"): one active role, for the New
@@ -147,6 +149,8 @@ export interface LaneSyncView {
   dirty: boolean;
   checkedAt: string;
   error?: string;
+  /** The lane's worktree HEAD as of this pass. Step A (docs/Hydra_Improvements_Pt_2.md) compares it against lastGates.commit to say "Checks are for an older commit". */
+  head?: string;
 }
 /**
  * The plan job a lane runs, as the tile shows it (docs/Plan_Lanes_Plan.md, section 5): the chip
@@ -164,6 +168,8 @@ export type LaneView = Lane & {
   roleNote?: string;
   /** Restarting Hydra (docs/Heads.md): set when Resume found no earlier conversation and started fresh instead. */
   resumeNote?: string;
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): lastGates.commit no longer matches the lane's HEAD — "Checks are for an older commit". The status itself is kept, just marked stale. */
+  gatesStale?: boolean;
 };
 export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resume' | 'restart' | 'diff' | 'openWindow' | 'refresh' | 'switchProvider' | 'runGates' | 'evidence'
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 5) ----
