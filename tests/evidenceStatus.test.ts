@@ -37,6 +37,8 @@ test('evidenceStatus: none vs none-chosen come from how the project configured g
   assert.equal(gatesConfigured('gates', 0), 'empty-file');
   assert.equal(gatesConfigured('gates', 2), 'file');
   assert.equal(gatesConfigured('checks', 1), 'file');
+  // A pack's gates count even when the project has no gates.json of its own.
+  assert.equal(gatesConfigured('none', 1), 'file');
 });
 
 test('evidenceStatus: an accepted result with no checks at all (nothing changed) is left unlabelled, not "no gates configured"', () => {

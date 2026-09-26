@@ -185,8 +185,9 @@ export const evidenceLabel = (status: EvidenceStatus): string => evidenceLabels[
  * reported not-run — gates.json's own gates plus any a pack added.
  */
 export function gatesConfigured(source: 'gates' | 'checks' | 'none', effectiveGateCount: number): GatesConfigured {
-  if (source === 'none') return 'none';
-  return effectiveGateCount > 0 ? 'file' : 'empty-file';
+  // Gates a pack adds count even without a gates.json of the project's own.
+  if (effectiveGateCount > 0) return 'file';
+  return source === 'none' ? 'none' : 'empty-file';
 }
 export interface JobEvent { at: string; from: JobState | null; to: JobState; reason?: string }
 

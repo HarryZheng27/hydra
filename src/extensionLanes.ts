@@ -694,7 +694,16 @@ export class LanesController implements vscode.Disposable {
     // With packs, a listed pack that can't run still shows its gates as not run (docs/Packs_Plan.md).
     const load: GatesLoader = this.host.gates ?? loadGates;
     const gatesConfig = await load(lane.repository).catch(() => undefined);
-    if (!gatesConfig || gatesConfig.lanes !== 'onMerge' || !(gatesConfig.gates.length || gatesConfig.notRun?.length)) return { note: '' };
+    if (!gatesConfig || gatesConfig.lanes !== 'onMerge' || !(gatesConfig.gates.length || gatesConfig.notRun?.length)) {
+      // Step A: no gates ran, so say which kind of "no gates" this is for the commit being merged.
+      // Gates that couldn't even be loaded get no label: that's not a project choice.
+      if (gatesConfig) {
+        const status = gatesConfig.source === 'none' && !gatesConfig.gates.length ? 'none' : 'none-chosen';
+        const commit = await git(lane.worktree, ['rev-parse', 'HEAD']).then(text => text.trim()).catch(() => undefined);
+        if (commit && /^[a-f0-9]{40,64}$/.test(commit)) await service.recordNoGates(lane.id, commit, status).catch(() => undefined);
+      }
+      return { note: '' };
+    }
     const reused = await service.reusableGates(lane.id).catch(() => undefined);
     if (reused?.commit) return { note: gatesPassNote(reused.results, ` on ${reused.commit.slice(0, 7)} at ${new Date(reused.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`) };
     const outcome = await this.runGatesFlow(service, lane, interactive);

@@ -520,6 +520,16 @@ export class LaneService {
     await this.options.store.update(lane.id, { lastGates: { source: lane.lastGates?.source ?? 'none', at: this.now().toISOString(), results, commit, status: 'override', ...(lane.lastGates?.config ? { config: lane.lastGates.config } : {}) } });
     this.changed();
   }
+  /**
+   * Step A: a merge or Mark job done that ran no gates, because the project has none or doesn't gate
+   * lanes, still says so for its commit ("No gates configured" / "No gates (project choice)"), so
+   * it's never an unlabelled "done".
+   */
+  async recordNoGates(id: unknown, commit: string, status: 'none' | 'none-chosen'): Promise<void> {
+    const lane = this.openLane(id);
+    await this.options.store.update(lane.id, { lastGates: { source: 'none', at: this.now().toISOString(), results: [], commit, status } });
+    this.changed();
+  }
 
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md) ----
 
