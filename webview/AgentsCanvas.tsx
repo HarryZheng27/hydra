@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientMessage, HelperJobView, LaneView, Provider, SnapshotRole } from '../src/core/model';
-import { buildCanvas, elapsedLabel, gateChip, headStatus, isActive, layout, type CanvasHead, type CanvasLead, type CanvasPlanJob, type CanvasPlanNode } from '../src/core/agentsCanvas';
+import { buildCanvas, elapsedLabel, evidenceLabel, gateChip, headStatus, isActive, layout, type CanvasHead, type CanvasLead, type CanvasPlanJob, type CanvasPlanNode } from '../src/core/agentsCanvas';
 // Type-only (see the note in agentsCanvas.ts): plans.ts's storage code must never
 // enter this browser bundle, so only PlanJob's shape crosses this boundary.
 import type { Plan, PlanJob, PlanJobRunAs } from '../src/core/plans';
@@ -393,6 +393,7 @@ function HeadNode({ item, now, fresh, from, selected, onSelect, onOpen, onMenu, 
       {!!head.checks.length && <div className="canvas-node-gates" aria-label="Gate results">
         {head.checks.map(check => { const chip = gateChip(check); return <span key={chip.id} className={`gate-chip tone-${chip.tone}`} title={chip.title}>{chip.label}</span>; })}
       </div>}
+      {head.status && <p className="canvas-node-evidence">{evidenceLabel(head.status)}</p>}
       <div className="canvas-node-foot">
         <code title={head.branch || head.writeScope?.join(', ')}>{head.branch ? head.branch.replace(/^agent\//, '') : (head.writeScope || []).join(' ') || 'not started'}</code>
         <span>{elapsedLabel(head, now)}</span>
@@ -514,6 +515,7 @@ function PlanRunningJobSlot({ item, onOpenMenu, onOpenLane, onPlan }: {
         {!!lane.lastGates?.results.length && <div className="canvas-node-gates" aria-label="Gate results">
           {lane.lastGates.results.map(check => { const chip = gateChip(check); return <span key={chip.id} className={`gate-chip tone-${chip.tone}`} title={chip.title}>{chip.label}</span>; })}
         </div>}
+        {lane.lastGates?.status && <p className="canvas-node-evidence">{evidenceLabel(lane.lastGates.status)}{lane.gatesStale ? ' (older commit)' : ''}</p>}
         <div className="canvas-node-foot">
           <code title={lane.branch}>{lane.branch}</code>
           <button className="canvas-node-more" aria-label={`More actions for ${job.title}`} onClick={event => { event.stopPropagation(); onOpenMenu(event.clientX, event.clientY); }}>⋯</button>
@@ -536,6 +538,7 @@ function PlanRunningJobSlot({ item, onOpenMenu, onOpenLane, onPlan }: {
       </div>
       <strong className="canvas-node-title" title={job.title}>{job.title}</strong>
       <p className="canvas-node-detail" title={detail}>{detail}</p>
+      {view.evidenceStatus && <p className="canvas-node-evidence">{evidenceLabel(view.evidenceStatus)}</p>}
       {view.startable && <div className="canvas-plan-actions"><button className="primary" onClick={event => { event.stopPropagation(); onPlan({ type: 'planStartJob', id: item.planId, key: job.key }); }}>Start lane</button></div>}
     </div>
   </div>;

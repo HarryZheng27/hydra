@@ -54,6 +54,8 @@ import type { LanePlanJobView } from './core/model';
 import { otherStillLimited } from './core/limitOffer';
 import { toHeadCheckView } from './core/jobs';
 import { buildEvidenceMarkdown } from './core/evidence';
+import { loadGates } from './core/gates';
+import { detectTestScript, noGatesFile, starterTestGatesFile } from './core/starterGates';
 // ---- Stop all (5.3, docs/Hydra_Improvements.md). Its own line. ----
 import { StopSwitch } from './core/stopSwitch';
 // ---- Audit log (5.2, docs/Hydra_Improvements.md). Its own line. ----
@@ -205,6 +207,8 @@ class Manager {
       stop: this.stop,
       // ---- Audit log (5.2) ----
       audit: event => this.audit.record(event),
+      // ---- Step A (docs/Hydra_Improvements_Pt_2.md) ----
+      offerStarterGates: folder => void this.offerStarterGatesIfNeeded(folder),
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
     const storedDismissed = context.workspaceState.get<string[]>(this.dismissedTrayKey);
@@ -618,6 +622,32 @@ class Manager {
       if (pick === 'Review') this.settings.show('packs');
     } catch { /* packs aren't available in this window; say nothing */ }
   }
+  /**
+   * Starter gates (docs/Hydra_Improvements_Pt_2.md, Step A): once per project per window, when it
+   * has no .hydra/gates.json at all, from the first lane merge or head acceptance in it. Never
+   * blocks: heads are unattended, and a lane merge has already happened by the time this runs.
+   */
+  private async offerStarterGatesIfNeeded(folder: string): Promise<void> {
+    if (process.env.HYDRA_TEST_REPOSITORY) return;
+    try {
+      const config = await (this.packs.gates ?? loadGates)(folder);
+      if (config.source !== 'none') return;
+      const key = 'hydra.starterGates.asked.v1';
+      const asked = new Set(this.context.workspaceState.get<string[]>(key, []));
+      if (asked.has(folder)) return;
+      await this.context.workspaceState.update(key, [...asked, folder]);
+      const hasTest = await detectTestScript(folder);
+      const pick = await vscode.window.showInformationMessage(
+        'This project has no gates yet: nothing independently checks a head\'s work before it\'s accepted, or a lane before it merges.',
+        hasTest ? 'Add a test gate (npm test)' : 'Add a test gate', 'No gates for this project', 'Not now',
+      );
+      if (!pick || pick === 'Not now') return;
+      const file = path.join(folder, '.hydra', 'gates.json');
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, pick.startsWith('Add a test gate') ? starterTestGatesFile() : noGatesFile(), 'utf8');
+      await this.settings.refreshPages(['gates']).catch(() => undefined);
+    } catch { /* gates aren't available in this window; say nothing, and never block acceptance or the merge */ }
+  }
   // ---- Lanes (docs/Lanes_And_Planner_Plan.md). The editor side is LanesController (src/extensionLanes.ts). ----
   /** Unfinished heads started from a lane. */
   private laneHeads(laneId: string): number {
@@ -771,12 +801,12 @@ class Manager {
       const job = this.helpers?.store.get(id);
       if (!job?.result?.checks.length) throw new Error('This head has no gate results yet.');
       base = path.join(this.storageDirectory, 'helpers', 'logs');
-      markdown = buildEvidenceMarkdown({ title: job.title, worktree: job.worktree ?? this.helpers!.service.leadFolder, logDirectories: [base], baseDirectory: base, results: job.result.checks });
+      markdown = buildEvidenceMarkdown({ title: job.title, worktree: job.worktree ?? this.helpers!.service.leadFolder, logDirectories: [base], baseDirectory: base, results: job.result.checks, ...(job.result.status ? { status: job.result.status, commit: job.result.commit } : {}) });
     } else {
       const evidence = this.lanes.laneEvidence(id), root = this.lanes.laneGatesLogRoot();
       if (!evidence || !root) throw new Error('This lane has no gate results yet.');
       base = root;
-      markdown = buildEvidenceMarkdown({ title: evidence.title, worktree: evidence.worktree, logDirectories: [root], baseDirectory: root, results: evidence.results });
+      markdown = buildEvidenceMarkdown({ title: evidence.title, worktree: evidence.worktree, logDirectories: [root], baseDirectory: root, results: evidence.results, ...(evidence.status ? { status: evidence.status, commit: evidence.commit, stale: evidence.stale } : {}) });
     }
     await mkdir(base, { recursive: true });
     const file = path.join(base, `${id}-evidence.md`);
@@ -894,6 +924,7 @@ class Manager {
       repository: service.leadFolder, worktree: job.worktree, dependsOn: job.dependsOn,
       lead: job.lead, merged: service.isMerged(job.id), startedAt: job.startedAt, writeScope: job.writeScope,
       ...(job.role ? { role: { ref: job.role.ref, title: job.role.title, packTitle: job.role.packTitle } } : {}),
+      ...(job.result?.status ? { status: job.result.status } : {}),
     })).reverse();
   }
   /** Head changes go to the webview at once (the Agents canvas animates them); the full snapshot follows, debounced. */
@@ -904,6 +935,8 @@ class Manager {
     // Plan lanes: the runner moves running plans along (it also makes them done or incomplete).
     this.planRunner?.advanceSoon();
     this.publishSoon();
+    // Step A (docs/Hydra_Improvements_Pt_2.md): a head just finished — the one-time starter-gates offer, non-blocking.
+    if (this.helpers && heads.some(head => head.state === 'done')) void this.offerStarterGatesIfNeeded(this.helpers.service.leadFolder);
   }
   private publishSoon(): void {
     if (this.publishTimer) clearTimeout(this.publishTimer);
@@ -1137,7 +1170,7 @@ class Manager {
     return new PlanRunner({
       store, repository: leadFolder,
       look: {
-        head: id => { const job = jobs.get(id); return job && { state: job.state, title: job.title, ...(job.limitHit ? { limitHit: true } : {}), ...(job.reason ? { reason: job.reason } : {}), ...(job.branch ? { branch: job.branch } : {}), ...(job.result ? { result: { commit: job.result.commit, summary: job.result.summary, changedFiles: job.result.changedFiles } } : {}) }; },
+        head: id => { const job = jobs.get(id); return job && { state: job.state, title: job.title, ...(job.limitHit ? { limitHit: true } : {}), ...(job.reason ? { reason: job.reason } : {}), ...(job.branch ? { branch: job.branch } : {}), ...(job.result ? { result: { commit: job.result.commit, summary: job.result.summary, changedFiles: job.result.changedFiles, ...(job.result.status ? { status: job.result.status } : {}) } } : {}) }; },
         lane: id => this.lanes.laneLook(id),
         planLanes: planId => this.lanes.planLanes(planId),
         lanesAvailable: () => this.lanes.available,

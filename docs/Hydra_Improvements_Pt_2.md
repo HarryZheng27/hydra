@@ -1,6 +1,6 @@
 # Hydra improvements, part 2: product and release parity
 
-Status (2026-09-26): planned. Decisions made; Steps A–E are to be built in order. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
+Status (2026-09-26): Step A built (see "As built"); Steps B–E to follow, in order. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
 
 ## Why this exists
 
@@ -290,3 +290,62 @@ Don't call Hydra "better" because of a feature checklist. Compare the same end-t
 - whether install and update can be trusted.
 
 Hydra should win first on a reliable Windows IDE workflow, with honest evidence and safe recovery. Add surface only where the comparison shows a real cost to users.
+
+## As built
+
+### Step A (2026-09-26)
+
+Built by one Sonnet subagent (`hydra-wt/evidence`). The main session reviewed the diff line by line, fixed what it found and ran the live checks.
+
+**What it does:**
+- **One status:** `evidenceStatus` (`src/core/jobs.ts`) gives each accepted job one of these, from its checks and how it was accepted:
+  - `passed`: Passed required gates;
+  - `partial`: Some gates not run;
+  - `none`: No gates configured;
+  - `none-chosen`: No gates (project choice);
+  - `override`: Human override.
+
+  A required gate that didn't run never counts as `passed`.
+- **Where it's stored, with its commit:**
+  - on a head's result (`HelperService.done`);
+  - on a lane's last gate record: when gates run, when you choose Merge anyway or Mark done anyway, and when a merge ran no gates;
+  - on a plan job's result.
+- **Old records** keep no status; nothing is relabelled.
+- **One label everywhere:**
+  - the canvas node (a head, and a plan's lane job);
+  - the lane tile, and the compact row of an exited lane;
+  - the Agents tree;
+  - the top line of View evidence;
+  - the "### Checks" section of the pull request body, through GitHub's compare `body` parameter.
+- **Stale checks:** a lane whose HEAD has moved past the recorded commit says "Checks are for an older commit" and keeps its status.
+- **Starter gates:**
+  - **Where:** Settings → Gates has "Starter gates". When a project has no `.hydra/gates.json`, the first lane merge or accepted head offers the same choice once, without blocking.
+  - **The choices:** "Add a test gate": `npm test`, the only choice when `package.json` has a test script. "No gates for this project": `{"gates": []}`. "Not now".
+
+**Fixed in review:**
+- **A lane merged with no gates had no status.** It merged in a project with no gates, or one that doesn't gate lanes, so no gates ran and nothing was recorded, leaving exactly the unlabelled "done" this step removes. `recordNoGates` now records `none` or `none-chosen` for the merged commit.
+- **A pack's gates didn't count** when the project had no `gates.json` of its own, so such a job read "No gates configured". Any effective gate now counts as configured.
+- **An exited lane's compact row** didn't show the status. Tile and row now share one `EvidenceChip`.
+- **The tree label had no test.** `tests/hydraTree.test.ts` now checks the lane, stale-lane and head labels.
+
+**Live checks (probe window):**
+1. **A passing gate:** a lane committed `ok.txt`, and Run gates made its tile read "Passed required gates".
+2. **A new commit:** the tile then read "Passed required gates — Checks are for an older commit".
+3. **An override:**
+   - Removing `ok.txt` made the gate fail, and Merge offered Merge anyway.
+   - After the merge, the tile read "Human override" with `✗ has-ok`.
+   - The lane record holds `override` for the merged commit (`637e8b2`, equal to `mergedHead`).
+4. **A project with no gates:**
+   - The merged lane reads "No gates configured".
+   - The one-time offer appeared with "Add a test gate (npm test)", and choosing it wrote the gate.
+   - A lane merged afterwards ran `npm test` as a gate on Windows and recorded `passed`. Its exited row shows the status.
+5. **Config:** Nico's Claude and Codex settings were unchanged. `~/.claude.json` gained a project entry for the fixture, left alone because editing it can race running Claude sessions.
+
+**Not checked live here:**
+- **The canvas and plan view labels:** they need heads and a plan, and Step B's journey exercises them with real heads.
+- **The pull request body:** this needs a GitHub remote. Unit tests cover its content and the size limit.
+
+**Tests:**
+- `tests/evidenceStatus.test.ts`: 13.
+- `tests/hydraTree.test.ts`: 9, including the new one.
+- Unchanged and passing: `lanes` 11, `laneGit` 9, `helperService` 21, `planRunner` 15, `planLanes` 11, `gates` 16, `audit` 11.

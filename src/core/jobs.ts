@@ -127,6 +127,67 @@ export interface JobResult {
   summary: string; commit: string; changedFiles: string[]; checks: JobCheckResult[];
   /** 1.6 (docs/Hydra_Improvements.md): set when .hydra/gates.json, checks.json or packs.json changed while this head ran. The gate floor (1.1) still ran the head's start-of-run gates regardless. */
   note?: string;
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status at acceptance. Missing on results from before this change, and on an accepted result nothing about gates should label (an optional-changes role that changed nothing): never relabelled after the fact. */
+  status?: EvidenceStatus;
+}
+
+// ---- Step A (docs/Hydra_Improvements_Pt_2.md, "truthful gate status for every job") ----
+
+/** How a project's gates were set up when a job finished: a real gates/checks file, a gates.json that deliberately lists none, or no file at all. */
+export type GatesConfigured = 'file' | 'empty-file' | 'none';
+/**
+ * One truthful label for how a job's work was accepted, shown identically everywhere the result
+ * appears (the canvas node, the lane tile, the plan view, the Agents tree and View evidence):
+ * - `passed`: every required gate passed, and no gate was skipped.
+ * - `partial`: required gates passed, but at least one gate (required or not) didn't run.
+ * - `none`: the project has no gates file at all.
+ * - `none-chosen`: the project's gates.json deliberately lists none.
+ * - `override`: a required gate failed, and a human went ahead anyway (Merge anyway / Mark done anyway).
+ */
+export type EvidenceStatus = 'passed' | 'partial' | 'none' | 'none-chosen' | 'override';
+export interface EvidenceStatusInput {
+  checks: JobCheckResult[];
+  configured: GatesConfigured;
+  /** A human overrode a failed required gate. Never set for a head: heads have no override, only lanes do. */
+  override?: boolean;
+}
+/**
+ * Step A: the status for a finished job's checks. Undefined in the two cases that aren't a
+ * governance decision about gates at all, so neither gets a gates label:
+ * - a required gate failed and nobody overrode it — the work wasn't accepted, so there is
+ *   nothing to label (the caller should not have reached acceptance in this case, but the
+ *   function stays total rather than throwing);
+ * - an accepted job whose checks are empty because nothing ran (for example an optional-changes
+ *   role that changed nothing): calling that "no gates configured" would misstate a project that
+ *   has real gates, so it is left unlabelled instead.
+ * A `notRun` required gate can never yield `passed` — `partial` always wins over it.
+ */
+export function evidenceStatus({ checks, configured, override }: EvidenceStatusInput): EvidenceStatus | undefined {
+  if (checks.some(gateBlocks)) return override ? 'override' : undefined;
+  if (configured === 'none') return 'none';
+  if (configured === 'empty-file') return 'none-chosen';
+  if (!checks.length) return undefined;
+  return checks.some(check => gateState(check) === 'notRun') ? 'partial' : 'passed';
+}
+const evidenceLabels: Readonly<Record<EvidenceStatus, string>> = {
+  passed: 'Passed required gates',
+  partial: 'Some gates not run',
+  none: 'No gates configured',
+  'none-chosen': 'No gates (project choice)',
+  override: 'Human override',
+};
+export const evidenceLabel = (status: EvidenceStatus): string => evidenceLabels[status];
+/**
+ * Whether a project's gates counted as configured (Step A): 'none' when there is no gates or
+ * checks file at all; 'empty-file' when the effective gate list is empty even though a file
+ * exists (a deliberate gates.json with `"gates": []`, or the packs that would have added to it
+ * inactive); 'file' otherwise. `effectiveGateCount` should count every gate that would run or be
+ * reported not-run — gates.json's own gates plus any a pack added.
+ */
+export function gatesConfigured(source: 'gates' | 'checks' | 'none', effectiveGateCount: number): GatesConfigured {
+  // Gates a pack adds count even without a gates.json of the project's own.
+  if (effectiveGateCount > 0) return 'file';
+  return source === 'none' ? 'none' : 'empty-file';
 }
 export interface JobEvent { at: string; from: JobState | null; to: JobState; reason?: string }
 

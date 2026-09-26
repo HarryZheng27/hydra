@@ -3,7 +3,8 @@ import path from 'node:path';
 import { git, gitRun } from './git';
 import { isInside } from './worktrees';
 import { branchTip, laneDiffBase, mergeTreeConflicts } from './laneSync';
-import { isLaneBranch, isSafeBranchName, laneFolder, type Lane, type LaneCloseMode } from './lanes';
+import { isLaneBranch, isSafeBranchName, laneFolder, type Lane, type LaneCloseMode, type LaneGatesRecord } from './lanes';
+import { evidenceLabel, gateKind, gateState } from './jobs';
 
 /**
  * Finishing a lane (docs/Lanes_And_Planner_Plan.md, "Finishing a lane"): commit,
@@ -12,7 +13,7 @@ import { isLaneBranch, isSafeBranchName, laneFolder, type Lane, type LaneCloseMo
  * asks for confirmation where it matters. Refs and paths come only from a
  * validated lane record, never from raw input.
  */
-type FinishLane = Pick<Lane, 'id' | 'name' | 'goal' | 'repository' | 'worktree' | 'branch' | 'target' | 'baseCommit' | 'state'>;
+type FinishLane = Pick<Lane, 'id' | 'name' | 'goal' | 'repository' | 'worktree' | 'branch' | 'target' | 'baseCommit' | 'state' | 'lastGates'>;
 
 function assertLaneRefs(lane: FinishLane): void {
   if (!isLaneBranch(lane.branch, lane.id)) throw new Error(`Lane ${lane.name} has an invalid branch.`);
@@ -115,12 +116,32 @@ export async function updateLane(lane: FinishLane): Promise<{ conflicts: string[
   throw new Error(`git refused the update: ${(result.stderr.trim() || result.stdout.trim()).split('\n').slice(0, 6).join(' ')}`);
 }
 
-/** The GitHub compare page for a pushed branch, or undefined for any other remote. */
-export function githubCompareUrl(remote: string, target: string, branch: string): string | undefined {
+/** The GitHub compare page for a pushed branch, or undefined for any other remote. `body` (Step A's "Checks" section) is passed as the compare page's own `body` parameter, already encoded. */
+export function githubCompareUrl(remote: string, target: string, branch: string, body?: string): string | undefined {
   const match = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com(?::\d+)?\/)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote.trim());
   if (!match) return undefined;
   const ref = (name: string) => name.split('/').map(encodeURIComponent).join('/');
-  return `https://github.com/${match[1]}/${match[2]}/compare/${ref(target)}...${ref(branch)}?expand=1`;
+  return `https://github.com/${match[1]}/${match[2]}/compare/${ref(target)}...${ref(branch)}?expand=1${body ? `&body=${body}` : ''}`;
+}
+
+/** Step A (docs/Hydra_Improvements_Pt_2.md): the compare page's PR body carries a short "Checks" section — the status, each gate's result and the commit — kept under `maxCompareUrlChars` in total (GitHub silently drops an overlong query). Undefined when there is nothing to say (no recorded status). */
+export const maxCompareUrlChars = 6000;
+export function checksSection(record: LaneGatesRecord | undefined): string | undefined {
+  if (!record?.status || !record.commit) return undefined;
+  const icon = (result: LaneGatesRecord['results'][number]) => { const state = gateState(result); return state === 'passed' ? '✓' : state === 'notRun' ? '–' : '✗'; };
+  const gateLines = record.results.map(result => `- ${icon(result)} ${result.id} (${gateKind(result)})`);
+  const build = (count: number) => [
+    '### Checks', '', evidenceLabel(record.status!), '',
+    ...gateLines.slice(0, count),
+    ...(count < gateLines.length ? [`- … ${gateLines.length - count} more`] : []),
+    '', `Commit ${record.commit!.slice(0, 7)}`,
+  ].join('\n');
+  // Clip the gate list, never the status or commit line, to stay under the URL budget.
+  for (let count = gateLines.length; count >= 0; count--) {
+    const body = build(count);
+    if (encodeURIComponent(body).length <= maxCompareUrlChars - 300) return body;
+  }
+  return `### Checks\n\n${evidenceLabel(record.status)}\n\nCommit ${record.commit.slice(0, 7)}`;
 }
 
 /** `git push -u origin <branch>` from the lane. Never prompts: a push that needs credentials git can't find fails with git's message. */
@@ -131,7 +152,8 @@ export async function pushLane(lane: FinishLane): Promise<{ branch: string; comp
   if (remote.code !== 0) throw new Error('This repository has no "origin" remote to push to.');
   const pushed = await gitRun(lane.worktree, ['push', '-u', 'origin', `refs/heads/${lane.branch}:refs/heads/${lane.branch}`], { GIT_TERMINAL_PROMPT: '0' }, 180_000);
   if (pushed.code !== 0) throw new Error(`git couldn't push ${lane.branch}: ${(pushed.stderr.trim() || pushed.stdout.trim()).split('\n').slice(0, 6).join(' ')}`);
-  const compareUrl = githubCompareUrl(remote.stdout, lane.target, lane.branch);
+  const body = checksSection(lane.lastGates);
+  const compareUrl = githubCompareUrl(remote.stdout, lane.target, lane.branch, body ? encodeURIComponent(body) : undefined);
   return { branch: lane.branch, ...(compareUrl ? { compareUrl } : {}) };
 }
 

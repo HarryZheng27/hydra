@@ -129,6 +129,7 @@ export class LaneSync {
       try {
         const { head, snapshot, dirty } = await snapshotLane(lane.worktree);
         result.dirty = dirty;
+        result.head = head;
         const tip = await branchTip(lane.repository, lane.target);
         snapshots.set(lane.id, { head, snapshot, tip });
         // Measured from where the lane meets its target, so work brought in by

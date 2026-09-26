@@ -1,5 +1,5 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
-import type { JobState } from './jobs';
+import type { EvidenceStatus, JobState } from './jobs';
 import type { LaneCloseMode, LaneState } from './lanes';
 import type { StopSwitch } from './stopSwitch';
 import {
@@ -20,7 +20,7 @@ export type PlanJobStatus = 'draft' | 'waiting' | 'active' | 'held' | 'done' | '
 /** What the runner needs to know about one head. */
 export interface PlanHeadLook {
   state: JobState; title: string; limitHit?: boolean; reason?: string; branch?: string;
-  result?: { commit: string; summary: string; changedFiles: string[] };
+  result?: { commit: string; summary: string; changedFiles: string[]; status?: EvidenceStatus };
 }
 /** What the runner needs to know about one lane, closed or not. */
 export interface PlanLaneLook {
@@ -28,6 +28,8 @@ export interface PlanLaneLook {
   /** The lane HEAD that Merge merged. */
   mergedHead?: string;
   closedAs?: LaneCloseMode;
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): the lane's last recorded evidence status, carried onto a merged job's result. */
+  gatesStatus?: EvidenceStatus;
 }
 /** The runner's view of this window's heads and lanes. */
 export interface PlanLook {
@@ -48,13 +50,15 @@ export interface PlanJobView {
   jobId?: string; laneId?: string;
   /** The work it handed on (a head's result, a lane's recorded result or merge). */
   commit?: string;
+  /** Step A (docs/Hydra_Improvements_Pt_2.md): the evidence status for `commit`, when one was recorded. Named apart from `status` (the job's run status) above. */
+  evidenceStatus?: EvidenceStatus;
   /** A lane job that was ready while the window started: Start lane starts it. */
   startable?: boolean;
 }
 export type PlanRecord =
   | { key: string; kind: 'outcome'; outcome: Omit<PlanJobOutcome, 'at'> }
   | { key: string; kind: 'adopt'; laneId: string }
-  | { key: string; kind: 'merged'; laneId: string; commit: string };
+  | { key: string; kind: 'merged'; laneId: string; commit: string; status?: EvidenceStatus };
 export interface PlanSteps {
   /** Every job, in the plan's order. */
   jobs: PlanJobView[];
@@ -108,11 +112,11 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
     const fail = (reason: string) => { record.push({ key, kind: 'outcome', outcome: { state: 'failed', reason } }); set('failed', reason); };
 
     if (job.outcome) { set(job.outcome.state, job.outcome.reason); continue; }
-    if (runAs === 'lane' && job.result) { view.commit = job.result.commit; set('done'); continue; }
+    if (runAs === 'lane' && job.result) { view.commit = job.result.commit; if (job.result.status) view.evidenceStatus = job.result.status; set('done'); continue; }
     if (runAs === 'head' && job.jobId) {
       const head = look.head(job.jobId);
       if (!head) set('failed', 'Its head is gone from this window.');
-      else if (head.state === 'done') { if (head.result) view.commit = head.result.commit; set('done'); }
+      else if (head.state === 'done') { if (head.result) { view.commit = head.result.commit; if (head.result.status) view.evidenceStatus = head.result.status; } set('done'); }
       else if (head.state === 'failed' && head.limitHit) set('held', head.reason || 'Its agent hit a usage limit.');
       else if (head.state === 'failed') set('failed', head.reason || 'Its head failed.');
       else if (head.state === 'cancelled') set('cancelled', head.reason || 'Its head was cancelled.');
@@ -123,7 +127,7 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
       // Without lanes in this window a lane can't be looked at: the job is neither done nor failed.
       if (!lanesAvailable) { set('active', 'Lanes aren\'t available in this window.'); continue; }
       const lane = look.lane(job.laneId);
-      if (lane?.mergedHead) { record.push({ key, kind: 'merged', laneId: job.laneId, commit: lane.mergedHead }); view.commit = lane.mergedHead; set('done'); continue; }
+      if (lane?.mergedHead) { record.push({ key, kind: 'merged', laneId: job.laneId, commit: lane.mergedHead, ...(lane.gatesStatus ? { status: lane.gatesStatus } : {}) }); view.commit = lane.mergedHead; if (lane.gatesStatus) view.evidenceStatus = lane.gatesStatus; set('done'); continue; }
       if (!lane || lane.state === 'closed') { fail(`Lane closed before its job was done${lane?.closedAs === 'keep' ? ` (branch ${lane.branch} kept)` : ''}.`); continue; }
       set('active');
       continue;
@@ -241,7 +245,7 @@ export interface PlanRunnerOptions {
 }
 
 /** What Mark job done records (docs/Plan_Lanes_Plan.md, "What done means for a lane job"). */
-export interface PlanLaneResultInput { commit: string; note?: string; changedFiles: string[] }
+export interface PlanLaneResultInput { commit: string; note?: string; changedFiles: string[]; status?: EvidenceStatus }
 
 export class PlanRunner {
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -374,7 +378,7 @@ export class PlanRunner {
       if (job.result && started.length) throw new Error(`${started.map(item => item.title).join(', ')} already started from ${job.result.commit.slice(0, 7)}, so this job's result can't move.`);
       if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(input.commit)) throw new Error('Mark job done needs a full commit id.');
       const note = input.note?.trim() ? clip(input.note.trim(), planResultNoteMax) : undefined;
-      const result = { commit: input.commit, via: 'marked' as const, at: this.now().toISOString(), ...(note ? { note } : {}), changedFiles: input.changedFiles.slice(0, planResultFilesMax) };
+      const result = { commit: input.commit, via: 'marked' as const, at: this.now().toISOString(), ...(note ? { note } : {}), changedFiles: input.changedFiles.slice(0, planResultFilesMax), ...(input.status ? { status: input.status } : {}) };
       await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key ? { ...item, result } : item) }));
       await this.pass(planId, {});
     });
@@ -457,7 +461,7 @@ export class PlanRunner {
         // A skipped job never started; a failed one here is a lane that closed without a result.
         if (item.kind === 'outcome' && (item.outcome.state === 'skipped' ? !jobStarted(job) : !!job.laneId)) { changed = true; return { ...job, outcome: { ...item.outcome, reason: clip(item.outcome.reason, planOutcomeReasonMax), at } }; }
         if (item.kind === 'adopt' && !job.laneId && !job.jobId) { changed = true; return { ...job, laneId: item.laneId }; }
-        if (item.kind === 'merged' && job.laneId === item.laneId) { changed = true; return { ...job, result: { commit: item.commit, via: 'merged' as const, at, changedFiles: merged.get(job.key) ?? [] } }; }
+        if (item.kind === 'merged' && job.laneId === item.laneId) { changed = true; return { ...job, result: { commit: item.commit, via: 'merged' as const, at, changedFiles: merged.get(job.key) ?? [], ...(item.status ? { status: item.status } : {}) } }; }
         return job;
       });
       return changed ? { ...current, jobs } : undefined;

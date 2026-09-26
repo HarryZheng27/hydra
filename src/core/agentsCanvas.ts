@@ -1,7 +1,7 @@
 import type { HeadCheckView, HelperJobView, LaneView, Provider } from './model';
 // Type-only, same rule as plans.ts above: jobs.ts pulls in node:fs/node:crypto for
 // the job store, so only its types (never gateChip/gateState as values) may cross.
-import type { JobCheckResult } from './jobs';
+import type { EvidenceStatus, JobCheckResult } from './jobs';
 // Type-only: this file is bundled into the browser webview, and plans.ts's
 // storage (PlanStore) pulls in node:fs/node:crypto, which a browser bundle
 // cannot resolve. So only types cross this boundary; the tiny bit of cycle
@@ -381,6 +381,19 @@ export function gateChip(check: Pick<HeadCheckView, 'id' | 'summary'> & { state?
   const title = check.pack ? `${base} · From the ${check.packTitle || check.pack} pack` : base;
   return { id: check.id, icon, label: `${icon} ${check.id}`, tone, title };
 }
+
+/**
+ * Step A (docs/Hydra_Improvements_Pt_2.md): the one evidence-status label, duplicated from
+ * src/core/jobs.ts's evidenceLabel for the same Node-import reason as gateChip above.
+ */
+const evidenceLabels: Readonly<Record<EvidenceStatus, string>> = {
+  passed: 'Passed required gates',
+  partial: 'Some gates not run',
+  none: 'No gates configured',
+  'none-chosen': 'No gates (project choice)',
+  override: 'Human override',
+};
+export const evidenceLabel = (status: EvidenceStatus): string => evidenceLabels[status];
 
 /** A short, human state for a head. */
 export const headStatus: Record<string, string> = {

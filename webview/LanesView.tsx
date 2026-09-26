@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientMessage, LaneAction, LaneLimitOfferView, LaneOfferButtonId, LanePlanJobView, LaneView, Provider, SnapshotRole } from '../src/core/model';
 import type { JobCheckResult } from '../src/core/jobs';
 import { otherProvider } from '../src/core/limitEvents';
-import { gateChip } from '../src/core/agentsCanvas';
+import { evidenceLabel, gateChip } from '../src/core/agentsCanvas';
 import { ProviderLogo } from './ProviderLogo';
 import { onLaneEvent } from './laneBus';
 import '@xterm/xterm/css/xterm.css';
@@ -244,6 +244,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
         {!!sync?.behind && lane.state !== 'merged' && <Chip tone="info">{sync.behind} behind {lane.target}</Chip>}
         {merges && <Chip tone="good">Merges cleanly</Chip>}
         {lane.state === 'merged' && <Chip tone="neutral">Merged</Chip>}
+        <EvidenceChip lane={lane} />
       </div>
     </header>
     <GateChips results={gates?.done ?? lane.lastGates?.results ?? []} running={gates?.running} />
@@ -286,6 +287,15 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
   </section>;
 }
 
+/** Step A (docs/Hydra_Improvements_Pt_2.md): the same evidence label on the tile and the exited-lane row. */
+function EvidenceChip({ lane }: { lane: LaneView }) {
+  const status = lane.lastGates?.status;
+  if (!status) return null;
+  return <Chip tone={status === 'override' ? 'warning' : status === 'passed' ? 'good' : 'neutral'}>
+    {evidenceLabel(status)}{lane.gatesStale ? ' — Checks are for an older commit' : ''}
+  </Chip>;
+}
+
 /** An exited lane's compact row (docs/Lanes_And_Planner_Plan.md, "Lanes view"): name, provider, branch, chips and its actions, instead of a full terminal tile. "Show terminal" expands it into the ordinary tile. */
 function ExitedLaneRow({ lane, laneName, expanded, onToggle, onSend }: {
   lane: LaneView; laneName: (id: string) => string | undefined; expanded: boolean; onToggle: () => void; onSend: (message: ClientMessage) => void;
@@ -302,6 +312,7 @@ function ExitedLaneRow({ lane, laneName, expanded, onToggle, onSend }: {
       {lane.planJob && <PlanChip planJob={lane.planJob} />}
       {conflict && <Chip tone="warning" title={sync!.conflicts.flatMap(item => item.files).join(', ')}>Conflicts with {laneName(conflict.laneId) || 'another lane'}</Chip>}
       {lane.exitCode !== undefined && <Chip tone="neutral">Exited (code {lane.exitCode})</Chip>}
+      <EvidenceChip lane={lane} />
     </div>
     <div className="lane-row-actions">
       <button onClick={() => act('resume')}>Resume</button>
