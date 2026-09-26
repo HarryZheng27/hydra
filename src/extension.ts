@@ -54,6 +54,8 @@ import type { LanePlanJobView } from './core/model';
 import { otherStillLimited } from './core/limitOffer';
 import { toHeadCheckView } from './core/jobs';
 import { buildEvidenceMarkdown } from './core/evidence';
+// ---- Stop all (5.3, docs/Hydra_Improvements.md). Its own line. ----
+import { StopSwitch } from './core/stopSwitch';
 
 let manager: Manager | undefined;
 // ---- Plan lanes (docs/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
@@ -101,6 +103,9 @@ class Manager {
   private disabled = false;
   private closing = false;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  // ---- Stop all (5.3, docs/Hydra_Improvements.md): the workspace-wide switch, and its status bar item ----
+  private readonly stop: StopSwitch;
+  private readonly stopStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
   private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
   private readonly locks: OwnershipLock[] = [];
   private readonly storageDirectory: string;
@@ -154,6 +159,8 @@ class Manager {
   /** Watches your packs folder (hydra.packs.folder), so a pack added or edited there refreshes without Reload. */
   private packsFolderWatcher?: vscode.FileSystemWatcher;
   constructor(private readonly context: vscode.ExtensionContext) {
+    // Stop all (5.3): a workspace-wide switch, so it survives a reload until Resume Agents runs.
+    this.stop = new StopSwitch(context.workspaceState);
     this.settingsImport = new SettingsImport(context);
     this.accounts = new ProviderAccounts(context, this.settingsImport.available);
     this.quota = new ProviderQuota(context, this.settingsImport.available);
@@ -187,6 +194,8 @@ class Manager {
       gates: this.packs.gates, roles: this.packs,
       // ---- Step 2 (docs/Hydra_Improvements.md): light limits for Claude lanes ----
       hydraStorage: context.globalStorageUri.fsPath,
+      // ---- Stop all (5.3) ----
+      stop: this.stop,
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
     const storedDismissed = context.workspaceState.get<string[]>(this.dismissedTrayKey);
@@ -224,6 +233,28 @@ class Manager {
       return stopped;
     });
     command('hydra.listHelpers', () => structuredClone(this.helpers?.service.list() ?? []));
+    // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
+    command('hydra.stopAllAgents', async (options?: { confirm?: boolean }) => {
+      if (options?.confirm !== false) {
+        const pick = await vscode.window.showWarningMessage('Stop every head and lane in this window?', { modal: true }, 'Stop all');
+        if (pick !== 'Stop all') return false;
+      }
+      const reason = 'Stopped with "Hydra: Stop All Agents".';
+      await this.stop.stop(reason);
+      const heads = await this.helpers?.service.stopAll(reason) ?? 0;
+      const lanes = await this.lanes.stopProcesses();
+      const parts = [heads ? `${heads} head${heads === 1 ? '' : 's'}` : '', lanes ? `${lanes} lane${lanes === 1 ? '' : 's'}` : ''].filter(Boolean);
+      void vscode.window.showInformationMessage(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
+      return true;
+    });
+    command('hydra.resumeAgents', async () => {
+      await this.stop.resume();
+      await this.planRunner?.advanceAll().catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
+      void vscode.window.showInformationMessage('Hydra resumed: heads, lanes and plans may start again.');
+      return true;
+    });
+    // Not contributed: Settings → Heads asks it, to show whether Hydra is stopped now.
+    command('hydra.getStopState', () => ({ stopped: this.stop.isStopped(), since: this.stop.since(), reason: this.stop.reason() }));
     // Not contributed: Settings → Heads asks it. Checks the head sandbox once per window if it hasn't been yet.
     command('hydra.headShellStatus', async () => { const shell = await this.headSandbox.shell(); return { kind: shell.kind, text: headShellSentence(shell) }; });
     // ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4). newPlan is public; the plans.* commands are test-only, not in menus. ----
@@ -304,10 +335,14 @@ class Manager {
       return event;
     });
     this.context.subscriptions.push(this.limitEvents.event(event => this.output.appendLine(`[limits] ${event.provider} ${event.source}${event.jobId ? ` ${event.jobId}` : ''}${event.sessionId ? ` session ${event.sessionId}` : ''}${event.resetsAt ? `, resets ${event.resetsAt}` : ''}: ${event.message ?? 'usage limit reached'}`)));
-    this.context.subscriptions.push(this.status, this.output);
+    this.context.subscriptions.push(this.status, this.stopStatus, this.output);
     await vscode.commands.executeCommand('setContext', 'hydra.mode', this.mode);
     this.status.command = 'hydra.toggleMode';
     this.status.show();
+    // Stop all (5.3): shown now if a previous session left Hydra stopped, and whenever it toggles.
+    this.stopStatus.command = 'hydra.resumeAgents';
+    this.context.subscriptions.push(this.stop.onChange(() => this.updateStopStatus()));
+    this.updateStopStatus();
     this.context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
       if (!event.affectsConfiguration('hydra')) return;
       // Packs: a changed packs folder re-creates the watcher on the new location (or none at all).
@@ -457,6 +492,8 @@ class Manager {
       sandbox: this.headSandbox, hydraStorage: this.context.globalStorageUri.fsPath,
       // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
       tempDirectory: path.join(this.context.globalStorageUri.fsPath, 't'),
+      // ---- Stop all (5.3) ----
+      stop: this.stop,
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
@@ -773,6 +810,14 @@ class Manager {
   }
   private async refresh(): Promise<void> { this.error = undefined; await this.refreshRepositories(); await this.publish(); }
   private describe(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  /** 5.3 (docs/Hydra_Improvements.md): the status bar item, shown only while Hydra is stopped. */
+  private updateStopStatus(): void {
+    if (!this.stop.isStopped()) { this.stopStatus.hide(); return; }
+    const since = this.stop.since();
+    this.stopStatus.text = '$(debug-stop) Hydra stopped';
+    this.stopStatus.tooltip = `Stopped since ${since ? new Date(since).toLocaleString() : 'earlier'}. Click to resume.`;
+    this.stopStatus.show();
+  }
   private report(error: unknown): void {
     this.error = this.describe(error);
     this.output.appendLine(this.error);
@@ -1070,6 +1115,8 @@ class Manager {
           .then(pick => { if (pick) void this.lanes.show('lanes', laneId); });
       },
       log: line => this.output.appendLine(line),
+      // ---- Stop all (5.3) ----
+      stop: this.stop,
     });
   }
   /** Each plan's job statuses, for plans that have run. */
