@@ -239,6 +239,8 @@ A **pack** bundles what one kind of work needs: **roles** for lanes, heads and p
 
 ## Security
 
+See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its boundaries, every control below with the file and test that proves it, and the risks accepted rather than fixed today.
+
 - **Local endpoint:** Hydra listens on `127.0.0.1` only, on a random port. Requests with a foreign `Host` or any `Origin` are refused, which blocks web pages. Oversized and flooding requests are refused too.
 - **Tokens:** every caller has its own random token, and only its hash is kept. The token alone decides who is calling (a window's lead, or one head) and which actions it may use. A head can't use lead actions. Head tokens are revoked when the job ends. The presented token's digest is also compared against the stored caller's digest with `crypto.timingSafeEqual`, on top of the map lookup.
 - **Gate floor:** a head's effective gates are recorded when it starts. At `hydra_done`, the gates that run are the start-of-run definition for every gate id the head already knew about, plus anything added to `.hydra/gates.json` since — so a head can't drop a gate or weaken its command mid-run, and Settings → Gates changes apply to heads started afterwards, never to one already running. If `.hydra/gates.json`, `checks.json` or `packs.json` changed while a head ran, its result says so.
