@@ -17,6 +17,7 @@ import type { Provider } from './model';
 import { headLimitReason } from './limitDetection';
 import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
+import type { StopSwitch } from './stopSwitch';
 
 /**
  * Hydra helpers, end to end (docs/Official_Extensions_Plan.md, Phases 4 and 6).
@@ -73,6 +74,9 @@ export interface HelperServiceOptions {
   hydraStorage?: string;
   /** Where each head's own TEMP folder goes. Defaults to `temp` beside the log directory. */
   tempDirectory?: string;
+  // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
+  /** Without it, heads never refuse to start and dispatch always runs (as before 5.3). */
+  stop?: StopSwitch;
 }
 
 interface Active {
@@ -212,6 +216,7 @@ export class HelperService {
    * it is resolved again from its pack's checked copy when the head starts.
    */
   private async startHelper(args: Record<string, unknown>, caller?: HelperCaller, inputs: readonly DependencyResult[] = [], defaultProvider?: Provider) {
+    this.options.stop?.assertRunning('Starting a head');
     const parsed = parseJobInput(args);
     const open = this.list().filter(job => !finalJobStates.has(job.state)).length;
     if (open >= 16) throw new Error('This window already has 16 unfinished heads. Wait for some to finish or cancel them.');
@@ -491,6 +496,8 @@ export class HelperService {
   }
 
   private async dispatchQueued(): Promise<void> {
+    // 5.3: stopped means no queued head starts, ever, until Resume Agents.
+    if (this.options.stop?.isStopped()) return;
     {
       for (const listed of this.list().filter(item => item.state === 'queued').sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
         // Each job is judged on its current state, and one job's trouble never stops the rest.
