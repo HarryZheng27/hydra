@@ -1,10 +1,10 @@
 # Hydra improvements: security hardening
 
-Status (2026-09-26): Steps 1–4 built and merged (see "As built"). What remains of Step 4 needs the release owner: a code-signing certificate, an update host and the update-signing key ([Releases.md](Releases.md)), then the native install step and a signed-to-signed upgrade test. Until then, in-app updates stay off. The **Later** list is not scheduled.
+Status (2026-09-26): Steps 1–4 built and merged (see "As built"). What remains of Step 4 needs the release owner: a code-signing certificate, an update host and the update-signing key ([Releases.md](Releases.md)), then the native install step and a signed-to-signed upgrade test. Until then, in-app updates stay off. The **Later** list is now Step 5, built one PR at a time.
 
 ## Goal
 
-Make Hydra's security as strong as it claims, then write it down. Four steps, in order:
+Make Hydra's security as strong as it claims, then write it down. Four steps, in order, then the Later list as Step 5:
 
 1. **Quick fixes:** a head can't weaken its own checks, and the reviewer can't be talked into approving.
 2. **Confine agents:**
@@ -140,14 +140,22 @@ Tests use real temp repos.
    - Hydra checks the signature before offering an update, and you confirm the download and the install.
    - `hydra.updateTrust` is on by default only after an upgrade test from a signed release to the next passes.
 
-## Later
+## Step 5: the Later list
 
-Not part of Steps 1–4, and not scheduled yet:
+These four were deferred while Steps 1–4 ran. Each is its own PR, in this order, because the audit log uses the redactor.
 
-- A global **Stop all**: ends every head and lane process and stays stopped until you resume.
-- An audit log of denials, approvals and stops.
-- One redactor for logs, transcripts and evidence.
-- Integrity checks for `npx` pack servers.
+| # | Feature | Where | Test |
+| --- | --- | --- | --- |
+| 5.1 | **One redactor.** `src/core/redact.ts` masks, in free text: Hydra's live endpoint tokens; the values of environment variables whose names look secret (the same name rule as the MCP settings page, which now imports it from here); known token shapes (`sk-`, `ghp_`, `github_pat_`, `glpat-`, `xox?-`, `AKIA`, `npm_`, `hf_`, JWTs); `Bearer`/`Basic` values and `Authorization:` headers; `-----BEGIN … PRIVATE KEY-----` blocks; passwords in URLs; and `key=value` or `"key": "value"` pairs whose key looks secret. It's applied to the Hydra output channel, head transcripts (`<jobId>.jsonl`), and gate evidence: command gate logs, review prompts and replies, and each gate result's output tail and summary. | `redact.ts`, `helperRunner.ts` (`logger`), `gates/command.ts`, `gates/review.ts`, `extension.ts` (the output channel) | Each shape is masked and ordinary text (paths, hashes, commit SHAs, UUIDs) is not; a head transcript, a command gate log and a review reply that print a planted token and an API key show neither. |
+| 5.2 | **An audit log.** `src/core/audit.ts` appends one redacted JSON line per event to `<globalStorage>/audit/audit.jsonl`, rotated at 2 MB (one previous file kept). Events: **denials** (every endpoint refusal, a refused lead connection, a head's `hydra_done` refused for changed git settings or hooks, a failed sandbox self-test, a pack server refused by 5.4); **approvals** (Merge with these changes, Mark done with these changes, Merge anyway after a failed gate, turning on a pack with its reviewed hash); **stops** (a head cancelled, Stop all, Resume). **Hydra: Open Audit Log** opens it read-only. | `audit.ts`, `extension.ts`, `extensionLanes.ts`, `helperService.ts`, the pack service | Events are written, redacted and rotated; a refused endpoint call and a "Merge anyway" each add exactly one line. |
+| 5.3 | **Stop all.** **Hydra: Stop All Agents** cancels every running head (and with it its gates), ends every lane's process while keeping the lane and its worktree, and stops plans from starting jobs. The stop is saved for the workspace, so it survives a reload, and a status bar item shows it. While stopped, `hydra_start_head` is refused with the reason, a lane won't launch or relaunch, and plans don't advance. **Hydra: Resume Agents** clears it. | `extension.ts`, `helperService.ts`, `laneService.ts`, `planRunner.ts`, `package.json` | Stop ends a running head and a lane process; start, launch and plan advance are refused while stopped; the state survives a new service instance; resume allows them again. |
+| 5.4 | **Integrity checks for `npx` pack servers.** A pack server run by `npx`, `bunx` or `pnpx` must name an exact version (`name@1.2.3`); a range, tag or bare name is refused when the pack loads. It may also pin `integrity` (npm's `sha512-…`). Before a pinned server first starts, Hydra asks the registry for that version's `dist.integrity` and refuses the server if it differs; a match is cached by name, version and integrity. npm itself then checks the download against the same value. The review panel shows the pin. The shipped Coding pack pins its Playwright server. | `src/core/packs/*`, `packs/coding/pack.json` | Ranges and tags are refused; a matching pin starts, a mismatch is refused with both values, and the cache avoids a second lookup. |
+
+**Live checks:**
+- 5.1: a head whose command gate prints a planted token; the output channel, transcript and evidence show it masked.
+- 5.2: refuse a call to the endpoint, merge a lane with "Merge anyway", then open the audit log.
+- 5.3: with a head and a lane running, Stop all; reload; try to start a head; Resume.
+- 5.4: turn on Coding and run a head with the UI builder role, which starts the Playwright server; then change the pin and see the refusal.
 
 ## When to use subagents
 
@@ -162,6 +170,7 @@ The main session (Opus) owns each step's plan, integration, live checks, local g
 | Step 3 threat model draft | **Sonnet** subagent | From the code and docs. It must cite the file and test for every control. |
 | Step 3 check | **Opus**, main session | Each control is checked against the code. A claim without a test is a gap. |
 | Step 4 CI and signing | **Opus**, main session | It touches release secrets and the update path. |
+| Step 5 features (5.1–5.4) | One **Sonnet** subagent per feature, each in its own worktree; 5.4 alongside 5.1, since they share no files | The main session reviews each diff line by line, runs the live checks and the gate, and opens one PR per feature. |
 | Looking things up (a file, a function, a setting) | Search directly, or an **Explore** subagent for broad sweeps | Never for review or judgement. |
 
 **Rules for every subagent:**
