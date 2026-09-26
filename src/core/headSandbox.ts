@@ -3,6 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promise
 import path from 'node:path';
 import { resolveCommand } from './gates/command';
 import { bashQuote, confinedEnvironment, envValue, guardScript, insideScript, treeScript, wrapperScript, type HeadShell } from './confine';
+import type { AuditEvent } from './audit';
 
 /**
  * Codex's Windows sandbox around a head's shell and the gate commands (docs/Hydra_Improvements.md,
@@ -109,6 +110,9 @@ export interface HeadSandboxOptions {
   log?: (line: string) => void;
   /** Test seam: the check's two runs. */
   run?: typeof runOnce;
+  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  /** Without it, a failed sandbox self-test is only logged, not recorded in the audit log. */
+  audit?: (event: AuditEvent) => void;
 }
 
 export class HeadSandbox implements CommandSandbox {
@@ -168,6 +172,8 @@ export class HeadSandbox implements CommandSandbox {
     await writeFile(wrapper, wrapperScript({ codex, bash: git.bash, inside: file('hydra-shell-inside.sh'), guard: file('hydra-shell-guard.sh'), tree: file('hydra-process-tree.ps1'), powershell }), 'utf8');
     const shell: HeadShell = { kind: 'sandboxed', wrapper, gitBin: git.bin };
     const problem = await this.test(shell, git);
+    // 5.2: a denial — the sandbox self-test itself (not a missing prerequisite) failed, once per window.
+    if (problem) this.options.audit?.({ kind: 'denial', what: 'sandbox self-test failed', detail: problem });
     return problem ? { kind: 'off', reason: problem } : shell;
   }
 

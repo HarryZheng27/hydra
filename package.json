@@ -110,6 +110,10 @@
         "title": "Hydra: Resume Agents"
       },
       {
+        "command": "hydra.openAuditLog",
+        "title": "Hydra: Open Audit Log"
+      },
+      {
         "command": "hydra.newLane",
         "title": "Hydra: New Lane",
         "icon": "$(add)"

@@ -23,6 +23,8 @@ import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLa
 import type { RoleSource } from './core/packs/launch';
 // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
 import type { StopSwitch } from './core/stopSwitch';
+// ---- Audit log (5.2, docs/Hydra_Improvements.md) ----
+import { laneOverrideEvent, type AuditEvent } from './core/audit';
 
 /**
  * The editor side of Hydra lanes (docs/Lanes_And_Planner_Plan.md): commands,
@@ -61,6 +63,9 @@ export interface LanesHost {
   // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
   /** Without it, a lane always may launch or relaunch. */
   stop?: StopSwitch;
+  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  /** Without it, a "Merge with these changes"/"Merge anyway" override and similar aren't recorded. */
+  audit?: (event: AuditEvent) => void;
 }
 /** Options for `hydra.lanes.action` (automation): no dialogs, so choices are passed in. */
 export interface LaneActionOptions { message?: string; close?: CloseMode }
@@ -668,6 +673,8 @@ export class LanesController implements vscode.Disposable {
     const message = `Your repository's git configuration or hooks changed since this lane started (${changed.join(', ')}). ${reason}`;
     if (!interactive) throw new Error(message);
     const pick = await vscode.window.showWarningMessage(message, { modal: true }, anyway);
+    // 5.2: an approval — "Merge with these changes" / "Mark done with these changes".
+    if (pick === anyway) this.host.audit?.(laneOverrideEvent(anyway, lane.id, changed.join(', ')));
     return pick === anyway;
   }
 
@@ -690,6 +697,8 @@ export class LanesController implements vscode.Disposable {
     if (!interactive) throw new Error(`Gates failed for lane ${lane.name}:\n${summarizeGateFailures(outcome.results)}`);
     const choice = await vscode.window.showWarningMessage(`Gates failed for lane ${lane.name}. ${question}`, { modal: true, detail: summarizeGateFailures(outcome.results) }, 'Send to lane', anyway);
     if (choice === 'Send to lane') { this.sendGatesToLane(service, lane, outcome.results); return undefined; }
+    // 5.2: an approval — "Merge anyway" / "Mark done anyway" after a failed gate.
+    if (choice === anyway) this.host.audit?.(laneOverrideEvent(anyway, lane.id, summarizeGateFailures(outcome.results)));
     return choice === anyway ? { note: '' } : undefined; // Cancel
   }
 

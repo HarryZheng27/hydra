@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { randomBytes, createHash } from 'node:crypto';
-import { mkdir, realpath, stat as fsStat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat as fsStat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { OwnershipLock } from './core/ownership';
 import { git, repositoryRoot } from './core/worktrees';
@@ -56,6 +56,8 @@ import { toHeadCheckView } from './core/jobs';
 import { buildEvidenceMarkdown } from './core/evidence';
 // ---- Stop all (5.3, docs/Hydra_Improvements.md). Its own line. ----
 import { StopSwitch } from './core/stopSwitch';
+// ---- Audit log (5.2, docs/Hydra_Improvements.md). Its own line. ----
+import { AuditLog, type AuditEvent } from './core/audit';
 
 let manager: Manager | undefined;
 // ---- Plan lanes (docs/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
@@ -106,6 +108,8 @@ class Manager {
   // ---- Stop all (5.3, docs/Hydra_Improvements.md): the workspace-wide switch, and its status bar item ----
   private readonly stop: StopSwitch;
   private readonly stopStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+  // ---- Audit log (5.2, docs/Hydra_Improvements.md): one per window, denials/approvals/stops ----
+  private readonly audit: AuditLog;
   private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
   private readonly locks: OwnershipLock[] = [];
   private readonly storageDirectory: string;
@@ -161,10 +165,12 @@ class Manager {
   constructor(private readonly context: vscode.ExtensionContext) {
     // Stop all (5.3): a workspace-wide switch, so it survives a reload until Resume Agents runs.
     this.stop = new StopSwitch(context.workspaceState);
+    // Audit log (5.2): one file per window, under Hydra's own storage, never a worktree.
+    this.audit = new AuditLog({ file: path.join(context.globalStorageUri.fsPath, 'audit', 'audit.jsonl') });
     this.settingsImport = new SettingsImport(context);
     this.accounts = new ProviderAccounts(context, this.settingsImport.available);
     this.quota = new ProviderQuota(context, this.settingsImport.available);
-    this.packs = createPackService(context, line => this.output.appendLine(line));
+    this.packs = createPackService(context, line => this.output.appendLine(line), event => this.audit.record(event));
     this.settings = new AppearanceSettings(context, this.settingsImport, this.packs);
     this.onboarding = new Onboarding(context, this.settingsImport, this.settings);
     context.subscriptions.push(this.settings, this.onboarding, this.accounts, this.quota, this.limitEvents, this.tree);
@@ -178,6 +184,7 @@ class Manager {
       folder: path.join(this.context.globalStorageUri.fsPath, 'sb', path.basename(this.storageDirectory)),
       codex: async () => (await findProvider('codex', vscode.workspace.getConfiguration('hydra').get<string>('codexPath') || undefined)).executable,
       log: line => this.output.appendLine(line),
+      audit: event => this.audit.record(event),
     });
     this.lanes = new LanesController({
       context, log: line => this.output.appendLine(line),
@@ -196,6 +203,8 @@ class Manager {
       hydraStorage: context.globalStorageUri.fsPath,
       // ---- Stop all (5.3) ----
       stop: this.stop,
+      // ---- Audit log (5.2) ----
+      audit: event => this.audit.record(event),
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
     const storedDismissed = context.workspaceState.get<string[]>(this.dismissedTrayKey);
@@ -244,15 +253,21 @@ class Manager {
       const heads = await this.helpers?.service.stopAll(reason) ?? 0;
       const lanes = await this.lanes.stopProcesses();
       const parts = [heads ? `${heads} head${heads === 1 ? '' : 's'}` : '', lanes ? `${lanes} lane${lanes === 1 ? '' : 's'}` : ''].filter(Boolean);
+      // 5.2: a stop — Stop All Agents itself, distinct from each head's own "head cancelled" line.
+      this.audit.record({ kind: 'stop', what: 'Stop all agents', detail: parts.join(', ') || undefined });
       void vscode.window.showInformationMessage(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
       return true;
     });
     command('hydra.resumeAgents', async () => {
       await this.stop.resume();
       await this.planRunner?.advanceAll().catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
+      // 5.2: a resume.
+      this.audit.record({ kind: 'resume', what: 'Resume agents' });
       void vscode.window.showInformationMessage('Hydra resumed: heads, lanes and plans may start again.');
       return true;
     });
+    // ---- Audit log (5.2, docs/Hydra_Improvements.md) ----
+    command('hydra.openAuditLog', () => this.openAuditLog());
     // Not contributed: Settings → Heads asks it, to show whether Hydra is stopped now.
     command('hydra.getStopState', () => ({ stopped: this.stop.isStopped(), since: this.stop.since(), reason: this.stop.reason() }));
     // Not contributed: Settings → Heads asks it. Checks the head sandbox once per window if it hasn't been yet.
@@ -465,10 +480,16 @@ class Manager {
       return service.handle(caller, tool, args, signal);
     }, { leadKey, laneExists: id => this.lanes.exists(id),
       // Refusals are logged too (docs/THREAT_MODEL.md): who, what and why, never a token.
-      onRefuse: event => this.output.appendLine(`[heads] refused ${event.status}: ${event.reason}${event.role ? ` (${event.role}${event.jobId ? ` ${event.jobId}` : ''}${event.tool ? `, ${event.tool}` : ''})` : ''}`),
+      onRefuse: event => {
+        this.output.appendLine(`[heads] refused ${event.status}: ${event.reason}${event.role ? ` (${event.role}${event.jobId ? ` ${event.jobId}` : ''}${event.tool ? `, ${event.tool}` : ''})` : ''}`);
+        // 5.2: a denial — every endpoint refusal.
+        this.audit.record({ kind: 'denial', what: `endpoint refused: ${event.status}`, detail: event.reason, role: event.role, jobId: event.jobId });
+      },
       verifyLead: async socket => {
       const verdict = await verifyLead(socket);
       this.output.appendLine(`[heads] lead connection ${verdict.ok ? 'accepted' : `refused: ${verdict.reason}`}`);
+      // 5.2: a denial — a refused lead connection.
+      if (!verdict.ok) this.audit.record({ kind: 'denial', what: 'lead connection refused', detail: verdict.reason });
       return verdict;
     } });
     const port = await endpoint.start();
@@ -494,6 +515,8 @@ class Manager {
       tempDirectory: path.join(this.context.globalStorageUri.fsPath, 't'),
       // ---- Stop all (5.3) ----
       stop: this.stop,
+      // ---- Audit log (5.2) ----
+      audit: event => this.audit.record(event),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
@@ -759,6 +782,19 @@ class Manager {
     const file = path.join(base, `${id}-evidence.md`);
     await writeFile(file, markdown, 'utf8');
     await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
+  }
+  /**
+   * Hydra: Open Audit Log (5.2, docs/Hydra_Improvements.md). Opens a snapshot of the file's
+   * current content as an untitled document, never the file itself, so it can't be edited in
+   * place. `flush()` first, so a just-recorded event (this window's own) is included.
+   */
+  private async openAuditLog(): Promise<void> {
+    await this.audit.flush();
+    const file = path.join(this.context.globalStorageUri.fsPath, 'audit', 'audit.jsonl');
+    const content = await readFile(file, 'utf8').catch(() => undefined);
+    if (!content) { void vscode.window.showInformationMessage('No audit events yet.'); return; }
+    const document = await vscode.workspace.openTextDocument({ language: 'json', content });
+    await vscode.window.showTextDocument(document, { preview: true });
   }
   private async stopHelpers(): Promise<void> {
     this.planRunner?.dispose(); this.planRunner = undefined;
