@@ -28,6 +28,6 @@
     }
   ],
   "mcpServers": {
-    "playwright": { "type": "stdio", "command": "npx", "args": ["-y", "@playwright/mcp@0.0.82", "--headless", "--isolated"] }
+    "playwright": { "type": "stdio", "command": "npx", "args": ["-y", "@playwright/mcp@0.0.82", "--headless", "--isolated"], "integrity": "sha512-OCqftfb8H4dnqm/njbTBRk3seUvUPttOlJUxCtEzXGETYOlRH5Qt3bbXIjmZIuWAxD9RF+yg1ASrPeXvm0y5cA==" }
   }
 }
