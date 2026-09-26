@@ -101,12 +101,13 @@ const maskTokenShapes = (text: string): string => tokenShapePatterns.reduce((acc
 const jsonPairPattern = /"([A-Za-z][\w-]{1,60})"[ \t]*:[ \t]*"((?:[^"\\]|\\.)*)"/g;
 const maskJsonPairs = (text: string): string => text.replace(jsonPairPattern, (whole, key: string, value: string) => secretKeyPattern.test(key) && qualifies(value) ? `"${key}": "${replacement}"` : whole);
 
-// A bare or quoted "key: value" line (YAML-ish). The value stops at end of line, a comma or a closing bracket.
-const colonPairPattern = /\b([A-Za-z][\w-]{1,60})[ \t]*:[ \t]+(?!\/\/)(['"]?)([^\s,;}\]"']+)\2/g;
+// A bare or quoted "key: value" line (YAML-ish). The value stops at end of line, a comma or a bracket
+// (never matching partway into an earlier "[redacted]" replacement).
+const colonPairPattern = /\b([A-Za-z][\w-]{1,60})[ \t]*:[ \t]+(?!\/\/)(['"]?)([^\s,;{}[\]"']+)\2/g;
 const maskColonPairs = (text: string): string => text.replace(colonPairPattern, (whole, key: string, quote: string, value: string) => secretKeyPattern.test(key) && qualifies(value) ? `${key}: ${quote}${replacement}${quote}` : whole);
 
 // key=value (env-file / CLI style), quoted or bare.
-const equalsPairPattern = /\b([A-Za-z_][\w-]{1,60})=(['"]?)([^\s,;}\]"']+)\2/g;
+const equalsPairPattern = /\b([A-Za-z_][\w-]{1,60})=(['"]?)([^\s,;{}[\]"']+)\2/g;
 const maskEqualsPairs = (text: string): string => text.replace(equalsPairPattern, (whole, key: string, quote: string, value: string) => secretKeyPattern.test(key) && qualifies(value) ? `${key}=${quote}${replacement}${quote}` : whole);
 
 /**

@@ -127,7 +127,8 @@ export const startHelperRun: StartHelperRun = spec => spec.provider === 'claude'
  * secret Hydra already knows), and so is anything else in the line that looks like a
  * secret — an API key the head's tool output happened to print, an env var value, and so on.
  */
-function logger(file: string, secret?: string) {
+/** Exported for tests/redact.test.ts: a head transcript that prints a planted secret masks it. */
+export function logger(file: string, secret?: string) {
   let queue: Promise<unknown> = mkdir(path.dirname(file), { recursive: true }).catch(() => undefined);
   const redact = (line: string) => redactText(line, secret ? [secret] : []);
   return (kind: string, data: unknown) => { queue = queue.then(() => appendFile(file, redact(JSON.stringify({ at: Date.now(), kind, data })) + '\n')).catch(() => undefined); };
