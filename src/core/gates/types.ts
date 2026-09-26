@@ -7,6 +7,7 @@ import type { CheckCommandResult } from '../checkCommand';
 import type { Gate } from './config';
 import type { ScreenshotBrowser } from './browser';
 import type { CommandSandbox } from '../headSandbox';
+import { redactText } from '../redact';
 
 /**
  * What a caller tells the gates about the work being checked. Heads
@@ -47,6 +48,13 @@ export interface GateContext {
    * past 260 characters and tools like npm nest deep inside TEMP. Without it, beside the gate's log.
    */
   tempRoot?: string;
+  /**
+   * 5.1 (docs/Hydra_Improvements.md): masks secrets in gate evidence (command logs, review
+   * prompts and replies) and in a JobCheckResult's own text. Defaults to `redactText` with no
+   * live secrets besides the environment; a caller that knows about live secrets (Hydra's own
+   * endpoint tokens) can pass a redactor that also masks those.
+   */
+  redact?: (text: string) => string;
 }
 
 /** A sandboxed gate command's own TEMP folder (see GateContext.tempRoot): short and unique per run. */
@@ -96,6 +104,18 @@ export type GateRunner<G extends Gate> = (gate: G, run: GateRun) => Promise<JobC
 /** A gate that couldn't run. It is reported with the reason and never fails the work. */
 export function notRun(gate: Pick<Gate, 'id' | 'type' | 'required'>, reason: string, durationMs = 0, extra: Partial<JobCheckResult> = {}): JobCheckResult {
   return { id: gate.id, kind: gate.type, required: gate.required, state: 'notRun', passed: false, exitCode: null, durationMs, outputTail: '', summary: reason, ...extra };
+}
+/**
+ * 5.1: every gate goes through this before its result is kept, so a command's printed secret
+ * or a reviewer's quoted one never reaches the job's checks, the UI or a lane's Send to lane.
+ */
+export function redactGateResult(result: JobCheckResult, redact: (text: string) => string = redactText): JobCheckResult {
+  return {
+    ...result,
+    outputTail: redact(result.outputTail),
+    ...(result.summary !== undefined ? { summary: redact(result.summary) } : {}),
+    ...(result.findings ? { findings: result.findings.map(finding => ({ ...finding, note: redact(finding.note) })) } : {}),
+  };
 }
 export const clip = (value: string, max: number): string => value.length > max ? `${value.slice(0, max)}…` : value;
 export const tail = (value: string, max: number): string => value.length > max ? `…${value.slice(-max)}` : value;

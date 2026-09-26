@@ -7,6 +7,7 @@ import type { JobCheckResult } from '../jobs';
 import type { ScreenshotsGate } from './config';
 import type { BrowserSession } from './browser';
 import type { CommandSandbox } from '../headSandbox';
+import { redactText } from '../redact';
 import { resolveCommand } from './command';
 import { clip, gateTemp, notRun, tail, type GateRun, type GateRuntime } from './types';
 
@@ -130,9 +131,17 @@ export async function runScreenshotsGate(gate: ScreenshotsGate, run: GateRun): P
     await session?.close();
     if (run.sandbox) await rm(appTemp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
   }
+  // 5.1: the app under test can print a secret from its own environment or a fixture; the log
+  // Hydra keeps as evidence, and the tail folded into the result, are both redacted.
+  const redact = run.redact ?? redactText;
+  const rawServerLog = await readFile(serverLog, 'utf8').catch(() => undefined);
+  if (rawServerLog !== undefined) {
+    const redactedServerLog = redact(rawServerLog);
+    if (redactedServerLog !== rawServerLog) await writeFile(serverLog, redactedServerLog, 'utf8').catch(() => undefined);
+  }
   const evidence = [...pictures, serverLog];
   if (run.signal?.aborted) return notRun(gate, 'Stopped before it finished.', elapsed(), { evidence });
-  const listed = [...new Set(problems)];
+  const listed = [...new Set(problems.map(problem => redact(problem)))];
   const shown = listed.slice(0, maxProblems).concat(listed.length > maxProblems ? [`…and ${listed.length - maxProblems} more.`] : []);
   if (!listed.length && tooling) return notRun(gate, tooling, elapsed(), { evidence });
   const serverOutput = listed.length && !pictures.length ? await readFile(serverLog, 'utf8').catch(() => '') : '';

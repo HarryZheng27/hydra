@@ -1,7 +1,8 @@
-import { access, readFile, rm } from 'node:fs/promises';
+import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { JobCheckResult } from '../jobs';
 import type { CommandGate } from './config';
+import { redactText } from '../redact';
 import { gateTemp, type GateRun } from './types';
 
 /**
@@ -43,6 +44,12 @@ export async function runCommandGate(gate: CommandGate, run: GateRun): Promise<J
   try { outcome = await run.runtime.runCommand(wrapped ? { executable: wrapped.executable, args: wrapped.args, environment: wrapped.environment } : command, run.worktree, logFile, gate.timeoutSeconds * 1000, run.signal, run.spawned); }
   finally { if (wrapped) await rm(temp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined); }
   const output = await readFile(logFile, 'utf8').catch(() => '');
+  // 5.1: a command a head or a lane runs can print a secret it read (a key from a CI log, a
+  // token a test fixture used); the saved log and the tail Hydra keeps in the result both go
+  // through the redactor before anyone reads them.
+  const redact = run.redact ?? redactText;
+  const redacted = redact(output);
+  if (redacted !== output) await writeFile(logFile, redacted, 'utf8').catch(() => undefined);
   const passed = outcome.exitCode === 0 && !outcome.timedOut && !outcome.interrupted;
   const summary = passed ? undefined
     : outcome.timedOut ? `Timed out after ${gate.timeoutSeconds} s.`
@@ -52,7 +59,7 @@ export async function runCommandGate(gate: CommandGate, run: GateRun): Promise<J
     : `Exited with code ${outcome.exitCode ?? 'none'}.`;
   return {
     id: gate.id, kind: 'command', required: gate.required, state: passed ? 'passed' : 'failed', passed,
-    exitCode: outcome.exitCode, durationMs: run.runtime.now() - started, outputTail: output.slice(-maxCommandOutput),
+    exitCode: outcome.exitCode, durationMs: run.runtime.now() - started, outputTail: redacted.slice(-maxCommandOutput),
     evidence: [logFile], ...(summary ? { summary } : {}),
   };
 }
