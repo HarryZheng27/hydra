@@ -300,7 +300,8 @@ Built in `hydra-wt/confine` (branch `feat/confine`), one Opus subagent, from the
 **Tests** (a temporary esbuild runner outside `tests/`, never the full gate, `helperEndpoint` or the integration test):
 - `tests/confine.test.ts`: 20 tests, all passing: rule paths, homes, the head and lane settings exactly, the settings check, the storage carve-out, tool lists, head arguments with and without the sandbox and with a role, Codex arguments, the environment allowlist, a head's environment, the wrapper text, the wrapper's fail-closed branch in real Git Bash, finding Codex and Git Bash, the check's decisions, gate commands wrapped only when the sandbox is there, hooks-off commits against a planted pre-commit hook and a `core.hooksPath` hook, confined heads and lanes end to end with stand-ins for the CLIs, and the first message.
 - Updated and passing: `helperService.test.ts` (21), `packsLaunch.test.ts` (17), `hardening.test.ts` (12), `gates.test.ts` (16, the reviewer's arguments).
-- Unchanged and passing: `gatesUI`, `lanes`, `planLanes`, `laneGit`, `lanesView`, `packs`, `core`, `jobs`, `settingsShell`, `planner`.
+- Unchanged and passing: `gatesUI` (16), `lanes` (11), `planLanes` (11), `laneGit` (9), `lanesView` (8), `packs` (25), `core` (11), `jobs` (9), `settingsShell` (7), `planner` (4). 197 tests in all.
+- `npx tsc --noEmit` and `npm run build` pass.
 
 **What the live checks must look at:**
 - **Settings → Heads** says "Head shells run in Codex's Windows sandbox." (and, with Codex's path set to a missing file, why they're off).
