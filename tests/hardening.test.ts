@@ -302,8 +302,8 @@ test('the endpoint accepts a valid token and refuses an unknown one and a same-l
 function f_repo(f: { repo: string }): string { return f.repo; }
 
 test('a head runs with background tasks off, so it waits for its commands instead of ending its turn', async () => {
-  const { headEnvironment } = await import('../src/core/helperRunner');
-  const env = headEnvironment({ PATH: 'x' }, { PACK_VAR: 'y' });
+  const { headEnvironment } = await import('../src/core/confine');
+  const env = headEnvironment({ base: { PATH: 'x' }, platform: 'win32', provider: 'codex', temp: 'T', worktree: 'W', roleValues: { PACK_VAR: 'y' } });
   assert.equal(env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, '1');
   assert.equal(env.DISABLE_AUTOUPDATER, '1');
   assert.deepEqual([env.PATH, env.PACK_VAR], ['x', 'y']);

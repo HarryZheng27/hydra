@@ -1,9 +1,12 @@
+import { randomBytes } from 'node:crypto';
+import path from 'node:path';
 import type { Provider } from '../model';
 import type { JobCheckResult } from '../jobs';
 import type { ProbeOutput } from '../process';
 import type { CheckCommandResult } from '../checkCommand';
 import type { Gate } from './config';
 import type { ScreenshotBrowser } from './browser';
+import type { CommandSandbox } from '../headSandbox';
 
 /**
  * What a caller tells the gates about the work being checked. Heads
@@ -33,6 +36,22 @@ export interface GateContext {
   onProgress?: (progress: { done: JobCheckResult[]; running?: string }) => void;
   /** Test seams: a fake reviewer, browser, clock or port. */
   runtime?: Partial<GateRuntime>;
+  /**
+   * Step 2 (docs/Hydra_Improvements.md, design 5): Codex's sandbox for command gates and the
+   * screenshots gate's app, with the worktree writable and the allowlisted environment. Without it,
+   * or when it isn't available, they run as before. Review gates don't use it: they run read-only.
+   */
+  sandbox?: CommandSandbox;
+  /**
+   * Where a sandboxed gate command's own TEMP goes: a short folder, since Windows refuses paths
+   * past 260 characters and tools like npm nest deep inside TEMP. Without it, beside the gate's log.
+   */
+  tempRoot?: string;
+}
+
+/** A sandboxed gate command's own TEMP folder (see GateContext.tempRoot): short and unique per run. */
+export function gateTemp(run: Pick<GateContext, 'tempRoot' | 'logDirectory'>, gateId: string): string {
+  return run.tempRoot ? path.join(run.tempRoot, `g${randomBytes(5).toString('hex')}`) : path.join(run.logDirectory, `${gateId}-temp`);
 }
 
 export interface ReviewerSpec {
@@ -50,7 +69,7 @@ export interface ReviewerSpec {
 
 /** Everything a gate does to the outside world, so tests can replace any of it. */
 export interface GateRuntime {
-  runCommand(command: { executable: string; args: string[]; env?: Record<string, string> }, cwd: string, logFile: string, timeoutMs: number, signal?: AbortSignal, spawned?: (pid: number) => void): Promise<CheckCommandResult>;
+  runCommand(command: { executable: string; args: string[]; env?: Record<string, string>; environment?: Record<string, string> }, cwd: string, logFile: string, timeoutMs: number, signal?: AbortSignal, spawned?: (pid: number) => void): Promise<CheckCommandResult>;
   runReviewer(spec: ReviewerSpec): Promise<ProbeOutput>;
   browser: ScreenshotBrowser;
   freePort(): Promise<number>;

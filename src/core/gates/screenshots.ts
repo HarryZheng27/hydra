@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
-import { open, readFile, writeFile } from 'node:fs/promises';
+import { open, readFile, rm, writeFile } from 'node:fs/promises';
 import net, { type AddressInfo } from 'node:net';
 import path from 'node:path';
 import { processLaunch } from '../process';
 import type { JobCheckResult } from '../jobs';
 import type { ScreenshotsGate } from './config';
 import type { BrowserSession } from './browser';
+import type { CommandSandbox } from '../headSandbox';
 import { resolveCommand } from './command';
-import { clip, notRun, tail, type GateRun, type GateRuntime } from './types';
+import { clip, gateTemp, notRun, tail, type GateRun, type GateRuntime } from './types';
 
 /**
  * The screenshots gate (docs/Gates_Plan.md). Hydra picks a free local port,
@@ -33,8 +34,12 @@ export const substitutePort = (value: string, port: number): string => value.rep
 
 interface AppServer { pid?: number; exitCode(): number | null | undefined; exited: Promise<void>; stop(): Promise<void> }
 
-/** Start the app as a tracked process tree in the worktree, its output going to a log. */
-async function startApp(command: string[], cwd: string, port: number, logFile: string, runtime: GateRuntime, spawned?: (pid: number) => void, env: Record<string, string> = {}): Promise<AppServer> {
+/**
+ * Start the app as a tracked process tree in the worktree, its output going to a log. With Codex's
+ * sandbox (Step 2, design 5), the app runs in it, with the worktree writable, the allowlisted
+ * environment and the network on; stopping it ends the sandboxed tree through the wrapper's guard.
+ */
+async function startApp(command: string[], cwd: string, port: number, logFile: string, runtime: GateRuntime, spawned?: (pid: number) => void, env: Record<string, string> = {}, sandbox?: CommandSandbox, temp?: string): Promise<AppServer> {
   const log = await open(logFile, 'w');
   let written = 0, writes = Promise.resolve(), exitCode: number | null | undefined;
   const append = (data: Buffer) => {
@@ -42,8 +47,10 @@ async function startApp(command: string[], cwd: string, port: number, logFile: s
     const part = data.subarray(0, maxServerLog - written); written += part.length;
     writes = writes.then(() => log.write(part).then(() => undefined)).catch(() => undefined);
   };
-  const launch = processLaunch(await resolveCommand(command[0]!), command.slice(1));
-  const child = spawn(launch.executable, launch.args, { cwd, env: { ...process.env, ...env, PORT: String(port) }, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+  const executable = await resolveCommand(command[0]!);
+  const wrapped = sandbox && temp ? await sandbox.wrap({ executable, args: command.slice(1), env: { ...env, PORT: String(port) } }, cwd, temp) : undefined;
+  const launch = wrapped ?? processLaunch(executable, command.slice(1));
+  const child = spawn(launch.executable, launch.args, { cwd, env: wrapped ? wrapped.environment : { ...process.env, ...env, PORT: String(port) }, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
   if (child.pid) spawned?.(child.pid);
   child.stdout.on('data', append); child.stderr.on('data', append);
   const exited = new Promise<void>(resolve => {
@@ -94,10 +101,11 @@ export async function runScreenshotsGate(gate: ScreenshotsGate, run: GateRun): P
   const port = await runtime.freePort();
   const url = substitutePort(gate.url, port);
   const serverLog = path.join(run.logDirectory, `${gate.id}-server.log`);
+  const appTemp = gateTemp(run, gate.id);
   const problems: string[] = [], pictures: string[] = [];
   let app: AppServer | undefined, session: BrowserSession | undefined, tooling: string | undefined;
   try {
-    app = await startApp(gate.start.map(part => substitutePort(part, port)), run.worktree, port, serverLog, runtime, run.spawned, gate.env);
+    app = await startApp(gate.start.map(part => substitutePort(part, port)), run.worktree, port, serverLog, runtime, run.spawned, gate.env, run.sandbox, appTemp);
     const ready = await waitUntilReady(url, gate.readyTimeoutSeconds * 1000, app, runtime, run.signal);
     if (!ready.ok) problems.push(ready.reason);
     else {
@@ -120,6 +128,7 @@ export async function runScreenshotsGate(gate: ScreenshotsGate, run: GateRun): P
   } finally {
     await app?.stop();
     await session?.close();
+    if (run.sandbox) await rm(appTemp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
   }
   const evidence = [...pictures, serverLog];
   if (run.signal?.aborted) return notRun(gate, 'Stopped before it finished.', elapsed(), { evidence });

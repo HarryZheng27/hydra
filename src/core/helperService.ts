@@ -1,15 +1,18 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { git, gitMetaChanges, gitMetaFingerprint, type GitMetaFingerprint } from './git';
 import { isWindowsShim } from './process';
+import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
+import { otherWorktrees, storageListing } from './confineFiles';
+import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree } from './worktrees';
 import { defaultMaxAttempts, finalJobStates, gateBlocks, gateFloor, gateKind, gateState, maxBriefLength, parseJobInput, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
 import { freshDirectory, gateFailureMessage, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
 import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
-import type { HelperRun, StartHelperRun } from './helperRunner';
+import type { HeadConfinement, HelperRun, StartHelperRun } from './helperRunner';
 import type { Provider } from './model';
 import { headLimitReason } from './limitDetection';
 import type { LimitEvent } from './limitEvents';
@@ -60,6 +63,16 @@ export interface HelperServiceOptions {
   gates?: GatesLoader;
   /** The active packs' roles (PackService). Without it, no head has a role and a head that names one is refused. */
   roles?: RoleSource;
+  // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
+  /**
+   * Codex's sandbox for Claude heads' shells and for gate commands (HeadSandbox). Without it, a
+   * Claude head has no shell and gate commands run as before.
+   */
+  sandbox?: { shell(): Promise<HeadShell> } & CommandSandbox;
+  /** Hydra's global storage: a Claude head writes none of it and reads none of it but its role's pack copy. Defaults to the log directory, which holds its settings file. */
+  hydraStorage?: string;
+  /** Where each head's own TEMP folder goes. Defaults to `temp` beside the log directory. */
+  tempDirectory?: string;
 }
 
 interface Active {
@@ -68,6 +81,11 @@ interface Active {
   role?: RoleLaunch;
   /** Packs: the Claude head's `--mcp-config` file for its role's servers, removed when the head ends. */
   mcpConfigFile?: string;
+  /** Step 2: the Claude head's `--settings` file and the head's own TEMP folder, both removed when it ends. */
+  settingsFile?: string;
+  temp?: string;
+  /** Step 2: why a Claude head had no shell, for its result. */
+  shellNote?: string;
 }
 const clip = (value: string, max: number) => value.length > max ? `${value.slice(0, max)}…` : value;
 
@@ -168,9 +186,9 @@ export class HelperService {
   async dispose(): Promise<void> {
     this.disposed = true; clearInterval(this.watchdog);
     await this.dispatchRun.catch(() => undefined);
-    const files = [...this.active.values()].flatMap(active => active.mcpConfigFile ? [active.mcpConfigFile] : []);
+    const files = [...this.active.values()].flatMap(active => [active.mcpConfigFile, active.settingsFile, active.temp].filter((file): file is string => !!file));
     await Promise.all([...this.active.keys()].map(id => this.finish(id, 'failed', 'The Hydra window closed while this head was running.').catch(() => undefined)));
-    await Promise.all(files.map(file => rm(file, { force: true }).catch(() => undefined)));
+    await Promise.all(files.map(file => rm(file, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined)));
     for (const job of this.list()) if (job.state === 'queued') await this.options.store.transition(job.id, 'failed', 'The Hydra window closed before this head started.').catch(() => undefined);
     this.changed();
   }
@@ -327,9 +345,15 @@ export class HelperService {
     if (typeof args.summary !== 'string' || !args.summary.trim()) throw new Error('summary is required.');
     const summary = clip(args.summary.trim(), 8000);
     const worktree = job.worktree!, base = job.baseCommit!;
-    // Hydra commits whatever the helper left uncommitted. Codex's Windows sandbox
-    // can't write a worktree's .git metadata, so a helper may be unable to commit.
-    if ((await git(worktree, ['status', '--porcelain=v1', '--untracked-files=all'])).trim()) await commitAll(worktree, `${job.title} (Hydra head ${job.id})`);
+    // Hydra commits whatever the helper left uncommitted: in Codex's Windows sandbox a head can't
+    // write its worktree's .git metadata, so it can't commit (R4). Hydra's own git calls in the head's
+    // worktree run with hooks off (Step 2): a hook the head edited (a husky script, say) would otherwise
+    // run as Hydra, outside any sandbox.
+    await mkdir(this.tempRoot, { recursive: true });
+    const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
+    try {
+      if ((await git(worktree, [...noHooks(hooksOff), 'status', '--porcelain=v1', '--untracked-files=all'])).trim()) await commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff);
+    } finally { await rm(hooksOff, { recursive: true, force: true }).catch(() => undefined); }
     const commit = (await git(worktree, ['rev-parse', 'HEAD'])).trim();
     if (commit === base) {
       // A role with changes "optional" (a reviewer, a fact-checker) may finish without changing
@@ -348,7 +372,8 @@ export class HelperService {
     // 1.1: maxAttempts always comes from today's config, never the start-of-run snapshot below —
     // Settings -> Gates changes apply to heads started after they're made, never mid-run.
     const maxAttempts = gates.maxAttempts ?? defaultMaxAttempts;
-    const note = await this.tamperNote(job);
+    // 1.6's tamper note, and Step 2's reason a Claude head had no shell (design 7: said in the head's result).
+    const note = [await this.tamperNote(job), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
     const changedFiles = (await git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'])).split('\0').filter(Boolean);
     const outside = changedFiles.filter(file => !inScope(file, job.writeScope));
     // 1.4: the git metadata a head shares with the main checkout (config, hooks, …) must not move.
@@ -405,6 +430,8 @@ export class HelperService {
       logDirectory: await freshDirectory(this.options.logDirectory, `${job.id}-gates-${attempt}`),
       executable: provider => this.options.executable(provider),
       ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
+      // Step 2 (design 5): command gates and the screenshots gate's app run in Codex's sandbox when it's available.
+      ...(this.options.sandbox ? { sandbox: this.options.sandbox, tempRoot: this.tempRoot } : {}),
       spawned: pid => { this.helperPids.add(pid); },
       ...(signal ? { signal } : {}),
       ...(this.options.log ? { log: this.options.log } : {}),
@@ -486,18 +513,22 @@ export class HelperService {
   private async launch(job: Job): Promise<void> {
     await this.options.store.transition(job.id, 'starting');
     this.changed();
-    let token: string | undefined, mcpConfigFile: string | undefined;
+    let token: string | undefined, mcpConfigFile: string | undefined, settingsFile: string | undefined, temp: string | undefined;
     try {
       const executable = await this.options.executable(job.provider);
       // Packs: the role from its pack's checked copy, before anything is created. A role that has
       // gone away fails the head here: "the role coding/builder isn't available (the Coding pack is off)."
       const role = job.role ? await this.roleFor(job, executable) : undefined;
       if (role?.notes.length) this.options.log?.(`[heads] ${job.id}: ${role.notes.join(' ')}`);
+      // Step 2: how a Claude head's shell runs (checked once per window). Codex heads keep Codex's own sandbox.
+      const shell = job.provider === 'claude' ? await this.headShell() : undefined;
       if (role && Object.keys(role.mcpServers).length) {
         // Only `${NAME}` references and plain values: Claude fills them in from its environment (R3).
+        // With the wrapper, Claude Code starts stdio servers through it too; the marker lets a role's servers run as before.
+        const servers = shell?.kind === 'sandboxed' ? Object.fromEntries(Object.entries(role.mcpServers).map(([name, server]) => [name, server.type === 'stdio' ? { ...server, env: { ...server.env, HYDRA_SHELL_DIRECT: '1' } } : server])) : role.mcpServers;
         mcpConfigFile = this.mcpConfigFile(job.id);
         await mkdir(this.options.logDirectory, { recursive: true });
-        await writeFile(mcpConfigFile, JSON.stringify({ mcpServers: role.mcpServers }, null, 2), { encoding: 'utf8', mode: 0o600 });
+        await writeFile(mcpConfigFile, JSON.stringify({ mcpServers: servers }, null, 2), { encoding: 'utf8', mode: 0o600 });
       }
       // A dependent starts from its dependencies' result commits (merged, if several) and hears what they did:
       // the heads it waited on, and a plan's lane jobs it was given as inputs.
@@ -509,6 +540,14 @@ export class HelperService {
         ? { worktree: job.worktree, branch: job.branch, baseCommit: job.baseCommit }
         : await createWorktree(this.options.leadFolder, job.title, job.id, this.options.worktreeRoot?.(), job.baseCommit ?? (dependencies.length ? await dependencyBase(this.options.leadFolder, job.title, dependencies) : undefined));
       await this.options.store.update(job.id, { worktree: created.worktree, branch: created.branch, baseCommit: created.baseCommit });
+      // Step 2: its settings file (Claude), its own TEMP and its allowlisted environment. A settings file
+      // Hydra can't build correctly stops the head here, rather than letting it run unconfined.
+      await mkdir(this.tempRoot, { recursive: true });
+      temp = await mkdtemp(path.join(this.tempRoot, `${job.id}-`));
+      const confined = await this.confine(job, created.worktree, executable, role, shell, temp);
+      settingsFile = confined.settingsFile;
+      const shellNote = shell?.kind === 'off' ? `This head had no shell: ${shell.reason}.` : undefined;
+      if (shellNote) this.options.log?.(`[heads] ${job.id}: ${shellNote}`);
       token = this.options.endpoint.issue({ role: 'helper', leadKey: this.options.leadKey, jobId: job.id });
       // The time limit counts from here, before the job is visible as running.
       const startedAt = this.now();
@@ -516,7 +555,7 @@ export class HelperService {
       const run = this.options.startRun({
         // Decision 4: the lead's model first, then the role's, which roleLaunch gives only on the role's own provider.
         provider: job.provider, executable, worktree: created.worktree, model: job.model ?? role?.model,
-        prompt: helperPrompt({ ...job, worktree: created.worktree, branch: created.branch, baseCommit: created.baseCommit }, dependencies.length ? dependencyBrief(dependencies) : undefined, dependencyNoun(dependencies), role),
+        prompt: helperPrompt({ ...job, worktree: created.worktree, branch: created.branch, baseCommit: created.baseCommit }, dependencies.length ? dependencyBrief(dependencies) : undefined, dependencyNoun(dependencies), role, shell?.kind === 'off' ? shell.reason : undefined),
         maxTurns: job.limits.maxTurns, maxBudgetUsd: job.limits.maxBudgetUsd,
         bridge: { command: this.options.bridge.command, args: this.options.bridge.args, env: { ...(this.options.bridge.env || {}), HYDRA_HELPER_PORT: String(this.options.endpoint.port), HYDRA_HELPER_TOKEN: token } },
         logFile: path.join(this.options.logDirectory, `${job.id}.jsonl`),
@@ -525,8 +564,9 @@ export class HelperService {
           ...(mcpConfigFile ? { mcpConfigFile } : {}), ...(role.pluginDir ? { pluginDir: role.pluginDir } : {}),
           allowedTools: role.allowedTools, codexConfig: role.codexConfig, webSearch: role.webSearch, env: role.env,
         } } : {}),
+        confine: confined.spec,
       });
-      const active: Active = { run, token, startedAt, blockedTotal: 0, ...(role ? { role } : {}), ...(mcpConfigFile ? { mcpConfigFile } : {}) };
+      const active: Active = { run, token, startedAt, blockedTotal: 0, ...(role ? { role } : {}), ...(mcpConfigFile ? { mcpConfigFile } : {}), ...(settingsFile ? { settingsFile } : {}), temp, ...(shellNote ? { shellNote } : {}) };
       this.active.set(job.id, active);
       run.onTurnEnd(() => { void this.turnEnded(job.id); });
       void run.exited.then(({ code }) => this.exited(job.id, code));
@@ -538,7 +578,7 @@ export class HelperService {
       if (token) this.options.endpoint.revokeJob(job.id);
       await this.active.get(job.id)?.run.stop().catch(() => undefined);
       this.active.delete(job.id);
-      if (mcpConfigFile) await rm(mcpConfigFile, { force: true }).catch(() => undefined);
+      for (const file of [mcpConfigFile, settingsFile, temp]) if (file) await rm(file, { recursive: true, force: true }).catch(() => undefined);
       await this.options.store.transition(job.id, 'failed', `Could not start: ${error instanceof Error ? error.message : String(error)}`).catch(() => undefined);
     }
     this.changed();
@@ -554,7 +594,7 @@ export class HelperService {
     if (await this.limitReached(id)) return;
     if (!job.nudged) {
       await this.options.store.update(id, { nudged: true });
-      const sent = await active.run.send('You stopped without reporting to Hydra. Commit your work and call hydra_done with a summary, or call hydra_stuck with one clear question. Do it now.');
+      const sent = await active.run.send('You stopped without reporting to Hydra. Call hydra_done with a summary (Hydra commits your work), or call hydra_stuck with one clear question. Do it now.');
       if (sent) return;
     }
     await this.finish(id, 'failed', 'The head stopped without calling hydra_done or hydra_stuck.');
@@ -563,18 +603,23 @@ export class HelperService {
   private async exited(id: string, code: number | null): Promise<void> {
     const active = this.active.get(id);
     if (!active) return;
-    // The process is gone for good: its role's server file goes with it (docs/Packs_Plan.md, section 4).
-    if (active.mcpConfigFile) await rm(active.mcpConfigFile, { force: true }).catch(() => undefined);
-    if (await this.limitReached(id)) { this.active.delete(id); this.changed(); void this.dispatch(); return; }
-    active.answer?.(undefined as unknown as string);
-    this.active.delete(id);
-    this.options.endpoint.revokeJob(id);
-    const job = this.options.store.get(id);
-    if (job && !finalJobStates.has(job.state)) {
-      await this.options.store.transition(id, 'failed', `The head process exited${code === null ? '' : ` (code ${code})`} without finishing.`).catch(() => undefined);
+    try {
+      if (await this.limitReached(id)) { this.active.delete(id); this.changed(); void this.dispatch(); return; }
+      active.answer?.(undefined as unknown as string);
+      this.active.delete(id);
+      this.options.endpoint.revokeJob(id);
+      const job = this.options.store.get(id);
+      if (job && !finalJobStates.has(job.state)) {
+        await this.options.store.transition(id, 'failed', `The head process exited${code === null ? '' : ` (code ${code})`} without finishing.`).catch(() => undefined);
+      }
+      this.changed();
+      void this.dispatch();
+    } finally {
+      // The process is gone for good: its role's server file goes with it (docs/Packs_Plan.md, section 4),
+      // and so do its settings file and its own TEMP folder (Step 2). After the state is settled, so a
+      // slow delete never holds it up; each launch has its own names, so this never hits a relaunch's files.
+      for (const file of [active.mcpConfigFile, active.settingsFile, active.temp]) if (file) await rm(file, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
     }
-    this.changed();
-    void this.dispatch();
   }
 
   /** If the head's last turn hit a usage limit: fail it with that reason (no nudge, no attempt used) and report it. */
@@ -638,6 +683,45 @@ export class HelperService {
   /** A Claude head's `--mcp-config` file for its role's servers (docs/Packs_Plan.md, section 4). */
   private mcpConfigFile(id: string): string { return path.join(this.options.logDirectory, `${id}.mcp.json`); }
 
+  // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
+
+  /** Where each head's own TEMP folder goes: under Hydra's storage, never the shared TEMP, which Codex's sandbox makes writable (R4). */
+  private get tempRoot(): string { return this.options.tempDirectory ?? path.join(path.dirname(this.options.logDirectory), 'temp'); }
+
+  /** How Claude heads' shells run in this window. Without a sandbox (tests, a window without one), a head has none. */
+  private async headShell(): Promise<HeadShell> {
+    if (!this.options.sandbox) return { kind: 'off', reason: 'this Hydra window has no sandbox for head shells' };
+    return this.options.sandbox.shell();
+  }
+
+  /**
+   * One head's confinement (design 1, 3 and 4): its own TEMP, its allowlisted environment, and for
+   * Claude its `--settings` file (0600, beside its `.mcp.json`), its `--add-dir` for the role's pack
+   * copy, and whether it has a shell. headSettings throws when the file wouldn't be right, and the
+   * head then doesn't start.
+   */
+  private async confine(job: Job, worktree: string, executable: string, role: RoleLaunch | undefined, shell: HeadShell | undefined, temp: string): Promise<{ spec: HeadConfinement; settingsFile?: string }> {
+    const platform = process.platform;
+    const env = headEnvironment({ base: process.env, platform, provider: job.provider, temp, worktree, ...(shell ? { shell } : {}), roleNames: role?.variables ?? [], roleValues: role?.env ?? {} });
+    if (job.provider !== 'claude') return { spec: { addDirs: [], shell: false, env } };
+    const shim = isWindowsShim(executable);
+    const storage = this.options.hydraStorage ?? this.options.logDirectory;
+    // One name per launch: a continued head's new file is never the one its old run's cleanup removes.
+    const settingsFile = path.join(this.options.logDirectory, `${job.id}-${randomBytes(4).toString('hex')}.settings.json`);
+    // A `.cmd` launcher's command line passes through cmd.exe: a path it would misread can't be given.
+    if (shim && cmdUnsafe.test(settingsFile)) throw new Error('Hydra can\'t pass the head\'s settings file to Claude Code through its .cmd launcher: its path has characters cmd.exe reads as commands.');
+    const addDirs = role && !(shim && cmdUnsafe.test(role.packCopy)) ? [role.packCopy] : [];
+    if (role && !addDirs.length) this.options.log?.(`[heads] ${job.id}: the role's files were left out: their path has characters cmd.exe reads as commands.`);
+    const keep = role ? [role.packCopy, ...(role.pluginDir ? [role.pluginDir] : [])] : [];
+    const settings = headSettings({
+      platform, env: process.env, storage, storageRead: storageReadDeny(storage, keep, await storageListing(storage, keep), platform),
+      worktree, addDirs, otherWorktrees: await otherWorktrees(this.options.leadFolder, worktree), leadFolder: this.options.leadFolder,
+    });
+    await mkdir(this.options.logDirectory, { recursive: true });
+    await writeFile(settingsFile, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 });
+    return { spec: { settingsFile, addDirs, shell: shell?.kind === 'sandboxed' || shell?.kind === 'unconfined', env }, settingsFile };
+  }
+
   /** A head's role for this launch (docs/Packs_Plan.md, section 5), resolved from its pack's checked copy. */
   private async roleFor(job: Job, executable: string): Promise<RoleLaunch> {
     if (!this.options.roles) throw new Error(`the role ${job.role!.ref} isn't available (packs aren't available in this Hydra window).`);
@@ -692,13 +776,27 @@ async function hydraFileHashes(folder: string): Promise<TamperSnapshot> {
   return { gatesJson, checksJson, packsJson };
 }
 
-/** Commit everything in a helper's worktree, with the repository's identity or, if it has none, Hydra's. */
-async function commitAll(worktree: string, message: string): Promise<void> {
-  await git(worktree, ['add', '-A']);
-  try { await git(worktree, ['commit', '-q', '-m', message]); }
+/** What cmd.exe reads as syntax in a path on a `.cmd` launcher's command line (as in packs/launch.ts). */
+const cmdUnsafe = /["%^&|<>!\u0000-\u001f\u007f]/;
+
+/**
+ * Git's hooks off (Step 2, docs/Hydra_Improvements.md): `core.hooksPath` pointed at an empty folder
+ * only Hydra writes, so no hook the repository or a head set up runs when Hydra runs git in a
+ * head's worktree. `-c` beats every config file, a head's included.
+ */
+export const noHooks = (emptyFolder: string): string[] => ['-c', `core.hooksPath=${emptyFolder}`];
+
+/**
+ * Commit everything in a helper's worktree, with the repository's identity or, if it has none,
+ * Hydra's, and with hooks off (`hooksOff`: an empty folder only Hydra writes). `git add` runs with
+ * them off too: it can run a post-index-change hook.
+ */
+export async function commitAll(worktree: string, message: string, hooksOff: string): Promise<void> {
+  await git(worktree, [...noHooks(hooksOff), 'add', '-A']);
+  try { await git(worktree, [...noHooks(hooksOff), 'commit', '-q', '-m', message]); }
   catch (error) {
     if (!/tell me who you are|user\.email|user\.name|empty ident/i.test(String(error))) throw error;
-    await git(worktree, ['-c', 'user.name=Hydra head', '-c', 'user.email=helper@hydra.invalid', 'commit', '-q', '-m', message]);
+    await git(worktree, [...noHooks(hooksOff), '-c', 'user.name=Hydra head', '-c', 'user.email=helper@hydra.invalid', 'commit', '-q', '-m', message]);
   }
 }
 
@@ -738,8 +836,9 @@ function describeGate(check: JobCheckResult) {
  * (dependencyBrief), for a head that starts from their work; `noun` is "jobs" when
  * any of them is a plan's lane job. A head with a role (docs/Packs_Plan.md, "Heads")
  * hears it first: "Your role: Builder (Coding pack)", its instructions and its skill index.
+ * `shellOff` is why a Claude head has no shell (Step 2, design 1), which it hears too.
  */
-export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeScope' | 'worktree' | 'branch' | 'baseCommit'>, dependencies?: string, noun: 'heads' | 'jobs' = 'heads', role?: Pick<RoleLaunch, 'label' | 'text' | 'changes'>): string {
+export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeScope' | 'worktree' | 'branch' | 'baseCommit'>, dependencies?: string, noun: 'heads' | 'jobs' = 'heads', role?: Pick<RoleLaunch, 'label' | 'text' | 'changes'>, shellOff?: string): string {
   return [
     `You are a Hydra head (job ${job.id}): ${job.title}`,
     '',
@@ -751,7 +850,8 @@ export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeSco
     `- Work only in this git worktree: ${job.worktree}, on branch ${job.branch}. It starts from commit ${job.baseCommit}${dependencies ? `, which already has the work of the ${noun} it depends on` : ''}.`,
     `- You may change only these paths: ${job.writeScope.length ? job.writeScope.map(entry => entry || '(whole repository)').join(', ') : '(whole repository)'}. Changes elsewhere are refused.`,
     '- Nobody will approve anything for you. Tools you are not allowed to use are denied; work around them.',
-    '- When you are finished, call the hydra_done tool with a summary. Hydra commits any uncommitted changes for you (you may also commit yourself), runs the project\'s gates on the changes (its checks, and possibly a review by another agent), and tells you if anything must be fixed.',
+    ...(shellOff ? [`- Your shell is off: Codex's Windows sandbox isn't available (${shellOff}). Hydra's gates run the tests.`] : []),
+    '- When you are finished, call the hydra_done tool with a summary. Hydra commits your changes for you, so don\'t commit yourself: git commands that write (commit, checkout, config) may fail in your sandbox. Hydra then runs the project\'s gates on the changes (its checks, and possibly a review by another agent), and tells you if anything must be fixed.',
     ...(role?.changes === 'optional' ? ['- Your role may finish without changing any file: then your summary is the result, so put everything the lead needs in it.'] : []),
     '- If you cannot continue without a decision, call hydra_stuck with one clear question. The answer comes back as the tool result.',
     '- Never stop without calling hydra_done or hydra_stuck.',

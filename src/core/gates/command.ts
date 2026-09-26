@@ -1,8 +1,8 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { JobCheckResult } from '../jobs';
 import type { CommandGate } from './config';
-import type { GateRun } from './types';
+import { gateTemp, type GateRun } from './types';
 
 /**
  * The command gate: today's head check, moved here unchanged (docs/Gates_Plan.md).
@@ -35,13 +35,20 @@ export async function runCommandGate(gate: CommandGate, run: GateRun): Promise<J
   const logFile = path.join(run.logDirectory, `${gate.id}.log`);
   const started = run.runtime.now();
   const executable = await resolveCommand(gate.command[0]!);
-  const outcome = await run.runtime.runCommand({ executable, args: gate.command.slice(1), ...(gate.env ? { env: gate.env } : {}) }, run.worktree, logFile, gate.timeoutSeconds * 1000, run.signal, run.spawned);
+  const command = { executable, args: gate.command.slice(1), ...(gate.env ? { env: gate.env } : {}) };
+  // Step 2 (design 5): in Codex's sandbox when it's available, with its own TEMP beside the log; else as before.
+  const temp = gateTemp(run, gate.id);
+  const wrapped = run.sandbox ? await run.sandbox.wrap(command, run.worktree, temp) : undefined;
+  let outcome;
+  try { outcome = await run.runtime.runCommand(wrapped ? { executable: wrapped.executable, args: wrapped.args, environment: wrapped.environment } : command, run.worktree, logFile, gate.timeoutSeconds * 1000, run.signal, run.spawned); }
+  finally { if (wrapped) await rm(temp, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined); }
   const output = await readFile(logFile, 'utf8').catch(() => '');
   const passed = outcome.exitCode === 0 && !outcome.timedOut && !outcome.interrupted;
   const summary = passed ? undefined
     : outcome.timedOut ? `Timed out after ${gate.timeoutSeconds} s.`
     : outcome.interrupted ? 'Stopped before it finished.'
     : outcome.unavailable ? `${gate.command[0]} wasn't found.`
+    : wrapped && outcome.exitCode === 127 ? `Exited with code 127: in Codex's sandbox that usually means ${gate.command[0]} wasn't found.`
     : `Exited with code ${outcome.exitCode ?? 'none'}.`;
   return {
     id: gate.id, kind: 'command', required: gate.required, state: passed ? 'passed' : 'failed', passed,

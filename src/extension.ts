@@ -15,6 +15,8 @@ import { HelperEndpoint } from './core/helperEndpoint';
 import { HelperService } from './core/helperService';
 import { removeWindowRecord, writeWindowRecord } from './core/helperDiscovery';
 import { startHelperRun } from './core/helperRunner';
+import { HeadSandbox } from './core/headSandbox';
+import { headShellSentence } from './core/confine';
 import { createLeadVerifier } from './core/leadVerification';
 import { claudeMemStatus, setupClaudeMem } from './core/claudeMem';
 import { downloadOpenVsx } from './core/openVsx';
@@ -123,6 +125,8 @@ class Manager {
   private dismissedTrayIds = new Set<string>();
   // ---- Packs (docs/Packs_Plan.md): gates.json plus the active packs' gates, for heads and lanes ----
   private readonly packs: PackService;
+  /** Step 2 (docs/Hydra_Improvements.md): Codex's sandbox for heads' shells and gate commands, checked once per window when first needed. */
+  private readonly headSandbox: HeadSandbox;
   /** The active packs' roles (Snapshot.roles), refreshed whenever packs change. */
   private roles: SnapshotRole[] = [];
   /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
@@ -141,6 +145,13 @@ class Manager {
     const key = createHash('sha256').update(identity).digest('hex').slice(0, 16);
     this.storageDirectory = path.join(context.globalStorageUri.fsPath, 'workspaces', key);
     this.leadKey = key;
+    // Its scripts live in Hydra's own storage, never in a worktree; Codex is the one Hydra would run (hydra.codexPath, else PATH).
+    this.headSandbox = new HeadSandbox({
+      // Short paths (Windows' 260-character limit): the sandbox's scripts and check folders, per window.
+      folder: path.join(this.context.globalStorageUri.fsPath, 'sb', path.basename(this.storageDirectory)),
+      codex: async () => (await findProvider('codex', vscode.workspace.getConfiguration('hydra').get<string>('codexPath') || undefined)).executable,
+      log: line => this.output.appendLine(line),
+    });
     this.lanes = new LanesController({
       context, log: line => this.output.appendLine(line),
       post: message => { void this.panel?.webview.postMessage(message); },
@@ -154,6 +165,8 @@ class Manager {
       markJobDone: (laneId, result) => this.markPlanJobDone(laneId, result),
       cancelPlanJob: laneId => this.cancelPlanJobOfLane(laneId),
       gates: this.packs.gates, roles: this.packs,
+      // ---- Step 2 (docs/Hydra_Improvements.md): light limits for Claude lanes ----
+      hydraStorage: context.globalStorageUri.fsPath,
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
     const storedDismissed = context.workspaceState.get<string[]>(this.dismissedTrayKey);
@@ -191,6 +204,8 @@ class Manager {
       return stopped;
     });
     command('hydra.listHelpers', () => structuredClone(this.helpers?.service.list() ?? []));
+    // Not contributed: Settings → Heads asks it. Checks the head sandbox once per window if it hasn't been yet.
+    command('hydra.headShellStatus', async () => { const shell = await this.headSandbox.shell(); return { kind: shell.kind, text: headShellSentence(shell) }; });
     // ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4). newPlan is public; the plans.* commands are test-only, not in menus. ----
     command('hydra.newPlan', () => this.newPlan());
     command('hydra.plans.list', () => structuredClone(this.plans?.store.list() ?? []));
@@ -277,6 +292,8 @@ class Manager {
       if (!event.affectsConfiguration('hydra')) return;
       // Packs: a changed packs folder re-creates the watcher on the new location (or none at all).
       if (event.affectsConfiguration('hydra.packs.folder')) void this.setupPacksFolderWatcher().catch(error => this.report(error));
+      // A different Codex: check the head sandbox again when it's next needed.
+      if (event.affectsConfiguration('hydra.codexPath')) this.headSandbox.reset();
       // Preference-only settings (the head cap) are read fresh wherever they are
       // used, so they only republish. Any other Hydra setting, including ones
       // added later, clears provider checks and refreshes.
@@ -413,6 +430,10 @@ class Manager {
       providerLimited: provider => otherStillLimited(this.latestLimits.get(provider), new Date()),
       // ---- Packs (docs/Packs_Plan.md) ----
       gates: this.packs.gates, roles: this.packs,
+      // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
+      sandbox: this.headSandbox, hydraStorage: this.context.globalStorageUri.fsPath,
+      // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
+      tempDirectory: path.join(this.context.globalStorageUri.fsPath, 't'),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));

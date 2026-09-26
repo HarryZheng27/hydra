@@ -234,13 +234,13 @@ test('once a required gate fails, the later gates are skipped; the failure messa
 // ---- The review gate ----
 
 test('review: the exact read-only arguments, and the prompt with the diff cap, the task, earlier results, screenshots and focus', () => {
-  assert.deepEqual(reviewArguments('claude'), ['-p', '--output-format', 'json', '--permission-mode', 'plan']);
-  assert.deepEqual(reviewArguments('claude', ['a.png']), ['-p', '--output-format', 'json', '--permission-mode', 'plan'], 'Claude reads screenshots by path');
+  assert.deepEqual(reviewArguments('claude'), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config']);
+  assert.deepEqual(reviewArguments('claude', ['a.png']), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config'], 'Claude reads screenshots by path');
   // `codex exec` searches the web by default (research R7): a review has it off unless its pack role has "web" (R9).
   assert.deepEqual(reviewArguments('codex'), ['exec', '--json', '-c', 'web_search=\'disabled\'', '--sandbox', 'read-only', '-']);
   assert.deepEqual(reviewArguments('codex', ['a.png', 'b.png']), ['exec', '--json', '-c', 'web_search=\'disabled\'', '-i', 'a.png', '-i', 'b.png', '--sandbox', 'read-only', '-']);
   assert.deepEqual(reviewArguments('codex', [], true), ['exec', '--json', '-c', 'web_search=\'live\'', '--sandbox', 'read-only', '-']);
-  assert.deepEqual(reviewArguments('claude', [], true), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--allowedTools', 'WebFetch,WebSearch'], 'still plan mode, with the web tools allowed');
+  assert.deepEqual(reviewArguments('claude', [], true), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config', '--allowedTools', 'WebFetch,WebSearch'], 'still plan mode, with the web tools allowed');
 
   assert.deepEqual(capDiff('small\n'), { text: 'small\n', cut: false });
   const line = `+${'é'.repeat(99)}\n`;
@@ -301,7 +301,7 @@ test('review: the other agent reviews; the same one stands in when the other is 
     const gate: Gate = { id: 'review', type: 'review', required: true, reviewer: 'other', focus: '' };
     const [result] = await runGateList([gate], f.worktree, f.base, context(f.root, { runReviewer: reviewer.runReviewer }, { limited: provider => provider === 'codex' }));
     assert.equal(reviewer.specs[0]!.provider, 'claude');
-    assert.deepEqual(reviewer.specs[0]!.args, ['-p', '--output-format', 'json', '--permission-mode', 'plan']);
+    assert.deepEqual(reviewer.specs[0]!.args, ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config']);
     assert.equal(reviewer.specs[0]!.executable, 'fake-claude'); assert.equal(reviewer.specs[0]!.timeoutMs, 5 * 60_000);
     assert.equal(result!.state, 'failed'); assert.equal(result!.reviewer, 'claude');
     assert.equal(result!.summary, 'Codex is at its usage limit, so a fresh read-only Claude Code session reviewed this instead. It never sets the flag.');

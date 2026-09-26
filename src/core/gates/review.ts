@@ -39,11 +39,16 @@ const other = (provider: Provider): Provider => provider === 'claude' ? 'codex' 
  * lets the reviewer open pages: Claude, still in plan mode, with WebFetch and WebSearch
  * allowed; Codex with `web_search='live'`. Every other Codex review has web search off,
  * since `codex exec` searches by default (R7). A Claude review gets no web, as before.
+ *
+ * Step 2 (docs/Hydra_Improvements.md): the Claude reviewer loads only your user settings and no MCP
+ * servers. It runs in the head's worktree, and `claude -p` in a folder nobody trusted still runs
+ * that folder's `.claude/settings.json` hooks and connects its `.mcp.json` servers, both of which a
+ * head can write: plan mode doesn't stop a hook, which would run as you, outside any sandbox.
  */
 export function reviewArguments(provider: Provider, images: readonly string[] = [], web = false): string[] {
   return provider === 'codex'
     ? ['exec', '--json', '-c', `web_search='${web ? 'live' : 'disabled'}'`, ...images.flatMap(image => ['-i', image]), '--sandbox', 'read-only', '-']
-    : ['-p', '--output-format', 'json', '--permission-mode', 'plan', ...(web ? ['--allowedTools', 'WebFetch,WebSearch'] : [])];
+    : ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config', ...(web ? ['--allowedTools', 'WebFetch,WebSearch'] : [])];
 }
 
 export type ReviewerAvailability = { ok: true; executable: string } | { ok: false; reason: string };

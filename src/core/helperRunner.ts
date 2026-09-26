@@ -4,6 +4,7 @@ import path from 'node:path';
 import { processLaunch, terminateProcessTree } from './process';
 import type { Provider } from './model';
 import { claudeHeadLimit, codexHeadLimit, type HeadLimit } from './limitDetection';
+import { claudeHeadTools } from './confine';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -34,6 +35,19 @@ export interface HelperRunSpec {
   spawned?: (pid: number) => void;
   /** Packs (docs/Packs_Plan.md, section 5): what the head's role adds to its command line and environment. */
   role?: HeadRoleArguments;
+  /** Step 2 (docs/Hydra_Improvements.md): how the head is confined. */
+  confine: HeadConfinement;
+}
+/** How HelperService confines one head (src/core/confine.ts builds each piece). */
+export interface HeadConfinement {
+  /** Claude: the head's `--settings` file, which Hydra wrote (0600) and removes when the head ends. */
+  settingsFile?: string;
+  /** Claude: folders it reads besides its worktree (`--add-dir`): its role's checked pack copy. */
+  addDirs: string[];
+  /** Claude: whether it has a shell (Bash): only in Codex's sandbox, or where there is none to use. */
+  shell: boolean;
+  /** Its whole environment (headEnvironment): the allowlist, its sign-in and role variables, and what Hydra sets. */
+  env: Record<string, string>;
 }
 /**
  * A role's pieces on a head's command line (roleLaunch, placed here). The role's
@@ -66,17 +80,30 @@ export interface HelperRun {
 }
 export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
 
-export const claudeHelperTools = ['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'LS', 'Bash', 'PowerShell', 'TodoWrite', 'mcp__hydra__hydra_done', 'mcp__hydra__hydra_stuck', 'mcp__hydra__hydra_progress'];
-
+/**
+ * A Claude head's command line. Step 2 (docs/Hydra_Improvements.md, design 1):
+ * - `--setting-sources user`: a head can write `.claude/settings.local.json` in its worktree, and
+ *   with project or local settings loaded, a hook it planted there ran unsandboxed (R5);
+ * - `--settings <file>`: its read block and deny rules (headSettings);
+ * - `--tools` and a scoped `--allowedTools` (claudeHeadTools): no PowerShell, Bash only with a shell;
+ * - `--add-dir` for its role's pack copy, which the read block would otherwise hide.
+ * A role's servers come in a second file, beside Hydra's token-bearing entry, which stays inline;
+ * --strict-mcp-config still keeps every other server out (R3).
+ */
 export function claudeHelperArguments(spec: HelperRunSpec): string[] {
-  const mcp = JSON.stringify({ mcpServers: { hydra: { type: 'stdio', command: spec.bridge.command, args: spec.bridge.args, env: spec.bridge.env, timeout: 3_600_000 } } });
+  const { confine } = spec;
+  if (!confine.settingsFile) throw new Error('A Claude head needs its settings file.');
+  // With a sandboxed shell, Claude Code starts stdio servers through the wrapper too; this marks Hydra's own (confine.ts, wrapperScript).
+  const bridgeEnv = confine.env.CLAUDE_CODE_SHELL_PREFIX ? { ...spec.bridge.env, HYDRA_SHELL_DIRECT: '1' } : spec.bridge.env;
+  const mcp = JSON.stringify({ mcpServers: { hydra: { type: 'stdio', command: spec.bridge.command, args: spec.bridge.args, env: bridgeEnv, timeout: 3_600_000 } } });
   const role = spec.role;
-  // A role's servers come in a second file, beside Hydra's token-bearing entry, which stays inline;
-  // --strict-mcp-config still keeps every other server out (R3). No --add-dir: Read reaches the pack's copy (R8).
+  const { tools, allowed } = claudeHeadTools(confine.shell, role?.allowedTools ?? []);
   return ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-    '--permission-mode', 'dontAsk', '--allowedTools', [...claudeHelperTools, ...role?.allowedTools ?? []].join(','),
+    '--permission-mode', 'dontAsk', '--setting-sources', 'user', '--settings', confine.settingsFile,
+    '--tools', tools.join(','), '--allowedTools', allowed.join(','),
     '--max-turns', String(spec.maxTurns), '--max-budget-usd', String(spec.maxBudgetUsd),
     `--mcp-config=${mcp}`, ...(role?.mcpConfigFile ? [`--mcp-config=${role.mcpConfigFile}`] : []), '--strict-mcp-config',
+    ...confine.addDirs.flatMap(folder => ['--add-dir', folder]),
     ...(role?.pluginDir ? ['--plugin-dir', role.pluginDir] : []), ...(spec.model ? ['--model', spec.model] : [])];
 }
 
@@ -100,19 +127,11 @@ function logger(file: string, secret?: string) {
   return (kind: string, data: unknown) => { queue = queue.then(() => appendFile(file, redact(JSON.stringify({ at: Date.now(), kind, data })) + '\n')).catch(() => undefined); };
 }
 
-/**
- * A head's environment. Background tasks are off: a head that started a long command in the
- * background and ended its turn to wait for it stopped without calling hydra_done, since a
- * `-p` session ends with its turn (found in the Step 1 live checks, docs/Hydra_Improvements.md).
- */
-export function headEnvironment(base: NodeJS.ProcessEnv, roleEnv?: Record<string, string>): NodeJS.ProcessEnv {
-  return { ...base, ...roleEnv, DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
-}
-
 function spawnLogged(spec: HelperRunSpec, args: string[], log: (kind: string, data: unknown) => void, onLine: (message: Record<string, unknown>) => void): ChildProcess {
   const launch = processLaunch(spec.executable, args);
-  // A role's Codex servers read some variables by name (R4): Hydra puts them in the head's own environment, never on its command line.
-  const child = spawn(launch.executable, launch.args, { cwd: spec.worktree, env: headEnvironment(process.env, spec.role?.env), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+  // Step 2: the head's own allowlisted environment (headEnvironment), never Hydra's whole one. A role's
+  // Codex servers read some variables by name (R4): they're in it, never on the command line.
+  const child = spawn(launch.executable, launch.args, { cwd: spec.worktree, env: spec.confine.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
   if (child.pid) spec.spawned?.(child.pid);
   let buffer = '';
   child.stdout!.setEncoding('utf8');
