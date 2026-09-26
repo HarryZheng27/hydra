@@ -7,7 +7,8 @@ import { git } from '../src/core/git';
 import { JobStore, parseJobInput } from '../src/core/jobs';
 import { HelperEndpoint, callHelperEndpoint } from '../src/core/helperEndpoint';
 import { HelperService, helperPrompt } from '../src/core/helperService';
-import { claudeHelperArguments, claudeHelperTools, codexHelperArguments, type HelperRun, type HelperRunSpec } from '../src/core/helperRunner';
+import { claudeHelperArguments, codexHelperArguments, type HelperRun, type HelperRunSpec } from '../src/core/helperRunner';
+import { claudeHeadTools } from '../src/core/confine';
 import { leadToolsWithRoles, rolesGuidance } from '../src/core/helperTools';
 import { createBridge } from '../src/core/mcpBridge';
 import { writeWindowRecord } from '../src/core/helperDiscovery';
@@ -193,20 +194,21 @@ test('roleLaunch for Codex: -c servers with env_vars and approval, variables in 
 
 // ---- Heads: arguments, the first message, and the service ----
 
-const runSpec = (extra: Partial<HelperRunSpec> = {}): HelperRunSpec => ({ provider: 'claude', executable: 'claude', worktree: 'W', prompt: 'P', maxTurns: 7, maxBudgetUsd: 2, bridge: { command: 'Hydra.exe', args: ['b.cjs'], env: { HYDRA_HELPER_TOKEN: 'tok', HYDRA_HELPER_PORT: '1' } }, logFile: 'l', ...extra });
+const runSpec = (extra: Partial<HelperRunSpec> = {}): HelperRunSpec => ({ provider: 'claude', executable: 'claude', worktree: 'W', prompt: 'P', maxTurns: 7, maxBudgetUsd: 2, bridge: { command: 'Hydra.exe', args: ['b.cjs'], env: { HYDRA_HELPER_TOKEN: 'tok', HYDRA_HELPER_PORT: '1' } }, logFile: 'l', confine: { settingsFile: 'S.settings.json', addDirs: [], shell: false, env: {} }, ...extra });
 test('head arguments: a role adds its --mcp-config file, allowed tools and --plugin-dir for Claude, and its -c servers and web_search for Codex; nothing without one', () => {
   const plain = claudeHelperArguments(runSpec());
   assert.equal(plain.filter(arg => arg.startsWith('--mcp-config')).length, 1);
-  assert.equal(plain[plain.indexOf('--allowedTools') + 1], claudeHelperTools.join(','));
+  assert.equal(plain[plain.indexOf('--allowedTools') + 1], claudeHeadTools(false).allowed.join(','));
   for (const absent of ['--plugin-dir', '--add-dir', 'Skill', 'WebFetch']) assert.ok(!plain.join(' ').includes(absent), absent);
   const role = { mcpConfigFile: 'C:\\logs\\abc.mcp.json', pluginDir: 'C:\\cache\\kit.plugins\\builder', allowedTools: ['Skill', 'mcp__kit-local', 'WebSearch', 'WebFetch'], codexConfig: ['-c', "mcp_servers.kit-lookup.command='npx'"], webSearch: 'live' as const, env: { LOOKUP_KEY: 'v' } };
   const claude = claudeHelperArguments(runSpec({ role }));
-  assert.equal(claude[claude.indexOf('--allowedTools') + 1], [...claudeHelperTools, 'Skill', 'mcp__kit-local', 'WebSearch', 'WebFetch'].join(','));
+  assert.equal(claude[claude.indexOf('--allowedTools') + 1], claudeHeadTools(false, ['Skill', 'mcp__kit-local', 'WebSearch', 'WebFetch']).allowed.join(','));
+  assert.equal(claude[claude.indexOf('--tools') + 1], 'Read,Edit,Write,NotebookEdit,Glob,Grep,Skill,WebSearch,WebFetch', 'Step 2: the role\'s built-in tools exist too');
   const mcp = claude.filter(arg => arg.startsWith('--mcp-config'));
   assert.equal(mcp.length, 2); assert.match(mcp[0]!, /^--mcp-config=\{.*tok/, 'Hydra\'s token stays inline'); assert.equal(mcp[1], '--mcp-config=C:\\logs\\abc.mcp.json');
   assert.ok(claude.indexOf('--strict-mcp-config') > claude.indexOf(mcp[1]!), 'still strict: only these servers');
   assert.deepEqual(claude.slice(claude.indexOf('--plugin-dir'), claude.indexOf('--plugin-dir') + 2), ['--plugin-dir', role.pluginDir]);
-  assert.ok(!claude.includes('--add-dir'), 'R8: Read reaches the copy without --add-dir');
+  assert.ok(!claude.includes('--add-dir'), 'no --add-dir unless HelperService passes the pack copy (Step 2)');
 
   const codexPlain = codexHelperArguments(runSpec({ provider: 'codex' }));
   assert.ok(codexPlain.includes("web_search='disabled'"), 'R7: a head without a role doesn\'t search');

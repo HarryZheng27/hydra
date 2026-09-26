@@ -173,6 +173,13 @@ export interface RoleLaunch {
   model?: string;
   /** What was left out, and why. */
   notes: string[];
+  /**
+   * Step 2 (docs/Hydra_Improvements.md): the pack's checked copy, which a Claude head reads with
+   * `--add-dir`, and which no Read deny may cover, for a head or a lane.
+   */
+  packCopy: string;
+  /** Step 2: the variables the role's servers read from the agent's own environment, which a head's allowlisted environment keeps. */
+  variables: string[];
 }
 
 const oneLine = (text: string) => text.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -316,6 +323,7 @@ export function roleLaunch(role: ResolvedRole, options: RoleLaunchOptions): Role
   const mcpServers: Record<string, ClaudeServerConfig> = {};
   const codexConfig: string[] = [];
   const env: Record<string, string> = {};
+  const variables = new Set<string>();
   const yours = new Set((role.userServers[provider] ?? []).map(name => name.toLowerCase()));
   for (const server of role.servers) {
     const name = `${role.pack}-${server.id}`;
@@ -326,16 +334,20 @@ export function roleLaunch(role: ResolvedRole, options: RoleLaunchOptions): Role
     const values = spec.type === 'stdio' ? [...spec.args, ...Object.values(spec.env)] : [spec.url, ...Object.values(spec.headers), ...(spec.bearerTokenEnvVar ? [`\${${spec.bearerTokenEnvVar}}`] : [])];
     const unset = unsetVariables(values, options.env, platform);
     if (unset.length) { skip(`${unset.map(variable => `\${${variable}}`).join(', ')} ${unset.length === 1 ? 'isn\'t' : 'aren\'t'} set in your environment`); continue; }
+    // A server that runs reads these from the agent's own environment: a head's allowlist keeps them (Step 2).
+    const reads = () => { for (const value of values) for (const variable of variableNames(value)) variables.add(variable); };
     if (provider === 'claude') {
       const claude = claudeServer(server, role, options);
       if ('skip' in claude) { skip(claude.skip); continue; }
       mcpServers[name] = claude;
+      reads();
       continue;
     }
     const codex = codexServer(name, server, role, options, env);
     if ('skip' in codex) { skip(codex.skip); continue; }
     codexConfig.push(...codex.config);
     Object.assign(env, codex.env);
+    reads();
   }
   // Paths on a shim's command line meet cmd.exe; one it would misread is left out rather than mangled.
   const onCommandLine = (file: string | undefined, what: string): string | undefined => {
@@ -358,6 +370,8 @@ export function roleLaunch(role: ResolvedRole, options: RoleLaunchOptions): Role
     webSearch: web ? 'live' : 'disabled',
     ...(role.role.model && role.role.provider === provider ? { model: role.role.model } : {}),
     notes,
+    packCopy: role.copy,
+    variables: [...variables],
   };
 }
 

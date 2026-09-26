@@ -339,11 +339,34 @@ export function confinedEnvironment(input: ConfinedEnvironmentInput): Record<str
   return env;
 }
 
-/** The `${NAME}` references in a Claude role's server settings: the variables Claude fills in from the head's own environment. */
-export function referencedVariables(values: readonly string[]): string[] {
-  const names = new Set<string>();
-  for (const value of values) for (const match of value.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}/g)) names.add(match[1]!);
-  return [...names];
+export interface HeadEnvironmentInput {
+  base: Readonly<Record<string, string | undefined>>;
+  platform: NodeJS.Platform;
+  provider: Provider;
+  /** The head's own TEMP and TMP, under Hydra's storage: Codex's sandbox makes TEMP writable, so it must not be the shared one (R4). */
+  temp: string;
+  worktree: string;
+  /** How a Claude head's shell runs. */
+  shell?: HeadShell;
+  /** A role's variables (RoleLaunch.variables) and its values for Codex servers (RoleLaunch.env). */
+  roleNames?: readonly string[];
+  roleValues?: Readonly<Record<string, string>>;
+}
+
+/**
+ * A head's whole environment. Background tasks stay off: a head that started a long command in the
+ * background and ended its turn to wait for it stopped without calling hydra_done, since a `-p`
+ * session ends with its turn (Step 1 live checks). With a sandboxed shell, Claude Code runs each
+ * Bash command through the wrapper (CLAUDE_CODE_SHELL_PREFIX) with the worktree as the sandbox's
+ * root (HYDRA_WT), and Git's `bin` comes first on PATH, since the `bash` that starts Hydra's own
+ * servers through the wrapper is looked up there.
+ */
+export function headEnvironment(input: HeadEnvironmentInput): Record<string, string> {
+  const set: Record<string, string> = { ...input.roleValues, TEMP: input.temp, TMP: input.temp, DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
+  if (input.provider === 'claude' && input.shell?.kind === 'sandboxed') {
+    Object.assign(set, { CLAUDE_CODE_SHELL_PREFIX: input.shell.wrapper, HYDRA_WT: input.worktree, PATH: [input.shell.gitBin, envValue(input.base, 'PATH', input.platform)].filter(Boolean).join(';') });
+  }
+  return confinedEnvironment({ base: input.base, platform: input.platform, provider: input.provider, roleNames: input.roleNames ?? [], set });
 }
 
 // ---- The shell: Codex's Windows sandbox around each Bash command (R5, design 1, 5 and 7) ----
