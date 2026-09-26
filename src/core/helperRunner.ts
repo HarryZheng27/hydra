@@ -5,6 +5,7 @@ import { processLaunch, terminateProcessTree } from './process';
 import type { Provider } from './model';
 import { claudeHeadLimit, codexHeadLimit, type HeadLimit } from './limitDetection';
 import { claudeHeadTools } from './confine';
+import { redactText } from './redact';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -121,9 +122,15 @@ export function codexHelperArguments(spec: HelperRunSpec, resumeThread?: string)
 
 export const startHelperRun: StartHelperRun = spec => spec.provider === 'claude' ? startClaude(spec) : startCodex(spec);
 
-function logger(file: string, secret?: string) {
+/**
+ * 5.1 (docs/Hydra_Improvements.md): the head's own bridge token is masked (it's an exact
+ * secret Hydra already knows), and so is anything else in the line that looks like a
+ * secret — an API key the head's tool output happened to print, an env var value, and so on.
+ */
+/** Exported for tests/redact.test.ts: a head transcript that prints a planted secret masks it. */
+export function logger(file: string, secret?: string) {
   let queue: Promise<unknown> = mkdir(path.dirname(file), { recursive: true }).catch(() => undefined);
-  const redact = (line: string) => secret ? line.split(secret).join('<token>') : line;
+  const redact = (line: string) => redactText(line, secret ? [secret] : []);
   return (kind: string, data: unknown) => { queue = queue.then(() => appendFile(file, redact(JSON.stringify({ at: Date.now(), kind, data })) + '\n')).catch(() => undefined); };
 }
 

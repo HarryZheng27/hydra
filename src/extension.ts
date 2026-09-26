@@ -27,6 +27,7 @@ import type { LimitEvent } from './core/limitEvents';
 import { ClaudeChatLimits, CodexChatLimits } from './extensionLimits';
 import type { ProviderConnectionView } from './helperConnectionsView';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from './core/mcpServers';
+import { createRedactor } from './core/redact';
 import { checkProvider } from './core/diagnostics';
 import { settingsRequiringRefresh } from './core/settingsRefresh';
 import { parseHandoff, officialProviders } from './core/handoff';
@@ -70,6 +71,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 export async function deactivate(): Promise<void> { await manager?.shutdown(); }
 
+/**
+ * 5.1 (docs/Hydra_Improvements.md): every line the Hydra output channel shows goes through the
+ * one redactor first. Hydra's own endpoint tokens are kept only as a SHA-256 digest
+ * (helperEndpoint.ts), never in the clear, and Hydra never logs one to this channel either
+ * (grep for "never a token" in extension.ts); what this catches is a secret a head's tool
+ * output, a gate command or an MCP server happened to print. A Proxy forwards everything else
+ * (dispose, show, clear, …) to the real channel unchanged.
+ */
+function redactedChannel(channel: vscode.OutputChannel, redact: (text: string) => string): vscode.OutputChannel {
+  return new Proxy(channel, {
+    get(target, prop) {
+      if (prop === 'appendLine') return (value: string) => target.appendLine(redact(value));
+      if (prop === 'append') return (value: string) => target.append(redact(value));
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 class Manager {
   private repositories: string[] = [];
   private panel?: vscode.WebviewPanel;
@@ -81,7 +101,7 @@ class Manager {
   private disabled = false;
   private closing = false;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  private readonly output = vscode.window.createOutputChannel('Hydra');
+  private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
   private readonly locks: OwnershipLock[] = [];
   private readonly storageDirectory: string;
   /** Hydra helpers for this window (docs/Official_Extensions_Plan.md): job store, local endpoint, service, discovery record. */

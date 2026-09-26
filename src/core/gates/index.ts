@@ -8,7 +8,7 @@ import { cdpBrowser } from './browser';
 import { runCommandGate } from './command';
 import { defaultRunReviewer, formatFinding, runReviewGate } from './review';
 import { freePort, runScreenshotsGate } from './screenshots';
-import { clip, notRun, providerName, type GateContext, type GateRuntime } from './types';
+import { clip, notRun, providerName, redactGateResult, type GateContext, type GateRuntime } from './types';
 
 /**
  * Gates (docs/Gates_Plan.md, section 1): the second pass that has to prove a
@@ -63,7 +63,10 @@ export async function runGateList(gates: readonly Gate[], worktree: string, base
     } catch (error) {
       result = notRun(gate, `Hydra couldn't run it: ${error instanceof Error ? error.message : String(error)}`);
     }
-    result = fromPack(gate, result);
+    // 5.1 (docs/Hydra_Improvements.md): every gate's result goes through the one redactor here,
+    // so a command's or a reviewer's output never reaches a job's checks, the UI or the log line
+    // below unmasked, even for a gate kind that doesn't redact its own result.
+    result = redactGateResult(fromPack(gate, result), context.redact);
     context.log?.(`[gates] ${gate.id} (${gate.type}): ${describeState(result)}${result.summary ? `. ${clip(result.summary, 200)}` : ''}`);
     results.push(result);
     if (gateBlocks(result)) blocker = result;

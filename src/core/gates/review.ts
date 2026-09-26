@@ -9,6 +9,7 @@ import { plannerResultText } from '../planner';
 import { claudeHeadLimit, codexHeadLimit, type HeadLimit } from '../limitDetection';
 import type { Provider } from '../model';
 import { gateKind, gateState, type FindingSeverity, type GateFinding, type JobCheckResult } from '../jobs';
+import { redactText } from '../redact';
 import type { ReviewerChoice, ReviewGate } from './config';
 import { clip, notRun, providerName, type GateRun, type ReviewerSpec } from './types';
 
@@ -233,6 +234,7 @@ async function reviewDiff(worktree: string, baseCommit: string): Promise<{ text:
 }
 
 export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<JobCheckResult> {
+  const redact = run.redact ?? redactText;
   const started = run.runtime.now();
   const elapsed = () => run.runtime.now() - started;
   const pick = await chooseReviewer(gate.reviewer, run.author, provider => availability(provider, run));
@@ -245,13 +247,17 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
     ...(gate.reviewerRole ? { role: gate.reviewerRole } : {}),
   });
   const promptFile = path.join(run.logDirectory, `${gate.id}-prompt.md`), replyFile = path.join(run.logDirectory, `${gate.id}-reply.txt`);
-  await writeFile(promptFile, prompt, 'utf8');
+  // 5.1: the diff (and the earlier gates' own output) can hold a secret the head's worktree
+  // never should have committed; the prompt Hydra writes to disk, and what the reviewer is
+  // actually sent, are both redacted the same way.
+  const redactedPrompt = redact(prompt);
+  await writeFile(promptFile, redactedPrompt, 'utf8');
   run.log?.(`[gates] ${gate.id}: ${name} is reviewing${pick.note ? ` (${pick.note})` : ''}`);
   const output = await run.runtime.runReviewer({
     provider: pick.provider, executable: pick.executable, args: reviewArguments(pick.provider, pick.provider === 'codex' ? screenshots : [], !!gate.reviewerRole?.web),
-    input: prompt, cwd: run.worktree, timeoutMs: reviewTimeoutMs, signal: run.signal, spawned: run.spawned,
+    input: redactedPrompt, cwd: run.worktree, timeoutMs: reviewTimeoutMs, signal: run.signal, spawned: run.spawned,
   });
-  await writeFile(replyFile, `${output.stdout}${output.stderr ? `\n--- stderr ---\n${output.stderr}` : ''}`, 'utf8');
+  await writeFile(replyFile, redact(`${output.stdout}${output.stderr ? `\n--- stderr ---\n${output.stderr}` : ''}`), 'utf8');
   const evidence = [replyFile, promptFile];
   const reviewer = { reviewer: pick.provider, evidence };
   if (output.timedOut) return notRun(gate, `${name} didn't finish its review in ${Math.round(reviewTimeoutMs / 60_000)} minutes.`, elapsed(), reviewer);
