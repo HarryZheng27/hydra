@@ -793,9 +793,19 @@ class Manager {
     const file = path.join(this.context.globalStorageUri.fsPath, 'audit', 'audit.jsonl');
     const content = await readFile(file, 'utf8').catch(() => undefined);
     if (!content) { void vscode.window.showInformationMessage('No audit events yet.'); return; }
-    const document = await vscode.workspace.openTextDocument({ language: 'json', content });
+    // A read-only document named audit.jsonl (a content provider's documents can't be saved);
+    // the query changes each time, so it's never a stale cached copy.
+    if (!this.auditProvider) {
+      this.auditProvider = vscode.workspace.registerTextDocumentContentProvider('hydra-audit', { provideTextDocumentContent: uri => this.auditSnapshots.get(uri.query) ?? '' });
+      this.context.subscriptions.push(this.auditProvider);
+    }
+    const key = String(Date.now());
+    this.auditSnapshots.clear(); this.auditSnapshots.set(key, content);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: 'hydra-audit', path: '/audit.jsonl', query: key }));
     await vscode.window.showTextDocument(document, { preview: true });
   }
+  private auditProvider?: vscode.Disposable;
+  private readonly auditSnapshots = new Map<string, string>();
   private async stopHelpers(): Promise<void> {
     this.planRunner?.dispose(); this.planRunner = undefined;
     const plans = this.plans; this.plans = undefined;
