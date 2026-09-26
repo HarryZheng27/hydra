@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { eolOf, providerPaths, read, removeCodexBlock, removeMarkedBlock, runClaude, serverName as hydraServerName, writeAtomic } from './helperRegistration';
 import { processLaunch, terminateProcessTree } from './process';
+import { looksLikeSecret, secretKeyPattern, secretPrefixPattern } from './redact';
+export { looksLikeSecret } from './redact';
 
 /**
  * The user's own MCP servers for Claude Code and Codex, managed from Hydra
@@ -134,22 +136,9 @@ export function validateServerSpec(input: unknown): McpServerSpec {
 }
 
 // ---- Secrets ----
+// secretKeyPattern, secretPrefixPattern and looksLikeSecret moved to ./redact (5.1, docs/Hydra_Improvements.md),
+// which redactText's key/value masking now shares with this page's own masking below.
 
-const secretKeyPattern = /token|secret|passw|api[-_]?key|apikey|auth(?!or)|credential|private[-_]?key|access[-_]?key|client[-_]?key|session|cookie|bearer|signature|(^|[-_])key($|[-_])/i;
-const secretPrefixPattern = /^(sk-|sk_|pk_live_|rk_live_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|glpat-|xox[abprs]-|AKIA|ASIA|AIza|ya29\.|npm_|pypi-|hf_|shpat_|SG\.|lin_api_|eyJ)/;
-/**
- * Whether a value should be masked: by its key (TOKEN, KEY, SECRET, PASSWORD,
- * AUTH, …) or by its shape (known token prefixes, "Bearer …", long random
- * strings). An environment-variable reference like `${GITHUB_TOKEN}` is not a secret.
- */
-export function looksLikeSecret(key: string | undefined, value: string): boolean {
-  if (!value || /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(value)) return false;
-  if (key && secretKeyPattern.test(key)) return true;
-  const bare = value.replace(/^(Bearer|Basic|token)\s+/i, '');
-  if (bare !== value) return bare.length >= 8;
-  if (secretPrefixPattern.test(bare) && bare.length >= 12) return true;
-  return bare.length >= 24 && /^[A-Za-z0-9_\-+=]+$/.test(bare) && /\d/.test(bare) && /[A-Za-z]/.test(bare) && !/^\d[\d-]*$/.test(bare);
-}
 const masked = (value: string) => value.length >= 16 ? `••••${value.slice(-4)}` : '••••••••';
 /** The value to show for a key/value pair: unchanged, or masked (an auth scheme word like "Bearer " is kept). */
 export function maskSecret(key: string | undefined, value: string): string {
