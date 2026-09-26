@@ -20,6 +20,7 @@ import type { LimitEvent } from './limitEvents';
 import type { LaneSyncView, LaneView, Provider } from './model';
 import { laneSettings, storageReadDeny } from './confine';
 import { otherWorktrees, storageListing } from './confineFiles';
+import type { StopSwitch } from './stopSwitch';
 
 /**
  * Hydra lanes, end to end (docs/Lanes_And_Planner_Plan.md, section 1): this
@@ -205,6 +206,9 @@ export interface LaneServiceOptions {
    * a lane is your terminal, with your full environment (decision 3).
    */
   hydraStorage?: string;
+  // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
+  /** Without it, a lane always may launch or relaunch (as before 5.3). */
+  stop?: StopSwitch;
 }
 
 /** How a plan lane starts (docs/Plan_Lanes_Plan.md, "Starting a lane job"). */
@@ -293,6 +297,7 @@ export class LaneService {
   /** Start a lane: a worktree and branch from the main checkout's HEAD (or a plan job's base commit), and its CLI in a terminal. */
   async create(value: unknown, options: LaneCreateOptions = {}): Promise<Lane> {
     const input = parseLaneInput(value);
+    this.options.stop?.assertRunning('Starting a lane');
     if (!this.options.pty) throw new Error(terminalsUnavailable);
     if (this.disposed) throw new Error('This Hydra window is closing.');
     if (this.lanes().length >= maxOpenLanes) throw new Error(`This window already has ${maxOpenLanes} open lanes. Close some first.`);
@@ -339,6 +344,7 @@ export class LaneService {
    * HYDRA_TEST_LANE_COMMAND keep today's behaviour, since nothing real ever wrote a conversation.
    */
   async resume(id: unknown): Promise<void> {
+    this.options.stop?.assertRunning('Resuming a lane');
     await this.exclusive(id, async lane => {
       if (this.terminals.get(lane.id)?.running) throw new Error(`Lane ${lane.name} is already running.`);
       if (this.options.testCommand?.()) { await this.relaunch(lane, true); return; }
@@ -350,6 +356,7 @@ export class LaneService {
 
   /** Start fresh: stop the lane's CLI if it runs, then start a new conversation (with the goal's first prompt). */
   async restart(id: unknown): Promise<void> {
+    this.options.stop?.assertRunning('Restarting a lane');
     await this.exclusive(id, async lane => {
       await this.terminals.get(lane.id)?.kill();
       await this.relaunch(this.options.store.get(lane.id)!, false);
@@ -364,6 +371,7 @@ export class LaneService {
    * first prompt. Uncommitted work is untouched — the switch never touches git.
    */
   async switchProvider(id: unknown, reason: LaneSwitchReason, event?: LimitEvent): Promise<Lane> {
+    this.options.stop?.assertRunning('Switching a lane\'s provider');
     return this.exclusive(id, async lane => {
       const to = otherProvider(lane.provider);
       const limitEvent: LimitEvent = event ?? { provider: lane.provider, source: 'lane', laneId: lane.id, at: this.now().toISOString(), cwd: lane.worktree };
@@ -614,6 +622,18 @@ export class LaneService {
         };
       }),
     };
+  }
+
+  /**
+   * 5.3 (docs/Hydra_Improvements.md): Hydra: Stop All Agents. Ends every open lane's process
+   * (its terminal's `exited` handler marks the lane "exited", same as any other exit) but keeps
+   * the lane and its worktree — unlike `dispose`, the service stays usable and Resume Agents lets
+   * the user resume each lane as today.
+   */
+  async stopProcesses(): Promise<number> {
+    const running = this.lanes().filter(lane => this.terminals.get(lane.id)?.running);
+    await Promise.all(running.map(lane => this.terminals.get(lane.id)!.kill().catch(() => undefined)));
+    return running.length;
   }
 
   /** Window closing: stop every lane's terminal. Their records stay running, so the next start marks them "Hydra restarted". */

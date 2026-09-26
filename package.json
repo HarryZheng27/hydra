@@ -102,6 +102,14 @@
         "title": "Hydra: Stop All Heads"
       },
       {
+        "command": "hydra.stopAllAgents",
+        "title": "Hydra: Stop All Agents"
+      },
+      {
+        "command": "hydra.resumeAgents",
+        "title": "Hydra: Resume Agents"
+      },
+      {
         "command": "hydra.newLane",
         "title": "Hydra: New Lane",
         "icon": "$(add)"

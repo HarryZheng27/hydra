@@ -21,6 +21,8 @@ import type { Plan, PlanJob } from './core/plans';
 import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from './core/planRunner';
 // ---- Packs (docs/Packs_Plan.md) ----
 import type { RoleSource } from './core/packs/launch';
+// ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
+import type { StopSwitch } from './core/stopSwitch';
 
 /**
  * The editor side of Hydra lanes (docs/Lanes_And_Planner_Plan.md): commands,
@@ -56,6 +58,9 @@ export interface LanesHost {
   // ---- Step 2 (docs/Hydra_Improvements.md) ----
   /** Hydra's global storage folder: a Claude lane's settings deny it (design 6). */
   hydraStorage?: string;
+  // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
+  /** Without it, a lane always may launch or relaunch. */
+  stop?: StopSwitch;
 }
 /** Options for `hydra.lanes.action` (automation): no dialogs, so choices are passed in. */
 export interface LaneActionOptions { message?: string; close?: CloseMode }
@@ -152,6 +157,7 @@ export class LanesController implements vscode.Disposable {
       ...(this.host.gates ? { gates: this.host.gates } : {}),
       ...(this.host.roles ? { roles: this.host.roles } : {}),
       ...(this.host.hydraStorage ? { hydraStorage: this.host.hydraStorage } : {}),
+      ...(this.host.stop ? { stop: this.host.stop } : {}),
     });
     this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(baseScheme, { provideTextDocumentContent: uri => this.baseContent(uri) }));
     this.service.activate();
@@ -181,6 +187,8 @@ export class LanesController implements vscode.Disposable {
   laneWorktreeEntries(): { id: string; worktree: string }[] { return this.service?.lanes().map(lane => ({ id: lane.id, worktree: lane.worktree })) ?? []; }
   /** For the Codex account-limit fan-out (src/extension.ts): this window's running lanes of one provider. */
   runningLanes(provider: Provider): { id: string; worktree: string }[] { return (this.service?.views() ?? []).filter(lane => lane.running && lane.provider === provider).map(lane => ({ id: lane.id, worktree: lane.worktree })); }
+  /** 5.3 (docs/Hydra_Improvements.md): Hydra: Stop All Agents. Ends every open lane's process, keeping the lane and its worktree. */
+  async stopProcesses(): Promise<number> { return this.service?.stopProcesses() ?? 0; }
 
   // ---- The Agents webview ----
 
