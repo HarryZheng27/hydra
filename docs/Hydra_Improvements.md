@@ -1,6 +1,6 @@
 # Hydra improvements: security hardening
 
-Status: Step 1 built and merged; Step 2 built (2026-09-26, see "As built"); Steps 3 and 4 planned.
+Status (2026-09-26): Steps 1–4 built and merged (see "As built"). What remains of Step 4 needs the release owner: a code-signing certificate, an update host and the update-signing key ([Releases.md](Releases.md)), then the native install step and a signed-to-signed upgrade test. Until then, in-app updates stay off. The **Later** list is not scheduled.
 
 ## Goal
 
@@ -141,6 +141,8 @@ Tests use real temp repos.
    - `hydra.updateTrust` is on by default only after an upgrade test from a signed release to the next passes.
 
 ## Later
+
+Not part of Steps 1–4, and not scheduled yet:
 
 - A global **Stop all**: ends every head and lane process and stays stopped until you resume.
 - An audit log of denials, approvals and stops.
