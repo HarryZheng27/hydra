@@ -394,14 +394,17 @@ test('the extension gallery is accepted only when every URL points at Open VSX',
 
 // ---- O8b: the hydra command, in the app's own bin/hydra launchers ----
 
+/** As prepare() reads them (git show: the pinned blobs, LF), whatever a checkout did to the fixtures' line endings. */
+const lf = text => text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));
+
 /** A fake install: Node stands in for Hydra.exe, and two scripts for the editor's CLI and Hydra's own. */
 async function launcherInstall() {
   const app = await fs.mkdtemp(path.join(tmpdir(), 'hydra-launcher-'));
   const upstream = path.join(root, 'tests', 'fixtures', 'upstream-launcher');
   const fill = text => text.split('@@NAME@@').join('Hydra').split('@@APPNAME@@').join('hydra').split('@@COMMIT@@').join('0'.repeat(40)).split('@@QUALITY@@').join('stable').split('@@SERVERDATAFOLDER@@').join('.hydra-server');
   await fs.mkdir(path.join(app, 'bin'), { recursive: true });
-  await fs.writeFile(path.join(app, 'bin', 'hydra.cmd'), fill(brandedLauncherCmd(await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8'))));
-  await fs.writeFile(path.join(app, 'bin', 'hydra'), fill(brandedLauncherSh(await fs.readFile(path.join(upstream, 'code.sh'), 'utf8'))), { mode: 0o755 });
+  await fs.writeFile(path.join(app, 'bin', 'hydra.cmd'), fill(brandedLauncherCmd(lf(await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8')))));
+  await fs.writeFile(path.join(app, 'bin', 'hydra'), fill(brandedLauncherSh(lf(await fs.readFile(path.join(upstream, 'code.sh'), 'utf8')))), { mode: 0o755 });
   await fs.link(process.execPath, path.join(app, 'Hydra.exe')).catch(() => fs.copyFile(process.execPath, path.join(app, 'Hydra.exe')));
   const report = name => `process.stdout.write(JSON.stringify({ ran: '${name}', args: process.argv.slice(2), node: process.env.ELECTRON_RUN_AS_NODE }));`;
   await fs.mkdir(path.join(app, 'resources', 'app', 'out'), { recursive: true });
@@ -415,7 +418,7 @@ const ran = result => { try { return JSON.parse(result.stdout.toString()); } cat
 
 test('the pinned launchers patch once, and the built pair is checked for the dispatch', async () => {
   const upstream = path.join(root, 'tests', 'fixtures', 'upstream-launcher');
-  const cmd = await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8'), sh = await fs.readFile(path.join(upstream, 'code.sh'), 'utf8');
+  const cmd = lf(await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8')), sh = lf(await fs.readFile(path.join(upstream, 'code.sh'), 'utf8'));
   assert.deepEqual([...hydraCliCommands], ['status', 'plan', 'heads', 'stop', 'resume', 'report']);
   assert.doesNotThrow(() => verifyLaunchers(brandedLauncherCmd(cmd), brandedLauncherSh(sh)));
   assert.throws(() => verifyLaunchers(cmd, brandedLauncherSh(sh)), /hydra\.cmd does not dispatch/);
