@@ -21,8 +21,8 @@ import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
 import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost, type PlanAmendment } from './plans';
-import { HeadSync, headSyncIntervalMs, type HeadConflict } from './headSync';
-export type { HeadConflict } from './headSync';
+import { HeadSync, headSyncIntervalMs, type HeadConflict, type IntegrationConflict } from './headSync';
+export type { HeadConflict, IntegrationConflict } from './headSync';
 import type { PlanAmendEdit, PlanAmendRetry, PlanAmendSkip, PlanBudget, PlanBudgetInput, PlanLeadJobInput, PlanState } from './plans';
 import type { PlanJobStatus } from './planRunner';
 
@@ -94,6 +94,8 @@ export interface UserControl {
 export interface PlanBoardBridge {
   /** Which plan and job key a running head belongs to; undefined for a loose head or one whose plan job was removed. */
   jobPlan(jobId: string): { planId: string; jobKey: string } | undefined;
+  /** O3: the integration branch a plan's head lands on, and its tip now; undefined for a loose head, or a plan without one. */
+  integrationTarget?(jobId: string): { branch: string; tip: string } | undefined;
   /** hydra_share (a job) posts to its plan's board. */
   post(planId: string, input: { from: BoardFrom; to: 'all' | string[]; topic?: string; body: string }): Promise<void>;
   /** hydra_board: every post a job (by key) may read. */
@@ -208,6 +210,7 @@ export class HelperService {
   // ---- O2: conflict prediction between running heads (docs/Heads.md, "Coordination") ----
   private readonly headSyncer = new HeadSync();
   private readonly headConflictsById = new Map<string, HeadConflict[]>();
+  private readonly integrationConflictsById = new Map<string, IntegrationConflict>();
   private readonly headSyncTimer: ReturnType<typeof setInterval>;
   constructor(private readonly options: HelperServiceOptions) {
     this.now = options.now || Date.now;
@@ -1199,6 +1202,9 @@ export class HelperService {
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
+      // O2/O3: predicted merge conflicts, as of the last pass: with other running heads, and with the plan's integration branch.
+      ...(detail && this.headConflicts(job.id).length ? { predicted_conflicts: this.headConflicts(job.id).map(conflict => ({ head: conflict.jobId, files: conflict.files })) } : {}),
+      ...(detail && this.headIntegrationConflict(job.id) ? { integration_conflict: { branch: this.headIntegrationConflict(job.id)!.branch, files: this.headIntegrationConflict(job.id)!.files } } : {}),
     };
   }
 
@@ -1244,19 +1250,27 @@ export class HelperService {
   /** Heads this one would conflict with if both merged now, from the last conflict-prediction pass. */
   headConflicts(id: string): HeadConflict[] { return this.headConflictsById.get(id) ?? []; }
 
+  /** O3: a plan head's predicted conflict with its plan's integration branch, from the last pass. */
+  headIntegrationConflict(id: string): IntegrationConflict | undefined { return this.integrationConflictsById.get(id); }
+
   private async runHeadSync(): Promise<void> {
     if (this.disposed) return;
-    const heads = this.list().filter(job => !finalJobStates.has(job.state) && job.worktree).map(job => ({ id: job.id, worktree: job.worktree! }));
-    if (heads.length < 2) {
-      if (this.headConflictsById.size) { this.headConflictsById.clear(); this.changed(); }
+    const heads = this.list().filter(job => !finalJobStates.has(job.state) && job.worktree).map(job => {
+      const integration = this.options.planBoard?.integrationTarget?.(job.id);
+      return { id: job.id, worktree: job.worktree!, ...(integration ? { integration } : {}) };
+    });
+    if (heads.length < 2 && !heads.some(head => head.integration)) {
+      if (this.headConflictsById.size || this.integrationConflictsById.size) { this.headConflictsById.clear(); this.integrationConflictsById.clear(); this.changed(); }
       return;
     }
-    const results = await this.headSyncer.run(this.options.leadFolder, heads).catch(() => new Map<string, HeadConflict[]>());
+    const results = await this.headSyncer.runAll(this.options.leadFolder, heads).catch(() => ({ pairs: new Map<string, HeadConflict[]>(), integration: new Map<string, IntegrationConflict>() }));
     if (this.disposed) return;
-    const same = (a: Map<string, HeadConflict[]>, b: Map<string, HeadConflict[]>) => JSON.stringify([...a]) === JSON.stringify([...b]);
-    if (same(results, this.headConflictsById)) return;
+    const same = (a: Map<string, unknown>, b: Map<string, unknown>) => JSON.stringify([...a]) === JSON.stringify([...b]);
+    if (same(results.pairs, this.headConflictsById) && same(results.integration, this.integrationConflictsById)) return;
     this.headConflictsById.clear();
-    for (const [id, conflicts] of results) this.headConflictsById.set(id, conflicts);
+    for (const [id, conflicts] of results.pairs) this.headConflictsById.set(id, conflicts);
+    this.integrationConflictsById.clear();
+    for (const [id, conflict] of results.integration) this.integrationConflictsById.set(id, conflict);
     this.changed();
   }
 }

@@ -344,7 +344,36 @@ test('buildPlanReport (O7): a snapshot of the morning report\'s shape for a mixe
   assert.match(report, /## Amendments/);
   assert.match(report, /Retried: lint/);
   assert.match(report, /## Integration gate/);
-  assert.match(report, /Not available/);
+  assert.match(report, /None: this plan started before Hydra landed plans on an integration branch/);
   assert.match(report, /## Needs you/);
   assert.match(report, /- Fix lint: Usage limit reached twice\./);
+});
+
+test('buildPlanReport (O3): the integration gate\'s real result, what landed, and what the plan needs from you next', () => {
+  const sha = (fill: string) => fill.repeat(40);
+  const check = (id: string, passed: boolean) => ({ id, kind: 'command' as const, state: passed ? 'passed' as const : 'failed' as const, required: true, passed, exitCode: passed ? 0 : 1, durationMs: 1, outputTail: '', summary: passed ? 'ok' : 'boom' });
+  const landed = [
+    { key: 'api', attempt: 0, commit: sha('b'), tip: sha('b'), via: 'fast-forward' as const, at: '2026-01-01T00:00:00.000Z' },
+    { key: 'ui', attempt: 0, commit: sha('d'), tip: sha('c'), via: 'merge' as const, at: '2026-01-01T00:00:00.000Z' },
+  ];
+  const integration = { branch: 'hydra/plan-aaaaaaaaaaaa', base: sha('a'), target: 'main', tip: sha('c'), queue: [], landed };
+  const plan = (gate: unknown) => ({ title: 'Checkout', state: 'done', unattended: { usd: 20 }, startedAt: '2026-01-01T00:00:00.000Z', amendments: [], integration: { ...integration, gate } }) as unknown as Plan;
+  const at = '2026-01-01T00:00:00.000Z';
+
+  const passed = buildPlanReport(plan({ tip: sha('c'), at, status: 'passed', checks: [check('unit', true)] }), []);
+  assert.ok(passed.includes('## Integration gate\n\nPassed required gates.'), passed);
+  assert.ok(passed.includes('Branch: hydra/plan-aaaaaaaaaaaa at ccccccc, from aaaaaaa on main.'));
+  assert.ok(passed.includes('Landed: api, ui.'));
+  assert.ok(passed.includes('- ✓ unit: ok'));
+  assert.ok(passed.includes('## Needs you\n\n- Merging the plan: its combined work passed; **Merge plan** lands hydra/plan-aaaaaaaaaaaa on main.'));
+
+  const failed = buildPlanReport(plan({ tip: sha('c'), at, failed: true, checks: [check('unit', false)] }), []);
+  assert.ok(failed.includes('Integration gate failed.'));
+  assert.ok(failed.includes('- ✗ unit: boom'));
+  assert.ok(failed.includes('- The integration gate: Integration gate failed. Fix it and run the gate again, or merge anyway from the canvas.'));
+  assert.ok(!failed.includes('Ready to merge'));
+
+  const stale = buildPlanReport(plan({ tip: sha('b'), at, status: 'passed', checks: [check('unit', true)] }), []);
+  assert.ok(stale.includes('Integration gate out of date'));
+  assert.ok(!stale.includes('- ✓ unit'), 'a result for an older tip is not shown as this one\'s');
 });

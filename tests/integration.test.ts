@@ -8,7 +8,7 @@ import { createPlan, PlanStore, applyPlanAmendment, type Plan, type PlanJob } fr
 import { PlanRunner, planHeadInput, type PlanHeadLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import {
   applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, integrationSettled, landCommit, mergeRefusal, newIntegration, reconcile,
-  reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
+  laneMergeRefusal, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
 } from '../src/core/integration';
 import { parseGatesConfig, runGateList } from '../src/core/gates';
 import { JobStore, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
@@ -73,7 +73,7 @@ interface Started { key: string; id: string; dependsOn: string[]; inputs: Depend
 const headJob = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], runAs: 'head', ...extra });
 
 /** A plan runner over a real repository, with fake heads that a test finishes with real commits. */
-async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; directory?: string; now?: () => Date } = {}) {
+async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
   const directory = options.directory ?? path.join(repo.root, `plans-${++counter}`);
   const heads = new Map<string, PlanHeadLook>();
   const started: Started[] = [];
@@ -92,7 +92,7 @@ async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: Non
     unlinkLane: async () => undefined,
     commitSubjects: async () => [], changedFiles: async () => [],
     terminalsAvailable: () => true, debounceMs: 1,
-    ...(options.now ? { now: options.now } : {}),
+    ...(options.now ? { now: options.now } : {}), ...options.hooks,
     integration: { runGate: options.runGate ?? passingGate, ...(options.attempts ? { attempts: options.attempts } : {}) },
   });
   let store = new PlanStore(directory);
@@ -590,4 +590,30 @@ test('applyPlanAmendment (O3): retrying a job held for a conflict gives it a fre
   assert.equal(job.attempt, 3);
   assert.deepEqual(job.conflict, { files: ['src/api/x.ts'], commit: sha('b'), tip: sha('a'), count: 0, at });
   assert.match(String(planHeadInput({ id: 'aaaaaaaaaaaa', title: 'X', integration: newIntegration('aaaaaaaaaaaa', sha('a')) }, job, []).brief), /Keep both changes\.\n\n## Conflict/);
+});
+
+test('laneMergeRefusal (O3): a plan lane\'s own Merge refuses while its plan lands through an integration branch', () => {
+  const integration = newIntegration('aaaaaaaaaaaa', sha('a'), 'main');
+  const refusal = laneMergeRefusal({ title: 'Checkout', integration }, { title: 'Build API' });
+  assert.match(refusal!, /job "Build API" of plan "Checkout", which lands on hydra\/plan-aaaaaaaaaaaa and reaches main only with the rest of the plan/);
+  assert.match(refusal!, /Use Mark job done instead of Merge/);
+  assert.equal(laneMergeRefusal({ title: 'Old' }, { title: 'x' }), undefined, 'a plan from before integration branches merges as it always did');
+  assert.equal(laneMergeRefusal({ title: 'Done', integration: { ...integration, merged: { via: 'merge', tip: sha('a'), at: '2026-09-27T00:00:00.000Z' } } }, { title: 'x' }), undefined);
+});
+
+test('O3: a done plan settles before its integration gate runs, and onGateDone follows with the gate\'s result on the plan', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const settled: Plan[] = [], gated: Plan[] = [];
+  const p = await planFixture(f, [headJob('a')], { hooks: { onSettled: plan => settled.push(plan), onGateDone: plan => gated.push(plan) } });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a.txt': 'a\n' }, 'a'));
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]!.state, 'done');
+    assert.equal(integrationSettled(settled[0]!), false, 'when the plan settles, its gate is still to come: the morning report waits');
+    await p.runner.integrate(p.plan.id); // joins the run the last landing started
+    assert.equal(gated.length, 1);
+    assert.equal(integrationSettled(gated[0]!), true);
+    assert.equal(gated[0]!.integration!.gate!.status, 'passed');
+  } finally { p.dispose(); await f.close(); }
 });

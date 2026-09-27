@@ -5,21 +5,31 @@ import { mergeTreeConflicts, snapshotLane } from './laneSync';
  * the same `git merge-tree` approach lanes already use (laneSync.ts): each
  * head's current work (committed, staged, unstaged and untracked) becomes a
  * snapshot commit without touching its real files, and a merge-tree dry run
- * says which pairs would conflict. Heads have no integration branch yet (O3),
- * so this checks running heads against each other only, not against a target.
+ * says which pairs would conflict. A plan's head is also checked against its
+ * plan's integration branch (O3), the tip it has to land on: work that has
+ * landed since it started can conflict with it before it's done.
  * `snapshotLane` and `mergeTreeConflicts` are worktree-generic despite their
  * name: nothing in either is specific to a lane.
  */
 export const headSyncIntervalMs = 30_000;
 export interface HeadConflict { jobId: string; files: string[] }
-interface SyncHead { id: string; worktree: string }
+/** O3: a plan head's predicted conflict with its plan's integration branch. */
+export interface IntegrationConflict { branch: string; tip: string; files: string[] }
+interface SyncHead { id: string; worktree: string; integration?: { branch: string; tip: string } }
+export interface HeadSyncResult { pairs: Map<string, HeadConflict[]>; integration: Map<string, IntegrationConflict> }
 
 export class HeadSync {
   private pairs = new Map<string, string[]>();
 
   /** One pass over the given heads' worktrees; `repository` is the lead folder, whose object database every head's worktree shares. */
   async run(repository: string, heads: readonly SyncHead[]): Promise<Map<string, HeadConflict[]>> {
+    return (await this.runAll(repository, heads)).pairs;
+  }
+
+  /** Like run, and also each plan head against its integration branch's tip. */
+  async runAll(repository: string, heads: readonly SyncHead[]): Promise<HeadSyncResult> {
     const results = new Map<string, HeadConflict[]>();
+    const integration = new Map<string, IntegrationConflict>();
     for (const head of heads) results.set(head.id, []);
     const snapshots = new Map<string, string>();
     for (const head of heads) {
@@ -42,8 +52,18 @@ export class HeadSync {
         } catch { /* couldn't check this pair this pass; try again next time */ }
       }
     }
+    for (const head of heads) {
+      const snapshot = snapshots.get(head.id), target = head.integration;
+      if (!snapshot || !target) continue;
+      const key = `${snapshot}|${target.tip}`;
+      try {
+        const files = this.pairs.get(key) ?? await mergeTreeConflicts(repository, snapshot, target.tip);
+        usedPairs.set(key, files);
+        if (files.length) integration.set(head.id, { branch: target.branch, tip: target.tip, files });
+      } catch { /* try again next pass */ }
+    }
     // Keep only what this pass used, so the cache never outgrows the heads currently running.
     this.pairs = usedPairs;
-    return results;
+    return { pairs: results, integration };
   }
 }

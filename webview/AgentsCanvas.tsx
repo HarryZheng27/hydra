@@ -398,6 +398,7 @@ function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, o
       </div>}
       {head.status && <p className="canvas-node-evidence">{evidenceLabel(head.status)}</p>}
       {!!conflictNames?.length && <p className="canvas-node-conflict" title={(head.conflicts || []).flatMap(conflict => conflict.files).join(', ')}>Conflicts with {conflictNames.join(', ')}</p>}
+      {head.integrationConflict && <p className="canvas-node-conflict" title={head.integrationConflict.files.join(', ')}>Conflicts with {head.integrationConflict.branch} (what landed since it started)</p>}
       <div className="canvas-node-foot">
         <code title={head.branch || head.writeScope?.join(', ')}>{head.branch ? head.branch.replace(/^agent\//, '') : (head.writeScope || []).join(' ') || 'not started'}</code>
         <span>{elapsedLabel(head, now)}</span>

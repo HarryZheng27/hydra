@@ -3,9 +3,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
-import type { EvidenceStatus } from './jobs';
+import { gateState, type EvidenceStatus } from './jobs';
 import type { PlanRigor } from './gates/config';
-import { releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
+import { integrationGateLabel, integrationPassed, releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
 
 /**
  * Hydra plans (docs/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
@@ -200,7 +200,7 @@ const reportDuration = (startedAt?: string, finishedAt?: string): string | undef
  * kept with the plan and opened as a tab when the plan ends. Pure and snapshot-testable; the caller (extension.ts)
  * assembles each job's detail from the head store, since this module never reads one itself.
  */
-export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended' | 'startedAt' | 'amendments'>, jobs: readonly PlanReportJobDetail[], defaultHeadBudgetUsd = 5): string {
+export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended' | 'startedAt' | 'amendments' | 'integration'>, jobs: readonly PlanReportJobDetail[], defaultHeadBudgetUsd = 5): string {
   const lines: string[] = [`# ${plan.title}`, ''];
   const ended = plan.state === 'done' ? 'finished' : plan.state === 'incomplete' ? 'stopped incomplete' : plan.state;
   lines.push(`Unattended plan, ${ended}.`);
@@ -244,12 +244,37 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
     for (const amendment of plan.amendments) lines.push(`- ${amendment.at}: ${amendment.detail}`);
     lines.push('');
   }
+  // O3: every job's work together, on the plan's integration branch.
+  const integration = plan.integration;
   lines.push('## Integration gate', '');
-  lines.push('Not available: Hydra doesn\'t yet run an integration gate across a plan\'s jobs (planned separately).', '');
+  if (!integration) lines.push('None: this plan started before Hydra landed plans on an integration branch.', '');
+  else {
+    const label = integrationGateLabel(integration.gate, integration.tip);
+    lines.push(`${label}.`, '');
+    lines.push(`Branch: ${integration.branch} at ${integration.tip.slice(0, 7)}, from ${integration.base.slice(0, 7)}${integration.target ? ` on ${integration.target}` : ''}.`);
+    lines.push(`Landed: ${integration.landed.length ? integration.landed.map(entry => entry.key).join(', ') : 'nothing'}${integration.queue.length ? `; still waiting to land: ${integration.queue.map(entry => entry.key).join(', ')}` : ''}.`);
+    if (integration.gate?.checks.length && integration.gate.tip === integration.tip) {
+      lines.push('', 'Gates:');
+      for (const check of integration.gate.checks) {
+        const state = gateState(check);
+        lines.push(`- ${state === 'passed' ? '✓' : state === 'notRun' ? '–' : '✗'} ${check.id}${check.required ? '' : ' (optional)'}${check.summary ? `: ${check.summary}` : ''}`);
+      }
+    }
+    if (integration.error) lines.push('', `The landing queue stopped: ${integration.error}`);
+    if (integration.merged) lines.push('', integration.merged.via === 'pr' ? `Pushed for a pull request${integration.merged.url ? `: ${integration.merged.url}` : ''}.` : `Merged into ${integration.merged.into ?? 'its branch'}${integration.merged.commit ? ` at ${integration.merged.commit.slice(0, 7)}` : ''}.`);
+    else if (integrationPassed(integration)) lines.push('', 'Ready to merge: **Merge plan** on the canvas, or hydra_plan_merge from the chat.');
+    lines.push('');
+  }
   const needsYou = jobs.filter(job => job.status === 'failed' || job.question);
+  const needs = needsYou.map(job => `- ${job.title}: ${job.question ? `asked "${job.question}"` : job.reason ? job.reason : 'failed'}`);
+  if (integration && !integration.merged) {
+    if (integration.error) needs.push(`- The landing queue on ${integration.branch}: ${integration.error}`);
+    else if (integration.gate && !integration.gate.running && integration.gate.tip === integration.tip && !integrationPassed(integration)) needs.push(`- The integration gate: ${integrationGateLabel(integration.gate, integration.tip)}. Fix it and run the gate again, or merge anyway from the canvas.`);
+    else if (integrationPassed(integration)) needs.push(`- Merging the plan: its combined work passed; **Merge plan** lands ${integration.branch} on ${integration.target ?? 'your branch'}.`);
+  }
   lines.push('## Needs you', '');
-  if (!needsYou.length) lines.push('Nothing — every job finished or was skipped on purpose.');
-  else for (const job of needsYou) lines.push(`- ${job.title}: ${job.question ? `asked "${job.question}"` : job.reason ? job.reason : 'failed'}`);
+  if (!needs.length) lines.push('Nothing — every job finished or was skipped on purpose.');
+  else lines.push(...needs);
   return lines.join('\n');
 }
 

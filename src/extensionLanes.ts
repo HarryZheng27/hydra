@@ -56,6 +56,12 @@ export interface LanesHost {
   markJobDone?(laneId: string, result: PlanLaneResultInput): Promise<void>;
   /** Cancel job: the job is cancelled and the lane stays open, as an ordinary lane. */
   cancelPlanJob?(laneId: string): Promise<void>;
+  /**
+   * O3: why this lane's own Merge must refuse: it runs a job of a plan that lands through its integration branch
+   * (docs/Heads.md, "Landing a plan together"), so its work reaches your branch only with the rest of the plan,
+   * after the integration gate. Undefined for any other lane.
+   */
+  planLaneMergeRefusal?(laneId: string): string | undefined;
   // ---- Packs (docs/Packs_Plan.md): gates.json plus the active packs' gates. Undefined reads gates.json only. ----
   gates?: GatesLoader;
   /** The active packs' roles, resolved at each lane launch. Undefined: a lane's role is never available. */
@@ -547,6 +553,12 @@ export class LanesController implements vscode.Disposable {
         return { commit };
       }
       case 'merge': {
+        const planRefusal = this.host.planLaneMergeRefusal?.(lane.id);
+        if (planRefusal) {
+          if (!interactive) throw new Error(planRefusal);
+          void vscode.window.showWarningMessage(planRefusal);
+          return undefined;
+        }
         const check = await service.checkMerge(lane.id);
         if (!check.ok) {
           if (!interactive) throw new Error(check.message);
