@@ -68,8 +68,9 @@ export interface ClaudeMemRowView { text: string; repair: boolean }
 export function claudeMemRowText(enabled: boolean, connected: boolean, status: ClaudeMemStatus | undefined): ClaudeMemRowView {
   const installed = !!status && status.plugin && !!status.bun && status.dependencies;
   if (!enabled) return { text: installed ? "claude-mem is installed; Hydra isn't managing it." : 'Off. Turn on Memory (claude-mem) to have Hydra set it up.', repair: false };
+  if (installed) return { text: 'claude-mem is set up.', repair: connected };
   if (!connected) return { text: 'Connect Claude Code to set up claude-mem.', repair: false };
-  return { text: installed ? 'claude-mem is set up.' : 'claude-mem is not set up yet.', repair: true };
+  return { text: 'claude-mem is not set up yet.', repair: true };
 }
 
 export async function claudeMemStatus(configDir = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude')): Promise<ClaudeMemStatus> {

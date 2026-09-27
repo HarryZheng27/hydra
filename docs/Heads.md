@@ -15,7 +15,7 @@ Connect in onboarding (step 03, Providers) or in **Hydra Settings → Connectors
 
 The row also has Disconnect and Sign in. Claude Code and Codex keep their own sign-in and billing.
 
-**Memory (claude-mem), opt-in:** the Claude row in Settings → Connectors has a separate **Memory (claude-mem)** toggle for [claude-mem](https://github.com/thedotmack/claude-mem), a third-party memory plugin — off by default (`hydra.claudeMem.enabled`). Connect never touches it on its own. Turning it on asks once, then:
+**Memory (claude-mem), opt-in:** the Claude row in Settings → Connectors has a separate **Memory (claude-mem)** toggle for [claude-mem](https://github.com/thedotmack/claude-mem), a third-party memory plugin. It's off by default (`hydra.claudeMem.enabled`), and Connect never touches it on its own. Turning it on asks once, then:
 - installs Bun into `~/.bun/bin` from Bun's official release, if missing;
 - installs claude-mem through `claude plugin` if missing, or updates it;
 - installs claude-mem's dependencies.

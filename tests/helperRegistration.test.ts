@@ -221,6 +221,8 @@ test('turning off Memory (claude-mem) never uninstalls anything, and Repair refu
 
   // On: status text depends on whether Claude is connected and whether it's actually set up; Repair only once connected.
   assert.deepEqual(claudeMemRowText(true, false, undefined), { text: 'Connect Claude Code to set up claude-mem.', repair: false });
+  // Turning it on runs the setup even before Claude is connected, so an installed claude-mem reads as set up.
+  assert.deepEqual(claudeMemRowText(true, false, installed), { text: 'claude-mem is set up.', repair: false });
   assert.deepEqual(claudeMemRowText(true, true, notInstalled), { text: 'claude-mem is not set up yet.', repair: true });
   assert.deepEqual(claudeMemRowText(true, true, installed), { text: 'claude-mem is set up.', repair: true });
 
