@@ -10,7 +10,7 @@ import path from 'node:path';
 import { preferenceOnlySettings } from '../src/core/settingsRefresh';
 import {
   allowedDownloadUrl, compareVersions, downloadVerified, installerArguments, isNewer, latestRelease, parseSums, psQuote, releaseFromPayload,
-  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, type FetchLike, type LatestRelease,
+  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, nextAutoCheckDelay, updateOffer, type FetchLike, type LatestRelease,
 } from '../src/core/updateCheck';
 
 const tag = 'v0.25.0';
@@ -293,4 +293,25 @@ test('the manifest contributes hydra.updates.check and Hydra: Check for Updates'
   assert.equal(setting.default, true);
   assert.ok(manifest.contributes.commands.some((command: { command: string; title: string }) => command.command === 'hydra.checkForUpdates' && command.title === 'Hydra: Check for Updates'));
   assert.ok(preferenceOnlySettings.has('hydra.updates.check'), 'turning the check off needs no provider refresh');
+});
+
+test('nextAutoCheckDelay waits 30 s after startup, then 24 h after the last check in any window', () => {
+  const now = 1_000_000_000_000;
+  assert.equal(nextAutoCheckDelay(undefined, now), 30_000);
+  assert.equal(nextAutoCheckDelay(now - 25 * 3600_000, now), 30_000);
+  assert.equal(nextAutoCheckDelay(now - 3600_000, now), 23 * 3600_000);
+  assert.equal(nextAutoCheckDelay(now - 1000, now), 24 * 3600_000 - 1000);
+  // A clock that went backwards (or a bad stored value) doesn't postpone checks forever.
+  assert.equal(nextAutoCheckDelay(now + 5 * 24 * 3600_000, now), 30_000);
+  assert.equal(nextAutoCheckDelay(Number.NaN, now), 30_000);
+});
+
+test('updateOffer: automatic checks respect Skip this version; a manual check always answers', () => {
+  assert.deepEqual(updateOffer('0.25.0', '0.24.1', undefined, false), { kind: 'offer', message: 'Hydra 0.25.0 is available (you have 0.24.1).' });
+  assert.deepEqual(updateOffer('0.25.0', '0.24.1', '0.25.0', false), { kind: 'skipped' });
+  assert.equal(updateOffer('0.25.0', '0.24.1', '0.25.0', true).kind, 'offer');
+  assert.equal(updateOffer('0.26.0', '0.24.1', '0.25.0', false).kind, 'offer', 'skipping one version does not skip the next');
+  assert.deepEqual(updateOffer('0.24.1', '0.24.1', undefined, true), { kind: 'latest', message: "You're on the latest version (0.24.1)." });
+  assert.equal(updateOffer('0.24.0', '0.24.1', undefined, true).kind, 'latest');
+  assert.equal(updateOffer('0.25.0', '0.24.1-dev', undefined, true).kind, 'unknown');
 });

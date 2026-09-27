@@ -343,3 +343,25 @@ export function updateHelperScript(input: HelperScriptInput): string {
 export function updateHelperFileContents(input: HelperScriptInput): Buffer {
   return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(updateHelperScript(input), 'utf8')]);
 }
+
+// ---- Scheduling and the offer (the vscode side is src/extensionUpdates.ts) ----
+
+export const firstCheckDelayMs = 30_000;
+export const checkIntervalMs = 24 * 60 * 60 * 1000;
+
+/** How long to wait before the next automatic check: at least 30 s after startup, then 24 h after the last one (in any window). */
+export function nextAutoCheckDelay(lastCheck: number | undefined, now: number): number {
+  const due = typeof lastCheck === 'number' && Number.isFinite(lastCheck) && lastCheck <= now ? lastCheck + checkIntervalMs - now : 0;
+  return Math.max(firstCheckDelayMs, due);
+}
+
+export type UpdateOffer = { kind: 'offer'; message: string } | { kind: 'latest'; message: string } | { kind: 'skipped' } | { kind: 'unknown'; message: string };
+
+/** What a check shows: an automatic one says nothing unless there is a newer version you haven't skipped. */
+export function updateOffer(latest: string, current: string, skipped: string | undefined, manual: boolean): UpdateOffer {
+  const order = compareVersions(latest, current);
+  if (order === undefined) return { kind: 'unknown', message: `Hydra couldn't compare ${latest} with this version (${current}).` };
+  if (order <= 0) return { kind: 'latest', message: `You're on the latest version (${current}).` };
+  if (!manual && skipped === latest) return { kind: 'skipped' };
+  return { kind: 'offer', message: `Hydra ${latest} is available (you have ${current}).` };
+}

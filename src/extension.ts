@@ -62,6 +62,8 @@ import { detectTestScript, noGatesFile, starterTestGatesFile } from './core/star
 import { StopSwitch } from './core/stopSwitch';
 // ---- Audit log (5.2). Its own line. ----
 import { AuditLog, type AuditEvent } from './core/audit';
+// ---- Updates (README, "Updating"). Its own line. ----
+import { registerUpdates } from './extensionUpdates';
 
 let manager: Manager | undefined;
 // ---- Plan lanes (docs/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
@@ -403,6 +405,16 @@ class Manager {
     } catch (error) { this.disabled = true; this.report(error); }
     await this.startHelpers().catch(error => { this.output.appendLine(`[heads] not started: ${this.describe(error)}`); });
     this.startLimitDetection();
+    // ---- Updates (README, "Updating"): the daily check and Hydra: Check for Updates ----
+    this.context.subscriptions.push(registerUpdates({
+      context: this.context,
+      log: line => this.output.appendLine(line),
+      running: () => ({
+        heads: this.helpers?.service.list().filter(job => !finalJobStates.has(job.state)).length ?? 0,
+        lanes: this.lanes.state().lanes.filter(lane => lane.running).length,
+        stopped: this.stop.isStopped(),
+      }),
+    }));
     this.context.subscriptions.push(registerLimitOffer({
       limitEvents: this.limitEvents.event,
       storageDir: this.context.globalStorageUri.fsPath,
