@@ -161,6 +161,9 @@ jobs:
       - name: Verify installer lifecycle on disposable runner
         shell: pwsh
         run: ./scripts/desktop-installer-test.ps1 -InstallerPath .desktop/code-oss/.build/win32-x64/user-setup/HydraSetup.exe
+      - name: Verify the one-line install script against the built installer
+        shell: pwsh
+        run: ./scripts/desktop-install-script-test.ps1 -InstallerPath .desktop/code-oss/.build/win32-x64/user-setup/HydraSetup.exe
       - name: Verify distinct-version upgrade on disposable runner
         shell: pwsh
         run: ./scripts/desktop-upgrade-test.ps1 -PriorInstallerPath .desktop/upgrade-prior/HydraSetup.exe -InstallerPath .desktop/code-oss/.build/win32-x64/user-setup/HydraSetup.exe -BuiltAppPath .desktop/VSCode-win32-x64

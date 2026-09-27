@@ -19,6 +19,20 @@ How a Hydra release is built, published and checked, and what's still needed bef
 
 The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published release. Move it to the new release once that release is out.
 
+## Installing
+
+`irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex` in PowerShell runs [`scripts/install.ps1`](../scripts/install.ps1). The website redirects that address to the file on `main`, so there's one copy.
+
+- **What it checks:** it finds the latest full release (or the one in `$env:HYDRA_INSTALL_VERSION`) through the same GitHub API and checks as the update prompt. It downloads `HydraSetup.exe` and `SHA256SUMS` and compares the installer's SHA-256 before running anything.
+- **What it refuses:** a hash mismatch, a running Hydra, and machines that aren't 64-bit x64 Windows.
+- **What it never does:** ask for admin, or change your execution policy.
+- **Run as a file:** it also takes `-Version <x.y.z>`, `-DryRun` (download and verify only), and `-InstallerPath` with `-SumsPath` (check and install local files).
+
+The `desktop` job runs it against the installer it just built, through `scripts/desktop-install-script-test.ps1`:
+- a wrong `SHA256SUMS` must be refused, even in a dry run, and install nothing;
+- a real install must land `Hydra.exe`;
+- its uninstall must remove it.
+
 ## Checking an installer
 
 - **Its hash:** `Get-FileHash .\HydraSetup.exe -Algorithm SHA256` in PowerShell must print the hash in the release's `SHA256SUMS`.
