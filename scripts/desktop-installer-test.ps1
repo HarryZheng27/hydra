@@ -14,13 +14,28 @@ $installRoot = Join-Path $testRoot 'Hydra'
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Hydra.lnk'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{4C372D32-54B2-43D8-8C63-ECC31D3744A8}_is1'
 if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Runner already contains a Hydra install or shortcut; refusing to replace it.' }
-# The last case removes these two folders, so they must be the test's own.
+New-Item -ItemType Directory -Path $testRoot | Out-Null
+# The last case removes these two folders, so they must be the test's own. Earlier steps of this job
+# (the build's smoke run) can leave Hydra data behind: set it aside for the test and put it back after.
 $hydraData = @((Join-Path $env:APPDATA 'Hydra'), (Join-Path $env:USERPROFILE '.hydra'))
-foreach ($folder in $hydraData) { if (Test-Path -LiteralPath $folder) { throw "Runner already has Hydra data; refusing to remove it: $folder" } }
+$setAside = @{}
+foreach ($folder in $hydraData) {
+  if (Test-Path -LiteralPath $folder) {
+    $aside = Join-Path $testRoot ('preexisting-' + (Split-Path -Leaf $folder))
+    Move-Item -LiteralPath $folder -Destination $aside
+    $setAside[$folder] = $aside
+  }
+}
+function Restore-SetAsideData {
+  foreach ($folder in $setAside.Keys) {
+    # The test's own data (sentinels, a junction) goes; the job's earlier data comes back.
+    if (Test-Path -LiteralPath $folder) { cmd /d /c rmdir /s /q "$folder" | Out-Null }
+    Move-Item -LiteralPath $setAside[$folder] -Destination $folder
+  }
+}
 # The uninstall cleanup must edit ~/.claude.json directly here, and find the files at their default places.
 if (Get-Command claude -ErrorAction SilentlyContinue) { throw 'A Claude CLI is on the runner; this test exercises the direct ~/.claude.json edit.' }
 if ($env:CLAUDE_CONFIG_DIR -or $env:CODEX_HOME) { throw 'CLAUDE_CONFIG_DIR or CODEX_HOME is set; the connector files would be elsewhere.' }
-New-Item -ItemType Directory -Path $testRoot | Out-Null
 $hydraSentinels = @(
   (Join-Path $env:APPDATA 'Hydra\User\hydra-installer-sentinel.txt'),
   (Join-Path $env:USERPROFILE '.hydra\extensions\hydra-installer-sentinel.txt')
@@ -188,4 +203,5 @@ try {
 }
 if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, desktop shortcut, or registration behind.' }
 Assert-DataPreserved
+Restore-SetAsideData
 Write-Output 'PASS: fresh default-unchecked and selected shortcut installs, equal-version refusal, and uninstall preserve Hydra/VS Code/Cursor data and projects; uninstall removes only its own Claude Code and Codex entries, and removes Hydra data only with /HYDRAREMOVEDATA.'
