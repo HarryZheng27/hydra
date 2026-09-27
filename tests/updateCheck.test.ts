@@ -10,7 +10,7 @@ import path from 'node:path';
 import { preferenceOnlySettings } from '../src/core/settingsRefresh';
 import {
   allowedDownloadUrl, compareVersions, downloadVerified, installerArguments, isNewer, latestRelease, parseSums, psQuote, releaseFromPayload,
-  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
+  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, updateLauncherArguments, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
 } from '../src/core/updateCheck';
 
 const tag = 'v0.25.0';
@@ -318,4 +318,18 @@ test('updateOffer: automatic checks respect Skip this version; a manual check al
 
 test('helperEnvironment drops Electron and VS Code variables so the reopened Hydra opens a window', () => {
   assert.deepEqual(helperEnvironment({ PATH: 'C:\\Windows', TEMP: 'C:\\Temp', ELECTRON_RUN_AS_NODE: '1', VSCODE_IPC_HOOK: 'x', vscode_pid: '1', ELECTRON_NO_ATTACH_CONSOLE: '1' }), { PATH: 'C:\\Windows', TEMP: 'C:\\Temp' });
+});
+
+test('the launcher starts the helper through WMI, hidden, with every path quoted inside an encoded command', () => {
+  const shell = String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`;
+  const helper = String.raw`C:\Users\O'Brien Smith\AppData\Local\Temp\hydra-update-0.24.2.ps1`;
+  const args = updateLauncherArguments(shell, helper);
+  // Nothing but fixed flags and the encoded script on the command line: no path to mis-quote.
+  assert.deepEqual(args.slice(0, -1), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand']);
+  const script = Buffer.from(args.at(-1)!, 'base64').toString('utf16le');
+  assert.match(script, /Invoke-CimMethod -ClassName Win32_Process -MethodName Create/);
+  assert.match(script, /ShowWindow = \[uint16\]0/);
+  assert.match(script, /if \(\$result\.ReturnValue -ne 0\) \{ exit 1 \}/);
+  // The helper's command line is one single-quoted PowerShell literal, its apostrophe doubled.
+  assert.ok(script.includes(`CommandLine = '"${shell}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${helper.replaceAll("'", "''")}"'`));
 });

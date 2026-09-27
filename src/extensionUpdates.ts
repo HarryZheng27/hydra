@@ -5,14 +5,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  checkIntervalMs, downloadVerified, helperEnvironment, latestRelease, nextAutoCheckDelay, runningNotice, updateEligibility, updateHelperFileContents, updateOffer, type LatestRelease,
+  checkIntervalMs, downloadVerified, helperEnvironment, latestRelease, nextAutoCheckDelay, runningNotice, updateEligibility, updateHelperFileContents, updateLauncherArguments, updateOffer, type LatestRelease,
 } from './core/updateCheck';
 
 /**
  * The in-app update prompt (README, "Updating"). An installed Hydra on Windows checks
  * GitHub's latest release 30 s after startup and then once a day, and offers
  * Update / Release notes / Skip this version. Update downloads HydraSetup.exe, checks it
- * against SHA256SUMS, asks once more, then starts a detached PowerShell helper that waits
+ * against SHA256SUMS, asks once more, then starts a hidden PowerShell helper (through WMI) that waits
  * for Hydra to close, runs the installer silently and reopens Hydra. Nothing is downloaded
  * or installed without those clicks. The logic lives in src/core/updateCheck.ts.
  */
@@ -112,9 +112,16 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
       await writeFile(helper, updateHelperFileContents({ installer: file, installDir: eligible.installDir, exe: process.execPath, log: path.join(os.tmpdir(), 'hydra-update.log') }));
       const systemRoot = process.env.SystemRoot || process.env.windir;
       const powershell = systemRoot ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : 'powershell.exe';
-      const child = spawn(existsSync(powershell) ? powershell : 'powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', helper], { detached: true, stdio: 'ignore', windowsHide: true, env: helperEnvironment(process.env) });
-      await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); });
-      child.unref();
+      const shell = existsSync(powershell) ? powershell : 'powershell.exe';
+      // The launcher starts the helper through WMI, outside Hydra's process tree, and exits;
+      // only when it reports success does Hydra quit. Hidden throughout: no window appears.
+      const launcher = spawn(shell, updateLauncherArguments(shell, helper), { stdio: 'ignore', windowsHide: true, env: helperEnvironment(process.env) });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        const timer = setTimeout(() => { launcher.kill(); reject(new Error('the update helper took too long to start')); }, 30_000);
+        launcher.once('error', error => { clearTimeout(timer); reject(error); });
+        launcher.once('exit', exitCode => { clearTimeout(timer); resolve(exitCode); });
+      });
+      if (code !== 0) throw new Error(`the update helper didn't start (launcher exit ${code})`);
       log(`[updates] started the update helper (${helper}); quitting so it can install ${release.version}`);
     } catch (error) {
       log(`[updates] helper didn't start: ${describe(error)}`);

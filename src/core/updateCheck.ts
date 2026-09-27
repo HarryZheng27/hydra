@@ -274,7 +274,7 @@ export function runningNotice(heads: number, lanes: number, stopped: boolean): s
   return lines.join(' ');
 }
 
-// ---- The detached helper ----
+// ---- The update helper ----
 
 export const installerArguments = ['/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NORESTARTAPPLICATIONS', '/MERGETASKS=!runcode'] as const;
 /** How long the helper waits for Hydra to close before giving up on the update. */
@@ -293,7 +293,7 @@ export function psQuote(value: string): string {
 export interface HelperScriptInput { installer: string; installDir: string; exe: string; log: string }
 
 /**
- * The PowerShell the extension starts detached just before quitting: wait (bounded) until
+ * The PowerShell started through WMI just before Hydra quits (updateLauncherArguments): wait (bounded) until
  * no process from the install folder runs, run the installer silently, log its exit code,
  * reopen Hydra. It deletes nothing but the downloaded installer, and only after it succeeded.
  * Written with a UTF-8 BOM (updateHelperFileContents) so Windows PowerShell reads non-ASCII paths.
@@ -342,6 +342,26 @@ export function updateHelperScript(input: HelperScriptInput): string {
 /** The script file's bytes: a UTF-8 BOM, then the script. */
 export function updateHelperFileContents(input: HelperScriptInput): Buffer {
   return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(updateHelperScript(input), 'utf8')]);
+}
+
+/**
+ * How the helper is started: a short hidden PowerShell asks WMI (Win32_Process.Create, window
+ * hidden) to start it, then exits. A WMI-created process has WmiPrvSE as its parent and belongs
+ * to no job, so nothing about Hydra's own process tree (the extension host, a job object) can end
+ * it when Hydra quits; it also starts with the user's default environment, not the extension
+ * host's. Passed as -EncodedCommand, so no path needs quoting on the command line. Exit code 0
+ * means the helper is running.
+ */
+export function updateLauncherArguments(powershell: string, helper: string): string[] {
+  const helperCommand = `"${powershell}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${helper}"`;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    '$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }',
+    `$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${psQuote(helperCommand)}; ProcessStartupInformation = $startup }`,
+    'if ($result.ReturnValue -ne 0) { exit 1 }',
+    'exit 0',
+  ].join('\n');
+  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
 }
 
 // ---- Scheduling and the offer (the vscode side is src/extensionUpdates.ts) ----
