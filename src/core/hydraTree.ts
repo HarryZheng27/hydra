@@ -30,7 +30,8 @@ export function livePlans(plans: readonly Plan[]): Plan[] {
 }
 
 /** A plan's job-progress line (docs/Plan_Lanes_Plan.md, section 5): "Running · 2 of 4 done · 1 lane waiting", or "Incomplete · 1 failed". */
-function planProgressLine(plan: Plan, views: readonly PlanJobView[] | undefined): string {
+// Exported for src/core/projectSummary.ts (Step D): the same line, reused rather than recomputed.
+export function planProgressLine(plan: Plan, views: readonly PlanJobView[] | undefined): string {
   if (plan.state === 'planning') return 'Planning…';
   if (plan.state === 'failed') return 'Planning failed';
   const count = `${plan.jobs.length} ${plan.jobs.length === 1 ? 'job' : 'jobs'}`;
