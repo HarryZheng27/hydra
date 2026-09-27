@@ -374,3 +374,31 @@ test('the first prompt of a dispatched lane says Hydra runs the gates; an ordina
   assert.match(plain, /call hydra_job_ready; the user marks the job done or merges the lane\./);
   assert.match(dispatched, /call hydra_job_ready; Hydra then runs the gates, marks the job done if they pass, and types any failures here for you to fix\..*Your task: Build it$/);
 });
+
+// ---- What you see ----
+
+test('the plan header offers Auto-dispatch to lanes with its three settings; the lane tile says which attempt it is on', async () => {
+  const React = (await import('react')).default;
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { AgentsCanvas } = await import('../webview/AgentsCanvas');
+  const { LanesView } = await import('../webview/LanesView');
+  const base = { ...createPlan({ title: 'Checkout' }), jobs: [lane('api'), lane('ui', { dependsOn: ['api'] })] };
+  const off = renderToStaticMarkup(React.createElement(AgentsCanvas, { heads: [], plans: [base], onAction: () => {} }));
+  assert.match(off, /<input type="checkbox"\/> Auto-dispatch to lanes/);
+  assert.doesNotMatch(off, /Lanes at once/);
+  const on = renderToStaticMarkup(React.createElement(AgentsCanvas, { heads: [], plans: [{ ...base, dispatch: dispatch({ lanes: 3, provider: 'codex', attempts: 4 }) }], onAction: () => {} }));
+  assert.match(on, /<input type="checkbox" checked=""\/> Auto-dispatch to lanes/);
+  assert.match(on, /aria-label="Lanes at once"/); assert.match(on, /aria-label="Provider for new lanes"/); assert.match(on, /aria-label="Attempts before the job fails"/);
+  assert.match(on, /<option value="3" selected="">3<\/option>/); assert.match(on, /<option value="codex" selected="">Codex<\/option>/); assert.match(on, /<option value="4" selected="">4<\/option>/);
+  const heads = renderToStaticMarkup(React.createElement(AgentsCanvas, { heads: [], plans: [{ ...base, jobs: [{ key: 'h', title: 'Head job', brief: 'x', dependsOn: [] }] }], onAction: () => {} }));
+  assert.doesNotMatch(heads, /Auto-dispatch/, 'a plan without lane jobs has nothing to dispatch');
+
+  const tile = (planJob: Partial<NonNullable<import('../src/core/model').LaneView['planJob']>>) => renderToStaticMarkup(React.createElement(LanesView, {
+    lanes: [{ id: '111111111111', name: 'Job api', provider: 'claude', repository: '/repo', worktree: '/w', branch: 'lane/x', baseCommit: sha('a'), target: 'main', createdAt: new Date().toISOString(), state: 'running', running: true,
+      planJob: { planId: 'p1', planTitle: 'Checkout', jobKey: 'api', jobTitle: 'Job api', state: 'active', dependents: 1, dependentsStarted: 0, ...planJob } }],
+    terminals: true, onSend: () => {}, onFocused: () => {},
+  }));
+  assert.match(tile({ dispatch: { attempt: 2, attempts: 3 } }), /Auto-dispatched · attempt 2 of 3/);
+  assert.match(tile({ dispatch: { attempt: 2, attempts: 3 } }), /Mark job done/, 'you can still mark it done yourself');
+  assert.doesNotMatch(tile({}), /Auto-dispatched/);
+});

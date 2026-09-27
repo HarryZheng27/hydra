@@ -3,7 +3,7 @@ import type { ClientMessage, HelperJobView, LaneView, Provider, SnapshotRole } f
 import { buildCanvas, elapsedLabel, evidenceLabel, gateChip, headStatus, isActive, layout, type CanvasHead, type CanvasLead, type CanvasPlanJob, type CanvasPlanNode } from '../src/core/agentsCanvas';
 // Type-only (see the note in agentsCanvas.ts): plans.ts's storage code must never
 // enter this browser bundle, so only PlanJob's shape crosses this boundary.
-import type { Plan, PlanJob, PlanJobRunAs } from '../src/core/plans';
+import type { Plan, PlanDispatch, PlanJob, PlanJobRunAs } from '../src/core/plans';
 import type { PlanJobStatus, PlanJobView } from '../src/core/planRunner';
 import { ProviderLogo } from './ProviderLogo';
 import './agents-canvas.css';
@@ -427,6 +427,7 @@ function PlanLeadNode({ node, defaultProvider, onPlan }: { node: CanvasPlanNode;
     {plan.state === 'draft' && <>
       {node.cycleMessage && <p className="canvas-plan-status error" role="alert">{node.cycleMessage}</p>}
       <p className="canvas-plan-status">{plan.jobs.length} {plan.jobs.length === 1 ? 'job' : 'jobs'}</p>
+      <PlanDispatchControls plan={plan} defaultProvider={defaultProvider} onPlan={onPlan} />
       <div className="canvas-plan-actions">
         <button aria-label={`Add a job to "${plan.title}"`} disabled={plan.jobs.length >= 12} onClick={() => onPlan({ type: 'planAddJob', id: plan.id })}>+ Job</button>
         <button className="primary" disabled={!!node.cycleMessage || !plan.jobs.length} title={node.cycleMessage || undefined} onClick={() => onPlan({ type: 'planRun', id: plan.id })}>Run plan</button>
@@ -438,6 +439,7 @@ function PlanLeadNode({ node, defaultProvider, onPlan }: { node: CanvasPlanNode;
       const hasDraft = plan.jobs.some(job => job.draft);
       return <>
         <p className={`canvas-plan-status${plan.state === 'incomplete' ? ' error' : ''}`}>{node.progress}</p>
+        {plan.state !== 'done' && <PlanDispatchControls plan={plan} defaultProvider={defaultProvider} onPlan={onPlan} />}
         <div className="canvas-plan-actions">
           {plan.state === 'incomplete' && hasFailed && <button className="primary" onClick={() => onPlan({ type: 'planRetryJobs', id: plan.id })}>Retry failed jobs</button>}
           {plan.state !== 'done' && <button aria-label={`Add a job to "${plan.title}"`} disabled={plan.jobs.length >= 12} onClick={() => onPlan({ type: 'planAddJob', id: plan.id })}>+ Job</button>}
@@ -446,6 +448,28 @@ function PlanLeadNode({ node, defaultProvider, onPlan }: { node: CanvasPlanNode;
         </div>
       </>;
     })()}
+  </div>;
+}
+
+/**
+ * Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes, for a plan with lane jobs. On, it shows
+ * its three settings; each change is saved at once. Off leaves running lanes alone.
+ */
+function PlanDispatchControls({ plan, defaultProvider, onPlan }: { plan: Plan; defaultProvider?: Provider; onPlan: (message: ClientMessage) => void }) {
+  if (!plan.dispatch && !plan.jobs.some(job => job.runAs === 'lane')) return null;
+  const current = plan.dispatch;
+  const send = (dispatch: PlanDispatch | null) => onPlan({ type: 'planDispatch', id: plan.id, dispatch });
+  const change = (field: keyof PlanDispatch, value: string) => current && send({ ...current, [field]: field === 'provider' ? value : Number(value) });
+  const numbers = (max: number) => Array.from({ length: max }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>);
+  return <div className="canvas-plan-dispatch">
+    <label title="Ready lane jobs start by themselves, and Hydra runs the gates when a lane says its job is ready.">
+      <input type="checkbox" checked={!!current} onChange={event => send(event.target.checked ? { lanes: 2, provider: defaultProvider ?? 'claude', attempts: 3 } : null)} /> Auto-dispatch to lanes
+    </label>
+    {current && <div className="canvas-plan-dispatch-values">
+      <label>Lanes<select aria-label="Lanes at once" value={current.lanes} onChange={event => change('lanes', event.target.value)}>{numbers(4)}</select></label>
+      <label>Agent<select aria-label="Provider for new lanes" value={current.provider} onChange={event => change('provider', event.target.value)}><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
+      <label>Tries<select aria-label="Attempts before the job fails" value={current.attempts} onChange={event => change('attempts', event.target.value)}>{numbers(5)}</select></label>
+    </div>}
   </div>;
 }
 
