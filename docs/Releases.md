@@ -21,7 +21,17 @@ The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published r
 
 ## Installing
 
-Most people install with the one-liner in the README (`irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex`), backed by `scripts/install.ps1` in this repository — the website serves a copy of that file. It resolves the latest full release (or `-Version <x.y.z>`) from the same GitHub API the in-app updater uses, downloads `HydraSetup.exe` and `SHA256SUMS`, verifies the installer's SHA-256 against `SHA256SUMS` before running anything, and refuses on a hash mismatch, non-Windows, 32-bit or ARM64 machines. It never needs admin and never changes your execution policy. `scripts/desktop-installer-test.ps1` (in CI) also runs it against a real built installer, including a deliberately wrong `SHA256SUMS` that must be refused.
+`irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex` in PowerShell runs [`scripts/install.ps1`](../scripts/install.ps1). The website redirects that address to the file on `main`, so there's one copy.
+
+- **What it checks:** it finds the latest full release (or the one in `$env:HYDRA_INSTALL_VERSION`) through the same GitHub API and checks as the update prompt. It downloads `HydraSetup.exe` and `SHA256SUMS` and compares the installer's SHA-256 before running anything.
+- **What it refuses:** a hash mismatch, a running Hydra, and machines that aren't 64-bit x64 Windows.
+- **What it never does:** ask for admin, or change your execution policy.
+- **Run as a file:** it also takes `-Version <x.y.z>`, `-DryRun` (download and verify only), and `-InstallerPath` with `-SumsPath` (check and install local files).
+
+The `desktop` job runs it against the installer it just built, through `scripts/desktop-install-script-test.ps1`:
+- a wrong `SHA256SUMS` must be refused, even in a dry run, and install nothing;
+- a real install must land `Hydra.exe`;
+- its uninstall must remove it.
 
 ## Checking an installer
 

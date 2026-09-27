@@ -2,8 +2,8 @@
 #
 #   irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex
 #
-# This file (scripts/install.ps1 in ndunl075/hydra) is the source of truth; the website
-# repository serves a copy of it at that URL. It downloads the latest full release of
+# This file (scripts/install.ps1 in ndunl075/hydra) is the only copy: the website redirects
+# that URL to it on main. It downloads the latest full release of
 # Hydra from GitHub (ndunl075/hydra), checks it against the release's SHA256SUMS, and
 # runs it silently. It never asks for admin and never changes your execution policy.
 #
