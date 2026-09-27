@@ -674,6 +674,52 @@ export function brandedNativeThemeStartup(text) {
   if (matches.length !== 1 || !matches[0][0].includes('this.stateService.getItem(THEME_STORAGE_KEY)') || !matches[0][0].includes('userValue')) throw new Error('Pinned native theme startup contract changed.');
   return text.replace(method, '$1\n    return Setting.DETECT_COLOR_SCHEME.getValue(this.configurationService);\n  }');
 }
+// O8b (docs/Heads.md, "Scripts and CI"): the app's bin/hydra launcher (the editor's own `code`-style launcher, named
+// after applicationName) also carries the `hydra` command. These first words go to the built-in extension's
+// dist/hydra-cli.cjs; anything else opens the editor exactly as before (`hydra .`, `hydra file.ts`).
+export const hydraCliCommands = Object.freeze(['status', 'plan', 'heads', 'stop', 'resume', 'report']);
+const hydraCliScript = ['resources', 'app', 'extensions', 'hydra-agent-manager', 'dist', 'hydra-cli.cjs'];
+/** resources/win32/bin/code.cmd, which the build renames to bin\hydra.cmd. */
+export function brandedLauncherCmd(text) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const dispatch = [
+    'set ELECTRON_RUN_AS_NODE=1',
+    'rem Hydra: its own commands go to the Hydra extension\'s CLI; anything else opens the editor.',
+    `for %%C in (${hydraCliCommands.join(' ')}) do if /I "%~1"=="%%C" goto hydracli`,
+  ].join(eol);
+  const cli = [
+    'endlocal',
+    'goto :eof',
+    ':hydracli',
+    `"%~dp0..\\@@NAME@@.exe" "%~dp0..\\${hydraCliScript.join('\\')}" %*`,
+    'exit /b %ERRORLEVEL%',
+  ].join(eol);
+  // prepare() reads the pinned file through git(), which trims it: `endlocal` may be its very last word.
+  return `${replaceOnceIn('Windows launcher', replaceOnceIn('Windows launcher', text, 'set ELECTRON_RUN_AS_NODE=1', dispatch), 'endlocal', cli).trimEnd()}${eol}`;
+}
+/** resources/win32/bin/code.sh, which the build renames to bin/hydra (Git Bash, and anything else with sh). */
+export function brandedLauncherSh(text) {
+  const anchor = 'ELECTRON="$VSCODE_PATH/$NAME.exe"\n';
+  const dispatch = [
+    anchor.trimEnd(),
+    '# Hydra: its own commands go to the Hydra extension\'s CLI; anything else opens the editor.',
+    'case "$1" in',
+    `\t${hydraCliCommands.join('|')})`,
+    `\t\tHYDRA_CLI="$VSCODE_PATH/${hydraCliScript.join('/')}"`,
+    '\t\tif [ -x "$(command -v cygpath)" ]; then HYDRA_CLI=$(cygpath -m "$HYDRA_CLI"); elif [ -x "$(command -v wslpath)" ]; then HYDRA_CLI=$(wslpath -m "$HYDRA_CLI"); fi',
+    '\t\tELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$HYDRA_CLI" "$@"',
+    '\t\texit $?',
+    '\t\t;;',
+    'esac',
+    '',
+  ].join('\n');
+  return replaceOnceIn('shell launcher', text, anchor, dispatch);
+}
+/** The built bin/hydra.cmd and bin/hydra still hand Hydra's commands to the CLI. */
+export function verifyLaunchers(cmd, sh) {
+  if (!cmd.includes(`goto hydracli`) || !cmd.includes(hydraCliScript.join('\\')) || !cmd.includes('resources\\app\\out\\cli.js')) throw new Error('bin\\hydra.cmd does not dispatch the hydra command.');
+  if (!sh.includes(`${hydraCliCommands.join('|')})`) || !sh.includes(hydraCliScript.join('/')) || !sh.includes('resources/app/out/cli.js')) throw new Error('bin/hydra does not dispatch the hydra command.');
+}
 export async function prepare() {
   await fs.mkdir(cache, { recursive: true });
   await contained(cache);
@@ -711,6 +757,8 @@ export async function prepare() {
   const installer = await git(['show', `${pin.commit}:build/win32/code.iss`]);
   for (const name of installerIncludes) await fs.copyFile(path.join(root, 'desktop', name), path.join(source, 'build', 'win32', name));
   await fs.writeFile(path.join(source, 'build', 'win32', 'code.iss'), brandedInstaller(installer));
+  await fs.writeFile(path.join(source, 'resources', 'win32', 'bin', 'code.cmd'), brandedLauncherCmd(await git(['show', `${pin.commit}:resources/win32/bin/code.cmd`])));
+  await fs.writeFile(path.join(source, 'resources', 'win32', 'bin', 'code.sh'), brandedLauncherSh(await git(['show', `${pin.commit}:resources/win32/bin/code.sh`])));
   const electron = await git(['show', `${pin.commit}:build/lib/electron.ts`]);
   if (!electron.includes("companyName: 'Microsoft Corporation'")) throw new Error('Pinned executable publisher metadata changed.');
   await fs.writeFile(path.join(source, 'build', 'lib', 'electron.ts'), electron.replace("companyName: 'Microsoft Corporation'", "companyName: 'Nico Dunlap'"));
@@ -807,7 +855,7 @@ export async function stageHydra(destination) {
     // defaults this experimental setting to 'some' outside stable builds).
     'workbench.editor.useModal': 'off' };
   await fs.mkdir(destination, { recursive: true });
-  for (const name of ['dist', 'themes', 'media', 'packs', 'README.md', 'hydra-logo.png']) await fs.cp(path.join(root, name), path.join(destination, name), { recursive: true });
+  for (const name of ['dist', 'themes', 'media', 'packs', 'schemas', 'README.md', 'hydra-logo.png']) await fs.cp(path.join(root, name), path.join(destination, name), { recursive: true });
   // Smoke-test code is a development artifact, not a bundled extension entrypoint.
   await fs.rm(path.join(destination, 'dist', 'smoke.cjs'), { force: true });
   await fs.writeFile(path.join(destination, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
@@ -826,6 +874,9 @@ export async function verify() {
   if (manifest.publisher !== 'nico-dunlap' || manifest.name !== 'hydra-agent-manager') throw new Error('Built-in Hydra extension is missing.');
   // The uninstaller runs this to remove Hydra's entries from Claude Code's and Codex's settings.
   await fs.access(path.join(bundled, 'dist', 'hydra-uninstall.cjs')).catch(() => { throw new Error('Built-in Hydra extension is missing its uninstall cleanup.'); });
+  // O8b: the hydra command's CLI, and the launchers that hand it Hydra's commands.
+  await fs.access(path.join(bundled, 'dist', 'hydra-cli.cjs')).catch(() => { throw new Error('Built-in Hydra extension is missing the hydra command.'); });
+  verifyLaunchers(await fs.readFile(path.join(output, 'bin', 'hydra.cmd'), 'utf8'), await fs.readFile(path.join(output, 'bin', 'hydra'), 'utf8'));
   const release = await readJson(path.join(root, 'package.json'));
   if (product.hydraVersion !== release.version || manifest.version !== release.version) throw new Error('Desktop product and bundled module versions differ from the Hydra release.');
   const nativeHelperPath = path.join(output, 'tools', 'HydraUpdateVerify.exe');

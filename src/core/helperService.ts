@@ -63,6 +63,10 @@ export interface PlanLeadBridge {
   integrate(id: string, leadSessionId: string, signal: AbortSignal): Promise<PlanLeadPlan>;
   /** O3: hydra_plan_merge. Throws (with the reason) unless the integration gate passed on the current tip, or the user overrode it. */
   merge(id: string, leadSessionId: string, via: 'merge' | 'pr'): Promise<{ plan: PlanLeadPlan; commit?: string; into?: string; compareUrl?: string }>;
+  /** O8b: hydra_plan_run. A draft starts; an incomplete plan retries its failed jobs. Throws for any other state. */
+  run(id: string, leadSessionId: string): Promise<PlanLeadPlan>;
+  /** O8b: hydra_plan_report. The plan's report as Markdown (buildPlanReport, plans.ts). */
+  report(id: string, leadSessionId: string): Promise<string>;
 }
 
 // ---- O8a: the user role (docs/Heads.md, "Scripts and CI") ----
@@ -260,6 +264,9 @@ export class HelperService {
         // ---- O3: the integration gate and Merge plan (docs/Heads.md, "Landing a plan together") ----
         case 'hydra_plan_integrate': return this.planIntegrate(args, this.requireLeadSession(caller), signal);
         case 'hydra_plan_merge': return this.planMerge(args, this.requireLeadSession(caller));
+        // ---- O8b: running a waiting plan, and its report ----
+        case 'hydra_plan_run': return this.planRun(args, this.requireLeadSession(caller));
+        case 'hydra_plan_report': return this.planReport(args, this.requireLeadSession(caller));
         // Packs (docs/Packs_Plan.md, decision 6): a lead's bridge asks once, for its instructions and hydra_start_head's `role`.
         case 'hydra_active_roles': return { roles: await this.activeRoles() };
         // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6): a lane's agent asks the user; it never marks the job itself ----
@@ -284,6 +291,8 @@ export class HelperService {
         case 'hydra_plan_amend': return this.planAmend(args, userPlanSession);
         case 'hydra_plan_cancel': return this.planCancel(args, userPlanSession);
         case 'hydra_plan_message': return this.planMessage(args, userPlanSession);
+        case 'hydra_plan_run': return this.planRun(args, userPlanSession);
+        case 'hydra_plan_report': return this.planReport(args, userPlanSession);
         case 'hydra_stop_all': {
           if (!this.options.control) throw new Error('Stop All Agents is not available in this Hydra window.');
           if (args.reason !== undefined && typeof args.reason !== 'string') throw new Error('reason must be text.');
@@ -1095,6 +1104,15 @@ export class HelperService {
       ...(result.commit ? { merged_commit: result.commit } : {}), ...(result.into ? { merged_into: result.into } : {}),
       ...(result.compareUrl ? { pull_request_url: result.compareUrl } : {}),
     };
+  }
+  /** O8b: hydra_plan_run — a draft starts, an incomplete plan retries its failed jobs. */
+  private async planRun(args: Record<string, unknown>, leadSessionId: string) {
+    return this.planView(await this.requirePlanBridge().run(this.planId(args.plan_id), leadSessionId));
+  }
+  /** O8b: hydra_plan_report — the plan's report, as Markdown. */
+  private async planReport(args: Record<string, unknown>, leadSessionId: string) {
+    const id = this.planId(args.plan_id);
+    return { plan_id: id, markdown: await this.requirePlanBridge().report(id, leadSessionId) };
   }
   /** A plan as hydra_plan_* return it: each job's status, a started job's own head detail, and the board. */
   private planView(plan: PlanLeadPlan) {

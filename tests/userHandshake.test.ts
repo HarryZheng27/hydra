@@ -46,11 +46,12 @@ function postRaw(port: number, url: string): Promise<number> {
 test('the user role: the plan tools, reading heads and lanes, stop and resume; never a head\'s or a lane\'s tool', () => {
   assert.deepEqual(toolsFor('user').map(tool => tool.name).sort(), [
     'hydra_get_head', 'hydra_lanes', 'hydra_list_heads',
-    'hydra_plan_amend', 'hydra_plan_cancel', 'hydra_plan_create', 'hydra_plan_get', 'hydra_plan_message', 'hydra_plan_wait',
+    'hydra_plan_amend', 'hydra_plan_cancel', 'hydra_plan_create', 'hydra_plan_get', 'hydra_plan_message', 'hydra_plan_report', 'hydra_plan_run', 'hydra_plan_wait',
     'hydra_resume', 'hydra_stop_all',
   ]);
-  // Only a head does these; only a lane does hydra_job_ready; a lead's own-head actions stay the chat's.
-  for (const name of ['hydra_done', 'hydra_stuck', 'hydra_progress', 'hydra_share', 'hydra_board', 'hydra_job_ready', 'hydra_start_head', 'hydra_reply_to_head', 'hydra_cancel_head', 'hydra_active_roles', 'hydra_wait_for_heads']) {
+  // Only a head does these; only a lane does hydra_job_ready; a lead's own-head actions stay the chat's; and
+  // landing a plan on your branch (O3) stays with you on the canvas, or a chat.
+  for (const name of ['hydra_done', 'hydra_stuck', 'hydra_progress', 'hydra_share', 'hydra_board', 'hydra_job_ready', 'hydra_start_head', 'hydra_reply_to_head', 'hydra_cancel_head', 'hydra_active_roles', 'hydra_wait_for_heads', 'hydra_plan_merge', 'hydra_plan_integrate']) {
     assert.equal(toolAllowed('user', name), false, name);
   }
   // Stop and resume are the user's alone.
