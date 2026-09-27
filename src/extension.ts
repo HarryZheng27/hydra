@@ -20,7 +20,7 @@ import { startHelperRun } from './core/helperRunner';
 import { HeadSandbox } from './core/headSandbox';
 import { headShellSentence } from './core/confine';
 import { createLeadVerifier } from './core/leadVerification';
-import { claudeMemStatus, setupClaudeMem } from './core/claudeMem';
+import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from './core/claudeMem';
 import { downloadOpenVsx } from './core/openVsx';
 import { selfCheckCli } from './core/cliSelfCheck';
 import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from './core/helperRegistration';
@@ -765,8 +765,10 @@ class Manager {
     const claudeExtension = vscode.extensions.getExtension('anthropic.claude-code');
     const codexExtension = vscode.extensions.getExtension('openai.chatgpt');
     const development = this.context.extensionMode !== vscode.ExtensionMode.Production;
+    const memoryEnabled = vscode.workspace.getConfiguration('hydra').get<boolean>('claudeMem.enabled', false);
+    const memoryRow = claudeMemRowText(memoryEnabled, claude.connected && claude.current, memory);
     return [
-      { ...claude, name: 'Claude Code', extensionInstalled: !!claudeExtension, extensionVersion: (claudeExtension?.packageJSON as { version?: string } | undefined)?.version, memory: memory.plugin && memory.bun && memory.dependencies ? 'ready' : 'missing', signedIn: accounts.claude.status, ...(development ? { development } : {}) },
+      { ...claude, name: 'Claude Code', extensionInstalled: !!claudeExtension, extensionVersion: (claudeExtension?.packageJSON as { version?: string } | undefined)?.version, memory: memoryEnabled ? (memory.plugin && memory.bun && memory.dependencies ? 'ready' : 'missing') : undefined, memoryEnabled, memoryText: memoryRow.text, memoryRepair: memoryRow.repair, signedIn: accounts.claude.status, ...(development ? { development } : {}) },
       { ...codex, name: 'Codex', extensionInstalled: !!codexExtension, extensionVersion: (codexExtension?.packageJSON as { version?: string } | undefined)?.version, signedIn: accounts.codex.status, ...(development ? { development } : {}) },
     ];
   }
@@ -774,8 +776,9 @@ class Manager {
   async helperWrittenEntries(): Promise<WrittenEntries> {
     return helperWrittenEntries(providerPaths(), maskSecret);
   }
-  /** Re-run claude-mem's setup idempotently: the Repair button, and reused by Connect. */
+  /** Re-run claude-mem's setup idempotently: the Repair button, and reused by Connect. Both are gated on the opt-in setting. */
   private async repairClaudeMem(): Promise<{ status: Awaited<ReturnType<typeof claudeMemStatus>>; installed: string[] }> {
+    if (!shouldSetUpClaudeMem(vscode.workspace.getConfiguration('hydra').get<boolean>('claudeMem.enabled', false))) throw new Error('Turn on Memory (claude-mem) in Settings → Connectors first.');
     const claude = await claudeForRegistration();
     if (!claude) throw new Error('Install the Claude Code extension or CLI first.');
     return setupClaudeMem(claude);
@@ -794,7 +797,9 @@ class Manager {
   }
   /**
    * One Connect: install the official extension if it's missing, connect it to
-   * Hydra, and for Claude set up claude-mem too. A claude-mem problem doesn't undo
+   * Hydra, and for Claude set up claude-mem too, but only when the user turned on
+   * Memory (claude-mem) in Settings → Connectors; off by default, so a plain
+   * Connect never installs Bun or claude-mem. A claude-mem problem doesn't undo
    * the connection; it's reported and Connect can be pressed again.
    */
   private async connectHelpers(provider: ConnectableProvider): Promise<string | undefined> {
@@ -806,6 +811,7 @@ class Manager {
       if (!claude) throw new Error('Install the Claude Code extension or CLI first; Hydra connects through it.');
       await connectClaude(claude, paths, spec, await this.limitHookFor(claude));
       this.output.appendLine('[heads] connected claude to Hydra');
+      if (!shouldSetUpClaudeMem(vscode.workspace.getConfiguration('hydra').get<boolean>('claudeMem.enabled', false))) return undefined;
       try {
         const memory = await setupClaudeMem(claude);
         if (memory.installed.length) this.output.appendLine(`[heads] set up ${memory.installed.join(' and ')} for claude-mem`);
