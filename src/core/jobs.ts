@@ -221,6 +221,8 @@ export interface Job {
   limitHit?: boolean;
   /** O6: every provider this job ran under before `provider` (continueWith), so a review knows when no agent reviewing it is independent (gates/review.ts's chooseReviewer). */
   priorProviders?: Provider[];
+  /** O9: what its runs cost, as the providers reported it (Claude Code in dollars, Codex in tokens), summed over its runs. */
+  usage?: JobUsage;
   /** O6 (docs/Heads.md, "Rigor"): a plan job's own rigor, added to the project's gate floor, never replacing it. Internal only: hydra_start_head's schema has no such field; only a plan sets it (planHeadInput). */
   rigor?: PlanRigor;
   /** The helper's own git worktree, created when it starts. */
@@ -504,6 +506,18 @@ export class JobStore {
   }
 
   /** Change fields that don't change state (progress, replies, worktree). Refused once a job is final. */
+  /** O9: adds a run's reported usage, whatever the job's state (a run's process usually exits after its job has finished). */
+  async recordUsage(id: string, run: RunUsage | undefined): Promise<void> {
+    return this.serialize(async () => {
+      this.assertLoaded();
+      const job = this.jobs.get(id);
+      const usage = job && addUsage(job.usage, run);
+      if (!job || !usage || usage === job.usage) return;
+      const previous = job.usage;
+      job.usage = usage;
+      try { await this.write(); } catch (error) { if (previous) job.usage = previous; else delete job.usage; throw error; }
+    });
+  }
   async update(id: string, patch: Partial<Pick<Job, 'progress' | 'replies' | 'worktree' | 'baseCommit' | 'branch' | 'question' | 'nudged' | 'attempts' | 'maxAttempts'>>): Promise<Job> {
     return this.serialize(async () => {
       this.assertLoaded();
@@ -596,6 +610,32 @@ export function processAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
+// ---- O9: what a head's runs cost ----
+
+/** One run's usage, as its CLI reported it: Claude Code's `total_cost_usd`, Codex's token counts. */
+export interface RunUsage { costUsd?: number; inputTokens?: number; outputTokens?: number }
+/** A job's usage over all its runs. `runs` counts the runs that reported anything. */
+export interface JobUsage extends RunUsage { runs: number }
+const usageNumber = (value: unknown, max: number): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max;
+/** Adds one run's usage (pure). A run that reported nothing changes nothing. */
+export function addUsage(current: JobUsage | undefined, run: RunUsage | undefined): JobUsage | undefined {
+  const cost = usageNumber(run?.costUsd, 1e6) ? run!.costUsd : undefined;
+  const input = usageNumber(run?.inputTokens, 1e12) ? run!.inputTokens : undefined;
+  const output = usageNumber(run?.outputTokens, 1e12) ? run!.outputTokens : undefined;
+  if (cost === undefined && input === undefined && output === undefined) return current;
+  const sum = (a: number | undefined, b: number | undefined) => a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+  const costUsd = sum(current?.costUsd, cost), inputTokens = sum(current?.inputTokens, input), outputTokens = sum(current?.outputTokens, output);
+  return { runs: (current?.runs ?? 0) + 1, ...(costUsd !== undefined ? { costUsd: Math.round(costUsd * 1e6) / 1e6 } : {}), ...(inputTokens !== undefined ? { inputTokens } : {}), ...(outputTokens !== undefined ? { outputTokens } : {}) };
+}
+function validateUsage(value: unknown): JobUsage | undefined {
+  const usage = value as Partial<JobUsage> | undefined;
+  if (!usage || typeof usage !== 'object' || !Number.isInteger(usage.runs) || usage.runs! < 1 || usage.runs! > 10_000) return undefined;
+  if (usage.costUsd !== undefined && !usageNumber(usage.costUsd, 1e6)) return undefined;
+  if (usage.inputTokens !== undefined && !usageNumber(usage.inputTokens, 1e12)) return undefined;
+  if (usage.outputTokens !== undefined && !usageNumber(usage.outputTokens, 1e12)) return undefined;
+  return { runs: usage.runs!, ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}), ...(usage.inputTokens !== undefined ? { inputTokens: usage.inputTokens } : {}), ...(usage.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}) };
+}
+
 function parseStoreFile(value: unknown): StoreFile {
   const source = value as Partial<StoreFile>;
   if (!source || source.version !== 1 || !Array.isArray(source.jobs)) throw new Error('Unsupported head job store.');
@@ -607,6 +647,8 @@ function parseStoreFile(value: unknown): StoreFile {
     (job as Job).gatesAtStart = validateGatesSnapshot((job as Job).gatesAtStart);
     (job as Job).gitMetaAtStart = validateGitMeta((job as Job).gitMetaAtStart);
     (job as Job).tamperAtStart = validateTamperSnapshot((job as Job).tamperAtStart);
+    const usage = validateUsage((job as Job).usage);
+    if (usage) (job as Job).usage = usage; else delete (job as Job).usage;
   }
   return { version: 1, jobs: source.jobs };
 }

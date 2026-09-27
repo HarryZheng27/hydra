@@ -1603,6 +1603,9 @@ class Manager {
         ...(head?.result?.checks?.length ? { checks: head.result.checks.map(check => ({ id: check.id, required: check.required, passed: check.passed, ...(check.state ? { state: check.state } : {}), ...(check.summary ? { summary: check.summary } : {}) })) } : {}),
         ...(job.outcome?.reason ? { reason: job.outcome.reason } : head?.reason ? { reason: head.reason } : {}),
         ...(head?.question ? { question: head.question } : {}),
+        ...(head?.usage?.costUsd !== undefined ? { costUsd: head.usage.costUsd } : {}),
+        ...(head?.usage?.inputTokens !== undefined ? { inputTokens: head.usage.inputTokens } : {}),
+        ...(head?.usage?.outputTokens !== undefined ? { outputTokens: head.usage.outputTokens } : {}),
       };
     });
     return buildPlanReport(plan, details, defaultHeadBudgetUsd);

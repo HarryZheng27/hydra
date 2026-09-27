@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { JobStore, canTransition, finalJobStates, jobStates, jobTransitions, parseJobInput, parseWriteScope, resolveHeadDefaults, type JobInput } from '../src/core/jobs';
+import { JobStore, addUsage, canTransition, finalJobStates, jobStates, jobTransitions, parseJobInput, parseWriteScope, resolveHeadDefaults, type JobInput } from '../src/core/jobs';
 
 const input = (key = 'k1', extra: Partial<JobInput> = {}): JobInput => ({ title: 'Parser', brief: 'Fix the parser', writeScope: ['src/'], provider: 'claude', idempotencyKey: key, ...extra });
 async function withStore(run: (store: JobStore, directory: string) => Promise<void>) {
@@ -135,5 +135,34 @@ test('a malformed store is refused rather than silently emptied', async () => {
   try {
     await writeFile(path.join(directory, 'jobs.json'), JSON.stringify({ version: 1, jobs: [{ id: 'bad' }] }));
     await assert.rejects(new JobStore(directory).load(), /malformed/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('addUsage (O9): sums what each run reported; a run that reported nothing changes nothing', () => {
+  assert.equal(addUsage(undefined, undefined), undefined);
+  assert.equal(addUsage(undefined, {}), undefined);
+  const first = addUsage(undefined, { costUsd: 0.5 });
+  assert.deepEqual(first, { runs: 1, costUsd: 0.5 });
+  assert.deepEqual(addUsage(first, { costUsd: 0.25 }), { runs: 2, costUsd: 0.75 });
+  assert.deepEqual(addUsage(first, { inputTokens: 10, outputTokens: 2 }), { runs: 2, costUsd: 0.5, inputTokens: 10, outputTokens: 2 });
+  assert.deepEqual(addUsage(first, { costUsd: -1 }), first, 'a nonsense figure is ignored');
+});
+
+test('JobStore.recordUsage (O9): kept across finished states and a reload; a malformed stored usage is dropped', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'hydra-usage-'));
+  try {
+    const store = new JobStore(directory); await store.load();
+    const { job } = await store.create('lead', input());
+    await store.transition(job.id, 'cancelled', 'done with it');
+    await store.recordUsage(job.id, { costUsd: 0.4 });
+    await store.recordUsage(job.id, { costUsd: 0.1 });
+    const reloaded = new JobStore(directory); await reloaded.load();
+    assert.deepEqual(reloaded.get(job.id)!.usage, { runs: 2, costUsd: 0.5 });
+    const file = path.join(directory, 'jobs.json');
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    stored.jobs[0].usage = { runs: 'lots', costUsd: 1e99 };
+    await writeFile(file, JSON.stringify(stored));
+    const bad = new JobStore(directory); await bad.load();
+    assert.equal(bad.get(job.id)!.usage, undefined);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

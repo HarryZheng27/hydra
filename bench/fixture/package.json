@@ -1,0 +1,8 @@
+{
+  "name": "hydra-bench-shop",
+  "private": true,
+  "description": "The fixture for Hydra's benchmark (docs/Benchmark.md): a small shop, in plain Node with no dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
