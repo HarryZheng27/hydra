@@ -152,6 +152,11 @@ Apart from plans (below), the view never starts work itself; everything else on 
 
 ### Plans
 
+**Plans from the chat.** The lead can create and run a plan itself, without you opening the canvas. When a task splits into three or more pieces, or has a dependency between pieces, the lead calls `hydra_plan_create` with every job at once, dependencies named by key; Hydra runs the jobs itself, as heads, in the right order. The lead calls `hydra_plan_wait` for the result, `hydra_plan_amend` to add or change a job that hasn't started, and `hydra_plan_cancel` to stop it. It shows on the canvas exactly like a plan you drafted yourself, grouped under the chat that made it.
+- **Approval:** by default it runs right away. Turn on `hydra.plans.leadPlansNeedApproval` to have a lead's plan open as a draft for you to run yourself, with **Run plan**.
+- **Amending:** the lead can add jobs, edit a job's title, brief, write scope or dependencies, or skip a job, all only while that job hasn't started yet. A skipped job's reason is passed on to the jobs that depended on it. A job that has already started can't be changed this way.
+- **Ownership:** a plan a lead makes is only for that same chat: another chat's lead, and a lane's agent, can't see or change it with these tools.
+
 **New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.

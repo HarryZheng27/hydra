@@ -97,10 +97,17 @@ export function validatePlanDispatch(value: unknown): PlanDispatch {
 }
 /** A plan job's role: "pack/role", as packs name their roles (src/core/packs/launch.ts). */
 export const planJobRolePattern = /^[a-z0-9-]{1,24}\/[a-z0-9-]{1,24}$/;
+export const planIdempotencyKeyMax = 200;
 export interface Plan {
   version: 1; id: string; title: string; brief?: string; createdAt: string; updatedAt: string;
   state: PlanState; error?: string; jobs: PlanJob[];
   dispatch?: PlanDispatch;
+  /**
+   * O1: a lead created this plan with hydra_plan_create, from this chat's own lead session.
+   * Repeating the call with the same idempotencyKey returns this same plan instead of making
+   * another; `hydra_plan_amend` and `hydra_plan_cancel` work only on a plan that has this.
+   */
+  leadOrigin?: { leadSessionId: string; idempotencyKey: string };
 }
 
 const trimmed = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -174,7 +181,18 @@ export function validatePlan(plan: Plan): void {
   if (plan.brief !== undefined && (typeof plan.brief !== 'string' || plan.brief.length > planBriefMax)) throw new Error(`Plan brief must be at most ${planBriefMax} characters.`);
   if (!planStates.includes(plan.state)) throw new Error('Invalid plan state.');
   if (plan.dispatch !== undefined) validatePlanDispatch(plan.dispatch);
+  if (plan.leadOrigin !== undefined) {
+    const origin = plan.leadOrigin as Partial<Plan['leadOrigin']>;
+    if (!origin || typeof origin !== 'object' || !trimmed(origin.leadSessionId) || !trimmed(origin.idempotencyKey) || origin.idempotencyKey.length > planIdempotencyKeyMax) {
+      throw new Error('Invalid leadOrigin.');
+    }
+  }
   validatePlanJobs(plan.jobs);
+}
+
+/** The lead-created plan (docs/Heads.md, "Plans from the chat") with this idempotency key, from this lead session, if any. */
+export function findPlanByIdempotencyKey(plans: readonly Plan[], leadSessionId: string, idempotencyKey: string): Plan | undefined {
+  return plans.find(plan => plan.leadOrigin?.leadSessionId === leadSessionId && plan.leadOrigin.idempotencyKey === idempotencyKey);
 }
 
 /**
@@ -324,6 +342,41 @@ function parseStoreFile(value: unknown): PlanStoreFile {
 export function createPlan(input: { title: string; brief?: string; state?: PlanState }): Plan {
   const at = new Date().toISOString();
   return { version: 1, id: randomBytes(6).toString('hex'), title: input.title, ...(input.brief ? { brief: input.brief } : {}), createdAt: at, updatedAt: at, state: input.state ?? 'draft', jobs: [] };
+}
+
+// ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+
+/** hydra_plan_create's job shape: the same fields hydra_start_head takes, keyed so dependencies name each other. */
+export interface PlanLeadJobInput {
+  key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; role?: string;
+}
+export interface PlanCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[] }
+
+/**
+ * Builds a draft plan from a lead's hydra_plan_create arguments, run as heads only
+ * (a lane job stays a user choice on the canvas). Throws the first problem found,
+ * the same way validatePlan does; nothing here starts a process or touches storage.
+ */
+export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSessionId: string; idempotencyKey: string }): Plan {
+  if (!input || typeof input !== 'object') throw new Error('hydra_plan_create needs an object.');
+  if (!Array.isArray(input.jobs) || input.jobs.length < 1) throw new Error('A plan needs at least one job.');
+  if (input.jobs.length > maxPlanJobs) throw new Error(`A plan may have at most ${maxPlanJobs} jobs.`);
+  const jobs: PlanJob[] = input.jobs.map(job => {
+    if (!job || typeof job !== 'object') throw new Error('Each job must be an object.');
+    if (!Array.isArray(job.write_scope) || job.write_scope.length < 1) throw new Error(`Job "${String(job.key)}" needs a write_scope with at least one path.`);
+    return {
+      key: job.key, title: job.title, brief: job.brief, runAs: 'head',
+      dependsOn: Array.isArray(job.depends_on) ? job.depends_on : [],
+      writeScope: job.write_scope,
+      ...(job.provider !== undefined ? { provider: job.provider } : {}),
+      ...(job.role !== undefined ? { role: job.role } : {}),
+    };
+  });
+  const plan: Plan = { ...createPlan({ title: input.title, brief: input.brief, state: 'draft' }), jobs, leadOrigin };
+  validatePlan(plan);
+  const cycle = findCycle(plan.jobs);
+  if (cycle) throw new Error(cycleMessage(plan.jobs, cycle));
+  return plan;
 }
 
 export class PlanStore {

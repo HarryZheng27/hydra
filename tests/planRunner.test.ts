@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createPlan, PlanStore, type Plan, type PlanJob } from '../src/core/plans';
+import { createPlan, planFromLeadInput, PlanStore, type Plan, type PlanJob, type PlanLeadJobInput } from '../src/core/plans';
 import { planHeadInput, planHeadKey, planRunRefusal, planSteps, PlanRunner, type PlanHeadLook, type PlanLaneLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import { parseJobInput } from '../src/core/jobs';
 import type { DependencyResult } from '../src/core/headStart';
@@ -368,4 +368,36 @@ test('a plan head job with no write scope may change the whole repository; its i
   assert.deepEqual(parseJobInput(input).writeScope, [''], 'parsed as the whole repository');
   assert.deepEqual(planHeadInput(plan, { key: 'ui', title: 'UI', brief: 'b', writeScope: ['src/ui/'], attempt: 2 }, []).write_scope, ['src/ui/']);
   assert.equal(planHeadInput(plan, { key: 'ui', title: 'UI', brief: 'b', attempt: 2 }, []).idempotency_key, 'plan-abcdef012345-ui-r2');
+});
+
+// ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+
+const leadJob = (key: string, extra: Partial<PlanLeadJobInput> = {}): PlanLeadJobInput => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, write_scope: [`src/${key}/`], ...extra });
+
+test('a diamond plan built by planFromLeadInput (schema -> api, schema -> ui, api and ui -> e2e) runs end to end as heads', async () => {
+  const built = planFromLeadInput({
+    title: 'Checkout refactor',
+    jobs: [leadJob('schema'), leadJob('api', { depends_on: ['schema'] }), leadJob('ui', { depends_on: ['schema'] }), leadJob('e2e', { depends_on: ['api', 'ui'] })],
+  }, { leadSessionId: 'session-1', idempotencyKey: 'plan-1' });
+  const f = await fixture(built.jobs);
+  try {
+    await f.runner.run(f.plan.id);
+    // Every head job of the chain is created in one Run pass (as a head-only plan already does); dependencies
+    // are mapped to head ids, and the jobs the dependent heads wait to finish (not just start) is HelperService's
+    // own job-dispatch concern (headStart.test.ts, helperService.test.ts), not the plan runner's.
+    assert.deepEqual(f.started.map(item => item.key), ['schema', 'api', 'ui', 'e2e']);
+    assert.ok(f.started.every(item => item.kind === 'head'), 'a lead\'s plan runs every job as a head');
+    const ids = new Map(f.started.map(item => [item.key, item.id]));
+    assert.deepEqual(f.started.find(item => item.key === 'api')!.dependsOn, [ids.get('schema')]);
+    assert.deepEqual(f.started.find(item => item.key === 'ui')!.dependsOn, [ids.get('schema')]);
+    assert.deepEqual(f.started.find(item => item.key === 'e2e')!.dependsOn!.sort(), [ids.get('api'), ids.get('ui')].sort());
+    assert.equal(f.get().state, 'running');
+    // Finish the diamond out of a naive order (ui before api) to show the plan doesn't care which side finishes first.
+    f.world.finish(ids.get('schema')!); f.world.finish(ids.get('ui')!); f.world.finish(ids.get('api')!);
+    await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'running', 'e2e itself has not finished yet');
+    f.world.finish(ids.get('e2e')!);
+    await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'done');
+  } finally { await f.close(); }
 });

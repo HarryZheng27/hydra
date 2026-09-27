@@ -50,7 +50,10 @@ import { createPlan, maxPlanJobs, PlanStore, type Plan, type PlanDispatch, type 
 import { planBrief } from './core/planner';
 // ---- Plan lanes (docs/Plan_Lanes_Plan.md). Their own block. ----
 import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
-import { planHeadInput, PlanRunner, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
+import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
+// ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Their own block. ----
+import { findPlanByIdempotencyKey, planFromLeadInput, planOutcomeReasonMax, validatePlanJobs, type PlanJobOutcome } from './core/plans';
+import type { PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
@@ -543,6 +546,8 @@ class Manager {
       stop: this.stop,
       // ---- Audit log (5.2) ----
       audit: event => this.audit.record(event),
+      // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+      plans: this.createPlanLeadBridge(),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
@@ -1059,10 +1064,141 @@ class Manager {
     this.lanes.planStatesChanged();
     this.projectSummary?.changed();
     this.publishSoon();
+    this.wakePlanWaiters();
   }
   private requirePlans(): { store: PlanStore; planning: Map<string, AbortController> } {
     if (!this.plans) throw new Error('Hydra plans are not ready in this window yet.');
     return this.plans;
+  }
+
+  // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+
+  /** Woken by plansChanged (any plan or plan-job change), for hydra_plan_wait. */
+  private readonly planWaiters = new Set<() => void>();
+  private wakePlanWaiters(): void { for (const wake of [...this.planWaiters]) wake(); }
+
+  private createPlanLeadBridge(): PlanLeadBridge {
+    return {
+      create: (input, leadSessionId) => this.planLeadCreate(input, leadSessionId),
+      get: (id, leadSessionId) => this.planLeadGet(id, leadSessionId),
+      wait: (id, leadSessionId, maxWaitS, signal) => this.planLeadWait(id, leadSessionId, maxWaitS, signal),
+      amend: (id, leadSessionId, input) => this.planLeadAmend(id, leadSessionId, input),
+      cancel: (id, leadSessionId, reason) => this.planLeadCancel(id, leadSessionId, reason),
+    };
+  }
+  /** A plan as hydra_plan_* show it to the lead that made it: each job's run status from the plan runner. */
+  private planLeadSummary(plan: Plan): PlanLeadPlan {
+    const views = this.requirePlanRunner().statuses(plan.id) ?? [];
+    const viewByKey = new Map(views.map(view => [view.key, view]));
+    return {
+      planId: plan.id, title: plan.title, state: plan.state, ...(plan.error ? { error: plan.error } : {}),
+      jobs: plan.jobs.map(job => {
+        const view = viewByKey.get(job.key);
+        return { key: job.key, title: job.title, status: view?.status ?? 'draft', ...(view?.reason ? { reason: view.reason } : {}), ...(job.jobId ? { jobId: job.jobId } : {}) };
+      }),
+    };
+  }
+  /** hydra_plan_create: a repeated idempotency key from the same chat returns the plan it already made. */
+  private async planLeadCreate(input: PlanLeadCreateInput, leadSessionId: string): Promise<{ plan: PlanLeadPlan; created: boolean }> {
+    const plans = this.requirePlans();
+    const repeat = findPlanByIdempotencyKey(plans.store.list(), leadSessionId, input.idempotencyKey);
+    if (repeat) return { plan: this.planLeadSummary(repeat), created: false };
+    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey });
+    await plans.store.save(plan);
+    this.plansChanged();
+    const needsApproval = vscode.workspace.getConfiguration('hydra').get<boolean>('plans.leadPlansNeedApproval', false);
+    if (!needsApproval) await this.requirePlanRunner().run(plan.id);
+    return { plan: this.planLeadSummary(plans.store.get(plan.id) ?? plan), created: true };
+  }
+  /** hydra_plan_get: undefined unless this exact chat made the plan (a lead never sees another lead's or the canvas's own plans). */
+  private planLeadGet(id: string, leadSessionId: string): PlanLeadPlan | undefined {
+    const plan = this.plans?.store.get(id);
+    if (!plan || plan.leadOrigin?.leadSessionId !== leadSessionId) return undefined;
+    return this.planLeadSummary(plan);
+  }
+  private planLeadOwn(id: string, leadSessionId: string): Plan {
+    const plan = this.plans?.store.get(id);
+    if (!plan || plan.leadOrigin?.leadSessionId !== leadSessionId) throw new Error(`No plan ${id} in this window.`);
+    return plan;
+  }
+  /** hydra_plan_wait: like hydra_wait_for_heads, but for every job of a plan. */
+  private async planLeadWait(id: string, leadSessionId: string, maxWaitS: number, signal: AbortSignal): Promise<PlanLeadPlan> {
+    const settled = () => {
+      const plan = this.plans?.store.get(id);
+      if (!plan || plan.leadOrigin?.leadSessionId !== leadSessionId) return true;
+      if (plan.state !== 'running') return true;
+      // A job's head asking a question needs the lead now, even mid-run.
+      const views = this.planRunner?.statuses(id) ?? [];
+      return views.some(view => view.jobId && this.helpers?.store.get(view.jobId)?.state === 'blocked');
+    };
+    const deadline = Date.now() + maxWaitS * 1000;
+    while (!settled() && !signal.aborted && Date.now() < deadline) {
+      await new Promise<void>(resolve => {
+        const wake = () => { this.planWaiters.delete(wake); clearTimeout(timer); resolve(); };
+        const timer = setTimeout(wake, Math.min(5000, Math.max(1, deadline - Date.now())));
+        this.planWaiters.add(wake); signal.addEventListener('abort', wake, { once: true });
+      });
+    }
+    return this.planLeadSummary(this.planLeadOwn(id, leadSessionId));
+  }
+  /** hydra_plan_amend: add, edit or skip jobs that haven't started yet, then let the runner advance. */
+  private async planLeadAmend(id: string, leadSessionId: string, input: PlanLeadAmendInput): Promise<PlanLeadPlan> {
+    const plans = this.requirePlans();
+    const owned = this.planLeadOwn(id, leadSessionId);
+    if (owned.state !== 'draft' && owned.state !== 'running') throw new Error(`Plan "${owned.title}" is ${owned.state}, so it can't be amended.`);
+    const runner = this.requirePlanRunner();
+    const changed = await runner.withPlan(id, async () => {
+      const updated = await plans.store.update(id, plan => {
+        let jobs = plan.jobs;
+        for (const skip of input.skip ?? []) {
+          const job = jobs.find(item => item.key === skip.key);
+          if (!job) throw new Error(`No job "${skip.key}" in this plan.`);
+          if (jobStarted(job)) throw new Error(`Job "${job.title}" has already started, so it can't be skipped.`);
+          const outcome: PlanJobOutcome = { state: 'skipped', reason: skip.reason.length > planOutcomeReasonMax ? `${skip.reason.slice(0, planOutcomeReasonMax - 1)}…` : skip.reason, at: new Date().toISOString() };
+          jobs = jobs.map(item => item.key === skip.key ? { ...item, outcome } : item);
+        }
+        for (const edit of input.edit ?? []) {
+          const job = jobs.find(item => item.key === edit.key);
+          if (!job) throw new Error(`No job "${edit.key}" in this plan.`);
+          if (jobStarted(job)) throw new Error(`Job "${job.title}" has already started, so it can't be edited.`);
+          jobs = jobs.map(item => item.key === edit.key ? {
+            ...item,
+            ...(edit.title !== undefined ? { title: edit.title } : {}), ...(edit.brief !== undefined ? { brief: edit.brief } : {}),
+            ...(edit.write_scope !== undefined ? { writeScope: edit.write_scope } : {}), ...(edit.depends_on !== undefined ? { dependsOn: edit.depends_on } : {}),
+          } : item);
+        }
+        if (input.add?.length) {
+          const keys = new Set(jobs.map(item => item.key));
+          const added: PlanJob[] = input.add.map(job => {
+            if (keys.has(job.key)) throw new Error(`Job key "${job.key}" is already used in this plan.`);
+            keys.add(job.key);
+            return { key: job.key, title: job.title, brief: job.brief, writeScope: job.write_scope, dependsOn: job.depends_on ?? [], runAs: 'head', ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}) };
+          });
+          jobs = [...jobs, ...added];
+        }
+        validatePlanJobs(jobs);
+        const cycle = findCycle(jobs);
+        if (cycle) throw new Error(cycleMessage(jobs, cycle));
+        return { ...plan, jobs };
+      });
+      if (!updated) throw new Error(`No plan ${id} in this window.`);
+      return updated;
+    });
+    this.plansChanged();
+    if (changed.state === 'running') await runner.advance(id);
+    return this.planLeadSummary(this.plans!.store.get(id) ?? changed);
+  }
+  /** hydra_plan_cancel: cancel every unfinished job (running heads are cancelled, branches kept); the plan settles to incomplete. */
+  private async planLeadCancel(id: string, leadSessionId: string, reason: string): Promise<PlanLeadPlan> {
+    const owned = this.planLeadOwn(id, leadSessionId);
+    if (owned.state === 'done' || owned.state === 'failed') throw new Error(`Plan "${owned.title}" has already ended.`);
+    const runner = this.requirePlanRunner();
+    const ended: PlanJobStatus[] = ['done', 'failed', 'cancelled', 'skipped'];
+    for (const view of runner.statuses(id) ?? []) {
+      if (ended.includes(view.status)) continue;
+      await runner.cancelJob(id, view.key, reason).catch(error => this.output.appendLine(`[plans] ${id}: couldn't cancel job ${view.key}: ${this.describe(error)}`));
+    }
+    return this.planLeadSummary(this.planLeadOwn(id, leadSessionId));
   }
   // ---- Canvas tidy-up (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up") ----
   /** The Finished tray's Clear button: hide these heads from the tray, kept across reloads; a new finished head still shows up. */
