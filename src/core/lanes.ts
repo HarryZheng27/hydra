@@ -97,6 +97,8 @@ export interface LanePlanLink {
   attempt?: number;
   startsFrom?: { title: string; commit: string }[];
   writeScope?: string[];
+  /** Step C (docs/Hydra_Improvements_Pt_2.md): started by Auto-dispatch, so its first prompt says Hydra runs the gates when it calls hydra_job_ready. */
+  dispatched?: true;
 }
 /** Where a plan lane's full brief is written, inside its worktree and ignored by git (decision 2): readable by either CLI, never committed. */
 export const laneJobFolder = '.hydra-job';
@@ -263,12 +265,14 @@ function validatePlanLink(value: unknown, where: string): LanePlanLink | undefin
   if (!text(link.planTitle, 200) || !text(link.jobTitle, 80)) throw new Error(`${where} has an invalid plan title.`);
   if (link.attempt !== undefined && (!Number.isInteger(link.attempt) || link.attempt < 0 || link.attempt > 1000)) throw new Error(`${where} has an invalid plan attempt.`);
   if (link.startsFrom !== undefined && (!Array.isArray(link.startsFrom) || link.startsFrom.length > 12 || link.startsFrom.some(item => !item || !text(item.title, 80) || typeof item.commit !== 'string' || !fullSha.test(item.commit)))) throw new Error(`${where} has an invalid plan start.`);
+  if (link.dispatched !== undefined && link.dispatched !== true) throw new Error(`${where} has an invalid dispatch flag.`);
   if (link.writeScope !== undefined && (!Array.isArray(link.writeScope) || link.writeScope.length > 32 || link.writeScope.some(entry => typeof entry !== 'string' || entry.length > 300 || entry.includes('\0')))) throw new Error(`${where} has an invalid plan write scope.`);
   return {
     planId: link.planId, jobKey: link.jobKey, planTitle: link.planTitle, jobTitle: link.jobTitle,
     ...(link.attempt ? { attempt: link.attempt } : {}),
     ...(link.startsFrom?.length ? { startsFrom: link.startsFrom.map(item => ({ title: item.title, commit: item.commit })) } : {}),
     ...(link.writeScope?.length ? { writeScope: [...link.writeScope] } : {}),
+    ...(link.dispatched ? { dispatched: true as const } : {}),
   };
 }
 
@@ -445,7 +449,11 @@ const providerName = (provider: Provider) => provider === 'codex' ? 'Codex' : 'C
 export function lanePlanSentence(plan: LanePlanLink): string {
   const intro = `This lane runs job "${clip(oneLine(plan.jobTitle), 80)}" of Hydra plan "${clip(oneLine(plan.planTitle), 120)}".`;
   // Where the brief is and how the job ends always survive; what it starts from and its scope get what is left.
-  const end = ` The job's full brief is in ${laneJobBriefFile} (never committed); read it first. When the work is ready, commit it and call hydra_job_ready; the user marks the job done or merges the lane.`;
+  // Step C: an auto-dispatched lane's job is checked by Hydra, and its failures come back into this terminal.
+  const finish = plan.dispatched
+    ? 'When the work is ready, commit it and call hydra_job_ready; Hydra then runs the gates, marks the job done if they pass, and types any failures here for you to fix.'
+    : 'When the work is ready, commit it and call hydra_job_ready; the user marks the job done or merges the lane.';
+  const end = ` The job's full brief is in ${laneJobBriefFile} (never committed); read it first. ${finish}`;
   const starts = plan.startsFrom?.length ? ` It starts from the work of ${plan.startsFrom.slice(0, 6).map(item => `${clip(oneLine(item.title), 60)} (${item.commit.slice(0, 12)})`).join(', ')}${plan.startsFrom.length > 6 ? ` and ${plan.startsFrom.length - 6} more` : ''}.` : '';
   const scope = plan.writeScope?.length ? ` Stay within ${plan.writeScope.slice(0, 8).map(entry => clip(oneLine(entry), 60) || 'the whole repository').join(', ')}${plan.writeScope.length > 8 ? ' and the rest of its scope' : ''} if you can.` : '';
   const middle = `${starts}${scope}`;

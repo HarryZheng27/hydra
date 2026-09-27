@@ -531,6 +531,29 @@ export class LaneService {
     this.changed();
   }
 
+  /**
+   * What the gates before Merge or Mark job done have to do (docs/Gates_Plan.md, "Merge"): `none` when this
+   * project doesn't gate lanes (Step A's "which kind of none" is recorded for HEAD then), `reused` for a passing
+   * run on the lane's current commit, `run` otherwise. Shared by the dialogs and by Auto-dispatch (Step C).
+   */
+  async handOnGates(id: unknown): Promise<{ kind: 'none' } | { kind: 'reused'; record: LaneGatesRecord } | { kind: 'run' }> {
+    const lane = this.openLane(id);
+    // With packs, a listed pack that can't run still shows its gates as not run (docs/Packs_Plan.md).
+    const load: GatesLoader = this.options.gates ?? loadGates;
+    const config = await load(lane.repository).catch(() => undefined);
+    if (!config || config.lanes !== 'onMerge' || !(config.gates.length || config.notRun?.length)) {
+      // Gates that couldn't even be loaded get no label: that's not a project choice.
+      if (config) {
+        const status = config.source === 'none' && !config.gates.length ? 'none' : 'none-chosen';
+        const commit = await git(lane.worktree, ['rev-parse', 'HEAD']).then(text => text.trim()).catch(() => undefined);
+        if (commit && /^[a-f0-9]{40,64}$/.test(commit)) await this.recordNoGates(lane.id, commit, status).catch(() => undefined);
+      }
+      return { kind: 'none' };
+    }
+    const record = await this.reusableGates(lane.id).catch(() => undefined);
+    return record?.commit ? { kind: 'reused', record } : { kind: 'run' };
+  }
+
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md) ----
 
   /**

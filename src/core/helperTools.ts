@@ -53,7 +53,7 @@ export const leadTools: readonly HelperToolDefinition[] = [
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6). Listed only in a lane that runs a plan job (see the bridge). ----
   {
     name: jobReadyTool,
-    description: 'Only in a Hydra lane that runs a job of a Hydra plan: tell the user the job is ready to be marked done. Commit your work first. Hydra shows the user a "Mark job done" prompt; it never marks the job itself, and the user may merge the lane instead. The jobs that depend on this one start from your last commit once the user marks it done.',
+    description: 'Only in a Hydra lane that runs a job of a Hydra plan: tell the user the job is ready to be marked done. Commit your work first. Hydra shows the user a "Mark job done" prompt; it never marks the job itself, and the user may merge the lane instead. When the plan auto-dispatches its lanes, Hydra runs the gates of the project instead: it marks the job done if they pass, or types the failures into this lane for you to fix and call this again. The jobs that depend on this one start from your last commit once the user marks it done.',
     inputSchema: { type: 'object', additionalProperties: false, properties: { note: string('Optional: what the jobs that depend on this one should know, under 2000 characters. It is offered to the user as the note.') } },
   },
 ];
@@ -118,7 +118,7 @@ export function laneGuidance(name?: string, branch?: string, planJob = false): s
   return `${name && branch ? `You are in Hydra lane "${name}" on branch ${branch}.` : 'You are in a Hydra lane.'} ${laneAdvice}${planJob ? ` ${planJobAdvice}` : ''}`;
 }
 /** A plan lane's part of the lane guidance (docs/Plan_Lanes_Plan.md, decision 6). */
-export const planJobAdvice = 'This lane runs a job of a Hydra plan; its full brief is in .hydra-job/brief.md (never committed). When the work is ready, commit it and call hydra_job_ready: the user then marks the job done, or merges the lane. Never mark the job done yourself.';
+export const planJobAdvice = 'This lane runs a job of a Hydra plan; its full brief is in .hydra-job/brief.md (never committed). When the work is ready, commit it and call hydra_job_ready: the user then marks the job done, or merges the lane; when the plan auto-dispatches, Hydra runs the gates and types any failures back here. Never mark the job done yourself.';
 /**
  * The same guidance for agents that don't read MCP instructions (Codex's AGENTS.md).
  * A lane's name isn't known there, so its branch prefix identifies it.
