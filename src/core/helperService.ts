@@ -19,7 +19,7 @@ import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
-import { writeScopeOverlap } from './plans';
+import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost } from './plans';
 import { HeadSync, headSyncIntervalMs, type HeadConflict } from './headSync';
 export type { HeadConflict } from './headSync';
 import type { PlanLeadJobInput, PlanState } from './plans';
@@ -33,7 +33,10 @@ export interface PlanLeadSkip { key: string; reason: string }
 export interface PlanLeadAmendInput { add?: PlanLeadJobInput[]; edit?: PlanLeadEdit[]; skip?: PlanLeadSkip[] }
 /** One job as hydra_plan_get/_wait/_create/_amend/_cancel show it; jobId (if any) is enriched with head detail by HelperService itself. */
 export interface PlanLeadJobView { key: string; title: string; status: PlanJobStatus; reason?: string; jobId?: string }
-export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[] }
+/** A board post as a lead's hydra_plan_* tools show it: `untrusted` is true for everything but the lead's own posts (boardForLead, plans.ts). */
+export type PlanLeadBoardPost = BoardPost & { untrusted: boolean };
+export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[] }
+export interface PlanLeadMessageInput { to: 'all' | string[]; topic?: string; body: string }
 /**
  * The plan runner and store, narrowed to what a lead's hydra_plan_* calls need.
  * Implemented in extension.ts, which owns the real PlanStore and PlanRunner.
@@ -49,6 +52,24 @@ export interface PlanLeadBridge {
   amend(id: string, leadSessionId: string, input: PlanLeadAmendInput): Promise<PlanLeadPlan>;
   /** hydra_plan_cancel. */
   cancel(id: string, leadSessionId: string, reason: string): Promise<PlanLeadPlan>;
+  /** hydra_plan_message (O4, docs/Heads.md, "The plan board"). Throws if `to` names an unknown job key. */
+  message(id: string, leadSessionId: string, input: PlanLeadMessageInput): Promise<PlanLeadPlan>;
+}
+
+// ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+
+/**
+ * The board for a job's own hydra_share/hydra_board (distinct from PlanLeadBridge,
+ * which is lead-only and ownership-scoped by leadSessionId): a job needs no
+ * ownership check, only its own plan membership, found from its job id.
+ */
+export interface PlanBoardBridge {
+  /** Which plan and job key a running head belongs to; undefined for a loose head or one whose plan job was removed. */
+  jobPlan(jobId: string): { planId: string; jobKey: string } | undefined;
+  /** hydra_share (a job) posts to its plan's board. */
+  post(planId: string, input: { from: BoardFrom; to: 'all' | string[]; topic?: string; body: string }): Promise<void>;
+  /** hydra_board: every post a job (by key) may read. */
+  boardFor(planId: string, jobKey: string): (BoardPost & { untrusted: boolean })[];
 }
 
 /**
@@ -95,6 +116,8 @@ export interface HelperServiceOptions {
    * to the calling chat's own bridge session (minted once when it connects).
    */
   plans?: PlanLeadBridge;
+  /** O4: hydra_share/hydra_board (a job's own view of its plan's board). Without it, both are refused. */
+  planBoard?: PlanBoardBridge;
   /** Gates (docs/Gates_Plan.md): whether a provider is at its usage limit now, so a review uses the other one. */
   providerLimited?: (provider: Provider) => boolean;
   /** Gates: test seams for the reviewer, the browser and the clock. */
@@ -190,6 +213,7 @@ export class HelperService {
         case 'hydra_plan_wait': return this.planWait(args, this.requireLeadSession(caller), signal);
         case 'hydra_plan_amend': return this.planAmend(args, this.requireLeadSession(caller));
         case 'hydra_plan_cancel': return this.planCancel(args, this.requireLeadSession(caller));
+        case 'hydra_plan_message': return this.planMessage(args, this.requireLeadSession(caller));
         // Packs (docs/Packs_Plan.md, decision 6): a lead's bridge asks once, for its instructions and hydra_start_head's `role`.
         case 'hydra_active_roles': return { roles: await this.activeRoles() };
         // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6): a lane's agent asks the user; it never marks the job itself ----
@@ -203,9 +227,12 @@ export class HelperService {
     } else {
       const jobId = caller.jobId!;
       switch (tool) {
-        case 'hydra_done': return this.done(jobId, args, signal);
+        case 'hydra_done': return this.withBoardCount(jobId, this.done(jobId, args, signal));
         case 'hydra_stuck': return this.stuck(jobId, args, signal);
-        case 'hydra_progress': return this.progress(jobId, args);
+        case 'hydra_progress': return this.withBoardCount(jobId, this.progress(jobId, args));
+        // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+        case 'hydra_share': return this.shareBoard(jobId, args);
+        case 'hydra_board': return this.readBoard(jobId);
       }
     }
     throw new Error(`Unknown Hydra action ${tool}.`);
@@ -913,7 +940,7 @@ export class HelperService {
     const plan = await this.requirePlanBridge().cancel(id, leadSessionId, reason);
     return this.planView(plan);
   }
-  /** A plan as hydra_plan_* return it: each job's status, and a started job's own head detail. */
+  /** A plan as hydra_plan_* return it: each job's status, a started job's own head detail, and the board. */
   private planView(plan: PlanLeadPlan) {
     return {
       plan_id: plan.planId, title: plan.title, state: plan.state, ...(plan.error ? { error: plan.error } : {}),
@@ -921,7 +948,55 @@ export class HelperService {
         const head = job.jobId ? this.options.store.get(job.jobId) : undefined;
         return { key: job.key, title: job.title, status: job.status, ...(job.reason ? { reason: job.reason } : {}), ...(head ? { head: this.describe(head, true) } : {}) };
       }),
+      ...(plan.board.length ? { board: plan.board } : {}),
     };
+  }
+
+  // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+
+  private requirePlanBoard(): PlanBoardBridge {
+    if (!this.options.planBoard) throw new Error('The plan board is not available in this Hydra window.');
+    return this.options.planBoard;
+  }
+  private jobPlanOrThrow(jobId: string): { planId: string; jobKey: string } {
+    const found = this.requirePlanBoard().jobPlan(jobId);
+    if (!found) throw new Error('This head isn\'t running as part of a plan, so it has no board.');
+    return found;
+  }
+  private validateBoardArgs(args: Record<string, unknown>): { topic?: string; body: string } {
+    if (typeof args.body !== 'string' || !args.body.trim() || args.body.length > boardBodyMax) throw new Error(`body must be 1-${boardBodyMax} characters.`);
+    if (args.topic !== undefined && (typeof args.topic !== 'string' || args.topic.length > boardTopicMax)) throw new Error(`topic must be at most ${boardTopicMax} characters.`);
+    return { body: args.body, ...(typeof args.topic === 'string' ? { topic: args.topic } : {}) };
+  }
+  /** hydra_plan_message: the lead posts to specific jobs (by key) or the whole plan. */
+  private async planMessage(args: Record<string, unknown>, leadSessionId: string) {
+    const id = this.planId(args.plan_id);
+    const { topic, body } = this.validateBoardArgs(args);
+    if (args.to !== 'all' && (!Array.isArray(args.to) || args.to.length < 1 || args.to.length > 12 || args.to.some(key => typeof key !== 'string'))) {
+      throw new Error('to must be "all" or a list of 1-12 job keys.');
+    }
+    const plan = await this.requirePlanBridge().message(id, leadSessionId, { to: args.to as 'all' | string[], ...(topic ? { topic } : {}), body });
+    return this.planView(plan);
+  }
+  /** hydra_share: a job posts to its own plan's board, for every job to read. */
+  private async shareBoard(jobId: string, args: Record<string, unknown>) {
+    const { planId, jobKey } = this.jobPlanOrThrow(jobId);
+    const { topic, body } = this.validateBoardArgs(args);
+    await this.requirePlanBoard().post(planId, { from: { kind: 'job', key: jobKey }, to: 'all', ...(topic ? { topic } : {}), body });
+    return { posted: true };
+  }
+  /** hydra_board: every post this job may read. */
+  private readBoard(jobId: string) {
+    const { planId, jobKey } = this.jobPlanOrThrow(jobId);
+    return { posts: this.requirePlanBoard().boardFor(planId, jobKey) };
+  }
+  /** Adds board_posts (excluding this job's own) to a hydra_done/hydra_progress reply, when its plan's board has any waiting. */
+  private async withBoardCount<T extends object>(jobId: string, result: Promise<T>): Promise<T & { board_posts?: number }> {
+    const value = await result;
+    const found = this.options.planBoard?.jobPlan(jobId);
+    if (!found) return value;
+    const count = this.options.planBoard!.boardFor(found.planId, found.jobKey).filter(post => !(post.from.kind === 'job' && post.from.key === found.jobKey)).length;
+    return count > 0 ? { ...value, board_posts: count } : value;
   }
 
   private ownJob(id: unknown): Job {

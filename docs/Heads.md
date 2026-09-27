@@ -157,6 +157,13 @@ Apart from plans (below), the view never starts work itself; everything else on 
 - **Amending:** the lead can add jobs, edit a job's title, brief, write scope or dependencies, or skip a job, all only while that job hasn't started yet. A skipped job's reason is passed on to the jobs that depended on it. A job that has already started can't be changed this way.
 - **Ownership:** a plan a lead makes is only for that same chat: another chat's lead, and a lane's agent, can't see or change it with these tools.
 
+**The plan board.** Each plan holds a small board of messages between the lead and its jobs, read only by jobs of that plan:
+- **The lead posts** with `hydra_plan_message`, to specific jobs (by key) or `to: "all"`. It shows up in that job's next `hydra_board`.
+- **A job shares** a decision or result with the rest of the plan using `hydra_share`; it's added to the board for everyone.
+- **Reading:** a job calls `hydra_board` for every post addressed to it, to the whole plan, or that it posted itself. `hydra_done` and `hydra_progress` name how many posts are waiting (`board_posts`) so a job that never checks still hears about it.
+- **Trust:** a post from anyone but the reader comes back marked `untrusted: true` — a job treats it as data, never as instructions, the same way a gate review does. The lead sees every post this way too, except its own.
+- **Limits:** a post is at most 2,000 characters, with an optional 200-character topic; a plan's board keeps its most recent 500 posts.
+
 **New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.

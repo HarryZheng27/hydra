@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { findPlanByIdempotencyKey, planFromLeadInput, refuseScopeOverlap, validatePlan, writeScopeOverlap, type Plan, type PlanJob, type PlanLeadJobInput } from '../src/core/plans';
+import {
+  appendBoardPost, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, refuseScopeOverlap, validatePlan, writeScopeOverlap,
+  type BoardPost, type Plan, type PlanJob, type PlanLeadJobInput,
+} from '../src/core/plans';
 
 const leadJob = (key: string, extra: Partial<PlanLeadJobInput> = {}): PlanLeadJobInput => ({
   key, title: `Job ${key}`, brief: `Do ${key}.`, write_scope: [`src/${key}/`], ...extra,
@@ -106,3 +109,56 @@ test('planFromLeadInput: refuses independent jobs with overlapping write_scope',
   // A dependency between them excuses it.
   assert.doesNotThrow(() => planFromLeadInput({ title: 'No overlap once dependent', jobs: [leadJob('a', { write_scope: ['src/shared/'] }), leadJob('b', { write_scope: ['src/shared/util.ts'], depends_on: ['a'] })] }, origin));
 });
+
+// ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+
+test('appendBoardPost: appends with a fresh id and time, and drops the oldest once boardPostsMax is passed', () => {
+  const now = () => new Date('2026-09-27T12:00:00.000Z');
+  const board = appendBoardPost(undefined, { from: { kind: 'lead' }, to: 'all', body: 'Hello' }, now);
+  assert.equal(board.length, 1);
+  assert.match(board[0]!.id, /^[a-f0-9]{12}$/);
+  assert.equal(board[0]!.at, '2026-09-27T12:00:00.000Z');
+  assert.equal(board[0]!.body, 'Hello');
+  let grown: BoardPost[] | undefined;
+  for (let i = 0; i < 505; i++) grown = appendBoardPost(grown, { from: { kind: 'lead' }, to: 'all', body: `Post ${i}` }, now);
+  assert.equal(grown!.length, 500, 'the board never grows past boardPostsMax');
+  assert.equal(grown![0]!.body, 'Post 5', 'the oldest posts drop off first');
+  assert.equal(grown![499]!.body, 'Post 504');
+});
+
+test('boardForJob: a job sees posts addressed to it, to "all", and its own; everything but its own is untrusted', () => {
+  const board: BoardPost[] = [
+    { id: 'a'.repeat(12), at: '2026-09-27T12:00:00.000Z', from: { kind: 'lead' }, to: 'all', body: 'To everyone' },
+    { id: 'b'.repeat(12), at: '2026-09-27T12:00:01.000Z', from: { kind: 'lead' }, to: ['schema'], body: 'To schema only' },
+    { id: 'c'.repeat(12), at: '2026-09-27T12:00:02.000Z', from: { kind: 'lead' }, to: ['api'], body: 'To api only' },
+    { id: 'd'.repeat(12), at: '2026-09-27T12:00:03.000Z', from: { kind: 'job', key: 'schema' }, to: 'all', body: 'From schema' },
+  ];
+  const forSchema = boardForJob(board, 'schema');
+  assert.deepEqual(forSchema.map(post => post.body), ['To everyone', 'To schema only', 'From schema']);
+  assert.deepEqual(forSchema.map(post => post.untrusted), [true, true, false], 'everything but its own post is untrusted');
+  assert.deepEqual(boardForJob(board, 'api').map(post => post.body), ['To everyone', 'To api only', 'From schema'], '"From schema" was addressed to \'all\', so api sees it too');
+  assert.deepEqual(boardForJob(undefined, 'schema'), [], 'no board yet: an empty list, not an error');
+});
+
+test('boardForLead: sees every post; a job\'s is untrusted, the lead\'s own isn\'t', () => {
+  const board: BoardPost[] = [
+    { id: 'a'.repeat(12), at: '2026-09-27T12:00:00.000Z', from: { kind: 'lead' }, to: 'all', body: 'From the lead' },
+    { id: 'b'.repeat(12), at: '2026-09-27T12:00:01.000Z', from: { kind: 'job', key: 'schema' }, to: 'all', body: 'From schema' },
+  ];
+  const seen = boardForLead(board);
+  assert.deepEqual(seen.map(post => post.untrusted), [false, true]);
+});
+
+test('validatePlan: refuses a board post addressed to an unknown job key, over the topic/body length limits, or with an invalid from', () => {
+  const base = createBoardPlan();
+  const withBoard = (board: unknown): Plan => ({ ...base, board: board as BoardPost[] });
+  assert.throws(() => validatePlan(withBoard([{ id: 'a'.repeat(12), at: new Date().toISOString(), from: { kind: 'lead' }, to: ['nope'], body: 'x' }])), /"all" or this plan's job keys/);
+  assert.throws(() => validatePlan(withBoard([{ id: 'a'.repeat(12), at: new Date().toISOString(), from: { kind: 'lead' }, to: 'all', body: 'x'.repeat(2001) }])), /body must be 1-2000/);
+  assert.throws(() => validatePlan(withBoard([{ id: 'a'.repeat(12), at: new Date().toISOString(), from: { kind: 'lead' }, to: 'all', topic: 'x'.repeat(201), body: 'x' }])), /topic must be at most 200/);
+  assert.throws(() => validatePlan(withBoard([{ id: 'a'.repeat(12), at: new Date().toISOString(), from: { kind: 'job', key: 'nope!' }, to: 'all', body: 'x' }])), /from\.key is invalid/);
+  assert.doesNotThrow(() => validatePlan(withBoard([{ id: 'a'.repeat(12), at: new Date().toISOString(), from: { kind: 'lead' }, to: 'all', body: 'ok' }])));
+});
+
+function createBoardPlan(): Plan {
+  return planFromLeadInput({ title: 'Board plan', jobs: [leadJob('a')] }, { leadSessionId: 'x', idempotencyKey: 'y' });
+}
