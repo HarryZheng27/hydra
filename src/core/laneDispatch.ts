@@ -4,7 +4,7 @@ import type { LaneService } from './laneService';
 import type { PlanRunner } from './planRunner';
 
 /**
- * Step C (docs/Hydra_Improvements_Pt_2.md): hydra_job_ready from a lane of a plan that auto-dispatches.
+ * Step C: hydra_job_ready from a lane of a plan that auto-dispatches.
  * Hydra checks the job itself instead of asking you: it runs the lane's gates as Mark job done does (with no
  * dialogs), marks the job done with its commit and evidence status when they pass, and otherwise types the
  * failures into the same lane, presses Enter and counts an attempt; the runner fails the job when the

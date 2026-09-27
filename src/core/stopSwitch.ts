@@ -1,5 +1,5 @@
 /**
- * 5.3 (docs/Hydra_Improvements.md): Hydra: Stop All Agents / Resume Agents. One switch per
+ * 5.3: Hydra: Stop All Agents / Resume Agents. One switch per
  * window, persisted through an injected store (the extension passes `context.workspaceState`;
  * tests pass a Map-backed fake), so a reload keeps it stopped until Resume Agents runs.
  */

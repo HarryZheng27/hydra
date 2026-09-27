@@ -43,7 +43,7 @@ export interface PackServiceOptions {
   userServers?: () => Promise<Partial<Record<Provider, readonly string[]>>>;
   /** 5.4: how a pinned server's integrity is checked against the registry. Tests inject a fake. */
   npxRegistryFetch?: RegistryFetcher;
-  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  // ---- 5.2: the audit log ----
   /** Without it, a pack server refused by 5.4's integrity pin and a pack turned on aren't recorded. */
   audit?: (event: AuditEvent) => void;
 }

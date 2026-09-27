@@ -21,7 +21,7 @@ import { LaneService, laneLaunch } from '../src/core/laneService';
 import { fakePtyModule } from './lanePtyFake';
 
 /**
- * Step 2 (docs/Hydra_Improvements.md): confining heads, and light limits for lanes. The settings
+ * Step 2: confining heads, and light limits for lanes. The settings
  * files, tool lists, environments and wrapper are built by confine.ts from typed inputs; these tests
  * pin them exactly, since Claude Code silently ignores a whole settings file with one bad value.
  */

@@ -106,7 +106,7 @@ export const gatesPage: SettingsPage = {
     </details>
     <div class="group">
       <h2>Starter gates</h2>
-      <p class="row-desc">A deliberate choice for a project with no <code>.hydra/gates.json</code> yet (docs/Hydra_Improvements_Pt_2.md, Step A). Choosing "No gates" writes a gates.json that says so, rather than leaving the project unconfigured.</p>
+      <p class="row-desc">A deliberate choice for a project with no <code>.hydra/gates.json</code> yet. Choosing "No gates" writes a gates.json that says so, rather than leaving the project unconfigured.</p>
       <div class="row"><div class="row-text"><div class="row-title">Add a test gate</div><div class="row-desc" id="gt-starter-test-desc">Detected from package.json's "test" script.</div></div>
         <div class="row-action"><button id="gt-starter-test">Add a test gate</button></div></div>
       <div class="row"><div class="row-text"><div class="row-title">No gates for this project</div><div class="row-desc">Writes gates.json with an empty list, a deliberate choice.</div></div>

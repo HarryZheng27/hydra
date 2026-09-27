@@ -1,10 +1,10 @@
-# The Windows journey (Part 2, Step B)
+# The Windows journey
 
-Run on 2026-09-26 for [Hydra_Improvements_Pt_2.md](Hydra_Improvements_Pt_2.md), Step B. Claude only, by decision 1: Codex ran nothing.
+Run on 2026-09-26, with Claude only: Codex ran nothing.
 
 ## The build and setup
 
-- **Build:** Hydra 0.24.0, commit `e2f422a` (main after Step A). The installed `Hydra.exe` from `.desktop/VSCode-win32-x64`.
+- **Build:** Hydra 0.24.0, commit `e2f422a` (main after the evidence status was added). The installed `Hydra.exe` from `.desktop/VSCode-win32-x64`.
 - **Extension code:** the same commit's extension, loaded as a development extension from the main checkout. A test window that runs the installed extension code unmodified can re-point the user's real Claude connection to itself. Loading it this way keeps that connection untouched, and the code is identical.
 - **Profile:** a fresh, isolated profile and extensions folder, with no settings or extensions carried over.
 - **Sign-in:** Nico's Claude Code subscription, through `claude.exe`. No API keys.
@@ -40,7 +40,7 @@ The **`flaky` gate** was a device added for this journey. It fails the first tim
 
 ## What the journey showed about Hydra
 
-- **The evidence status (Step A) held up** on the canvas for heads, and on the lane tile for a merged lane. The same status was in each job's record.
+- **The evidence status held up** on the canvas for heads, and on the lane tile for a merged lane. The same status was in each job's record.
 - **Heads check their own work.** With a readable gate script, heads met its rules before finishing, so Hydra's retry loop was rarely needed.
 - **Recovery is honest.** A reload fails the running head with the reason, and the plan offers Retry. It never quietly restarts work. A head that can't pass asks its question instead of guessing, and the answer came from the canvas.
 - **Claude's folder-trust prompt defaults to "No, exit".** A stray Enter in a new lane's terminal quits Claude with exit code 0. Earlier live checks hit this, and it isn't Hydra's to change. A lane's first run should expect the prompt.

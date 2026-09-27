@@ -6,8 +6,8 @@ import { bashQuote, confinedEnvironment, envValue, guardScript, insideScript, tr
 import type { AuditEvent } from './audit';
 
 /**
- * Codex's Windows sandbox around a head's shell and the gate commands (docs/Hydra_Improvements.md,
- * Step 2, design 1, 5 and 7). Once per window, the first time a head or a gate needs it, Hydra finds
+ * Codex's Windows sandbox around a head's shell and the gate commands
+ * (Step 2, design 1, 5 and 7). Once per window, the first time a head or a gate needs it, Hydra finds
  * Codex's own executable and Git Bash, writes the wrapper scripts into its own storage (never under
  * a worktree), and checks them: a harmless command must run inside a test folder, and a write to a
  * sibling folder outside it must be refused. The result is kept for the window. When anything is
@@ -110,7 +110,7 @@ export interface HeadSandboxOptions {
   log?: (line: string) => void;
   /** Test seam: the check's two runs. */
   run?: typeof runOnce;
-  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  // ---- 5.2: the audit log ----
   /** Without it, a failed sandbox self-test is only logged, not recorded in the audit log. */
   audit?: (event: AuditEvent) => void;
 }

@@ -21,7 +21,7 @@ export interface EvidenceSubject {
   /** Where the .md file is written; every link is relative to it. */
   baseDirectory: string;
   results: readonly JobCheckResult[];
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status this document describes, when one was recorded. */
+  /** Step A: the truthful evidence status this document describes, when one was recorded. */
   status?: EvidenceStatus;
   /** The commit `status` describes; shown with `status` on the top line. */
   commit?: string;

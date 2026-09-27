@@ -55,7 +55,7 @@ export interface LaneLaunchInput {
   platform?: NodeJS.Platform;
   /** Packs (docs/Packs_Plan.md, section 5): the lane's role for this launch (roleLaunch), passed every time: fresh, Resume, Start fresh and Switch. */
   role?: RoleLaunch;
-  /** Step 2 (docs/Hydra_Improvements.md, design 6): a Claude lane's `--settings` file (laneSettings), which LaneService wrote (0600). */
+  /** Step 2 (design 6): a Claude lane's `--settings` file (laneSettings), which LaneService wrote (0600). */
   settingsFile?: string;
 }
 export interface LaneLaunch { executable: string; args: string[]; env: Record<string, string>; mcpConfig?: string }
@@ -200,17 +200,17 @@ export interface LaneServiceOptions {
    * override `home` with a temp fake home, never the real `~/.claude` or `~/.codex`.
    */
   conversation?: { home?: () => string; platform?: NodeJS.Platform; fs?: LaneConversationOptions['fs'] };
-  // ---- Step 2 (docs/Hydra_Improvements.md) ----
+  // ---- Step 2 ----
   /**
    * Hydra's global storage: a Claude lane may read none of it but its role's pack copy, and write none
    * of it (design 6). Without it, no settings file. A lane's gate commands stay outside Codex's sandbox:
    * a lane is your terminal, with your full environment (decision 3).
    */
   hydraStorage?: string;
-  // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
+  // ---- 5.3: Stop All Agents ----
   /** Without it, a lane always may launch or relaunch (as before 5.3). */
   stop?: StopSwitch;
-  // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+  // ---- Step E: a preview for each lane ----
   /** Where lane previews keep their capped server log, one file per lane. Defaults beside the gate logs. */
   previewLogDirectory?: string;
   /** Test seam: replaces the preview's free port, fetch, clock or terminate. */
@@ -317,7 +317,7 @@ export class LaneService {
     });
   }
 
-  // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+  // ---- Step E: a preview for each lane ----
 
   /** The project's screenshots gate wins; else `.hydra/preview.json`; else undefined (extensionLanes.ts then asks once). */
   async previewConfig(id: unknown): Promise<PreviewConfig | undefined> {
@@ -361,7 +361,7 @@ export class LaneService {
     if (!isSafeBranchName(current)) throw new Error(`Hydra can't start a lane from the branch "${current}". Use a branch named with letters, numbers and . _ / - only.`);
     let id: string; do { id = newLaneId(); } while (this.options.store.get(id));
     const created = await createWorktree(this.options.repository, input.name, id, this.options.worktreeRoot(), options.baseCommit, { branch: laneBranch(input.name, id), folder: laneFolder(id) });
-    // 1.4 (docs/Hydra_Improvements.md): best effort, like a head's equivalent snapshot — a repository
+    // 1.4: best effort, like a head's equivalent snapshot — a repository
     // Hydra can't fingerprint (a very unusual .git layout) simply gets no git-metadata check later.
     const gitMeta: GitMetaFingerprint | undefined = await gitMetaFingerprint(created.worktree).catch(() => undefined);
     const lane: Lane = {
@@ -450,7 +450,7 @@ export class LaneService {
   }
 
   /**
-   * 1.3 (docs/Hydra_Improvements.md): Hydra's own text into a lane, never the user's keystrokes
+   * 1.3: Hydra's own text into a lane, never the user's keystrokes
    * (those go through `input` unchanged, since arrow keys and the like are escape sequences on
    * purpose). Used for "Send to lane" and anywhere else Hydra types text it didn't write itself,
    * such as a gate's command output, into a lane's terminal.
@@ -725,7 +725,7 @@ export class LaneService {
   }
 
   /**
-   * 5.3 (docs/Hydra_Improvements.md): Hydra: Stop All Agents. Ends every open lane's process
+   * 5.3: Hydra: Stop All Agents. Ends every open lane's process
    * (its terminal's `exited` handler marks the lane "exited", same as any other exit) but keeps
    * the lane and its worktree — unlike `dispose`, the service stays usable and Resume Agents lets
    * the user resume each lane as today.

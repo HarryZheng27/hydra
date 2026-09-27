@@ -124,7 +124,7 @@ export function githubCompareUrl(remote: string, target: string, branch: string,
   return `https://github.com/${match[1]}/${match[2]}/compare/${ref(target)}...${ref(branch)}?expand=1${body ? `&body=${body}` : ''}`;
 }
 
-/** Step A (docs/Hydra_Improvements_Pt_2.md): the compare page's PR body carries a short "Checks" section — the status, each gate's result and the commit — kept under `maxCompareUrlChars` in total (GitHub silently drops an overlong query). Undefined when there is nothing to say (no recorded status). */
+/** Step A: the compare page's PR body carries a short "Checks" section — the status, each gate's result and the commit — kept under `maxCompareUrlChars` in total (GitHub silently drops an overlong query). Undefined when there is nothing to say (no recorded status). */
 export const maxCompareUrlChars = 6000;
 export function checksSection(record: LaneGatesRecord | undefined): string | undefined {
   if (!record?.status || !record.commit) return undefined;

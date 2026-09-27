@@ -12,7 +12,7 @@ import { AuditLog, laneOverrideEvent, type AuditEvent } from '../src/core/audit'
 import { PackService } from '../src/core/packs/service';
 
 /**
- * 5.2 (docs/Hydra_Improvements.md): the audit log. Events are written one JSON line each,
+ * 5.2: the audit log. Events are written one JSON line each,
  * redacted, and rotated at a small size; a refused endpoint call, a refused lead connection,
  * a "Merge anyway" override, a pack turned on and a head cancelled each add exactly one line.
  */

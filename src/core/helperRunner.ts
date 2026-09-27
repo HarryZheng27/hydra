@@ -36,7 +36,7 @@ export interface HelperRunSpec {
   spawned?: (pid: number) => void;
   /** Packs (docs/Packs_Plan.md, section 5): what the head's role adds to its command line and environment. */
   role?: HeadRoleArguments;
-  /** Step 2 (docs/Hydra_Improvements.md): how the head is confined. */
+  /** Step 2: how the head is confined. */
   confine: HeadConfinement;
 }
 /** How HelperService confines one head (src/core/confine.ts builds each piece). */
@@ -82,7 +82,7 @@ export interface HelperRun {
 export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
 
 /**
- * A Claude head's command line. Step 2 (docs/Hydra_Improvements.md, design 1):
+ * A Claude head's command line. Step 2 (design 1):
  * - `--setting-sources user`: a head can write `.claude/settings.local.json` in its worktree, and
  *   with project or local settings loaded, a hook it planted there ran unsandboxed (R5);
  * - `--settings <file>`: its read block and deny rules (headSettings);
@@ -123,7 +123,7 @@ export function codexHelperArguments(spec: HelperRunSpec, resumeThread?: string)
 export const startHelperRun: StartHelperRun = spec => spec.provider === 'claude' ? startClaude(spec) : startCodex(spec);
 
 /**
- * 5.1 (docs/Hydra_Improvements.md): the head's own bridge token is masked (it's an exact
+ * 5.1: the head's own bridge token is masked (it's an exact
  * secret Hydra already knows), and so is anything else in the line that looks like a
  * secret — an API key the head's tool output happened to print, an env var value, and so on.
  */

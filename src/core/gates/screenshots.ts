@@ -39,7 +39,7 @@ export interface AppServer { pid?: number; exitCode(): number | null | undefined
  * Start the app as a tracked process tree in the worktree, its output going to a log. With Codex's
  * sandbox (Step 2, design 5), the app runs in it, with the worktree writable, the allowlisted
  * environment and the network on; stopping it ends the sandboxed tree through the wrapper's guard.
- * Exported for a lane's preview (Step E, docs/Hydra_Improvements_Pt_2.md): the same tracked,
+ * Exported for a lane's preview (Step E): the same tracked,
  * capped-log process, just kept running instead of stopped right after a capture.
  */
 export async function startApp(command: string[], cwd: string, port: number, logFile: string, runtime: GateRuntime, spawned?: (pid: number) => void, env: Record<string, string> = {}, sandbox?: CommandSandbox, temp?: string): Promise<AppServer> {

@@ -178,7 +178,7 @@ export interface RoleLaunch {
   /** What was left out, and why. */
   notes: string[];
   /**
-   * Step 2 (docs/Hydra_Improvements.md): the pack's checked copy, which a Claude head reads with
+   * Step 2: the pack's checked copy, which a Claude head reads with
    * `--add-dir`, and which no Read deny may cover, for a head or a lane.
    */
   packCopy: string;

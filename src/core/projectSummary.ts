@@ -8,7 +8,7 @@ import type { Plan } from './plans';
 import type { PlanJobView } from './planRunner';
 
 /**
- * Step D (docs/Hydra_Improvements_Pt_2.md): a small, read-only summary each window
+ * Step D: a small, read-only summary each window
  * publishes beside its discovery record (`helperDiscovery.ts`), so "Hydra: Show All
  * Projects" can list every open project without any window reaching into another's
  * jobs. Pure build/read/write, like helperDiscovery.ts; the extension owns the

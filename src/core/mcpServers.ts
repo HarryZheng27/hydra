@@ -136,7 +136,7 @@ export function validateServerSpec(input: unknown): McpServerSpec {
 }
 
 // ---- Secrets ----
-// secretKeyPattern, secretPrefixPattern and looksLikeSecret moved to ./redact (5.1, docs/Hydra_Improvements.md),
+// secretKeyPattern, secretPrefixPattern and looksLikeSecret moved to ./redact (5.1),
 // which redactText's key/value masking now shares with this page's own masking below.
 
 const masked = (value: string) => value.length >= 16 ? `••••${value.slice(-4)}` : '••••••••';

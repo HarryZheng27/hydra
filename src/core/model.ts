@@ -32,7 +32,7 @@ export interface HelperJobView {
   writeScope?: string[];
   /** Packs (docs/Packs_Plan.md): the role it works in, "coding/builder", with the titles it started with. */
   role?: { ref: string; title: string; packTitle: string };
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status at `commit`, when one was recorded. */
+  /** Step A: the truthful evidence status at `commit`, when one was recorded. */
   status?: EvidenceStatus;
 }
 /**
@@ -78,7 +78,7 @@ export type ClientMessage =
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md): Retry failed jobs on an incomplete plan; Cancel job and Start lane on a job's node ----
   | { type: 'planRetryJobs'; id: string }
   | { type: 'planCancelJob' | 'planStartJob'; id: string; key: string }
-  // ---- Auto-dispatch (Step C, docs/Hydra_Improvements_Pt_2.md): null turns it off ----
+  // ---- Auto-dispatch (Step C): null turns it off ----
   | { type: 'planDispatch'; id: string; dispatch: PlanDispatch | null };
 
 export function parseMessage(value: unknown): ClientMessage {
@@ -159,7 +159,7 @@ export interface LaneSyncView {
   dirty: boolean;
   checkedAt: string;
   error?: string;
-  /** The lane's worktree HEAD as of this pass. Step A (docs/Hydra_Improvements_Pt_2.md) compares it against lastGates.commit to say "Checks are for an older commit". */
+  /** The lane's worktree HEAD as of this pass. Step A compares it against lastGates.commit to say "Checks are for an older commit". */
   head?: string;
 }
 /**
@@ -170,7 +170,7 @@ export interface LaneSyncView {
 export interface LanePlanJobView {
   planId: string; planTitle: string; jobKey: string; jobTitle: string; state: PlanJobStatus;
   commit?: string; dependents: number; dependentsStarted: number;
-  /** Step C (docs/Hydra_Improvements_Pt_2.md): its plan auto-dispatches: "Auto-dispatched · attempt 2 of 3". */
+  /** Step C: its plan auto-dispatches: "Auto-dispatched · attempt 2 of 3". */
   dispatch?: { attempt: number; attempts: number };
 }
 /** A lane as the webview shows it: the record, its last sync, whether its terminal is alive and, for a plan lane, its job. */
@@ -180,9 +180,9 @@ export type LaneView = Lane & {
   roleNote?: string;
   /** Restarting Hydra (docs/Heads.md): set when Resume found no earlier conversation and started fresh instead. */
   resumeNote?: string;
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): lastGates.commit no longer matches the lane's HEAD — "Checks are for an older commit". The status itself is kept, just marked stale. */
+  /** Step A: lastGates.commit no longer matches the lane's HEAD — "Checks are for an older commit". The status itself is kept, just marked stale. */
   gatesStale?: boolean;
-  /** Step E (docs/Hydra_Improvements_Pt_2.md): this lane's dev server, for the tile's "Preview on :port" chip. */
+  /** Step E: this lane's dev server, for the tile's "Preview on :port" chip. */
   preview?: { port: number; url: string };
   /** Step E: the preview server exited on its own since it was last started, and why. Cleared at its next start. */
   previewNote?: string;
@@ -190,7 +190,7 @@ export type LaneView = Lane & {
 export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resume' | 'restart' | 'diff' | 'openWindow' | 'refresh' | 'switchProvider' | 'runGates' | 'evidence'
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 5) ----
   | 'markJobDone' | 'cancelJob' | 'showPlan'
-  // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+  // ---- Step E: a preview for each lane ----
   | 'preview' | 'stopPreview';
 export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan', 'preview', 'stopPreview'];
 export type AgentsView = 'canvas' | 'lanes';

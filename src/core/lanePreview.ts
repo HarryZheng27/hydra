@@ -6,9 +6,9 @@ import { startApp, substitutePort, waitUntilReady, type AppServer } from './gate
 import { redactText } from './redact';
 
 /**
- * A lane's preview (Step E, docs/Hydra_Improvements_Pt_2.md): the project's dev server, started in
- * the lane's own worktree with the lane's own environment (a lane is your terminal, decision 3 of
- * Hydra_Improvements.md) on a free port, then opened in VS Code's Simple Browser. At most one
+ * A lane's preview (Step E): the project's dev server, started in
+ * the lane's own worktree with the lane's own environment (a lane is your terminal) on a free
+ * port, then opened in VS Code's Simple Browser. At most one
  * server per lane; two lanes never share a port.
  */
 export interface PreviewConfig { command: string[]; url: string; readyTimeoutSeconds?: number }

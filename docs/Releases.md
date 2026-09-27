@@ -1,6 +1,6 @@
 # Releasing Hydra
 
-How a Hydra release is built, published and checked, and what's still needed before Hydra can update itself ([Hydra_Improvements.md](Hydra_Improvements.md), Step 4).
+How a Hydra release is built, published and checked, and what's still needed before Hydra can update itself.
 
 ## Publishing a release
 

@@ -383,7 +383,7 @@ export function gateChip(check: Pick<HeadCheckView, 'id' | 'summary'> & { state?
 }
 
 /**
- * Step A (docs/Hydra_Improvements_Pt_2.md): the one evidence-status label, duplicated from
+ * Step A: the one evidence-status label, duplicated from
  * src/core/jobs.ts's evidenceLabel for the same Node-import reason as gateChip above.
  */
 const evidenceLabels: Readonly<Record<EvidenceStatus, string>> = {

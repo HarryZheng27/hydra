@@ -452,7 +452,7 @@ function PlanLeadNode({ node, defaultProvider, onPlan }: { node: CanvasPlanNode;
 }
 
 /**
- * Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes, for a plan with lane jobs. On, it shows
+ * Step C: Auto-dispatch to lanes, for a plan with lane jobs. On, it shows
  * its three settings; each change is saved at once. Off leaves running lanes alone.
  */
 function PlanDispatchControls({ plan, defaultProvider, onPlan }: { plan: Plan; defaultProvider?: Provider; onPlan: (message: ClientMessage) => void }) {

@@ -125,13 +125,13 @@ export function gateChip(check: Pick<JobCheckResult, 'id' | 'kind' | 'state' | '
 }
 export interface JobResult {
   summary: string; commit: string; changedFiles: string[]; checks: JobCheckResult[];
-  /** 1.6 (docs/Hydra_Improvements.md): set when .hydra/gates.json, checks.json or packs.json changed while this head ran. The gate floor (1.1) still ran the head's start-of-run gates regardless. */
+  /** 1.6: set when .hydra/gates.json, checks.json or packs.json changed while this head ran. The gate floor (1.1) still ran the head's start-of-run gates regardless. */
   note?: string;
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status at acceptance. Missing on results from before this change, and on an accepted result nothing about gates should label (an optional-changes role that changed nothing): never relabelled after the fact. */
+  /** Step A: the truthful evidence status at acceptance. Missing on results from before this change, and on an accepted result nothing about gates should label (an optional-changes role that changed nothing): never relabelled after the fact. */
   status?: EvidenceStatus;
 }
 
-// ---- Step A (docs/Hydra_Improvements_Pt_2.md, "truthful gate status for every job") ----
+// ---- Step A ("truthful gate status for every job") ----
 
 /** How a project's gates were set up when a job finished: a real gates/checks file, a gates.json that deliberately lists none, or no file at all. */
 export type GatesConfigured = 'file' | 'empty-file' | 'none';
@@ -238,7 +238,7 @@ export interface Job {
   // ---- Packs (docs/Packs_Plan.md, "Heads") ----
   /** The role it works in, from an active pack. Resolved again when it starts, from the pack's checked copy. */
   role?: JobRole;
-  // ---- Hardening (docs/Hydra_Improvements.md, Step 1) ----
+  // ---- Hardening (Step 1) ----
   /**
    * 1.1: the gates in force when this head started (the same loader `hydra_done` otherwise uses),
    * so a head that edits or removes a gate from .hydra/gates.json mid-run can't weaken what checks
@@ -259,7 +259,7 @@ export interface Job {
 /** A head's role: "coding/builder", with the titles it had when the head was started, for the views. */
 export interface JobRole { ref: string; title: string; packTitle: string }
 
-// ---- Hardening (docs/Hydra_Improvements.md, Step 1) ----
+// ---- Hardening (Step 1) ----
 
 /** 1.1: a head's gates at start (HelperService.startHelper), the same shape `loadGates`/`effectiveGates` return. */
 export interface JobGatesSnapshot { gates: Gate[]; notRun: JobCheckResult[] }
@@ -291,7 +291,7 @@ function validateGatesSnapshot(value: unknown): JobGatesSnapshot | undefined {
 }
 
 /**
- * 1.1 (docs/Hydra_Improvements.md): the gates that actually run at hydra_done — the snapshot's
+ * 1.1: the gates that actually run at hydra_done — the snapshot's
  * own definition for every gate id it already knew about (so a head that edits or deletes a gate
  * from .hydra/gates.json mid-run, or points its command somewhere weaker, can't change what runs
  * for that id), plus any gate in today's config whose id the snapshot never had (a gate — or a

@@ -38,7 +38,7 @@ export interface GateContext {
   /** Test seams: a fake reviewer, browser, clock or port. */
   runtime?: Partial<GateRuntime>;
   /**
-   * Step 2 (docs/Hydra_Improvements.md, design 5): Codex's sandbox for command gates and the
+   * Step 2 (design 5): Codex's sandbox for command gates and the
    * screenshots gate's app, with the worktree writable and the allowlisted environment. Without it,
    * or when it isn't available, they run as before. Review gates don't use it: they run read-only.
    */
@@ -49,7 +49,7 @@ export interface GateContext {
    */
   tempRoot?: string;
   /**
-   * 5.1 (docs/Hydra_Improvements.md): masks secrets in gate evidence (command logs, review
+   * 5.1: masks secrets in gate evidence (command logs, review
    * prompts and replies) and in a JobCheckResult's own text. Defaults to `redactText` with no
    * live secrets besides the environment; a caller that knows about live secrets (Hydra's own
    * endpoint tokens) can pass a redactor that also masks those.
