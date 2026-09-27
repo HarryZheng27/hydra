@@ -12,6 +12,8 @@ body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-edit
 .search { display: flex; align-items: center; gap: 6px; margin: 0 4px 12px; padding: 6px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; background: var(--vscode-input-background); }
 .search input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--vscode-input-foreground); font: inherit; }
 .search input:focus-visible { outline: none; }
+/* The box shows keyboard focus for its borderless input (found in the Windows journey, Pt 2 Step B). */
+.search:focus-within { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px var(--vscode-focusBorder); }
 .search svg { flex: none; opacity: .6; }
 .nav-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .nav-item { display: block; width: 100%; text-align: left; font: inherit; cursor: pointer; border: none; background: transparent; color: var(--vscode-foreground); padding: 6px 10px; border-radius: 6px; }
@@ -41,7 +43,7 @@ body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-edit
 mark { background: var(--vscode-editor-findMatchHighlightBackground, #ea5c0055); color: inherit; border-radius: 2px; }
 button { cursor: pointer; font: inherit; border-radius: 4px; padding: 6px 12px; border: 1px solid var(--vscode-button-border, var(--vscode-panel-border)); color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
 button:hover { background: var(--vscode-button-secondaryHoverBackground); }
-button:focus-visible, [tabindex]:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+button:focus-visible, [tabindex]:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
 button:disabled { cursor: default; opacity: .5; }
 button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-color: transparent; }
 button.primary:hover { background: var(--vscode-button-hoverBackground); }

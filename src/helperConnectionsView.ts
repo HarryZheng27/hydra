@@ -14,6 +14,8 @@ export interface ProviderConnectionView {
   extensionVersion?: string;
   connected: boolean;
   current: boolean;
+  /** A development window never rewrites the user-level connection, so "updating" would never come true there. */
+  development?: boolean;
   error?: string;
   /** Claude only: claude-mem (and the Bun it needs) is set up. */
   memory?: 'ready' | 'missing';
@@ -56,7 +58,7 @@ export function connectionsSection(marks: { claude: string; codex: string }): st
 export const connectionsScript = `
 function renderConnections(list){for(const c of list||[]){const state=document.querySelector('[data-state="'+c.provider+'"]');if(!state)continue;
 const memory=c.memory===undefined?'':c.memory==='ready'?' Memory: claude-mem on.':' Memory: claude-mem not set up yet.';
-state.textContent=c.error?('Error: '+c.error):!c.connected?(c.extensionInstalled?'Not connected to Hydra.':'Not installed. Connect installs it and connects it to Hydra.'):(c.current?'Connected to Hydra.':'Connected, updating for this Hydra…')+(c.connected?memory:'');
+state.textContent=c.error?('Error: '+c.error):!c.connected?(c.extensionInstalled?'Not connected to Hydra.':'Not installed. Connect installs it and connects it to Hydra.'):(c.current?'Connected to Hydra.':c.development?'Connected to another Hydra. A development window leaves it as it is.':'Connected, updating for this Hydra…')+(c.connected?memory:'');
 document.querySelector('[data-connect="'+c.provider+'"]').hidden=c.connected&&c.current&&c.memory!=='missing';
 document.querySelector('[data-disconnect="'+c.provider+'"]').hidden=!c.connected;}}
 document.querySelectorAll('[data-connect]').forEach(b=>b.addEventListener('click',()=>send({type:'connectHelpers',provider:b.dataset.connect})));

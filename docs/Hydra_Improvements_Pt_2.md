@@ -1,6 +1,6 @@
 # Hydra improvements, part 2: product and release parity
 
-Status (2026-09-26): Step A built (see "As built"); Steps B–E to follow, in order. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
+Status (2026-09-26): Steps A and B done (see "As built"); Steps C–E to follow, in order. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
 
 ## Why this exists
 
@@ -349,3 +349,22 @@ Built by one Sonnet subagent (`hydra-wt/evidence`). The main session reviewed th
 - `tests/evidenceStatus.test.ts`: 13.
 - `tests/hydraTree.test.ts`: 9, including the new one.
 - Unchanged and passing: `lanes` 11, `laneGit` 9, `helperService` 21, `planRunner` 15, `planLanes` 11, `gates` 16, `audit` 11.
+
+### Step B (2026-09-26)
+
+Run by the main session (Opus) on Hydra 0.24.0 at `e2f422a`, Claude only. The full record is [Windows_Journey.md](Windows_Journey.md).
+
+**What ran:**
+- Onboarding from a fresh profile.
+- A plan of two dependent heads, planned by Claude from a brief. Both passed their gates.
+- A head that failed a real gate, asked a question, was answered from the canvas, then passed on attempt 3.
+- A lane whose gate failed, then **Send to lane**, then a merge with "Passed required gates".
+- A window reload while a head ran. It was reported as "The Hydra window closed while this head was running.", with **Retry failed jobs**.
+- A keyboard and contrast pass in both themes.
+
+**Fixed from it:**
+- The settings search box showed no keyboard focus.
+- Text areas had no focus ring.
+- A development window said "Connected, updating for this Hydra…" about an update it never makes.
+
+**Still open:** code signing, an update host and key custody (the release owner), then the native install step and a signed upgrade. Also Open PR against a real GitHub repository, and a clean-machine run with a signed installer. Each is listed with its owner in the record.
