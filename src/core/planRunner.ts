@@ -269,6 +269,11 @@ export class PlanRunner {
   private readonly queues = new Map<string, Promise<unknown>>();
   /** `<planId>:<key>` of lane jobs that were ready while the window started. */
   private readonly deferred = new Set<string>();
+  /**
+   * Step C: plans whose Auto-dispatch you turned off in this window. Their lane jobs that are or become ready
+   * wait for Start lane, as at window start, instead of starting by themselves; Run plan or Retry lifts it.
+   */
+  private readonly undispatched = new Set<string>();
   private readonly waits = new Map<string, string>();
   private readonly shown = new Map<string, string>();
   private readonly soon = new Set<string>();
@@ -346,6 +351,7 @@ export class PlanRunner {
       if (cycle) throw new Error(cycleMessage(plan.jobs, cycle));
       const refusal = planRunRefusal(plan, this.options.terminalsAvailable());
       if (refusal) throw new Error(refusal);
+      this.undispatched.delete(planId);
       await this.options.store.update(planId, current => ({ ...current, state: 'running', error: undefined, jobs: current.jobs.map(({ draft: _draft, ...job }) => job) }));
       await this.pass(planId, {});
     });
@@ -370,6 +376,7 @@ export class PlanRunner {
         }),
       }));
       for (const key of again) { this.waits.delete(`${planId}:${key}`); this.deferred.delete(`${planId}:${key}`); }
+      this.undispatched.delete(planId);
       await this.pass(planId, {});
     });
   }
@@ -378,7 +385,7 @@ export class PlanRunner {
   startJob(planId: string, key: string): Promise<void> {
     return this.withPlan(planId, async () => {
       if (!this.deferred.delete(`${planId}:${key}`)) throw new Error('That job isn\'t waiting to be started.');
-      await this.pass(planId, {});
+      await this.pass(planId, { release: key });
     });
   }
 
@@ -429,17 +436,19 @@ export class PlanRunner {
 
   /**
    * Turn Auto-dispatch on (with its settings) or off. Turning it on starts the lane jobs that are ready, as
-   * slots allow; turning it off only stops new starts: lanes already running carry on, and are yours.
+   * slots allow; turning it off stops new starts (ready jobs wait for Start lane) and leaves running lanes alone.
    */
   setDispatch(planId: string, dispatch: PlanDispatch | undefined): Promise<void> {
     return this.withPlan(planId, async () => {
       const next = dispatch && validatePlanDispatch(dispatch);
+      const was = !!this.options.store.get(planId)?.dispatch;
       const plan = await this.options.store.update(planId, current => {
         if (current.state === 'planning' || current.state === 'done') throw new Error(current.state === 'done' ? 'This plan is already done.' : 'This plan is still being drafted.');
         const { dispatch: _dispatch, ...rest } = current;
         return next ? { ...rest, dispatch: next } : rest;
       });
       if (!plan) throw new Error(`No plan ${planId}.`);
+      if (next) this.undispatched.delete(planId); else if (was) this.undispatched.add(planId);
       this.options.log?.(`[plans] ${planId} auto-dispatch ${next ? `on (${next.lanes} lanes, ${next.provider}, ${next.attempts} attempts)` : 'off'}`);
       await this.pass(planId, {});
     });
@@ -475,7 +484,8 @@ export class PlanRunner {
     return { deferred, waits };
   }
 
-  private async pass(planId: string, options: { startup?: boolean }): Promise<void> {
+  /** `release`: the one lane job Start lane starts in a plan whose Auto-dispatch you turned off. */
+  private async pass(planId: string, options: { startup?: boolean; release?: string }): Promise<void> {
     // 5.3: stopped means a plan starts nothing, head or lane, until Resume Agents.
     if (this.options.stop?.isStopped()) return;
     try {
@@ -488,7 +498,7 @@ export class PlanRunner {
         let progressed = false;
         if (steps.record.length) progressed = await this.record(planId, steps.record) || progressed;
         for (const step of steps.start) {
-          if (step.runAs === 'lane' && options.startup && !plan.dispatch) {
+          if (step.runAs === 'lane' && (options.startup || (this.undispatched.has(planId) && step.key !== options.release)) && !plan.dispatch) {
             // Hydra never opens a lane terminal while a window is starting: the job shows Start lane instead,
             // unless the plan auto-dispatches (Step C), which is you asking for its lanes to start by themselves.
             this.deferred.add(`${planId}:${step.key}`);
