@@ -12,14 +12,15 @@ import { ProviderQuota } from './extensionQuota';
 import { findProvider } from './core/providers';
 import { JobStore, evidenceLabel, finalJobStates, resolveHeadDefaults, type EvidenceStatus } from './core/jobs';
 import { HelperEndpoint } from './core/helperEndpoint';
-import { HelperService } from './core/helperService';
+import { HelperService, userPlanSession } from './core/helperService';
+import { removeUserHandshake, sweepStaleHandshakes, writeUserHandshake } from './core/userHandshake';
 import { alive as isWindowAlive, discoveryDirectory, removeWindowRecord, writeWindowRecord } from './core/helperDiscovery';
 // ---- Step D: a read-only view across projects ----
 import { buildProjectSummary, readProjectSummaries, startProjectSummaryPublisher, type ProjectSummaryPublisher } from './core/projectSummary';
 import { startHelperRun } from './core/helperRunner';
 import { HeadSandbox } from './core/headSandbox';
 import { headShellSentence } from './core/confine';
-import { createLeadVerifier } from './core/leadVerification';
+import { createLeadVerifier, createUserVerifier } from './core/leadVerification';
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from './core/claudeMem';
 import { downloadOpenVsx } from './core/openVsx';
 import { selfCheckCli } from './core/cliSelfCheck';
@@ -123,7 +124,7 @@ class Manager {
   private readonly locks: OwnershipLock[] = [];
   private readonly storageDirectory: string;
   /** Hydra helpers for this window (docs/Official_Extensions_Plan.md): job store, local endpoint, service, discovery record. */
-  private helpers?: { store: JobStore; endpoint: HelperEndpoint; service: HelperService; record: string };
+  private helpers?: { store: JobStore; endpoint: HelperEndpoint; service: HelperService; record: string; handshake?: string };
   // ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4): its own store, and the brief-planning ----
   // ---- CLI runs in flight (by plan id), so Cancel and window close can abort them. ----
   private plans?: { store: PlanStore; planning: Map<string, AbortController> };
@@ -263,22 +264,11 @@ class Manager {
         const pick = await vscode.window.showWarningMessage('Stop every head and lane in this window?', { modal: true }, 'Stop all');
         if (pick !== 'Stop all') return false;
       }
-      const reason = 'Stopped with "Hydra: Stop All Agents".';
-      await this.stop.stop(reason);
-      const heads = await this.helpers?.service.stopAll(reason) ?? 0;
-      const lanes = await this.lanes.stopProcesses();
-      const parts = [heads ? `${heads} head${heads === 1 ? '' : 's'}` : '', lanes ? `${lanes} lane${lanes === 1 ? '' : 's'}` : ''].filter(Boolean);
-      // 5.2: a stop — Stop All Agents itself, distinct from each head's own "head cancelled" line.
-      this.audit.record({ kind: 'stop', what: 'Stop all agents', detail: parts.join(', ') || undefined });
-      void vscode.window.showInformationMessage(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
+      await this.stopAllAgents('Stopped with "Hydra: Stop All Agents".', 'Stop all agents');
       return true;
     });
     command('hydra.resumeAgents', async () => {
-      await this.stop.resume();
-      await this.planRunner?.advanceAll().catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
-      // 5.2: a resume.
-      this.audit.record({ kind: 'resume', what: 'Resume agents' });
-      void vscode.window.showInformationMessage('Hydra resumed: heads, lanes and plans may start again.');
+      await this.resumeAgents('Resume agents');
       return true;
     });
     // ---- Audit log (5.2) ----
@@ -504,6 +494,7 @@ class Manager {
       allowedAncestors: new Set([process.pid, process.ppid]),
       deniedAncestors: service?.helperProcessIds() ?? new Set<number>(),
     }));
+    const verifyUser = createUserVerifier(() => ({ deniedAncestors: service?.helperProcessIds() ?? new Set<number>() }));
     const endpoint = new HelperEndpoint(async (caller, tool, args, signal) => {
       if (!service) throw new Error('Hydra heads are still starting.');
       // Every action is logged, whoever calls it (plan, Phase 3 security note).
@@ -515,6 +506,12 @@ class Manager {
         this.output.appendLine(`[heads] refused ${event.status}: ${event.reason}${event.role ? ` (${event.role}${event.jobId ? ` ${event.jobId}` : ''}${event.tool ? `, ${event.tool}` : ''})` : ''}`);
         // 5.2: a denial — every endpoint refusal.
         this.audit.record({ kind: 'denial', what: `endpoint refused: ${event.status}`, detail: event.reason, role: event.role, jobId: event.jobId });
+      },
+      // O8a: a user token (from the handshake file) is refused from inside a head, like a lead.
+      verifyUser: async socket => {
+        const verdict = await verifyUser(socket);
+        if (!verdict.ok) this.output.appendLine(`[heads] user connection refused: ${verdict.reason}`);
+        return verdict;
       },
       verifyLead: async socket => {
       const verdict = await verifyLead(socket);
@@ -548,6 +545,11 @@ class Manager {
       stop: this.stop,
       // ---- Audit log (5.2) ----
       audit: event => this.audit.record(event),
+      // ---- O8a: the user role's stop and resume ----
+      control: {
+        stopAll: reason => this.stopAllAgents(reason, 'Stop all agents (from a script)'),
+        resume: () => this.resumeAgents('Resume agents (from a script)'),
+      },
       // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
       plans: this.createPlanLeadBridge(),
       planBoard: this.createPlanBoardBridge(),
@@ -561,6 +563,14 @@ class Manager {
     const record = await writeWindowRecord(path.join(this.context.globalStorageUri.fsPath, 'helpers'), { port, pid: process.pid, folders: [...folders, ...this.lanes.openWorktrees()] });
     this.discovery = { port, folders, written: JSON.stringify(this.lanes.openWorktrees()), queue: Promise.resolve() };
     this.helpers = { store, endpoint, service, record };
+    // ---- O8a: the user role's handshake (docs/Heads.md, "Scripts and CI") ----
+    // Hydra mints the user token here, once per window, and puts it only in the handshake file.
+    // A failure leaves scripts without Hydra, never the window: the token is revoked with it.
+    const helpersRoot = path.join(this.context.globalStorageUri.fsPath, 'helpers');
+    await sweepStaleHandshakes(helpersRoot).catch(() => 0);
+    const userToken = endpoint.issue({ role: 'user', leadKey, leadSessionId: userPlanSession });
+    try { this.helpers.handshake = await writeUserHandshake(helpersRoot, { pid: process.pid, port, token: userToken, repository: leadFolder }); }
+    catch (error) { endpoint.revoke(userToken); this.output.appendLine(`[heads] no handshake for scripts: ${this.describe(error)}`); }
     this.startProjectSummary(record, leadFolder);
     // Plans need the same trusted repository as heads (they read it, and running one starts heads in it).
     const planStore = new PlanStore(path.join(this.storageDirectory, 'plans'));
@@ -934,6 +944,28 @@ class Manager {
     await vscode.window.showTextDocument(document, { preview: true });
   }
   private auditProvider?: vscode.Disposable;
+  /**
+   * Stop All Agents (5.3), shared by the command (after its confirmation) and the user role's
+   * hydra_stop_all (O8a), which asks nothing: the script is you. `what` is the audit line.
+   */
+  private async stopAllAgents(reason: string, what: string): Promise<{ heads: number; lanes: number }> {
+    await this.stop.stop(reason);
+    const heads = await this.helpers?.service.stopAll(reason) ?? 0;
+    const lanes = await this.lanes.stopProcesses();
+    const parts = [heads ? `${heads} head${heads === 1 ? '' : 's'}` : '', lanes ? `${lanes} lane${lanes === 1 ? '' : 's'}` : ''].filter(Boolean);
+    // 5.2: a stop — Stop All Agents itself, distinct from each head's own "head cancelled" line.
+    this.audit.record({ kind: 'stop', what, detail: parts.join(', ') || undefined });
+    void vscode.window.showInformationMessage(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
+    return { heads, lanes };
+  }
+  /** Resume Agents (5.3), shared by the command and the user role's hydra_resume (O8a). */
+  private async resumeAgents(what: string): Promise<void> {
+    await this.stop.resume();
+    await this.planRunner?.advanceAll().catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
+    // 5.2: a resume.
+    this.audit.record({ kind: 'resume', what });
+    void vscode.window.showInformationMessage('Hydra resumed: heads, lanes and plans may start again.');
+  }
   private readonly auditSnapshots = new Map<string, string>();
   private async stopHelpers(): Promise<void> {
     this.planRunner?.dispose(); this.planRunner = undefined;
@@ -946,6 +978,7 @@ class Manager {
     if (!helpers) return;
     await this.discovery?.queue.catch(() => undefined); this.discovery = undefined;
     await removeWindowRecord(helpers.record).catch(() => undefined);
+    if (helpers.handshake) await removeUserHandshake(helpers.handshake).catch(() => undefined);
     await helpers.service.dispose();
     await helpers.endpoint.close();
   }

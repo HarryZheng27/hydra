@@ -315,6 +315,17 @@ A **pack** bundles what one kind of work needs: **roles** for lanes, heads and p
 - **Windows:** a server command such as `npx` runs through `cmd.exe`, as Claude Code's docs advise.
 - **Pinned downloads:** a server run by `npx`, `bunx` or `pnpx` must name an exact version, like `name@1.2.3`. A pack with a range, a tag or a bare name doesn't load. A server may also pin `integrity`, npm's `sha512-…` hash. Before it first starts, Hydra checks that hash against the npm registry and leaves the server out if it differs, saying why; the rest of the role still starts. A match is remembered, so later starts don't ask again. The review panel shows the pin, and the Coding pack pins its Playwright server.
 
+## Scripts and CI
+
+A script or CI job on this machine can act as you against the Hydra window that owns its repository, with no prompt. This is the groundwork for a `hydra` command; the command itself isn't built yet.
+
+- **Which window answers:** the one whose folder holds the script's current folder, found through the same discovery file a lead's bridge uses (one window per repository).
+- **The handshake file:** each window writes `<globalStorage>/helpers/handshakes/<pid>-<port>.json` when its heads start: the window's process id and endpoint port, the repository, and a `user` token Hydra mints for this file only (no endpoint hands one out). On Windows, Hydra cuts the file's access list to you alone with `icacls` (no inherited entries, not even SYSTEM or Administrators) before the token goes in. The file goes when the window closes; the token dies with the window either way.
+- **What a reader refuses:** a file whose access list isn't owner-only, a malformed one, one whose Hydra process is gone (it's also removed), and one that doesn't match the live window it was looked up for.
+- **What the `user` role may do:** the plan tools (`hydra_plan_create`, `_get`, `_wait`, `_amend`, `_cancel`, `_message`), read heads (`hydra_list_heads`, `hydra_get_head`) and lanes (`hydra_lanes`), and stop and resume (`hydra_stop_all`, `hydra_resume`, the same as **Hydra: Stop All Agents** and **Resume Agents**, without the confirmation). Nothing a head or a lane does (`hydra_done`, `hydra_stuck`, `hydra_job_ready`), and none of a chat's own head actions.
+- **Plans a script makes** belong to the `user` role as a whole: any script can read and change them, and no chat can. A chat's plans stay its own.
+- **Refused from inside a head:** like a lead's token, the user token is refused when the calling process descends from one Hydra started for a head.
+
 ## Security
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its boundaries, every control below with the file and test that proves it, and the risks accepted rather than fixed today.
@@ -325,6 +336,7 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its b
 - **Fenced review input:** the reviewer's prompt wraps the diff and the earlier gates' output and summaries in `<<<untrusted-<nonce>` … `>>>end-untrusted-<nonce>` markers, with a fresh random nonce per review, and says plainly that text between them is data, never instructions. The agent under review can't guess the nonce in advance, so it can't forge a closing marker and step back out of the fence.
 - **Clean terminal input:** text Hydra types into a lane on your behalf (for example "Send to lane") has its control sequences stripped first — CSI and OSC sequences, bracketed-paste markers, other escape sequences, and C0/C1 control characters — so a head's gate output can't type ANSI or bracketed-paste sequences into your terminal. Your own keystrokes are never touched.
 - **Git hardening:** every git call Hydra makes passes `-c core.fsmonitor=false`, so a `core.fsmonitor` a head or lane planted in the shared `.git` never runs. Hydra also fingerprints `.git`'s shared config, `config.worktree`, `info/attributes` and `hooks/*` (except `*.sample`) when a head or lane starts; a change refuses `hydra_done` (naming the file, counted as a failed check) and warns before a lane's Merge or Mark job done (naming the file, Cancel the default; `hydra.lanes.action` refuses outright).
+- **The user token** (see "Scripts and CI") is the one Hydra token on disk: in a handshake file only you can read, refused once its window is gone, and refused from inside a head. It can't call a head's or a lane's tools.
 - **No lead secret on disk.** The discovery file (port, pid, folders) contains no token. A lead's bridge asks Hydra for its token once, and Hydra first asks Windows which process opened the connection, then walks that process's parents (`src/core/leadVerification.ts`):
   - **Refused** if the chain passes through any process Hydra started for a head or a head's checks. A head, and anything it starts, can't act as the lead.
   - **Refused** if the chain doesn't reach this Hydra window. That covers a detached process trying to escape its head, and a CLI run outside Hydra; use the extensions or a terminal inside Hydra.

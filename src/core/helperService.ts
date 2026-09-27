@@ -58,6 +58,21 @@ export interface PlanLeadBridge {
   message(id: string, leadSessionId: string, input: PlanLeadMessageInput): Promise<PlanLeadPlan>;
 }
 
+// ---- O8a: the user role (docs/Heads.md, "Scripts and CI") ----
+
+/**
+ * The plan-ownership session every user-role caller shares. A lead's session is 12 hex
+ * characters (HelperEndpoint mints it), so this can never be mistaken for a chat's: a plan a
+ * script makes is readable and changeable by any user-role caller (they are all you), and by no
+ * chat; a chat's plans stay its own.
+ */
+export const userPlanSession = 'user';
+/** Stop All Agents and Resume Agents, as the user role reaches them (implemented in extension.ts, shared with the commands). */
+export interface UserControl {
+  stopAll(reason: string): Promise<{ heads: number; lanes: number }>;
+  resume(): Promise<void>;
+}
+
 // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
 
 /**
@@ -144,6 +159,9 @@ export interface HelperServiceOptions {
   // ---- 5.3: Stop All Agents ----
   /** Without it, heads never refuse to start and dispatch always runs (as before 5.3). */
   stop?: StopSwitch;
+  // ---- O8a: the user role ----
+  /** hydra_stop_all/hydra_resume for a user-role caller. Without it, both are refused. */
+  control?: UserControl;
   // ---- 5.2: the audit log ----
   /** Without it, a head cancelled and a hydra_done refused for changed git settings aren't recorded. */
   audit?: (event: AuditEvent) => void;
@@ -228,8 +246,35 @@ export class HelperService {
           return this.options.lanes.jobReady(caller.lane, typeof note === 'string' && note.trim() ? note.trim() : undefined);
         }
       }
-    } else {
-      const jobId = caller.jobId!;
+    } else if (caller.role === 'user') {
+      // ---- O8a: the user role (docs/Heads.md, "Scripts and CI"): the plan tools, reading heads and lanes, stop and resume ----
+      switch (tool) {
+        case 'hydra_get_head': return this.describe(this.ownJob(args.job_id), true);
+        case 'hydra_list_heads': return { heads: this.options.store.list(this.options.leadKey).map(job => this.describe(job, false)) };
+        case 'hydra_lanes':
+          if (!this.options.lanes) throw new Error('Lanes are not available in this Hydra window.');
+          return this.options.lanes.describe();
+        case 'hydra_plan_create': return this.planCreate(args, userPlanSession);
+        case 'hydra_plan_get': return this.planView(this.requirePlan(args.plan_id, userPlanSession));
+        case 'hydra_plan_wait': return this.planWait(args, userPlanSession, signal);
+        case 'hydra_plan_amend': return this.planAmend(args, userPlanSession);
+        case 'hydra_plan_cancel': return this.planCancel(args, userPlanSession);
+        case 'hydra_plan_message': return this.planMessage(args, userPlanSession);
+        case 'hydra_stop_all': {
+          if (!this.options.control) throw new Error('Stop All Agents is not available in this Hydra window.');
+          if (args.reason !== undefined && typeof args.reason !== 'string') throw new Error('reason must be text.');
+          const reason = typeof args.reason === 'string' && args.reason.trim() ? `Stopped from a script: ${clip(args.reason.trim(), 500)}` : 'Stopped from a script (hydra_stop_all).';
+          const stopped = await this.options.control.stopAll(reason);
+          return { stopped: true, ...stopped };
+        }
+        case 'hydra_resume': {
+          if (!this.options.control) throw new Error('Resume Agents is not available in this Hydra window.');
+          await this.options.control.resume();
+          return { stopped: false };
+        }
+      }
+    } else if (caller.role === 'helper' && caller.jobId) {
+      const jobId = caller.jobId;
       switch (tool) {
         case 'hydra_done': return this.withBoardCount(jobId, this.done(jobId, args, signal));
         case 'hydra_stuck': return this.stuck(jobId, args, signal);
