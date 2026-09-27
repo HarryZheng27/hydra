@@ -378,7 +378,7 @@ export class LanesController implements vscode.Disposable {
       ...(job.writeScope?.length ? { writeScope: job.writeScope.slice(0, 32) } : {}),
       ...(plan.dispatch ? { dispatched: true as const } : {}),
     };
-    const file = planLaneBrief(plan.title, job, start.dependencies);
+    const file = planLaneBrief(plan.title, job, start.dependencies, plan.integration?.branch);
     // Packs (docs/Packs_Plan.md, "Plans"): the job's provider, then its role's, then hydra.defaultProvider. A role
     // that isn't active now still goes with the lane, which starts without it and says why on its tile.
     const roleProvider = job.role && !job.provider ? (await this.host.roles?.roles(this.repository ?? '').catch(() => []))?.find(role => role.ref === job.role)?.provider : undefined;

@@ -759,7 +759,7 @@ test('hydra_plan_* tools need a bridge session (a lead token minted without one 
   const f = await fixture({ script: async () => {}, plans: {
     create: async () => { throw new Error('should not be called'); }, get: () => undefined,
     wait: async () => { throw new Error('should not be called'); }, amend: async () => { throw new Error('should not be called'); }, cancel: async () => { throw new Error('should not be called'); },
-    message: async () => { throw new Error('should not be called'); },
+    message: async () => { throw new Error('should not be called'); }, integrate: async () => { throw new Error('should not be called'); }, merge: async () => { throw new Error('should not be called'); },
   } });
   try {
     // fixture()'s own default lead token has no leadSessionId.
@@ -1078,5 +1078,86 @@ test('hydra_progress/hydra_done: name how many board posts are waiting (excludin
     assert.equal(progressResult.result.board_posts, 1);
     await until(() => !!doneResult, 'done reported');
     assert.equal(doneResult.result.board_posts, 1);
+  } finally { await f.close(); }
+});
+
+// ---- O3: landing a plan together (docs/Heads.md, "Landing a plan together") ----
+
+test('O3: after a restart, a plan\'s head that was waiting for an answer goes back in the queue in its own worktree; a loose head still fails', async () => {
+  let planHead = '';
+  const prompts = new Map<string, string>();
+  const f = await fixture({
+    script: async helper => { prompts.set(helper.spec.worktree, helper.spec.prompt); },
+    planBoard: { jobPlan: id => id === planHead ? { planId: 'aaaaaaaaaaaa', jobKey: 'api' } : undefined, post: async () => undefined, boardFor: () => [] },
+  });
+  try {
+    const base = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    // Two heads that were blocked on a question when Hydra stopped (as jobs.json has them after a restart).
+    const blocked = async (key: string) => {
+      const { job } = await f.store.create('window', { title: `Job ${key}`, brief: 'Build the API.', writeScope: ['src/'], idempotencyKey: key, provider: 'codex' });
+      await f.store.transition(job.id, 'starting');
+      await f.store.transition(job.id, 'running', undefined, { worktree: path.join(f.root, `wt-${key}`), branch: `agent/${key}`, baseCommit: base });
+      await f.store.transition(job.id, 'blocked', 'Needs a decision.', { question: 'REST or GraphQL?' });
+      return job.id;
+    };
+    planHead = await blocked('api');
+    const loose = await blocked('loose');
+    await f.service.recover();
+    assert.equal(f.store.get(loose)!.state, 'failed');
+    assert.match(f.store.get(loose)!.reason!, /Hydra restarted while this head was waiting for an answer/);
+    await until(() => prompts.has(path.join(f.root, 'wt-api')), 'the plan head restarted in its own worktree');
+    const job = f.store.get(planHead)!;
+    assert.notEqual(job.state, 'failed');
+    assert.deepEqual(job.history.slice(-4).map(event => event.to), ['failed', 'queued', 'starting', 'running'], 'back through the queue, not left failed');
+    assert.equal(job.question, undefined);
+    const prompt = prompts.get(path.join(f.root, 'wt-api'))!;
+    assert.match(prompt, /## Restarted/);
+    assert.match(prompt, /REST or GraphQL\?/);
+  } finally { await f.close(); }
+});
+
+test('O3: runIntegrationGate runs the project\'s command gates on the integrated tree, in a worktree it removes afterwards', async () => {
+  const f = await fixture({ script: async () => {}, gates: { gates: [{ id: 'unit', type: 'command', command: [process.execPath, '-e', "process.exit(require('fs').existsSync('src/landed.ts') ? 0 : 1)"] }] } });
+  try {
+    const base = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    await git(f.repo, ['checkout', '-q', '-b', 'side']);
+    await writeFile(path.join(f.repo, 'src', 'landed.ts'), 'export const landed = true;\n');
+    await git(f.repo, ['add', '.']); await git(f.repo, ['commit', '-qm', 'landed']);
+    const tip = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    await git(f.repo, ['checkout', '-q', 'main']);
+    const ran = await f.service.runIntegrationGate({ planId: 'aaaaaaaaaaaa', title: 'Checkout', base, tip, strict: false, providers: ['claude', 'codex'] });
+    assert.equal(ran.configured, 'file');
+    assert.deepEqual(ran.checks.map(check => [check.id, check.state]), [['unit', 'passed']]);
+    const onBase = await f.service.runIntegrationGate({ planId: 'aaaaaaaaaaaa', title: 'Checkout', base, tip: base, strict: false, providers: ['claude'] });
+    assert.deepEqual(onBase.checks.map(check => [check.id, check.state]), [['unit', 'failed']]);
+    assert.doesNotMatch(await git(f.repo, ['worktree', 'list', '--porcelain']), /ig-aaaaaaaaaaaa/, 'its worktree is gone');
+    assert.equal(await git(f.repo, ['status', '--porcelain=v1']), '', 'the main checkout is untouched');
+  } finally { await f.close(); }
+});
+
+test('O3: a plan head re-queued after a conflict starts from the given commit, with its previous try merged in and the conflicting file marked', async () => {
+  let content: string | undefined;
+  const f = await fixture({ script: async helper => { content = await readFile(path.join(helper.spec.worktree, 'src', 'a.ts'), 'utf8'); } });
+  try {
+    const main = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    const side = async (branch: string, text: string) => {
+      await git(f.repo, ['checkout', '-q', '-b', branch, main]);
+      await writeFile(path.join(f.repo, 'src', 'a.ts'), text);
+      await writeFile(path.join(f.repo, 'src', `${branch}.ts`), `${branch}\n`);
+      await git(f.repo, ['add', '.']); await git(f.repo, ['commit', '-qm', branch]);
+      const commit = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+      await git(f.repo, ['checkout', '-q', 'main']);
+      return commit;
+    };
+    const tip = await side('landed', 'export const a = 2;\n');
+    const previous = await side('previous', 'export const a = 3;\n');
+    const started = await f.service.startForPlan({ title: 'Job right', brief: 'Do it.', write_scope: ['src/'], idempotency_key: 'plan-x-right-r1' }, 'plan-aaaaaaaaaaaa', [], 'claude', { baseCommit: tip, carry: previous }) as { job_id: string; base_commit: string };
+    assert.equal(started.base_commit, tip);
+    await until(() => content !== undefined, 'the head started');
+    assert.match(content!, /<<<<<<<[\s\S]*export const a = 2;[\s\S]*=======[\s\S]*export const a = 3;[\s\S]*>>>>>>>/);
+    const worktree = f.store.get(started.job_id)!.worktree!;
+    assert.equal((await readFile(path.join(worktree, 'src', 'previous.ts'), 'utf8')).replace(/\r\n/g, '\n'), 'previous\n', 'the clean part of its previous try carried over');
+    assert.equal((await git(worktree, ['rev-parse', 'HEAD'])).trim(), tip, 'nothing is committed for it');
+    await assert.rejects(f.service.startForPlan({ title: 'Bad', brief: 'x', write_scope: ['src/'], idempotency_key: 'bad' }, 'plan-aaaaaaaaaaaa', [], 'claude', { baseCommit: 'nope' }), /start commit is malformed/);
   } finally { await f.close(); }
 });

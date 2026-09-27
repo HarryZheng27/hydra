@@ -22,7 +22,7 @@ export const dependencyNoun = (dependencies: readonly Pick<DependencyResult, 'ki
 export const maxDependencyBrief = 4096;
 const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 /** Hydra's own commits carry Hydra's name, whatever the repository's identity is. */
-const hydraIdentity: NodeJS.ProcessEnv = {
+export const hydraIdentity: NodeJS.ProcessEnv = {
   GIT_AUTHOR_NAME: 'Hydra', GIT_AUTHOR_EMAIL: 'heads@hydra.invalid',
   GIT_COMMITTER_NAME: 'Hydra', GIT_COMMITTER_EMAIL: 'heads@hydra.invalid',
 };
@@ -32,8 +32,8 @@ export class DependencyConflict extends Error {
   constructor(readonly files: string[], noun: 'heads' | 'jobs' = 'heads') { super(`The ${noun} it depends on conflict in ${files.join(', ')}; merge them first.`); }
 }
 
-/** Two commits merged in memory: the tree, or the files that conflict. Never touches a worktree or the index. */
-async function mergeTrees(repository: string, a: string, b: string): Promise<{ tree: string } | { conflicts: string[] }> {
+/** Two commits merged in memory: the tree, or the files that conflict. Never touches a worktree or the index. Also O3's integration queue (integration.ts). */
+export async function mergeTrees(repository: string, a: string, b: string): Promise<{ tree: string } | { conflicts: string[] }> {
   const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b]);
   const [tree, ...files] = result.stdout.split('\0');
   if (result.code === 0 && tree && sha.test(tree)) return { tree };

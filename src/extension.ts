@@ -56,6 +56,9 @@ import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type P
 import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPlanReport, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, type PlanReportJobDetail } from './core/plans';
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
+// ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together"). Their own block. ----
+import { integrationLeadView, integrationSettled, mergeRefusal } from './core/integration';
+import type { PlanMergeVia } from './core/planRunner';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
 import { toHeadCheckView } from './core/jobs';
@@ -288,6 +291,9 @@ class Manager {
     command('hydra.plans.cancelJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().cancelJob(planIdArgument(id), jobKeyArgument(key), 'Cancelled.'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     command('hydra.plans.startJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().startJob(planIdArgument(id), jobKeyArgument(key)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     // Step C: Auto-dispatch to lanes; null or nothing turns it off. setDispatch validates the settings.
+    // O3: the integration gate and Merge plan, for tests and automation (never asking anything; no override here).
+    command('hydra.plans.integrate', async (id: unknown) => { await this.requirePlanRunner().integrate(planIdArgument(id)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    command('hydra.plans.merge', async (id: unknown, via?: unknown) => { await this.requirePlanRunner().merge(planIdArgument(id), via === 'pr' ? 'pr' : 'merge'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     command('hydra.plans.dispatch', async (id: unknown, dispatch?: unknown) => { await this.requirePlanRunner().setDispatch(planIdArgument(id), dispatch == null ? undefined : dispatch as PlanDispatch); this.plansChanged(); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     // ---- Packs (docs/Packs_Plan.md, section 6). The Packs page and smoke tests call these; there is ----
     // ---- no hydra.packs.allow command — allowing a pack only ever happens from the review panel's   ----
@@ -558,6 +564,11 @@ class Manager {
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
+    // Plans need the same trusted repository as heads (they read it, and running one starts heads in it). Loaded
+    // before recover() (O3): a plan's head that was waiting for an answer goes back in the queue, not failed.
+    const planStore = new PlanStore(path.join(this.storageDirectory, 'plans'));
+    await planStore.load();
+    this.plans = { store: planStore, planning: new Map() };
     await service.recover();
     await this.lanes.start(leadFolder, this.storageDirectory).catch(error => this.output.appendLine(`[lanes] not started: ${this.describe(error)}`));
     const record = await writeWindowRecord(path.join(this.context.globalStorageUri.fsPath, 'helpers'), { port, pid: process.pid, folders: [...folders, ...this.lanes.openWorktrees()] });
@@ -572,10 +583,6 @@ class Manager {
     try { this.helpers.handshake = await writeUserHandshake(helpersRoot, { pid: process.pid, port, token: userToken, repository: leadFolder }); }
     catch (error) { endpoint.revoke(userToken); this.output.appendLine(`[heads] no handshake for scripts: ${this.describe(error)}`); }
     this.startProjectSummary(record, leadFolder);
-    // Plans need the same trusted repository as heads (they read it, and running one starts heads in it).
-    const planStore = new PlanStore(path.join(this.storageDirectory, 'plans'));
-    await planStore.load();
-    this.plans = { store: planStore, planning: new Map() };
     // Plan lanes: the runner picks up running plans; a lane job that is ready now waits for Start lane.
     this.planRunner = this.createPlanRunner(planStore, service, leadFolder);
     await this.planRunner.advanceAll({ startup: true }).catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
@@ -1124,6 +1131,8 @@ class Manager {
       amend: (id, leadSessionId, input) => this.planLeadAmend(id, leadSessionId, input),
       cancel: (id, leadSessionId, reason) => this.planLeadCancel(id, leadSessionId, reason),
       message: (id, leadSessionId, input) => this.planLeadMessage(id, leadSessionId, input),
+      integrate: (id, leadSessionId) => this.planLeadIntegrate(id, leadSessionId),
+      merge: (id, leadSessionId, via) => this.planLeadMerge(id, leadSessionId, via),
     };
   }
   /** A plan as hydra_plan_* show it to the lead that made it: each job's run status from the plan runner, and the board. */
@@ -1134,12 +1143,26 @@ class Manager {
       planId: plan.id, title: plan.title, state: plan.state, ...(plan.error ? { error: plan.error } : {}),
       jobs: plan.jobs.map(job => {
         const view = viewByKey.get(job.key);
-        return { key: job.key, title: job.title, status: view?.status ?? 'draft', ...(view?.reason ? { reason: view.reason } : {}), ...(job.jobId ? { jobId: job.jobId } : {}) };
+        return { key: job.key, title: job.title, status: view?.status ?? 'draft', ...(view?.reason ? { reason: view.reason } : {}), ...(job.jobId ? { jobId: job.jobId } : {}), ...(view?.conflict?.length ? { conflict: view.conflict } : {}) };
       }),
       board: boardForLead(plan.board),
       amendments: plan.amendments ?? [],
       ...(plan.unattended ? { unattended: plan.unattended } : {}),
+      ...(plan.integration ? { integration: integrationLeadView(plan) } : {}),
     };
+  }
+  /** O3: hydra_plan_integrate — the integration gate on what has landed; waits for its result. */
+  private async planLeadIntegrate(id: string, leadSessionId: string): Promise<PlanLeadPlan> {
+    this.planLeadOwn(id, leadSessionId);
+    await this.requirePlanRunner().integrate(id);
+    return this.planLeadSummary(this.planLeadOwn(id, leadSessionId));
+  }
+  /** O3: hydra_plan_merge — Merge plan or Open PR; the runner refuses unless the integration gate passed on the current tip (or you merged anyway on the canvas). */
+  private async planLeadMerge(id: string, leadSessionId: string, via: PlanMergeVia) {
+    this.planLeadOwn(id, leadSessionId);
+    const result = await this.requirePlanRunner().merge(id, via);
+    this.plansChanged();
+    return { plan: this.planLeadSummary(this.planLeadOwn(id, leadSessionId)), ...(result.commit ? { commit: result.commit } : {}), ...(result.into ? { into: result.into } : {}), ...(result.compareUrl ? { compareUrl: result.compareUrl } : {}) };
   }
   /** hydra_plan_create: a repeated idempotency key from the same chat returns the plan it already made. */
   private async planLeadCreate(input: PlanLeadCreateInput, leadSessionId: string): Promise<{ plan: PlanLeadPlan; created: boolean }> {
@@ -1170,7 +1193,8 @@ class Manager {
     const settled = () => {
       const plan = this.plans?.store.get(id);
       if (!plan || plan.leadOrigin?.leadSessionId !== leadSessionId) return true;
-      if (plan.state !== 'running') return true;
+      // O3: a finished plan's integration gate (running, or about to start) is worth waiting for.
+      if (plan.state !== 'running') return integrationSettled(plan);
       // O5: a job that ran out of attempts, or one asking a question, needs the lead now, even mid-run
       // (independent jobs keep going regardless; only its own dependents wait for it).
       const views = this.planRunner?.statuses(id) ?? [];
@@ -1475,8 +1499,8 @@ class Manager {
       },
       // A plan's heads group under its lead `plan-<id>`; a retried head gets a new idempotency key.
       // Provider (docs/Packs_Plan.md, "Plans"): the job's own, then its role's, then hydra.defaultProvider.
-      startHead: async (plan, job, dependsOn, inputs) => {
-        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn), `plan-${plan.id}`, inputs, defaultProvider()) as { job_id: string };
+      startHead: async (plan, job, dependsOn, inputs, start) => {
+        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
         return { jobId: result.job_id };
       },
       startLane: (plan, job, start) => this.lanes.startPlanLane(plan, job, start, defaultProvider()),
@@ -1496,7 +1520,33 @@ class Manager {
       log: line => this.output.appendLine(line),
       // ---- Stop all (5.3) ----
       stop: this.stop,
+      // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together") ----
+      integration: {
+        runGate: (plan, tip) => service.runIntegrationGate({
+          planId: plan.id, title: plan.title, ...(plan.brief ? { brief: plan.brief } : {}), base: plan.integration!.base, tip,
+          strict: plan.jobs.some(job => job.rigor === 'strict'),
+          providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
+        }),
+      },
     });
+  }
+  /** O3: Merge plan / Open PR from the canvas: the same refusal as hydra_plan_merge; a pull request opens its compare page. */
+  private async planMergeFromCanvas(id: string, via: PlanMergeVia): Promise<void> {
+    const result = await this.requirePlanRunner().merge(id, via);
+    this.plansChanged();
+    if (result.compareUrl) await vscode.env.openExternal(vscode.Uri.parse(result.compareUrl, true));
+    else void vscode.window.showInformationMessage(via === 'pr' ? `Pushed ${result.plan.integration?.branch}. Open a pull request for it on your host.` : `Merged plan "${result.plan.title}" into ${result.into}.`);
+  }
+  /** O3: Merge anyway (the canvas only; a lead's tool never can): asks first, records the approval in the audit log, then merges. */
+  private async planMergeAnyway(id: string): Promise<void> {
+    const plan = this.requirePlans().store.get(id);
+    if (!plan?.integration) throw new Error(`No plan ${id} with an integration branch.`);
+    const reason = mergeRefusal(plan);
+    const pick = await vscode.window.showWarningMessage(`Merge plan "${plan.title}" anyway?`, { modal: true, detail: `${reason ?? 'The integration gate passed.'}\n\nThis merges ${plan.integration.branch} into ${plan.integration.target ?? 'its branch'} as it is now.` }, 'Merge anyway');
+    if (pick !== 'Merge anyway') return;
+    await this.requirePlanRunner().overrideGate(id);
+    this.audit.record({ kind: 'approval', what: 'Merge plan anyway', detail: `${plan.title} (${plan.integration.branch} at ${plan.integration.tip.slice(0, 7)}): ${reason ?? 'gate passed'}` });
+    await this.planMergeFromCanvas(id, 'merge');
   }
   /** O7: the morning report (docs/Heads.md, "Unattended plans") — written next to plans.json, opened as a tab, and notified. */
   private async writePlanReport(plan: Plan): Promise<void> {
@@ -1669,6 +1719,10 @@ class Manager {
     if (message.type === 'planStartJob') { await this.requirePlanRunner().startJob(message.id, message.key); return; }
     // Step C: Auto-dispatch to lanes, on (with its settings) or off. Stop all may leave the runner quiet, so say it changed.
     if (message.type === 'planDispatch') { await this.requirePlanRunner().setDispatch(message.id, message.dispatch ?? undefined); this.plansChanged(); return; }
+    // ---- O3: the integration gate, Merge plan, Open PR and Merge anyway ----
+    if (message.type === 'planIntegrate') { await this.requirePlanRunner().integrate(message.id); this.plansChanged(); return; }
+    if (message.type === 'planMerge') { await this.planMergeFromCanvas(message.id, message.via); return; }
+    if (message.type === 'planMergeAnyway') { await this.planMergeAnyway(message.id); return; }
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace to use Hydra.');
     if (this.disabled) throw new Error('Hydra is disabled in this window. Resolve the ownership or handoff error and reload this window.');
     if (message.type === 'checkProvider') {

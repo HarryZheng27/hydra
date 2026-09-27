@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientMessage, HelperJobView, LaneView, Provider, SnapshotRole } from '../src/core/model';
-import { buildCanvas, elapsedLabel, evidenceLabel, gateChip, headStatus, isActive, layout, type CanvasHead, type CanvasLead, type CanvasPlanJob, type CanvasPlanNode } from '../src/core/agentsCanvas';
+import { buildCanvas, elapsedLabel, evidenceLabel, gateChip, headStatus, integrationCanvasView, isActive, layout, type CanvasHead, type CanvasLead, type CanvasPlanJob, type CanvasPlanNode } from '../src/core/agentsCanvas';
 // Type-only (see the note in agentsCanvas.ts): plans.ts's storage code must never
 // enter this browser bundle, so only PlanJob's shape crosses this boundary.
 import type { Plan, PlanDispatch, PlanJob, PlanJobRunAs } from '../src/core/plans';
@@ -444,6 +444,7 @@ function PlanLeadNode({ node, defaultProvider, onPlan }: { node: CanvasPlanNode;
       return <>
         <p className={`canvas-plan-status${plan.state === 'incomplete' ? ' error' : ''}`}>{node.progress}</p>
         {plan.state !== 'done' && <PlanDispatchControls plan={plan} defaultProvider={defaultProvider} onPlan={onPlan} />}
+        <PlanIntegrationControls plan={plan} onPlan={onPlan} />
         <div className="canvas-plan-actions">
           {plan.state === 'incomplete' && hasFailed && <button className="primary" onClick={() => onPlan({ type: 'planRetryJobs', id: plan.id })}>Retry failed jobs</button>}
           {plan.state !== 'done' && <button aria-label={`Add a job to "${plan.title}"`} disabled={plan.jobs.length >= 12} onClick={() => onPlan({ type: 'planAddJob', id: plan.id })}>+ Job</button>}
@@ -452,6 +453,25 @@ function PlanLeadNode({ node, defaultProvider, onPlan }: { node: CanvasPlanNode;
         </div>
       </>;
     })()}
+  </div>;
+}
+
+/**
+ * O3 (docs/Heads.md, "Landing a plan together"): the plan's integration branch, its gate's label, and Run
+ * integration gate; Merge plan and Open PR only once the gate passed on the branch as it is now; Merge
+ * anyway (which asks first) after it ran and didn't pass.
+ */
+function PlanIntegrationControls({ plan, onPlan }: { plan: Plan; onPlan: (message: ClientMessage) => void }) {
+  const view = integrationCanvasView(plan);
+  if (!view) return null;
+  return <div className="canvas-plan-integration">
+    <p className={`canvas-plan-status integration-${view.tone}`} title={view.branch}>{view.merged ?? view.label}</p>
+    {(view.canRunGate || view.canMerge || view.canMergeAnyway) && <div className="canvas-plan-actions">
+      {view.canMerge && <button className="primary" onClick={() => onPlan({ type: 'planMerge', id: plan.id, via: 'merge' })}>Merge plan</button>}
+      {view.canMerge && <button onClick={() => onPlan({ type: 'planMerge', id: plan.id, via: 'pr' })}>Open PR</button>}
+      {view.canRunGate && <button onClick={() => onPlan({ type: 'planIntegrate', id: plan.id })}>Run integration gate</button>}
+      {view.canMergeAnyway && <button className="danger" onClick={() => onPlan({ type: 'planMergeAnyway', id: plan.id })}>Merge anyway…</button>}
+    </div>}
   </div>;
 }
 

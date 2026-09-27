@@ -1,5 +1,9 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
-import type { EvidenceStatus, JobState } from './jobs';
+import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobState } from './jobs';
+import {
+  applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
+  newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, type IntegrationGateRecord, type PlanIntegration,
+} from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
 import type { StopSwitch } from './stopSwitch';
 import {
@@ -56,11 +60,15 @@ export interface PlanJobView {
   startable?: boolean;
   /** Step C: a lane job of a plan that auto-dispatches: its try against the gates ("attempt 2 of 3"). */
   dispatch?: { attempt: number; attempts: number };
+  /** O3: the files a job held for the lead conflicts in, on the plan's integration branch. */
+  conflict?: string[];
 }
 export type PlanRecord =
   | { key: string; kind: 'outcome'; outcome: Omit<PlanJobOutcome, 'at'> }
   | { key: string; kind: 'adopt'; laneId: string }
-  | { key: string; kind: 'merged'; laneId: string; commit: string; status?: EvidenceStatus };
+  | { key: string; kind: 'merged'; laneId: string; commit: string; status?: EvidenceStatus }
+  /** O3: a job's work passed its gates: it joins the plan's landing queue. */
+  | { key: string; kind: 'enqueue'; attempt: number; commit: string };
 export interface PlanSteps {
   /** Every job, in the plan's order. */
   jobs: PlanJobView[];
@@ -104,6 +112,7 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
   const adoptable = new Map<string, { laneId: string; attempt: number }>();
   if (lanesAvailable) for (const entry of look.planLanes(plan.id)) if (!adoptable.has(entry.jobKey)) adoptable.set(entry.jobKey, entry);
   const title = (key: string) => byKey.get(key)?.title ?? key;
+  const integration = plan.integration;
   // Step C: with Auto-dispatch on, a ready lane job starts when one of the plan's lane slots is free. Every lane
   // job still running in a lane takes one, counted up front (adoptable lanes too), so a job walked early never
   // takes the slot of a lane found later in the walk.
@@ -127,11 +136,27 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
     const fail = (reason: string) => { record.push({ key, kind: 'outcome', outcome: { state: 'failed', reason } }); set('failed', reason); };
 
     if (job.outcome) { set(job.outcome.state, job.outcome.reason); continue; }
-    if (runAs === 'lane' && job.result) { view.commit = job.result.commit; if (job.result.status) view.evidenceStatus = job.result.status; set('done'); continue; }
+    // O3: out of tries to land on the integration branch; held for the lead (a retry gives it more).
+    if (integration && job.conflict?.held) {
+      view.conflict = job.conflict.files;
+      set('failed', clip(`Couldn't land on ${integration.branch} after ${job.conflict.count} ${job.conflict.count === 1 ? 'try' : 'tries'}: conflicts in ${job.conflict.files.join(', ') || 'files git did not name'}.`, 500));
+      continue;
+    }
+    /** Work that passed its gates: done at once without an integration branch; with one, done once it has landed there. */
+    const finished = (commit: string | undefined, evidence?: EvidenceStatus) => {
+      if (evidence) view.evidenceStatus = evidence;
+      if (!integration || !commit) { if (commit) view.commit = commit; set('done'); return; }
+      view.commit = commit;
+      const attempt = job.attempt ?? 0;
+      if (landedEntry(integration, key, attempt)) { set('done'); return; }
+      if (queuePosition(integration, key, attempt) === -1) record.push({ key, kind: 'enqueue', attempt, commit });
+      set('active', landingReason(integration, key, attempt));
+    };
+    if (runAs === 'lane' && job.result) { finished(job.result.commit, job.result.status); continue; }
     if (runAs === 'head' && job.jobId) {
       const head = look.head(job.jobId);
       if (!head) set('failed', 'Its head is gone from this window.');
-      else if (head.state === 'done') { if (head.result) { view.commit = head.result.commit; if (head.result.status) view.evidenceStatus = head.result.status; } set('done'); }
+      else if (head.state === 'done') finished(head.result?.commit, head.result?.status);
       else if (head.state === 'failed' && head.limitHit) set('held', head.reason || 'Its agent hit a usage limit.');
       else if (head.state === 'failed') set('failed', head.reason || 'Its head failed.');
       else if (head.state === 'cancelled') set('cancelled', head.reason || 'Its head was cancelled.');
@@ -142,7 +167,13 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
       // Without lanes in this window a lane can't be looked at: the job is neither done nor failed.
       if (!lanesAvailable) { set('active', 'Lanes aren\'t available in this window.'); continue; }
       const lane = look.lane(job.laneId);
-      if (lane?.mergedHead) { record.push({ key, kind: 'merged', laneId: job.laneId, commit: lane.mergedHead, ...(lane.gatesStatus ? { status: lane.gatesStatus } : {}) }); view.commit = lane.mergedHead; if (lane.gatesStatus) view.evidenceStatus = lane.gatesStatus; set('done'); continue; }
+      if (lane?.mergedHead) {
+        record.push({ key, kind: 'merged', laneId: job.laneId, commit: lane.mergedHead, ...(lane.gatesStatus ? { status: lane.gatesStatus } : {}) });
+        view.commit = lane.mergedHead; if (lane.gatesStatus) view.evidenceStatus = lane.gatesStatus;
+        // O3: it joins the landing queue once its result is written down (the next round).
+        if (integration) set('active', `Merged; landing on ${integration.branch} next.`); else set('done');
+        continue;
+      }
       if (!lane || lane.state === 'closed') { fail(`Lane closed before its job was done${lane?.closedAs === 'keep' ? ` (branch ${lane.branch} kept)` : ''}.`); continue; }
       set('active');
       continue;
@@ -164,13 +195,14 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
     if (cycle && cycle.includes(key)) { set('waiting', cycleMessage(plan.jobs, cycle)); continue; }
     const blocking = dependencies.filter(dependency => {
       const current = status.get(dependency);
-      if (runAs === 'lane' || jobRunAs(byKey.get(dependency)!) === 'lane') return current !== 'done';
+      // O3: with an integration branch every job starts from its tip, so it waits for what it depends on to land there.
+      if (integration || runAs === 'lane' || jobRunAs(byKey.get(dependency)!) === 'lane') return current !== 'done';
       // A head only needs its head dependencies started; a held one makes it wait, so giving up on that head skips it.
       return !(current === 'done' || (current === 'active' && (!!byKey.get(dependency)!.jobId || startingHeads.has(dependency))));
     });
     if (blocking.length) {
       const names = blocking.map(title).join(', ');
-      set('waiting', runAs === 'lane' ? `Starts as a lane when ${names} ${blocking.length === 1 ? 'is' : 'are'} done` : `Waiting for ${names}`);
+      set('waiting', runAs === 'lane' ? `Starts as a lane when ${names} ${blocking.length === 1 ? 'is' : 'are'} done` : integration ? `Waiting for ${names} to land` : `Waiting for ${names}`);
       continue;
     }
     if (runAs === 'head') { start.push({ key, runAs }); startingHeads.add(key); set('active', 'Starting…'); continue; }
@@ -187,6 +219,15 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
   const state: PlanSteps['state'] = jobs.length && jobs.every(job => job.status === 'done') ? 'done'
     : start.length || jobs.some(job => job.status === 'waiting' || job.status === 'active' || job.status === 'held') ? 'running' : 'incomplete';
   return { jobs, record, start, state };
+}
+
+/** O3: where a job whose work passed its gates stands in its plan's landing queue. */
+function landingReason(integration: PlanIntegration, key: string, attempt: number): string {
+  if (integration.error) return clip(`Passed its gates, but can't land: ${integration.error}`, 500);
+  if (integration.inFlight?.key === key && integration.inFlight.attempt === attempt) return `Landing on ${integration.branch}…`;
+  const place = queuePosition(integration, key, attempt);
+  if (place <= 0) return `Passed its gates; landing on ${integration.branch} next.`;
+  return `Passed its gates; ${place} ${place === 1 ? 'job' : 'jobs'} ahead of it in the landing queue for ${integration.branch}.`;
 }
 
 /**
@@ -206,9 +247,11 @@ export const planHeadKey = (plan: Pick<Plan, 'id'>, job: Pick<PlanJob, 'key' | '
  * What a plan's head job starts with (`hydra_start_head`'s input). A job with no write scope, such as
  * one added by hand, may change the whole repository: `"."` (an empty entry is refused).
  */
-export function planHeadInput(plan: Pick<Plan, 'id' | 'title'>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor'>, dependsOn: string[]): Record<string, unknown> {
+export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[]): Record<string, unknown> {
+  // O3: a try re-queued after a conflict on the integration branch hears which files, and that its old work was carried over.
+  const brief = plan.integration && job.conflict ? `${job.brief}\n\n${conflictSection(job.conflict, plan.integration.branch)}` : job.brief;
   return {
-    title: job.title, brief: job.brief, write_scope: job.writeScope?.length ? job.writeScope : ['.'],
+    title: job.title, brief, write_scope: job.writeScope?.length ? job.writeScope : ['.'],
     ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}), idempotency_key: planHeadKey(plan, job),
     // O6: rigor (docs/Heads.md, "Rigor") — hydra_start_head's own schema has no such property, so
     // only a plan job ever sets it. A plan saved before rigor existed has none: HelperService then
@@ -224,9 +267,11 @@ export function planHeadInput(plan: Pick<Plan, 'id' | 'title'>, job: Pick<PlanJo
  * A plan lane's .hydra-job/brief.md: the job's whole brief, then what the jobs it depends on handed on
  * (their notes or commit subjects, and changed files), as a head's brief has them (docs/Plan_Lanes_Plan.md, decision 2).
  */
-export function planLaneBrief(planTitle: string, job: Pick<PlanJob, 'title' | 'brief'>, dependencies: readonly DependencyResult[]): string {
+export function planLaneBrief(planTitle: string, job: Pick<PlanJob, 'title' | 'brief' | 'conflict'>, dependencies: readonly DependencyResult[], integrationBranchName?: string): string {
   const handedOn = dependencies.length ? `\n${dependencyBrief(dependencies)}\n` : '';
-  return `# ${job.title}\n\nJob "${job.title}" of Hydra plan "${planTitle}". Hydra wrote this file for the lane; it is never committed.\n\n${job.brief.trim()}\n${handedOn}`;
+  // O3: a lane's worktree starts clean from the integration tip; its previous try is a commit it can merge itself.
+  const conflict = job.conflict && integrationBranchName ? `\n${conflictSection(job.conflict, integrationBranchName, false)}\n` : '';
+  return `# ${job.title}\n\nJob "${job.title}" of Hydra plan "${planTitle}". Hydra wrote this file for the lane; it is never committed.\n\n${job.brief.trim()}\n${handedOn}${conflict}`;
 }
 
 export interface PlanLaneStart {
@@ -240,8 +285,13 @@ export interface PlanRunnerOptions {
   look: PlanLook;
   /** The main checkout: a lane job's dependencies are merged into one starting commit here. */
   repository: string;
-  /** Start a head job. `dependsOn` are the ids of the head jobs it depends on; `inputs` the results of its lane jobs. */
-  startHead(plan: Plan, job: PlanJob, dependsOn: string[], inputs: DependencyResult[]): Promise<{ jobId: string }>;
+  /**
+   * Start a head job. `dependsOn` are the ids of the head jobs it depends on; `inputs` the results of its lane jobs.
+   * O3: with an integration branch, `start` names the commit it starts from (the branch's tip, which already has
+   * every job it depends on), `dependsOn` is empty and `inputs` are all its dependencies, for its brief only;
+   * `carry` is a previous try's commit to merge into its worktree after a conflict.
+   */
+  startHead(plan: Plan, job: PlanJob, dependsOn: string[], inputs: DependencyResult[], start?: { baseCommit: string; carry?: string }): Promise<{ jobId: string }>;
   /** Start a lane job, or say why it has to wait (24 lanes open). */
   startLane(plan: Plan, job: PlanJob, start: PlanLaneStart): Promise<{ laneId: string } | { wait: string }>;
   /** Cancel job on a head job: stop the head (or give up on one held at its usage limit). */
@@ -266,7 +316,25 @@ export interface PlanRunnerOptions {
   // ---- 5.3: Stop All Agents ----
   /** Without it, a plan always advances (as before 5.3). */
   stop?: StopSwitch;
+  // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together") ----
+  /**
+   * Present means on: a plan's first Run cuts `hydra/plan-<id>` in `repository`, jobs land there through a
+   * serial queue, dependents start from its tip, and the integration gate runs once everything has landed.
+   * Without it, plans run as they did before O3 (tests of the runner alone, with no git repository).
+   */
+  integration?: PlanIntegrationOptions;
 }
+
+export interface PlanIntegrationOptions {
+  /** Run the integration gate on the integrated tree at `tip`: the project's command gates, and for a strict plan a review. */
+  runGate(plan: Plan, tip: string): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }>;
+  /** Tries a job gets to land before it is held for the lead. Default 3. */
+  attempts?: number;
+}
+/** What hydra_plan_merge (or the canvas) asked for. */
+export type PlanMergeVia = 'merge' | 'pr';
+/** O3: how long a stopped landing queue waits before a plan event may try it again. */
+export const queueRetryMs = 30_000;
 
 /** What Mark job done records (docs/Plan_Lanes_Plan.md, "What done means for a lane job"). */
 export interface PlanLaneResultInput { commit: string; note?: string; changedFiles: string[]; status?: EvidenceStatus }
@@ -305,9 +373,10 @@ export class PlanRunner {
   advance(planId: string, options: { startup?: boolean } = {}): Promise<void> {
     return this.withPlan(planId, () => this.pass(planId, options));
   }
-  /** Every running plan (at startup, with `startup`). */
+  /** Every running plan (at startup, with `startup`). O3: also every integration gate a restart cut short, or never started. */
   async advanceAll(options: { startup?: boolean } = {}): Promise<void> {
     await Promise.all(this.options.store.list().filter(plan => plan.state === 'running').map(plan => this.advance(plan.id, options)));
+    if (this.options.integration) await this.resumeGates();
   }
   /** Debounced (200 ms): after heads and lanes change. Without an id, every running plan. */
   advanceSoon(planId?: string): void {
@@ -357,8 +426,12 @@ export class PlanRunner {
       if (cycle) throw new Error(cycleMessage(plan.jobs, cycle));
       const refusal = planRunRefusal(plan, this.options.terminalsAvailable());
       if (refusal) throw new Error(refusal);
+      // O3: the first Run cuts the plan's integration branch from where the main checkout is now. A plan that
+      // already started jobs before Hydra had integration branches carries on without one, as it began.
+      const integration = this.options.integration && !plan.integration && !plan.jobs.some(jobStarted) ? await this.startIntegration(planId) : undefined;
       this.undispatched.delete(planId);
       await this.options.store.update(planId, current => ({
+        ...(integration && !current.integration ? { integration } : {}),
         ...current, state: 'running', error: undefined, jobs: current.jobs.map(({ draft: _draft, ...job }) => job),
         // O7: the wall-clock budget (docs/Heads.md, "Unattended plans") measures from here, set once.
         ...(current.startedAt ? {} : { startedAt: new Date().toISOString() }),
@@ -381,8 +454,10 @@ export class PlanRunner {
         ...current, state: 'running',
         jobs: current.jobs.map(job => {
           if (!again.has(job.key)) return job;
-          const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, gateFailures: _gateFailures, ...rest } = job;
-          return { ...rest, attempt: (job.attempt ?? 0) + 1 };
+          const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, gateFailures: _gateFailures, conflict, ...rest } = job;
+          // O3: a job held after its tries to land ran out gets a fresh set; its files and commit stay for its brief.
+          const released = releaseConflict(conflict);
+          return { ...rest, attempt: (job.attempt ?? 0) + 1, ...(released ? { conflict: released } : {}) };
         }),
       }));
       for (const key of again) { this.waits.delete(`${planId}:${key}`); this.deferred.delete(`${planId}:${key}`); }
@@ -485,6 +560,203 @@ export class PlanRunner {
     });
   }
 
+  // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together") ----
+
+  /** Cuts the plan's integration branch from where the main checkout is now (or accepts one a crashed start already cut). */
+  private async startIntegration(planId: string): Promise<PlanIntegration> {
+    const { base, target } = await integrationStart(this.options.repository);
+    const integration = newIntegration(planId, base, target);
+    await ensureIntegrationBranch(this.options.repository, integration.branch, base);
+    this.options.log?.(`[plans] ${planId} integration branch ${integration.branch} at ${base.slice(0, 7)}${target ? ` (from ${target})` : ''}`);
+    return integration;
+  }
+
+  /**
+   * The landing queue, one job at a time, on the plan's own queue (so nothing else moves the plan meanwhile).
+   * Each landing first checks the branch against the record (reconcile), writes down what it's about to do
+   * (inFlight), moves the branch, then writes down the outcome; a restart anywhere in between is resolved
+   * by the next reconcile. True when anything changed.
+   */
+  private async drain(planId: string): Promise<boolean> {
+    const repository = this.options.repository, attempts = this.options.integration?.attempts ?? defaultLandingAttempts;
+    let progressed = false;
+    for (let round = 0; round < 100 && !this.disposed; round++) {
+      const plan = this.options.store.get(planId);
+      const integration = plan?.integration;
+      if (!plan || !integration || plan.state !== 'running') break;
+      let facts;
+      try { facts = await reconcileFacts(repository, integration); }
+      catch (error) {
+        if (!integration.error) await this.stopQueue(planId, `Hydra couldn't read ${integration.branch}: ${describe(error)}`);
+        return !integration.error;
+      }
+      const verdict = reconcile(integration, facts);
+      if (integration.error) {
+        // A stopped queue goes on once the branch is back where Hydra left it (the fix its reason asks for), at the
+        // next plan event at least queueRetryMs after it stopped, so a landing that keeps failing never spins.
+        const stopped = this.queueStops.get(planId);
+        if ((verdict.kind !== 'ok' && verdict.kind !== 'retry') || (stopped !== undefined && this.now().getTime() - stopped < queueRetryMs)) break;
+        await this.options.store.update(planId, current => { if (!current.integration) return undefined; const { error: _error, ...rest } = current.integration; return { ...current, integration: rest }; });
+        this.options.log?.(`[plans] ${planId}: ${integration.branch} is back at ${integration.tip.slice(0, 7)}; the landing queue goes on`);
+        progressed = true; continue;
+      }
+      if (verdict.kind === 'recreate') {
+        try { await recreateIntegrationBranch(repository, integration); }
+        catch (error) { await this.stopQueue(planId, describe(error)); return true; }
+        this.options.log?.(`[plans] ${planId}: ${integration.branch} was gone; put it back at ${integration.tip.slice(0, 7)}`);
+        continue;
+      }
+      if (verdict.kind === 'moved') {
+        await this.stopQueue(planId, verdict.added
+          ? `${integration.branch} gained commits Hydra didn't land (now at ${verdict.actual.slice(0, 7)}). Only jobs' checked work goes on this branch, so Hydra won't take them in. Move it back to ${integration.tip.slice(0, 7)} for the queue to go on; to add that work, give it to a job.`
+          : `${integration.branch} was moved by hand to ${verdict.actual.slice(0, 7)}, which doesn't contain what Hydra landed (${integration.tip.slice(0, 7)}). Move it back to ${integration.tip.slice(0, 7)} for the queue to go on.`);
+        return true;
+      }
+      if (verdict.kind === 'landedBeforeRestart') {
+        const flight = integration.inFlight!;
+        await this.options.store.update(planId, current => current.integration ? { ...current, ...applyLanding(current, flight, { kind: 'landed', tip: verdict.tip, via: verdict.via }, () => this.now(), attempts) } : undefined);
+        this.options.log?.(`[plans] ${planId}: job ${flight.key} had landed before Hydra stopped; recorded it`);
+        progressed = true; continue;
+      }
+      if (verdict.kind === 'retry') {
+        // The branch never moved for the landing Hydra wrote down: drop the note; the entry is still first in line.
+        await this.options.store.update(planId, current => { if (!current.integration) return undefined; const { inFlight: _inFlight, ...rest } = current.integration; return { ...current, integration: rest }; });
+        continue;
+      }
+      const entry = integration.queue[0];
+      if (!entry) break;
+      const job = plan.jobs.find(item => item.key === entry.key);
+      if (!job || (job.attempt ?? 0) !== entry.attempt || job.outcome) {
+        // A job cancelled or retried since it queued: its old try doesn't land.
+        await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, queue: current.integration.queue.filter(item => !(item.key === entry.key && item.attempt === entry.attempt)) } } : undefined);
+        progressed = true; continue;
+      }
+      const from = integration.tip;
+      await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, inFlight: { key: entry.key, attempt: entry.attempt, commit: entry.commit, from, at: this.now().toISOString() } } } : undefined);
+      let outcome: LandingOutcome;
+      try { outcome = await landCommit(repository, integration.branch, from, entry.commit, `Hydra: land job "${job.title}" (${entry.key}) of plan "${plan.title}"`); }
+      catch (error) { await this.stopQueue(planId, `Couldn't land ${job.title}: ${describe(error)}`); return true; }
+      await this.options.store.update(planId, current => current.integration ? { ...current, ...applyLanding(current, entry, outcome, () => this.now(), attempts) } : undefined);
+      this.options.log?.(`[plans] ${planId} job ${entry.key}: ${outcome.kind === 'landed' ? `landed on ${integration.branch} (${outcome.via}) at ${outcome.tip.slice(0, 7)}` : `conflicts with ${integration.branch} in ${outcome.files.join(', ')}`}`);
+      progressed = true;
+    }
+    return progressed;
+  }
+  /** The queue stops for a person: the reason shows on every job waiting to land, and Merge plan refuses. */
+  private readonly queueStops = new Map<string, number>();
+  private async stopQueue(planId: string, reason: string): Promise<void> {
+    this.queueStops.set(planId, this.now().getTime());
+    this.options.log?.(`[plans] ${planId} integration queue stopped: ${reason}`);
+    await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, error: clip(reason, 2000) } } : undefined);
+  }
+
+  private readonly gateRuns = new Map<string, Promise<IntegrationGateRecord>>();
+  /** The integration gate, started now without waiting; a failure to start is logged, and shows on the plan. */
+  private integrateSoon(planId: string): void {
+    if (this.disposed) return;
+    void this.integrate(planId).catch(error => this.options.log?.(`[plans] ${planId} integration gate: ${describe(error)}`));
+  }
+  /**
+   * The integration gate (hydra_plan_integrate, or by itself after the last job lands): the project's command
+   * gates, and for a strict plan a review, on the integrated tree at the branch's tip. Refused while jobs are
+   * still landing; a run already going is joined rather than started twice. Returns the gate's record.
+   */
+  integrate(planId: string): Promise<IntegrationGateRecord> {
+    // Set synchronously, so a second call (the lead's, while the automatic one waits its turn) joins this run.
+    const running = this.gateRuns.get(planId);
+    if (running) return running;
+    const run = this.runGate(planId);
+    this.gateRuns.set(planId, run);
+    const clear = () => { if (this.gateRuns.get(planId) === run) this.gateRuns.delete(planId); };
+    run.then(clear, clear);
+    return run;
+  }
+  private async runGate(planId: string): Promise<IntegrationGateRecord> {
+    const gate = this.options.integration;
+    if (!gate) throw new Error('This Hydra window has no integration gate.');
+    const plan = await this.withPlan(planId, async () => {
+      const current = this.options.store.get(planId);
+      if (!current) throw new Error(`No plan ${planId}.`);
+      const integration = current.integration;
+      if (!integration) throw new Error(`Plan "${current.title}" has no integration branch: it started before Hydra had one, or hasn't run yet.`);
+      if (integration.error) throw new Error(`The integration queue stopped: ${integration.error}`);
+      if (integration.queue.length || integration.inFlight) throw new Error(`${integration.queue.length || 1} job(s) are still landing on ${integration.branch}; the gate runs once they have.`);
+      if (integration.tip === integration.base) throw new Error(`Nothing has landed on ${integration.branch} yet.`);
+      const record: IntegrationGateRecord = { tip: integration.tip, at: this.now().toISOString(), running: true, checks: [] };
+      return this.options.store.update(planId, item => item.integration ? { ...item, integration: { ...item.integration, gate: record } } : undefined);
+    });
+    if (!plan?.integration) throw new Error(`No plan ${planId}.`);
+    this.notify(planId);
+    const tip = plan.integration.tip;
+    let record: IntegrationGateRecord;
+    try {
+      const { checks, configured } = await gate.runGate(plan, tip);
+      record = gateRecord(tip, checks, configured, () => this.now());
+    } catch (error) { record = { tip, at: this.now().toISOString(), error: clip(describe(error), 2000), checks: [] }; }
+    await this.withPlan(planId, () => this.options.store.update(planId, current => current.integration?.gate?.running && current.integration.gate.tip === tip ? { ...current, integration: { ...current.integration, gate: record } } : undefined));
+    this.options.log?.(`[plans] ${planId} integration gate on ${tip.slice(0, 7)}: ${record.error ? `couldn't run (${record.error})` : record.failed ? 'failed' : record.status ?? 'done'}`);
+    this.notify(planId);
+    return record;
+  }
+  /** Whether this window is running a plan's integration gate now. */
+  gateRunning(planId: string): boolean { return this.gateRuns.has(planId); }
+  /** After a restart: a gate left "running" was cut short, and a done plan whose gate never ran (or ran on an older tip) runs it now. */
+  private async resumeGates(): Promise<void> {
+    for (const listed of this.options.store.list()) {
+      const integration = listed.integration;
+      if (!integration || this.gateRuns.has(listed.id)) continue;
+      const interrupted = !!integration.gate?.running;
+      if (interrupted) {
+        await this.withPlan(listed.id, () => this.options.store.update(listed.id, current => {
+          if (!current.integration?.gate?.running) return undefined;
+          const { gate: _gate, ...rest } = current.integration;
+          return { ...current, integration: rest };
+        }));
+      }
+      const stale = interrupted || !integration.gate || integration.gate.tip !== integration.tip;
+      if (listed.state === 'done' && stale && !integration.error && !integration.merged && integration.tip !== integration.base) this.integrateSoon(listed.id);
+    }
+  }
+
+  /**
+   * Merge plan or Open PR (hydra_plan_merge, or the canvas): refused unless the integration gate passed on the
+   * branch's current tip, or you merged anyway on the canvas for this tip (mergeRefusal). Merge merges into the
+   * branch the plan started from, in the main checkout; Open PR pushes the branch and gives the compare page.
+   */
+  merge(planId: string, via: PlanMergeVia = 'merge'): Promise<{ plan: Plan; commit?: string; into?: string; compareUrl?: string }> {
+    return this.withPlan(planId, async () => {
+      const plan = this.options.store.get(planId);
+      if (!plan) throw new Error(`No plan ${planId}.`);
+      const refusal = mergeRefusal(plan);
+      if (refusal) throw new Error(refusal);
+      const integration = plan.integration!;
+      const at = this.now().toISOString();
+      if (via === 'pr') {
+        const pushed = await pushIntegration(this.options.repository, integration);
+        const updated = await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, merged: { via: 'pr' as const, tip: integration.tip, at, ...(integration.target ? { into: integration.target } : {}), ...(pushed.compareUrl ? { url: pushed.compareUrl } : {}) } } } : undefined);
+        this.notify(planId);
+        return { plan: updated!, ...(pushed.compareUrl ? { compareUrl: pushed.compareUrl } : {}) };
+      }
+      const merged = await mergeIntegration(this.options.repository, integration, plan.title);
+      const updated = await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, merged: { via: 'merge' as const, tip: integration.tip, at, into: merged.into, commit: merged.commit } } } : undefined);
+      this.options.log?.(`[plans] ${planId} merged ${integration.branch} into ${merged.into} at ${merged.commit.slice(0, 7)}`);
+      this.notify(planId);
+      return { plan: updated!, commit: merged.commit, into: merged.into };
+    });
+  }
+  /** Merge anyway, from the canvas only (never a lead's tool): lets Merge plan through for the branch's current tip, whatever the gate said. */
+  overrideGate(planId: string): Promise<Plan> {
+    return this.withPlan(planId, async () => {
+      const plan = this.options.store.get(planId);
+      if (!plan?.integration) throw new Error(`Plan ${plan?.title ?? planId} has no integration branch.`);
+      if (plan.integration.queue.length || plan.integration.inFlight) throw new Error('Jobs are still landing; wait for them.');
+      const tip = plan.integration.tip;
+      const updated = await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, override: { tip, at: this.now().toISOString() } } } : undefined);
+      this.notify(planId);
+      return updated!;
+    });
+  }
+
   // ---- The pass ----
 
   private stepOptions(planId: string): PlanStepOptions {
@@ -507,6 +779,8 @@ export class PlanRunner {
         const steps = planSteps(plan, this.options.look, this.stepOptions(planId));
         let progressed = false;
         if (steps.record.length) progressed = await this.record(planId, steps.record) || progressed;
+        // O3: land what passed its gates, one at a time, before starting what waits for it.
+        if (plan.integration && this.options.integration) progressed = await this.drain(planId) || progressed;
         for (const step of steps.start) {
           if (step.runAs === 'lane' && (options.startup || (this.undispatched.has(planId) && step.key !== options.release)) && !plan.dispatch) {
             // Hydra never opens a lane terminal while a window is starting: the job shows Start lane instead,
@@ -521,6 +795,8 @@ export class PlanRunner {
           const settled = await this.options.store.update(planId, current => current.state === 'running' ? { ...current, state: steps.state } : undefined);
           this.options.log?.(`[plans] ${planId} is ${steps.state}`);
           if (settled) this.options.onSettled?.(settled);
+          // O3: the last job has landed: the integration gate runs on the integrated tree, off this plan's queue.
+          if (settled?.state === 'done' && settled.integration && this.options.integration) this.integrateSoon(planId);
         }
         break;
       }
@@ -547,7 +823,16 @@ export class PlanRunner {
         if (item.kind === 'merged' && job.laneId === item.laneId) { changed = true; return { ...job, result: { commit: item.commit, via: 'merged' as const, at, changedFiles: merged.get(job.key) ?? [], ...(item.status ? { status: item.status } : {}) } }; }
         return job;
       });
-      return changed ? { ...current, jobs } : undefined;
+      // O3: work that passed its gates joins the landing queue, in the order it was seen.
+      let integration = current.integration;
+      for (const item of records) {
+        if (item.kind !== 'enqueue' || !integration) continue;
+        const job = jobs.find(entry => entry.key === item.key);
+        if (!job || (job.attempt ?? 0) !== item.attempt) continue;
+        const next = enqueue(integration, item.key, item.attempt, item.commit, () => this.now());
+        if (next !== integration) { integration = next; changed = true; }
+      }
+      return changed ? { ...current, jobs, ...(integration ? { integration } : {}) } : undefined;
     });
     return changed;
   }
@@ -559,6 +844,30 @@ export class PlanRunner {
     if (!plan || !job || plan.state !== 'running' || jobStarted(job) || job.draft) return false;
     const id = `${planId}:${key}`;
     try {
+      if (plan.integration && this.options.integration) {
+        // O3: every job starts from the integration branch's tip, which already has what it depends on (landed and
+        // merged), so there is nothing to merge here; its dependencies' results go into its brief only.
+        const tip = plan.integration.tip;
+        const dependencies = await this.dependencyResults(plan, job);
+        if (jobRunAs(job) === 'head') {
+          const { jobId } = await this.options.startHead(plan, job, [], dependencies, { baseCommit: tip, ...(job.conflict ? { carry: job.conflict.commit } : {}) });
+          await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key && !jobStarted(item) ? { ...item, jobId } : item) }));
+          this.options.log?.(`[plans] ${planId} started head ${jobId} for job ${key} from ${plan.integration.branch} at ${tip.slice(0, 7)}`);
+          return true;
+        }
+        const started = await this.options.startLane(plan, job, { baseCommit: tip, dependencies });
+        if ('wait' in started) {
+          const changed = this.waits.get(id) !== started.wait;
+          this.waits.set(id, started.wait);
+          if (changed) this.notify(planId);
+          return false;
+        }
+        this.waits.delete(id);
+        await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key && !jobStarted(item) ? { ...item, laneId: started.laneId } : item) }));
+        this.options.log?.(`[plans] ${planId} started lane ${started.laneId} for job ${key} from ${plan.integration.branch}`);
+        this.options.onLaneStarted?.(plan, job, started.laneId);
+        return true;
+      }
       if (jobRunAs(job) === 'head') {
         const headIds: string[] = [];
         for (const dependency of job.dependsOn) {

@@ -191,6 +191,10 @@ body.vscode-high-contrast .canvas-node-card, body.vscode-high-contrast-light .ca
 .canvas-plan-lead-head b { min-width: 0; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .canvas-plan-status { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.4; }
 .canvas-plan-status.error { color: var(--state-fail); }
+/* O3: the integration branch's line in a plan's header. */
+.canvas-plan-integration { display: flex; flex-direction: column; gap: 4px; }
+.canvas-plan-status.integration-good { color: var(--state-done, var(--muted)); }
+.canvas-plan-status.integration-bad { color: var(--state-fail); }
 .canvas-plan-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Step C: Auto-dispatch to lanes, in the plan's header. */
 .canvas-plan-dispatch { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; }

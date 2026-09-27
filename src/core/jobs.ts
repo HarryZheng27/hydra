@@ -239,6 +239,11 @@ export interface Job {
    * lead's call; kept with the job so a queued head keeps them across a restart.
    */
   inputs?: DependencyResult[];
+  /**
+   * O3: a previous try's commit, merged into this head's fresh worktree before it starts (a plan job re-queued
+   * after a conflict on its integration branch). Set only by Hydra (HelperService.startForPlan).
+   */
+  carry?: string;
   // ---- Packs (docs/Packs_Plan.md, "Heads") ----
   /** The role it works in, from an active pack. Resolved again when it starts, from the pack's checked copy. */
   role?: JobRole;
@@ -361,6 +366,8 @@ export interface JobInput {
   tamperAtStart?: TamperSnapshot;
   /** O6: internal only (HelperService.startForPlan reads it off the raw args); hydra_start_head's schema has no such field, so parseJobInput never sets it. */
   rigor?: PlanRigor;
+  /** O3: internal only (HelperService.startForPlan); parseJobInput never sets it. */
+  carry?: string;
 }
 
 const text = (value: unknown, name: string, max: number, min = 1): string => {
@@ -472,6 +479,7 @@ export class JobStore {
         ...(input.gitMetaAtStart ? { gitMetaAtStart: structuredClone(input.gitMetaAtStart) } : {}),
         ...(input.tamperAtStart ? { tamperAtStart: structuredClone(input.tamperAtStart) } : {}),
         ...(input.rigor ? { rigor: input.rigor } : {}),
+        ...(input.carry ? { carry: input.carry } : {}),
         replies: [], createdAt: at, updatedAt: at, history: [{ at, from: null, to: 'queued' }],
       };
       this.jobs.set(id, job);
