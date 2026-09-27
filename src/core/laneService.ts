@@ -734,6 +734,8 @@ export class LaneService {
     const running = this.lanes().filter(lane => this.terminals.get(lane.id)?.running);
     await Promise.all(running.map(lane => this.terminals.get(lane.id)!.kill().catch(() => undefined)));
     await this.previews.stopAll(); // Step E: a lane's preview is one more process Stop all agents ends
+    // A lane whose terminal had already exited sends no exit event, so its tile needs this to drop the preview chip.
+    this.changed();
     return running.length;
   }
 

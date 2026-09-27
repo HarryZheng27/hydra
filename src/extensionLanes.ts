@@ -852,16 +852,16 @@ export class LanesController implements vscode.Disposable {
     return config;
   }
 
-  private warnedNoSimpleBrowser = false;
   /** VS Code's built-in Simple Browser (decision 4, docs/Hydra_Improvements_Pt_2.md): untrusted content, no Hydra access. */
   private async openPreview(url: string): Promise<void> {
-    const commands = await vscode.commands.getCommands(true);
-    if (commands.includes('simpleBrowser.show')) { await vscode.commands.executeCommand('simpleBrowser.show', url); return; }
-    if (!this.warnedNoSimpleBrowser) {
-      this.warnedNoSimpleBrowser = true;
-      void vscode.window.showInformationMessage('Hydra: Simple Browser isn\'t available in this build; opening the preview in your default browser instead.');
-    }
-    await vscode.env.openExternal(vscode.Uri.parse(url, true));
+    // simpleBrowser.api.open is Simple Browser's own API command and its activation event, so it works
+    // before the extension has loaded (getCommands() doesn't list an unactivated extension's commands).
+    try {
+      await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url, true), { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+      return;
+    } catch { /* not in this build: offer the browser below, never open one unasked */ }
+    const pick = await vscode.window.showInformationMessage(`Hydra: the preview is running at ${url}, but Simple Browser isn't available in this build.`, 'Open in browser');
+    if (pick === 'Open in browser') await vscode.env.openExternal(vscode.Uri.parse(url, true));
   }
 
   /** A file's content at the lane's base commit, for the diff's left side. Only an open lane's files, at a full commit id. */

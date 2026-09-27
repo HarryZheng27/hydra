@@ -1,6 +1,6 @@
 # Hydra improvements, part 2: product and release parity
 
-Status (2026-09-26): Steps A–D done (see "As built"); Step E to follow. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
+Status (2026-09-26): Complete: Steps A–E built and merged (see "As built"). `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
 
 ## Why this exists
 
@@ -438,3 +438,46 @@ Built by one Opus subagent (`hydra-wt/dispatch`), alongside Step D. The main ses
 **Tests:**
 - `tests/laneDispatch.test.ts`: 13.
 - Unchanged and passing: `planRunner` 15, `planLanes` 11, `lanes` 11, `laneGit` 9, `helperService` 21, `stopAll` 5, `evidenceStatus` 13, `audit` 11, `packsLaunch` 19, `gates` 16, `gatesUI` 16, `plans` 10, `agentsCanvas` 24, `lanesView` 8, `projectSummary` 11.
+
+### Step E (2026-09-26)
+
+Built by one Sonnet subagent (`hydra-wt/preview`). The main session reviewed the diff, fixed what it found and ran the live checks.
+
+**What it does:** a lane's **Preview app** starts the project's dev server in that lane's worktree.
+- **The command** comes from the project's screenshots gate, else `.hydra/preview.json`, else it's asked for once and saved there.
+- **The port** is a free one, passed as `PORT` and `{port}`.
+- **It waits** until the server responds, then opens the page in VS Code's Simple Browser, beside the lane.
+- **One preview per lane.** The tile shows "Preview on :port" with **Stop**.
+- **The server stops** with Stop, Close lane (before the worktree goes), Stop all (5.3), or the window closing. A server that exits on its own says why on the tile.
+- **`preview.json`** accepts only loopback URLs. The log is redacted (5.1) when shown.
+- **Threat model:** HSEC-53.
+
+**Fixed in review:**
+- **Two quick starts made two servers.** Clicking Preview app twice while the server was coming up started two. The second click now waits for the first.
+- **Previews could start while Hydra was stopped.** Stop all ended them, but they could start again. They are now refused with 5.3's message.
+- **Previews opened in the default browser.** Simple Browser is bundled, but the check for it used `getCommands()`, which doesn't list an extension's commands before the extension loads. So every preview opened in the default browser, and the live check popped two browser windows. It now calls Simple Browser's own `simpleBrowser.api.open`, which loads it. If that ever fails, Hydra offers an "Open in browser" button and never opens a browser by itself.
+- **The preview chip outlived Stop all.** It stayed on a lane whose terminal had already exited, because no exit event came. Stop all now refreshes the view.
+
+**Live checks (probe):** the fixture's server answers with its worktree's name.
+1. Two lanes got previews on different ports, each answering with its own worktree.
+2. After the fix, the preview opened as a Simple Browser tab inside Hydra ("127.0.0.1:63802").
+3. **A window reload** stopped both servers.
+4. **Stop on one tile** stopped only that server; the other kept answering.
+5. **Close lane** stopped its server and removed its worktree.
+6. **Stop all** stopped the running preview and cleared its chip. **Preview app** while stopped was refused with the reason.
+7. **Leftovers:** no server was left listening, and Nico's Claude and Codex settings were unchanged.
+
+**Tests:**
+- `tests/lanePreview.test.ts`: 13, including two quick starts.
+- Unchanged and passing: `gates` 16, `lanes` 11, `laneGit` 9, `stopAll` 5, `laneDispatch` 13, `lanesView` 8.
+
+## Part 2 is complete
+
+Steps A–E are built and merged, and item 6 (platforms) was decided: Windows only for now.
+
+What remains belongs to the release owner, as recorded in [Windows_Journey.md](Windows_Journey.md):
+- code signing, an update host and key custody;
+- then the native install step and a signed upgrade;
+- a clean-machine journey with a signed installer.
+
+The later candidates stay as listed: the global stop, audit log and redactor are already done; a new CLI provider or per-lane accounts wait until users ask.
