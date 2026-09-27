@@ -31,13 +31,8 @@ export function chainProvider(chain: readonly ProcessLink[]): Provider | undefin
   return undefined;
 }
 export function evaluateLeadChain(chain: readonly ProcessLink[], rules: LeadRules): { ok: true; provider?: Provider } | { ok: false; reason: string } {
-  if (!chain.length) return { ok: false, reason: 'the connecting process could not be identified.' };
-  const trusted: ProcessLink[] = [chain[0]!];
-  for (let index = 1; index < chain.length; index++) {
-    const child = trusted[trusted.length - 1]!, parent = chain[index]!;
-    if (parent.pid !== child.ppid || parent.created > child.created) break;
-    trusted.push(parent);
-  }
+  const trusted = trustedChain(chain);
+  if (!trusted.length) return { ok: false, reason: 'the connecting process could not be identified.' };
   if (trusted.some(link => rules.deniedAncestors.has(link.pid))) return { ok: false, reason: 'it runs inside a Hydra head, and heads cannot act as the lead.' };
   if (trusted.some(link => rules.allowedAncestors.has(link.pid))) { const provider = chainProvider(trusted); return provider ? { ok: true, provider } : { ok: true }; }
   return { ok: false, reason: 'it was not started from this Hydra window (use the Claude Code or Codex extension, or a terminal inside Hydra).' };
@@ -75,5 +70,42 @@ export function createLeadVerifier(rules: () => LeadRules, chainFor: (socket: So
   return async socket => {
     if (platform !== 'win32') return { ok: true };
     return evaluateLeadChain(await chainFor(socket), rules());
+  };
+}
+
+// ---- O8a: the user role (docs/Heads.md, "Scripts and CI") ----
+
+/** The trusted part of a chain: from the connecting process up, until a link's parent doesn't match or was created after it (a reused PID). */
+function trustedChain(chain: readonly ProcessLink[]): ProcessLink[] {
+  if (!chain.length) return [];
+  const trusted: ProcessLink[] = [chain[0]!];
+  for (let index = 1; index < chain.length; index++) {
+    const child = trusted[trusted.length - 1]!, parent = chain[index]!;
+    if (parent.pid !== child.ppid || parent.created > child.created) break;
+    trusted.push(parent);
+  }
+  return trusted;
+}
+
+/**
+ * Who may use the user token from the handshake file. A script or CI job runs anywhere (an outside
+ * terminal, a scheduled task), so unlike a lead it needn't descend from this window. It is refused
+ * only when its process chain passes through a process Hydra started for a head or its checks: a
+ * head that read the handshake file (it can read as you through its shell; docs/THREAT_MODEL.md,
+ * HR-19) still can't use it from inside the head. A chain the OS can't report is refused, never
+ * assumed clean.
+ */
+export function evaluateUserChain(chain: readonly ProcessLink[], rules: Pick<LeadRules, 'deniedAncestors'>): { ok: true } | { ok: false; reason: string } {
+  const trusted = trustedChain(chain);
+  if (!trusted.length) return { ok: false, reason: 'the connecting process could not be identified.' };
+  if (trusted.some(link => rules.deniedAncestors.has(link.pid))) return { ok: false, reason: 'it runs inside a Hydra head, and heads cannot act as you.' };
+  return { ok: true };
+}
+
+/** The user-token check for this window: on Windows the OS connection owner; elsewhere Hydra has no such check yet and accepts, as the lead check does. */
+export function createUserVerifier(rules: () => Pick<LeadRules, 'deniedAncestors'>, chainFor: (socket: Socket) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform): (socket: Socket) => Promise<{ ok: true } | { ok: false; reason: string }> {
+  return async socket => {
+    if (platform !== 'win32') return { ok: true };
+    return evaluateUserChain(await chainFor(socket), rules());
   };
 }

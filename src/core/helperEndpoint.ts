@@ -28,6 +28,14 @@ export type HelperHandler = (caller: HelperCaller, tool: string, args: Record<st
  * (see src/core/leadVerification.ts). Returns a reason when refused.
  */
 export type LeadVerifier = (socket: import('node:net').Socket) => Promise<{ ok: true; provider?: Provider } | { ok: false; reason: string }>;
+/**
+ * O8a: decides whether the process on the other end of a connection may use a user token
+ * (src/core/leadVerification.ts, createUserVerifier). Asked once per connection: a socket
+ * belongs to one process for its whole life. Without one, every user token is refused.
+ */
+export type UserVerifier = (socket: import('node:net').Socket) => Promise<{ ok: true } | { ok: false; reason: string }>;
+/** How a refusal names a role to its caller. */
+const roleNoun = (role: HelperRole) => role === 'helper' ? 'head' : role;
 const asProvider = (value: unknown): Provider | undefined => value === 'claude' || value === 'codex' ? value : undefined;
 export interface HelperCallResponse { ok: boolean; result?: unknown; error?: string }
 /** A refused call, for the log: never the token. */
@@ -49,12 +57,14 @@ export class HelperEndpoint {
   private readonly calls = new Map<string, number[]>();
   private listening = 0;
   private sessionAttempts: number[] = [];
+  /** O8a: the user check's verdict per connection, so keep-alive calls aren't checked again. */
+  private readonly userVerdicts = new WeakMap<import('node:net').Socket, ReturnType<UserVerifier>>();
   /**
    * `onRefuse` hears every refused call that isn't simply malformed (a foreign Host or Origin, an
    * unknown token, a tool the caller's role may not use, too large, too many), so refusals are
    * logged like accepted actions (docs/THREAT_MODEL.md). It never receives a token.
    */
-  constructor(private readonly handler: HelperHandler, private readonly options: { maxBodyBytes?: number; callsPerMinute?: number; leadKey?: string; verifyLead?: LeadVerifier; laneExists?: (id: string) => boolean; onRefuse?: (event: HelperRefusal) => void } = {}) {}
+  constructor(private readonly handler: HelperHandler, private readonly options: { maxBodyBytes?: number; callsPerMinute?: number; leadKey?: string; verifyLead?: LeadVerifier; verifyUser?: UserVerifier; laneExists?: (id: string) => boolean; onRefuse?: (event: HelperRefusal) => void } = {}) {}
   private refused(status: number, reason: string, caller?: Pick<HelperCaller, 'role' | 'jobId'>, tool?: string): void {
     try { this.options.onRefuse?.({ status, reason, ...(caller ? { role: caller.role, ...(caller.jobId ? { jobId: caller.jobId } : {}) } : {}), ...(tool ? { tool } : {}) }); } catch { /* logging never breaks the endpoint */ }
   }
@@ -132,12 +142,20 @@ export class HelperEndpoint {
       const recent = (this.calls.get(key) || []).filter(at => now - at < window);
       if (recent.length >= limit) { this.refused(429, 'too many calls', caller); return reply(429, { ok: false, error: 'Too many Hydra calls; slow down.' }); }
       recent.push(now); this.calls.set(key, recent);
+      if (caller.role === 'user') {
+        // O8a: the user token lives in a file, so the process presenting it is checked too.
+        const verify = this.options.verifyUser;
+        let verdict = verify ? this.userVerdicts.get(request.socket) : undefined;
+        if (verify && !verdict) { verdict = verify(request.socket).catch(() => ({ ok: false as const, reason: 'the connecting process could not be identified.' })); this.userVerdicts.set(request.socket, verdict); }
+        const checked = verdict ? await verdict : { ok: false as const, reason: 'this Hydra window does not accept user connections.' };
+        if (!checked.ok) { this.refused(403, `a user token from a refused process: ${checked.reason}`, caller); return reply(403, { ok: false, error: `Hydra refused this caller: ${checked.reason}` }); }
+      }
       const body = await readBody(request, this.options.maxBodyBytes ?? 256 * 1024);
       if (body === undefined) { this.refused(413, 'a request too large', caller); return reply(413, { ok: false, error: 'Request too large.' }); }
       let parsed: { tool?: unknown; arguments?: unknown };
       try { parsed = JSON.parse(body); } catch { return reply(400, { ok: false, error: 'Invalid JSON.' }); }
       if (typeof parsed.tool !== 'string') return reply(400, { ok: false, error: 'Missing tool.' });
-      if (!toolAllowed(caller.role, parsed.tool)) { this.refused(403, 'a tool its role may not use', caller, parsed.tool.slice(0, 60)); return reply(403, { ok: false, error: `${parsed.tool} is not available to a Hydra ${caller.role === 'helper' ? 'head' : 'lead'}.` }); }
+      if (!toolAllowed(caller.role, parsed.tool)) { this.refused(403, 'a tool its role may not use', caller, parsed.tool.slice(0, 60)); return reply(403, { ok: false, error: `${parsed.tool} is not available to a Hydra ${roleNoun(caller.role)}.` }); }
       const args = parsed.arguments && typeof parsed.arguments === 'object' && !Array.isArray(parsed.arguments) ? parsed.arguments as Record<string, unknown> : {};
       const controller = new AbortController();
       response.on('close', () => { if (!response.writableEnded) controller.abort(); });
