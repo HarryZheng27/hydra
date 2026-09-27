@@ -168,9 +168,12 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
   assert.match(result, /#include "hydra-uninstall\.iss"\nprocedure CurUninstallStepChanged\(CurUninstallStep: TUninstallStep\);\nvar\n[^]*?\nbegin\n  HydraUninstallCleanup\(CurUninstallStep\);\n  if not CurUninstallStep = usUninstall then begin/);
   assert.ok(result.indexOf('#include "hydra-update-mode.iss"') < result.indexOf('#include "hydra-uninstall.iss"'), 'the switch helpers it uses come first');
   assert.throws(() => brandedInstaller(original.replace('  i: Integer;', '  j: Integer;')), /Pinned installer changed: procedure CurUninstallStepChanged/);
+  // The tasks page's clipped checkboxes: Hydra's own InitializeWizard, which the pinned installer must not also define.
+  assert.match(result, /#include "hydra-update-mode\.iss"\n#include "hydra-wizard\.iss"\nfunction IsBackgroundUpdate/);
+  assert.throws(() => brandedInstaller(original.replace('[Code]\n', '[Code]\nprocedure InitializeWizard();\nbegin\nend;\n')), /defines InitializeWizard/);
 });
 test('the uninstall include ships with the installer and keeps to its two data folders', async () => {
-  assert.deepEqual(installerIncludes, ['hydra-update-mode.iss', 'hydra-uninstall.iss']);
+  assert.deepEqual(installerIncludes, ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss']);
   const iss = await fs.readFile(path.join(root, 'desktop', 'hydra-uninstall.iss'), 'utf8');
   assert.match(iss, /procedure HydraUninstallCleanup\(CurUninstallStep: TUninstallStep\);/);
   assert.match(iss, /if IsBackgroundUpdate\(\) or IsHydraUpdate\(\) then Exit;/);
