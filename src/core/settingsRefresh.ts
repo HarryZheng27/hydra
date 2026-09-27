@@ -9,6 +9,8 @@ export const preferenceOnlySettings: ReadonlySet<string> = new Set([
   'hydra.startupLayout', 'hydra.limits.offerHandoff', 'hydra.updates.check',
   // Read at each use by the packs service (docs/Packs_Plan.md).
   'hydra.packs.folder',
+  // Only changes what Connect/Repair do next; nothing about the current provider connection.
+  'hydra.claudeMem.enabled',
 ]);
 
 /**

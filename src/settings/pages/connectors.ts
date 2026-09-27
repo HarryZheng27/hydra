@@ -8,12 +8,13 @@ import type { SettingsContext, SettingsPage } from '../types';
  * agent with its state, the Connect/Disconnect/Sign in actions (unchanged
  * behaviour, reused from helperConnectionsView.handleConnectionsMessage —
  * onboarding keeps its own simpler section built on the same helper), the
- * claude-mem memory status with a Repair button, and a "What Hydra wrote"
- * disclosure that reads the exact entries back off disk.
+ * opt-in claude-mem memory toggle with a Repair button (hydra.claudeMem.enabled,
+ * off by default), and a "What Hydra wrote" disclosure that reads the exact
+ * entries back off disk.
  */
 function card(provider: 'claude' | 'codex', name: string, blurb: string): string {
   const memoryRow = provider === 'claude'
-    ? `<div class="row"><div class="row-text"><div class="row-title">claude-mem memory</div><div class="row-desc" data-memory="claude">Checking…</div></div><div class="row-action"><button data-repair-memory hidden>Repair</button></div></div>`
+    ? `<div class="row"><div class="row-text"><div class="row-title"><label><input type="checkbox" data-claude-mem-toggle> Memory (claude-mem)</label></div><div class="row-desc">Cross-session memory for Claude Code, using the third-party <a href="https://github.com/thedotmack/claude-mem">claude-mem</a> plugin. Off by default.</div><div class="row-desc" data-memory="claude">Checking…</div></div><div class="row-action"><button data-repair-memory hidden>Repair</button></div></div>`
     : '';
   return `
     <div class="group" data-connection="${provider}">
@@ -31,7 +32,7 @@ export const connectorsPage: SettingsPage = {
   rows: [
     { title: 'Claude Code', description: 'Connect Claude Code so its chats can start Hydra heads.' },
     { title: 'Codex', description: 'Connect Codex so its chats can start Hydra heads.' },
-    { title: 'claude-mem memory', description: 'Repair claude-mem if Claude Code stops remembering across sessions.' },
+    { title: 'Memory (claude-mem)', description: 'Turn on claude-mem, a third-party memory plugin for Claude Code. Off by default; Repair fixes or updates it once on.' },
     { title: 'What Hydra wrote', description: 'The exact user-level entries Hydra added for Claude Code and Codex.' },
   ],
   html(): string {
@@ -39,10 +40,10 @@ export const connectorsPage: SettingsPage = {
     <h1>Connectors</h1>
     <p class="lede">Connect Claude Code and Codex so their chats can start Hydra heads: separate agents that work on independent pieces in their own worktrees.</p>
     <div class="cards">
-      ${card('claude', 'Claude Code', 'Chat in the Claude Code extension. Claude can start Hydra heads for independent work, and remembers across sessions with claude-mem.')}
+      ${card('claude', 'Claude Code', 'Chat in the Claude Code extension. Claude can start Hydra heads for independent work.')}
       ${card('codex', 'Codex', 'Chat in the Codex extension. Codex can start Hydra heads for independent work.')}
     </div>
-    <p class="connection-note">Connect installs the extension if needed and adds Hydra as a tool in its user settings on this computer — never inside a project. For Claude it also sets up <a href="https://github.com/thedotmack/claude-mem">claude-mem</a> (and the Bun runtime it needs). Claude Code and Codex keep their own sign-in and billing, and you can disconnect anytime.</p>
+    <p class="connection-note">Connect installs the extension if needed and adds Hydra as a tool in its user settings on this computer — never inside a project. Claude Code and Codex keep their own sign-in and billing, and you can disconnect anytime.</p>
     `;
   },
   script: `
@@ -65,10 +66,12 @@ export const connectorsPage: SettingsPage = {
       const disconnectButton = document.querySelector('[data-disconnect="'+c.provider+'"]');
       if (disconnectButton) disconnectButton.hidden = !c.connected;
       if (c.provider === 'claude') {
+        const toggle = document.querySelector('[data-claude-mem-toggle]');
+        if (toggle) toggle.checked = !!c.memoryEnabled;
         const memory = document.querySelector('[data-memory="claude"]');
-        if (memory) memory.textContent = c.memory === 'ready' ? 'claude-mem is set up.' : c.memory === 'missing' ? 'claude-mem is not set up yet.' : 'Connect Claude Code to set up claude-mem.';
+        if (memory) memory.textContent = c.memoryText || '';
         const repair = document.querySelector('[data-repair-memory]');
-        if (repair) repair.hidden = !c.connected;
+        if (repair) repair.hidden = !c.memoryRepair;
       }
     }
   }
@@ -97,6 +100,7 @@ export const connectorsPage: SettingsPage = {
   document.querySelectorAll('[data-disconnect]').forEach(b=>b.addEventListener('click',()=>send({type:'disconnectHelpers',provider:b.dataset.disconnect})));
   document.querySelectorAll('[data-signin]').forEach(b=>b.addEventListener('click',()=>send({type:'signIn',provider:b.dataset.signin})));
   document.querySelector('[data-repair-memory]')?.addEventListener('click',()=>send({type:'repairClaudeMem'}));
+  document.querySelector('[data-claude-mem-toggle]')?.addEventListener('change',e=>send({type:'claudeMemEnabled',value:e.target.checked}));
   document.querySelectorAll('details.disclosure').forEach(details=>details.addEventListener('toggle',()=>{if(details.open)send({type:'writtenEntries'});}));
   window.addEventListener('message', event => {
     const message = event.data;
@@ -110,6 +114,33 @@ export const connectorsPage: SettingsPage = {
     await ctx.post({ type: 'writtenEntries', entries });
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
+    if (message.type === 'claudeMemEnabled') {
+      const config = vscode.workspace.getConfiguration('hydra');
+      if (message.value === true) {
+        const choice = await vscode.window.showWarningMessage(
+          "Install Bun and the claude-mem plugin for Claude Code? They're third-party tools, installed into your user profile.",
+          { modal: true }, 'Install',
+        );
+        if (choice !== 'Install') {
+          const connections = await vscode.commands.executeCommand<ProviderConnectionView[]>('hydra.helperConnections');
+          await ctx.post({ type: 'connections', connections });
+          return true;
+        }
+        await config.update('claudeMem.enabled', true, vscode.ConfigurationTarget.Global);
+        try {
+          const result = await vscode.commands.executeCommand<{ installed: string[] }>('hydra.repairClaudeMem');
+          await ctx.post({ type: 'status', text: result.installed.length ? `Set up claude-mem: installed ${result.installed.join(' and ')}.` : 'claude-mem is already set up.' });
+        } catch (error) {
+          await ctx.post({ type: 'status', text: `Turned on Memory, but claude-mem could not be set up: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      } else {
+        await config.update('claudeMem.enabled', false, vscode.ConfigurationTarget.Global);
+        await ctx.post({ type: 'status', text: "Hydra won't set it up or repair it; anything already installed stays." });
+      }
+      const connections = await vscode.commands.executeCommand<ProviderConnectionView[]>('hydra.helperConnections');
+      await ctx.post({ type: 'connections', connections });
+      return true;
+    }
     if (message.type === 'repairClaudeMem') {
       try {
         const result = await vscode.commands.executeCommand<{ installed: string[] }>('hydra.repairClaudeMem');

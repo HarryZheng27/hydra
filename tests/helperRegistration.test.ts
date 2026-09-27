@@ -190,12 +190,47 @@ test('claude-mem counts as set up only with its plugin installed', async () => {
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('one Connect button installs, connects, and sets up claude-mem', async () => {
+test('one Connect button installs and connects; claude-mem is opt-in, not a default of Connect', async () => {
   const view = await readFile('src/helperConnectionsView.ts', 'utf8');
   assert.doesNotMatch(view, /data-install|Install extension/);
   assert.match(view, /data-connect=/); assert.match(view, /claude-mem/);
+  assert.doesNotMatch(view, /remembers across sessions with claude-mem/, 'Connect no longer claims to always set up claude-mem');
   const extension = await readFile('src/extension.ts', 'utf8');
   assert.match(extension, /await this\.installProviderExtension\(provider\);/);
   assert.match(extension, /downloadOpenVsx\(id\)/);
+  assert.match(extension, /shouldSetUpClaudeMem\(/, 'Connect checks the opt-in setting before touching claude-mem');
   assert.match(extension, /setupClaudeMem\(claude\)/);
+  const manifest = JSON.parse(await readFile('package.json', 'utf8'));
+  const setting = manifest.contributes.configuration.properties['hydra.claudeMem.enabled'];
+  assert.equal(setting.type, 'boolean');
+  assert.equal(setting.default, false, 'off by default, so a plain Connect never installs Bun or claude-mem');
+});
+
+test('turning off Memory (claude-mem) never uninstalls anything, and Repair refuses while the setting is off', async () => {
+  const { shouldSetUpClaudeMem, claudeMemRowText } = await import('../src/core/claudeMem');
+  assert.equal(shouldSetUpClaudeMem(false), false);
+  assert.equal(shouldSetUpClaudeMem(true), true);
+
+  const notInstalled = { plugin: false, dependencies: false } as const;
+  const installed = { plugin: true, bun: 'C:\\bun\\bun.exe', dependencies: true } as const;
+
+  // Off: never claims to manage it, but still says when something's already there.
+  assert.deepEqual(claudeMemRowText(false, true, notInstalled), { text: 'Off. Turn on Memory (claude-mem) to have Hydra set it up.', repair: false });
+  assert.deepEqual(claudeMemRowText(false, true, installed), { text: "claude-mem is installed; Hydra isn't managing it.", repair: false });
+  assert.equal(claudeMemRowText(false, false, installed).repair, false);
+
+  // On: status text depends on whether Claude is connected and whether it's actually set up; Repair only once connected.
+  assert.deepEqual(claudeMemRowText(true, false, undefined), { text: 'Connect Claude Code to set up claude-mem.', repair: false });
+  // Turning it on runs the setup even before Claude is connected, so an installed claude-mem reads as set up.
+  assert.deepEqual(claudeMemRowText(true, false, installed), { text: 'claude-mem is set up.', repair: false });
+  assert.deepEqual(claudeMemRowText(true, true, notInstalled), { text: 'claude-mem is not set up yet.', repair: true });
+  assert.deepEqual(claudeMemRowText(true, true, installed), { text: 'claude-mem is set up.', repair: true });
+
+  const extension = await readFile('src/extension.ts', 'utf8');
+  assert.match(extension, /repairClaudeMem\(\): Promise[\s\S]{0,200}shouldSetUpClaudeMem/, 'Repair itself refuses when the setting is off, not just the button that is hidden');
+  const connectors = await readFile('src/settings/pages/connectors.ts', 'utf8');
+  assert.match(connectors, /data-claude-mem-toggle/);
+  assert.match(connectors, /claudeMem\.enabled/);
+  assert.match(connectors, /third-party tools, installed into your user profile/, 'turning it on asks once, naming Bun and claude-mem as third-party');
+  assert.match(connectors, /Hydra won't set it up or repair it; anything already installed stays\./);
 });

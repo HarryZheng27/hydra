@@ -436,6 +436,11 @@
           ],
           "default": "ask",
           "description": "When a lane's provider hits its usage limit, whether to ask before continuing in the other provider or switch automatically."
+        },
+        "hydra.claudeMem.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also set up claude-mem, a third-party memory plugin for Claude Code. Installs Bun and the claude-mem plugin. Off by default."
         }
       }
     }

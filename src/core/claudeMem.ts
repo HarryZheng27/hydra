@@ -5,11 +5,12 @@ import path from 'node:path';
 import { processLaunch } from './process';
 
 /**
- * claude-mem (github.com/thedotmack/claude-mem, Apache-2.0) comes with Hydra's
- * Claude Code connection: connecting Claude also sets it up. Hydra redistributes
- * nothing. It installs Bun from Bun's official release into ~/.bun/bin (where
- * claude-mem's hooks look for it, like Bun's own installer), then installs the
- * plugin through Claude's own `claude plugin` commands.
+ * claude-mem (github.com/thedotmack/claude-mem, Apache-2.0) is optional, off by
+ * default (`hydra.claudeMem.enabled`, Settings → Connectors). Turned on, it comes
+ * with Hydra's Claude Code connection: connecting Claude also sets it up. Hydra
+ * redistributes nothing. It installs Bun from Bun's official release into
+ * ~/.bun/bin (where claude-mem's hooks look for it, like Bun's own installer),
+ * then installs the plugin through Claude's own `claude plugin` commands.
  */
 export const claudeMemPlugin = 'claude-mem@thedotmack';
 export const claudeMemMarketplace = 'thedotmack/claude-mem';
@@ -46,6 +47,30 @@ async function claudeMemRoots(configDir: string): Promise<string[]> {
   const present: string[] = [];
   for (const root of roots) if (await exists(path.join(root, 'package.json'))) present.push(root);
   return present;
+}
+
+/**
+ * Whether Connect (or the Repair button/command) should touch claude-mem at all.
+ * Gated on `hydra.claudeMem.enabled`, off by default: a user who never turns it on
+ * gets no Bun install and no claude-mem plugin, full stop.
+ */
+export function shouldSetUpClaudeMem(enabled: boolean): boolean {
+  return enabled;
+}
+
+export interface ClaudeMemRowView { text: string; repair: boolean }
+
+/**
+ * Connectors page row text for claude-mem, and whether Repair belongs on screen.
+ * Off leaves whatever's already installed alone and says so; on shows live status
+ * once Claude is connected, with Repair available to fix or update it.
+ */
+export function claudeMemRowText(enabled: boolean, connected: boolean, status: ClaudeMemStatus | undefined): ClaudeMemRowView {
+  const installed = !!status && status.plugin && !!status.bun && status.dependencies;
+  if (!enabled) return { text: installed ? "claude-mem is installed; Hydra isn't managing it." : 'Off. Turn on Memory (claude-mem) to have Hydra set it up.', repair: false };
+  if (installed) return { text: 'claude-mem is set up.', repair: connected };
+  if (!connected) return { text: 'Connect Claude Code to set up claude-mem.', repair: false };
+  return { text: 'claude-mem is not set up yet.', repair: true };
 }
 
 export async function claudeMemStatus(configDir = process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude')): Promise<ClaudeMemStatus> {

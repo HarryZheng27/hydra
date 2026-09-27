@@ -17,8 +17,14 @@ export interface ProviderConnectionView {
   /** A development window never rewrites the user-level connection, so "updating" would never come true there. */
   development?: boolean;
   error?: string;
-  /** Claude only: claude-mem (and the Bun it needs) is set up. */
+  /** Claude only, when hydra.claudeMem.enabled is on: claude-mem (and the Bun it needs) is set up. Undefined when the setting is off. */
   memory?: 'ready' | 'missing';
+  /** Claude only: hydra.claudeMem.enabled, the opt-in setting behind claude-mem. */
+  memoryEnabled?: boolean;
+  /** Claude only (Settings → Connectors row text, from claudeMemRowText): what to say about claude-mem right now. */
+  memoryText?: string;
+  /** Claude only (Settings → Connectors): whether the Repair button belongs on screen. */
+  memoryRepair?: boolean;
   /** From hydra.getAccountSetupState; 'unchecked' until the user opens Accounts. */
   signedIn?: 'unchecked' | 'working' | 'pending' | 'signed-in' | 'signed-out' | 'other' | 'cancelled' | 'error';
 }
@@ -32,7 +38,7 @@ export async function handleConnectionsMessage(message: Record<string, unknown>,
     case 'connectHelpers': {
       if (!provider) throw new Error('Unknown provider.');
       const result = await vscode.commands.executeCommand<{ warning?: string }>('hydra.connectHelpers', provider);
-      text = result?.warning || `${provider === 'claude' ? 'Claude Code (with claude-mem memory)' : 'Codex'} is connected to Hydra. New ${provider === 'claude' ? 'Claude' : 'Codex'} chats can start Hydra heads.`; break;
+      text = result?.warning || `${provider === 'claude' ? 'Claude Code' : 'Codex'} is connected to Hydra. New ${provider === 'claude' ? 'Claude' : 'Codex'} chats can start Hydra heads.`; break;
     }
     case 'disconnectHelpers':
       if (!provider) throw new Error('Unknown provider.');
@@ -51,7 +57,7 @@ export async function handleConnectionsMessage(message: Record<string, unknown>,
 
 export function connectionsSection(marks: { claude: string; codex: string }): string {
   const row = (provider: 'claude' | 'codex', name: string, blurb: string) => `<div class="card connection" data-connection="${provider}"><h2>${marks[provider]}${name}</h2><p>${blurb}</p><p class="connection-state" data-state="${provider}">Checking…</p><div class="actions"><button class="primary" data-connect="${provider}" hidden>Connect to Hydra</button><button data-disconnect="${provider}" hidden>Disconnect</button><button class="quiet" data-signin="${provider}">Sign in</button></div></div>`;
-  return `<div class="cards">${row('claude', 'Claude Code', 'Chat in the Claude Code extension. Claude can start Hydra heads for independent work, and remembers across sessions with claude-mem.')}${row('codex', 'Codex', 'Chat in the Codex extension. Codex can start Hydra heads for independent work.')}</div><p class="connection-note">Connect installs the extension if needed and adds Hydra as a tool in its user settings on this computer — never inside a project. For Claude it also sets up <a href="https://github.com/thedotmack/claude-mem">claude-mem</a> (and the Bun runtime it needs). Claude Code and Codex keep their own sign-in and billing, and you can disconnect anytime.</p>`;
+  return `<div class="cards">${row('claude', 'Claude Code', 'Chat in the Claude Code extension. Claude can start Hydra heads for independent work. Memory (claude-mem) is optional, in Settings → Connectors.')}${row('codex', 'Codex', 'Chat in the Codex extension. Codex can start Hydra heads for independent work.')}</div><p class="connection-note">Connect installs the extension if needed and adds Hydra as a tool in its user settings on this computer — never inside a project. Claude Code and Codex keep their own sign-in and billing, and you can disconnect anytime.</p>`;
 }
 
 /** Client script: expects `send(message)` and a `status` element in scope. */
