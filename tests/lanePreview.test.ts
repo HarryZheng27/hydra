@@ -186,3 +186,15 @@ test('splitPreviewCommand splits the one-time input box like a shell would, for 
   assert.deepEqual(splitPreviewCommand('npm run dev -- --port {port}'), ['npm', 'run', 'dev', '--', '--port', '{port}']);
   assert.deepEqual(splitPreviewCommand('node "my server.js" {port}'), ['node', 'my server.js', '{port}']);
 });
+
+test('two quick starts for one lane share one server', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hydra-preview-'));
+  try {
+    const wt = await worktree('lane-twice', root);
+    const service = new LanePreviews({ logDirectory: path.join(root, 'logs') });
+    const config = { command: command('slow'), url: 'http://127.0.0.1:{port}/' };
+    const [first, second] = await Promise.all([service.start({ id: 'lane-twice', worktree: wt }, config), service.start({ id: 'lane-twice', worktree: wt }, config)]);
+    assert.equal(first.port, second.port);
+    await service.stopAll();
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); }
+});

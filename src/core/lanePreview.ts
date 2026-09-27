@@ -105,6 +105,15 @@ export class LanePreviews {
   async start(lane: { id: string; worktree: string }, config: PreviewConfig): Promise<PreviewEntry> {
     const already = this.running.get(lane.id);
     if (already) return already.entry;
+    // A second click while the server is still coming up waits for the same start, never a second server.
+    const pending = this.starting.get(lane.id);
+    if (pending) return pending;
+    const started = this.launch(lane, config).finally(() => this.starting.delete(lane.id));
+    this.starting.set(lane.id, started);
+    return started;
+  }
+  private readonly starting = new Map<string, Promise<PreviewEntry>>();
+  private async launch(lane: { id: string; worktree: string }, config: PreviewConfig): Promise<PreviewEntry> {
     const port = await this.runtime.freePort();
     const command = config.command.map(part => substitutePort(part, port));
     const url = substitutePort(config.url, port);

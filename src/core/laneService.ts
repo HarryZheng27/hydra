@@ -329,6 +329,8 @@ export class LaneService {
   previewOf(id: string): PreviewEntry | undefined { return this.previews.get(id); }
   /** Start (or reopen) this lane's preview: the app runs in its worktree, with its normal environment (a lane is your terminal). */
   async startPreview(id: unknown, config: PreviewConfig): Promise<PreviewEntry> {
+    // Stop all (5.3) ends previews, so none starts again until Resume Agents.
+    this.options.stop?.assertRunning('Starting a preview');
     const lane = this.openLane(id);
     const entry = await this.previews.start(lane, config);
     this.previewNotes.delete(lane.id);
