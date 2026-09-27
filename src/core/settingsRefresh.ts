@@ -15,6 +15,8 @@ export const preferenceOnlySettings: ReadonlySet<string> = new Set([
   'hydra.plans.leadPlansNeedApproval',
   // O5: read fresh by hydra_plan_amend; nothing about the current provider connection.
   'hydra.plans.maxAmendments',
+  // O6: read fresh by the limit-offer handler and hydra_done/gates; nothing about the current provider connection.
+  'hydra.limits.autoContinuePlans',
 ]);
 
 /**

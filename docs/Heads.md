@@ -171,6 +171,17 @@ Apart from plans (below), the view never starts work itself; everything else on 
 - **A history:** every add, edit, skip and retry is kept on the plan (`amendments` on `hydra_plan_get`), oldest first.
 - **A limit:** `hydra.plans.maxAmendments` (10 by default; 0 means unlimited) caps how many changes one plan can take before `hydra_plan_amend` is refused. Cancel it, or start a new plan, once you hit it.
 
+**Rigor.** Each job in a lead's plan has a rigor, on top of the project's own gates, which always run regardless:
+- **`quick`:** nothing extra.
+- **`standard`** (the default): also a review by the other agent, if the project doesn't already have one configured.
+- **`strict`:** the same as `standard`; it will also cover screenshots and an integration check once a project has them configured and Hydra builds the integration gate. Rigor only ever adds; it can't remove or weaken a gate the project requires.
+
+Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`hydra_plan_amend`'s `edit` or `retry`).
+
+**Both providers as one pool.**
+- **A guaranteed independent reviewer, honestly.** When a job's usage-limit handoff means both Claude Code and Codex wrote part of its diff, "the other agent" has no independent choice left. Hydra reviews with the job's current agent anyway and says so plainly in the evidence, rather than quietly picking one and calling it independent.
+- **Plan jobs fail over on their own.** With `hydra.limits.autoContinuePlans` (on by default), a plan's job that hits its usage limit continues in the other provider right away — nobody may be watching an unattended plan to answer the usual prompt. Turn it off to have a plan job's limit offered like any other head's.
+
 **New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.

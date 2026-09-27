@@ -41,6 +41,14 @@ test('planFromLeadInput: passes through provider and role, and records leadOrigi
   assert.equal(plan.jobs[0]!.role, 'coding/builder');
 });
 
+test('planFromLeadInput (O6): a job defaults to "standard" rigor; an explicit rigor is kept; an unknown one is refused', () => {
+  const defaulted = planFromLeadInput({ title: 'X', jobs: [leadJob('a')] }, origin);
+  assert.equal(defaulted.jobs[0]!.rigor, 'standard');
+  const quick = planFromLeadInput({ title: 'X', jobs: [leadJob('a', { rigor: 'quick' })] }, origin);
+  assert.equal(quick.jobs[0]!.rigor, 'quick');
+  assert.throws(() => planFromLeadInput({ title: 'X', jobs: [leadJob('a', { rigor: 'thorough' as never })] }, origin), /unknown rigor/);
+});
+
 test('validatePlan: refuses a malformed leadOrigin', () => {
   const plan: Plan = { ...planFromLeadInput({ title: 'Bad origin', jobs: [leadJob('a')] }, origin), leadOrigin: { leadSessionId: '', idempotencyKey: 'x' } };
   assert.throws(() => validatePlan(plan), /Invalid leadOrigin/);
@@ -222,6 +230,15 @@ test('applyPlanAmendment: skip, edit and add each record one amendment, and re-v
   assert.equal(result.jobs.find(job => job.key === 'b')!.outcome!.state, 'skipped');
   assert.ok(result.jobs.some(job => job.key === 'c'));
   assert.deepEqual(result.amendments.map(entry => entry.kind), ['skip', 'edit', 'add']);
+  assert.equal(result.jobs.find(job => job.key === 'c')!.rigor, 'standard', 'a job added by amend defaults to standard rigor too');
+});
+
+test('applyPlanAmendment (O6): edit and retry can change a job\'s rigor', () => {
+  const jobs = [{ key: 'a', title: 'A', brief: 'x', dependsOn: [], rigor: 'standard' as const }];
+  const edited = applyPlanAmendment({ jobs }, { edit: [{ key: 'a', rigor: 'strict' }] });
+  assert.equal(edited.jobs[0]!.rigor, 'strict');
+  const retried = applyPlanAmendment({ jobs: [failedJob('b')] }, { retry: [{ key: 'b', rigor: 'strict' }] });
+  assert.equal(retried.jobs[0]!.rigor, 'strict');
 });
 
 test('applyPlanAmendment: refuses an edit or a skip on a job that has already started', () => {
