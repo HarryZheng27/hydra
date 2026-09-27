@@ -1,6 +1,6 @@
 # Hydra improvements, part 2: product and release parity
 
-Status (2026-09-26): Steps A, B and D done (see "As built"); Steps C and E to follow. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
+Status (2026-09-26): Steps A–D done (see "As built"); Step E to follow. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
 
 ## Why this exists
 
@@ -399,3 +399,42 @@ Built by one Sonnet subagent (`hydra-wt/projects`), alongside Step C. The main s
 4. Nico's Claude and Codex settings were unchanged.
 
 **Tests:** `tests/projectSummary.test.ts`, 11 tests, including the closed and pruned case. `hydraTree` 9 is unchanged.
+
+### Step C (2026-09-26)
+
+Built by one Opus subagent (`hydra-wt/dispatch`), alongside Step D. The main session reviewed the diff, rebased it onto D and ran the live checks.
+
+**What it does:**
+- **The plan setting:** `Plan.dispatch` (lanes 1–4, provider, attempts 1–5, checked by `validatePlanDispatch`) is switched on from the plan header on the canvas.
+- **Slots:** the runner counts busy slots before starting anything. A ready lane job starts only when one is free; otherwise it reads "Waiting for a free lane (1 of 1 in use)."
+  - Jobs start through the existing plan-lane start path, so the brief, write scope and adoption keys are unchanged.
+  - Adopting an existing lane always wins over starting a new one.
+- **`hydra_job_ready` from a dispatched lane** goes to `src/core/laneDispatch.ts`. The agent hears back at once, then Hydra runs the gates without dialogs:
+  - **Pass:** the job is marked done with its commit and Step A evidence status.
+  - **Fail:** the Send to lane text, cleaned, goes into the lane, then Enter. A separate `gateFailures` count goes up, and the chip reads "attempt N of M".
+  - **Out of attempts:** the job fails, and the jobs after it are skipped.
+- **You stay in charge:** a manual Mark job done, Cancel job or Run gates wins over a check in flight. Stop all (5.3) still stops everything.
+- **Turning the mode off:** running lanes carry on, and their next `hydra_job_ready` goes back to the normal "ready" notification. Jobs that were waiting for a slot then wait for **Start lane** instead of all starting at once.
+
+**Changes from the spec (the subagent's, reviewed and kept):**
+- Gate failures have their own counter, because reusing the job's `attempt` would change adoption keys and orphan the lane.
+- The failure text ends by telling the agent to call `hydra_job_ready` again.
+- A lane whose HEAD moves during the check is asked to call again, with no attempt counted.
+
+**Live checks (probe, Claude only):**
+1. **Setup:** two lane jobs, one lane at a time, and the journey's `check` and `flaky` gates.
+2. **Slots:** Run plan started one lane. The other read "Waiting for a free lane (1 of 1 in use)."
+3. **A failure sent back:**
+   - The first lane's agent (after its folder-trust prompt) committed and called `hydra_job_ready`. `flaky` failed.
+   - Hydra typed the failure into Claude and submitted it, with no human step, and the chip read "Auto-dispatched · attempt 2 of 3".
+   - Claude called `hydra_job_ready` again. The gates passed, and the job was marked done at `5aaed51` with "Passed required gates".
+   - The second lane then started.
+4. **Mode off partway:** the second lane carried on. Its next `hydra_job_ready` raised the normal "…is ready." notification. Mark job done ran the gates and finished it with "Passed required gates".
+5. **Reload:** with the mode back on and a third job's lane just started, a reload adopted the existing lane (it showed "Exited", still holding its slot). There were no duplicates: still three worktrees.
+6. **Setup untouched:** Nico's Claude and Codex settings were unchanged.
+
+**Threat model:** HR-18. In dispatch mode, gate output is typed into the lane and sent with Enter.
+
+**Tests:**
+- `tests/laneDispatch.test.ts`: 13.
+- Unchanged and passing: `planRunner` 15, `planLanes` 11, `lanes` 11, `laneGit` 9, `helperService` 21, `stopAll` 5, `evidenceStatus` 13, `audit` 11, `packsLaunch` 19, `gates` 16, `gatesUI` 16, `plans` 10, `agentsCanvas` 24, `lanesView` 8, `projectSummary` 11.
