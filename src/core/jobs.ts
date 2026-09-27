@@ -4,7 +4,7 @@ import path from 'node:path';
 import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
 import type { DependencyResult } from './headStart';
-import { gateIdPattern, type Gate } from './gates/config';
+import { gateIdPattern, type Gate, type PlanRigor } from './gates/config';
 import type { GitMetaFingerprint } from './git';
 
 /**
@@ -219,6 +219,10 @@ export interface Job {
   nudged: boolean;
   /** Failed because its provider hit a usage limit (headLimitReason), not the head's own fault. Lets HelperService.continueWith find it, and clears once it does. */
   limitHit?: boolean;
+  /** O6: every provider this job ran under before `provider` (continueWith), so a review knows when no agent reviewing it is independent (gates/review.ts's chooseReviewer). */
+  priorProviders?: Provider[];
+  /** O6 (docs/Heads.md, "Rigor"): a plan job's own rigor, added to the project's gate floor, never replacing it. Internal only: hydra_start_head's schema has no such field; only a plan sets it (planHeadInput). */
+  rigor?: PlanRigor;
   /** The helper's own git worktree, created when it starts. */
   worktree?: string;
   baseCommit?: string;
@@ -355,6 +359,8 @@ export interface JobInput {
   gatesAtStart?: JobGatesSnapshot;
   gitMetaAtStart?: GitMetaFingerprint;
   tamperAtStart?: TamperSnapshot;
+  /** O6: internal only (HelperService.startForPlan reads it off the raw args); hydra_start_head's schema has no such field, so parseJobInput never sets it. */
+  rigor?: PlanRigor;
 }
 
 const text = (value: unknown, name: string, max: number, min = 1): string => {
@@ -465,6 +471,7 @@ export class JobStore {
         ...(input.gatesAtStart ? { gatesAtStart: structuredClone(input.gatesAtStart) } : {}),
         ...(input.gitMetaAtStart ? { gitMetaAtStart: structuredClone(input.gitMetaAtStart) } : {}),
         ...(input.tamperAtStart ? { tamperAtStart: structuredClone(input.tamperAtStart) } : {}),
+        ...(input.rigor ? { rigor: input.rigor } : {}),
         replies: [], createdAt: at, updatedAt: at, history: [{ at, from: null, to: 'queued' }],
       };
       this.jobs.set(id, job);

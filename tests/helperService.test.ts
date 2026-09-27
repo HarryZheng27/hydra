@@ -642,6 +642,88 @@ test('heads queued behind a head that hit its usage limit wait for it (decision 
   } finally { await f.close(); }
 });
 
+test('O6: continueWith records priorProviders as soon as it hands off, before the other provider even starts', async () => {
+  // A review after the handoff, reading priorProviders as priorAuthors, is covered as a pure
+  // chooseReviewer test (tests/gates.test.ts); this only checks continueWith's own bookkeeping,
+  // never waiting for the retried process (this suite's watchdog can otherwise re-detect the
+  // first attempt's already-handled limit against the second attempt's now-different provider,
+  // a pre-existing timing sensitivity of continueWith unrelated to priorProviders itself).
+  const f = await fixture({ script: async helper => {
+    helper.limit({ message: 'Claude AI usage limit reached|1790000000' }); helper.endTurn();
+  } });
+  try {
+    const started = await f.start('handoff');
+    await until(() => !!f.store.get(started.job_id)?.limitHit, 'hit its limit');
+    assert.equal(f.store.get(started.job_id)!.priorProviders, undefined, 'nothing recorded until it actually continues');
+    await f.service.continueWith(started.job_id, 'codex', '## Handoff');
+    assert.deepEqual(f.store.get(started.job_id)!.priorProviders, ['claude']);
+  } finally { await f.close(); }
+});
+
+test('O6: continueWith never lists the same provider twice in priorProviders (a job that bounces back and forth)', async () => {
+  const store = new JobStore(await mkdtemp(path.join(tmpdir(), 'hydra-jobs-')));
+  await store.load();
+  const service = new HelperService({
+    store, endpoint: { issue: () => '', revokeJob: () => {}, port: 0 }, leadFolder: '.', leadKey: 'window',
+    startRun: () => { throw new Error('not exercised'); }, executable: async () => 'fake', bridge: { command: 'x', args: [] }, logDirectory: '.',
+    maxConcurrent: () => 1,
+  });
+  try {
+    const { job } = await store.create('window', { title: 'X', brief: 'x', writeScope: ['src/'], idempotencyKey: 'k' });
+    await store.transition(job.id, 'failed', 'limit', { limitHit: true });
+    await service.continueWith(job.id, 'codex', '## Handoff');
+    assert.deepEqual(store.get(job.id)!.priorProviders, ['claude']);
+    await store.transition(job.id, 'failed', 'limit', { limitHit: true });
+    await service.continueWith(job.id, 'claude', '## Handoff again');
+    assert.deepEqual(store.get(job.id)!.priorProviders, ['claude', 'codex'], 'codex is added; claude, already there, is not duplicated');
+  } finally { await service.dispose(); await rm(store.file.replace(/[^/\\]+$/, ''), { recursive: true, force: true }); }
+});
+
+// ---- O6: both providers as one pool (docs/Heads.md, "Rigor") ----
+
+test('O6: rigor adds a review the project doesn\'t already have; quick adds nothing; the project\'s own review is never duplicated', async () => {
+  const reviewer = scriptedReviewer([{ verdict: 'pass', summary: 'Looks fine.', findings: [] }]);
+  const f = await fixture({ checks: passCheck, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    const standard = await helper.call('hydra_done', { summary: 'Standard rigor' });
+    assert.equal(standard.ok, true, standard.error);
+    helper.endTurn();
+  } });
+  try {
+    // No rigor at all: today's behaviour, unchanged -- the project's own gate only.
+    const plain = await f.start('plain');
+    const [plainHead] = (await f.wait([plain.job_id])).heads;
+    assert.deepEqual(plainHead.checks.map((check: { id: string }) => check.id), ['unit']);
+
+    // "quick": explicitly asked for, still adds nothing beyond the project's own gate.
+    const quick = await f.start('quick', { rigor: 'quick' });
+    const [quickHead] = (await f.wait([quick.job_id])).heads;
+    assert.deepEqual(quickHead.checks.map((check: { id: string }) => check.id), ['unit']);
+
+    // "standard": adds a review, since the project (passCheck) has none.
+    const standard = await f.start('standard', { rigor: 'standard' });
+    const [standardHead] = (await f.wait([standard.job_id])).heads;
+    assert.deepEqual(standardHead.checks.map((check: { id: string; kind: string }) => [check.id, check.kind]), [['unit', 'command'], ['rigor-review', 'review']]);
+    assert.equal(standardHead.state, 'done');
+  } finally { await f.close(); }
+});
+
+test('O6: rigor never duplicates a review the project already runs', async () => {
+  const reviewer = scriptedReviewer([{ verdict: 'pass', summary: 'Fine.', findings: [] }]);
+  const f = await fixture({ gates: { gates: [fixedExists, { id: 'review', type: 'review', reviewer: 'other', focus: 'x' }] }, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    const result = await helper.call('hydra_done', { summary: 'Done' });
+    assert.equal(result.ok, true, result.error);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('strict', { rigor: 'strict' });
+    const [head] = (await f.wait([started.job_id])).heads;
+    assert.deepEqual(head.checks.map((check: { id: string }) => check.id), ['unit', 'review'], 'no second, rigor-added review');
+    assert.equal(reviewer.specs.length, 1);
+  } finally { await f.close(); }
+});
+
 // ---- O2: scope contracts (docs/Heads.md, "Coordination") ----
 
 test('hydra_start_head: names a running head with an overlapping write_scope, unless one depends on the other; never refuses', async () => {

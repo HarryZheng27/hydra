@@ -419,6 +419,11 @@
           "default": true,
           "description": "When Claude Code or Codex hits its usage limit, offer to continue in the other provider with a handoff."
         },
+        "hydra.limits.autoContinuePlans": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a plan's job hits its usage limit, continue it in the other provider right away, without asking. Off, it's offered like any other head."
+        },
         "hydra.updates.check": {
           "type": "boolean",
           "default": true,

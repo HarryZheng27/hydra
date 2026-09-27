@@ -206,10 +206,14 @@ export const planHeadKey = (plan: Pick<Plan, 'id'>, job: Pick<PlanJob, 'key' | '
  * What a plan's head job starts with (`hydra_start_head`'s input). A job with no write scope, such as
  * one added by hand, may change the whole repository: `"."` (an empty entry is refused).
  */
-export function planHeadInput(plan: Pick<Plan, 'id' | 'title'>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role'>, dependsOn: string[]): Record<string, unknown> {
+export function planHeadInput(plan: Pick<Plan, 'id' | 'title'>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor'>, dependsOn: string[]): Record<string, unknown> {
   return {
     title: job.title, brief: job.brief, write_scope: job.writeScope?.length ? job.writeScope : ['.'],
     ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}), idempotency_key: planHeadKey(plan, job),
+    // O6: rigor (docs/Heads.md, "Rigor") — hydra_start_head's own schema has no such property, so
+    // only a plan job ever sets it. A plan saved before rigor existed has none: HelperService then
+    // adds nothing beyond the project's own gates, exactly as it always has.
+    ...(job.rigor ? { rigor: job.rigor } : {}),
     depends_on: dependsOn, lead_label: `Plan · ${plan.title}`.slice(0, 60),
   };
 }

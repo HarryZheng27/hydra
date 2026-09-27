@@ -4,6 +4,7 @@ import path from 'node:path';
 import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
 import type { EvidenceStatus } from './jobs';
+import type { PlanRigor } from './gates/config';
 
 /**
  * Hydra plans (docs/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
@@ -76,6 +77,13 @@ export interface PlanJob {
   role?: string;
   /** Step C: gate failures Hydra sent back to this try's auto-dispatched lane. Retry failed jobs clears it. */
   gateFailures?: number;
+  /**
+   * O6 (docs/Heads.md, "Rigor"): only ever adds to the project's own gate floor;
+   * 'quick' adds nothing. A lead's plan defaults an unset job to 'standard' when
+   * creating or adding it (planFromLeadInput, applyPlanAmendment); missing here
+   * behaves as 'quick', which is every plan saved before rigor existed.
+   */
+  rigor?: PlanRigor;
 }
 /**
  * Step C: Auto-dispatch to lanes. Present means on: at most `lanes` of the
@@ -136,10 +144,10 @@ export function appendAmendment(amendments: readonly PlanAmendment[] | undefined
   return [...(amendments ?? []), { at: now().toISOString(), ...entry }];
 }
 
-export interface PlanAmendEdit { key: string; title?: string; brief?: string; write_scope?: string[]; depends_on?: string[] }
+export interface PlanAmendEdit { key: string; title?: string; brief?: string; write_scope?: string[]; depends_on?: string[]; rigor?: PlanRigor }
 export interface PlanAmendSkip { key: string; reason: string }
 /** Retry a job that failed or was skipped, optionally with changes; refused for a job that's running, done or not started. */
-export interface PlanAmendRetry { key: string; title?: string; brief?: string; write_scope?: string[]; provider?: Provider }
+export interface PlanAmendRetry { key: string; title?: string; brief?: string; write_scope?: string[]; provider?: Provider; rigor?: PlanRigor }
 export interface PlanAmendInput { add?: PlanLeadJobInput[]; edit?: PlanAmendEdit[]; skip?: PlanAmendSkip[]; retry?: PlanAmendRetry[] }
 
 /**
@@ -185,8 +193,9 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
       ...item,
       ...(edit.title !== undefined ? { title: edit.title } : {}), ...(edit.brief !== undefined ? { brief: edit.brief } : {}),
       ...(edit.write_scope !== undefined ? { writeScope: edit.write_scope } : {}), ...(edit.depends_on !== undefined ? { dependsOn: edit.depends_on } : {}),
+      ...(edit.rigor !== undefined ? { rigor: edit.rigor } : {}),
     } : item);
-    const changed = [edit.title !== undefined && 'title', edit.brief !== undefined && 'brief', edit.write_scope !== undefined && 'write_scope', edit.depends_on !== undefined && 'depends_on'].filter(Boolean);
+    const changed = [edit.title !== undefined && 'title', edit.brief !== undefined && 'brief', edit.write_scope !== undefined && 'write_scope', edit.depends_on !== undefined && 'depends_on', edit.rigor !== undefined && 'rigor'].filter(Boolean);
     record('edit', edit.key, `Edited: ${changed.join(', ')}`);
   }
   for (const retry of input.retry ?? []) {
@@ -203,8 +212,9 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
       ...rest, attempt: nextAttempt,
       ...(retry.title !== undefined ? { title: retry.title } : {}), ...(retry.brief !== undefined ? { brief: retry.brief } : {}),
       ...(retry.write_scope !== undefined ? { writeScope: retry.write_scope } : {}), ...(retry.provider !== undefined ? { provider: retry.provider } : {}),
+      ...(retry.rigor !== undefined ? { rigor: retry.rigor } : {}),
     } : item);
-    const changed = [retry.title !== undefined && 'title', retry.brief !== undefined && 'brief', retry.write_scope !== undefined && 'write_scope', retry.provider !== undefined && 'provider'].filter(Boolean);
+    const changed = [retry.title !== undefined && 'title', retry.brief !== undefined && 'brief', retry.write_scope !== undefined && 'write_scope', retry.provider !== undefined && 'provider', retry.rigor !== undefined && 'rigor'].filter(Boolean);
     record('retry', retry.key, `Retried (attempt ${nextAttempt})${changed.length ? `, with a new ${changed.join(', ')}` : ''}.`);
   }
   if (input.add?.length) {
@@ -213,7 +223,7 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
       if (keys.has(job.key)) throw new Error(`Job key "${job.key}" is already used in this plan.`);
       keys.add(job.key);
       return {
-        key: job.key, title: job.title, brief: job.brief, writeScope: job.write_scope, dependsOn: job.depends_on ?? [], runAs: 'head',
+        key: job.key, title: job.title, brief: job.brief, writeScope: job.write_scope, dependsOn: job.depends_on ?? [], runAs: 'head', rigor: job.rigor ?? 'standard',
         ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}),
       };
     });
@@ -330,6 +340,7 @@ export function validatePlanJobs(jobs: readonly PlanJob[]): void {
     if (!trimmed(job.brief) || job.brief.length > planJobBriefMax) throw new Error(`Job "${job.key}" brief must be 1-${planJobBriefMax} characters.`);
     if (job.provider !== undefined && job.provider !== 'claude' && job.provider !== 'codex') throw new Error(`Job "${job.key}" has an unknown provider.`);
     if (job.role !== undefined && (typeof job.role !== 'string' || !planJobRolePattern.test(job.role))) throw new Error(`Job "${job.key}" names its role as "pack/role", like "coding/builder".`);
+    if (job.rigor !== undefined && job.rigor !== 'quick' && job.rigor !== 'standard' && job.rigor !== 'strict') throw new Error(`Job "${job.key}" has an unknown rigor.`);
     if (!Array.isArray(job.dependsOn)) throw new Error(`Job "${job.key}" dependsOn must be a list.`);
     validateRunFields(job);
   }
@@ -518,7 +529,7 @@ export function createPlan(input: { title: string; brief?: string; state?: PlanS
 
 /** hydra_plan_create's job shape: the same fields hydra_start_head takes, keyed so dependencies name each other. */
 export interface PlanLeadJobInput {
-  key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; role?: string;
+  key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; role?: string; rigor?: PlanRigor;
 }
 export interface PlanCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[] }
 
@@ -537,7 +548,7 @@ export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSess
     return {
       key: job.key, title: job.title, brief: job.brief, runAs: 'head',
       dependsOn: Array.isArray(job.depends_on) ? job.depends_on : [],
-      writeScope: job.write_scope,
+      writeScope: job.write_scope, rigor: job.rigor ?? 'standard',
       ...(job.provider !== undefined ? { provider: job.provider } : {}),
       ...(job.role !== undefined ? { role: job.role } : {}),
     };

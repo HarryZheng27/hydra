@@ -23,6 +23,7 @@ const planJobSchema = {
     depends_on: { type: 'array', items: jobKey, maxItems: 11, description: 'Keys of jobs in this same plan that must finish first. This job then starts from their results and is told what they did.' },
     provider: string('Which agent runs this job. Defaults to the plan\'s, else yours.', { enum: ['claude', 'codex'] }),
     role: string('A role from an active pack, as "pack/role", if one fits this job.'),
+    rigor: string('How much checking this job gets, on top of the project\'s own gates (never fewer than those). "quick": nothing extra. "standard" (the default): also a review by the other agent, if the project doesn\'t already review. "strict": the same, plus screenshots and an integration check when the project has them.', { enum: ['quick', 'standard', 'strict'] }),
   },
 };
 
@@ -91,11 +92,11 @@ export const leadTools: readonly HelperToolDefinition[] = [
       properties: {
         plan_id: planId,
         add: { type: 'array', items: planJobSchema, maxItems: 12, description: 'New jobs to add to the plan.' },
-        edit: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32 }, depends_on: { type: 'array', items: jobKey, maxItems: 11 } } }, maxItems: 12, description: 'Changes to jobs that haven\'t started yet.' },
+        edit: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32 }, depends_on: { type: 'array', items: jobKey, maxItems: 11 }, rigor: string('New rigor.', { enum: ['quick', 'standard', 'strict'] }) } }, maxItems: 12, description: 'Changes to jobs that haven\'t started yet.' },
         skip: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'reason'], properties: { key: jobKey, reason: string('Why, told to jobs that depend on it.') } }, maxItems: 12, description: 'Jobs to skip instead of running; jobs that haven\'t started only.' },
         retry: {
           type: 'array', maxItems: 12, description: 'Jobs to retry: a job whose status is "failed", or "skipped" (skipped by you, or automatically because a dependency failed — retry the dependency too if the whole chain should resume). Its attempt count goes up by one.',
-          items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief — say what went wrong and what to do differently.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32, description: 'A wider write_scope, if that was the problem.' }, provider: string('Retry with a different agent.', { enum: ['claude', 'codex'] }) } },
+          items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief — say what went wrong and what to do differently.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32, description: 'A wider write_scope, if that was the problem.' }, provider: string('Retry with a different agent.', { enum: ['claude', 'codex'] }), rigor: string('Retry with different rigor.', { enum: ['quick', 'standard', 'strict'] }) } },
         },
       },
     },

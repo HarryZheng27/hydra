@@ -9,7 +9,7 @@ import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree } from './worktrees';
 import { defaultMaxAttempts, evidenceStatus, finalJobStates, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
-import { freshDirectory, gateFailureMessage, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader } from './gates';
+import { applyRigor, freshDirectory, gateFailureMessage, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
 import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
 import type { HeadConfinement, HelperRun, StartHelperRun } from './helperRunner';
@@ -318,11 +318,14 @@ export class HelperService {
     // A plan head that depends only on lane jobs starts from their results, which never move, so its
     // base is known now: hydra_get_head shows it at once, and results that conflict refuse the start.
     const inputBase = inputs.length && !input.dependsOn?.length && !repeat ? await dependencyBase(this.options.leadFolder, input.title, inputs) : undefined;
-    const withInputs = inputs.length ? { ...input, inputs: [...inputs] } : input;
+    // O6: a plan job's rigor (planHeadInput sets it on the raw args; hydra_start_head's schema
+    // has no such property, so a lead's own call can never set it).
+    const rigor: PlanRigor | undefined = args.rigor === 'quick' || args.rigor === 'standard' || args.rigor === 'strict' ? args.rigor : undefined;
+    const withInputs = { ...(inputs.length ? { ...input, inputs: [...inputs] } : input), ...(rigor ? { rigor } : {}) };
     // Step 1 hardening: a snapshot of the gates, the git metadata and
     // the .hydra files a repeated idempotency key would reuse an existing job for anyway, so it's
     // skipped there — `store.create` returns that job untouched before looking at these fields.
-    const snapshot = repeat ? {} : await this.headStartSnapshot();
+    const snapshot = repeat ? {} : await this.headStartSnapshot(rigor);
     const { job, created } = await this.options.store.create(this.options.leadKey, lead && laneName ? { ...withInputs, leadLabel: laneName, ...snapshot } : { ...withInputs, ...snapshot }, lead);
     // A dependent starts from what it waits for, so its base is known only when it starts.
     const dependent = job.dependsOn.length > 0 || !!job.inputs?.length;
@@ -358,11 +361,13 @@ export class HelperService {
    * with no git yet) never stops the others, and simply leaves that one check off for this head,
    * exactly as if Step 1 hadn't run for it.
    */
-  private async headStartSnapshot(): Promise<{ gatesAtStart?: JobGatesSnapshot; gitMetaAtStart?: GitMetaFingerprint; tamperAtStart?: TamperSnapshot }> {
+  private async headStartSnapshot(rigor?: PlanRigor): Promise<{ gatesAtStart?: JobGatesSnapshot; gitMetaAtStart?: GitMetaFingerprint; tamperAtStart?: TamperSnapshot }> {
     const snapshot: { gatesAtStart?: JobGatesSnapshot; gitMetaAtStart?: GitMetaFingerprint; tamperAtStart?: TamperSnapshot } = {};
     try {
       const gates: Awaited<ReturnType<GatesLoader>> = await (this.options.gates ?? loadGates)(this.options.leadFolder);
-      snapshot.gatesAtStart = { gates: gates.gates, notRun: gates.notRun ?? [] };
+      // O6: rigor is applied here too (not only in done()), so the snapshot and the floor agree on
+      // what it added — the same gate id both times — instead of the floor treating it as something new.
+      snapshot.gatesAtStart = { gates: applyRigor(gates.gates, rigor), notRun: gates.notRun ?? [] };
     } catch { /* no snapshot: hydra_done falls back to today's config only, as it always has */ }
     try { snapshot.gitMetaAtStart = await gitMetaFingerprint(this.options.leadFolder); } catch { /* best effort: no git-metadata check for this head */ }
     try { snapshot.tamperAtStart = await hydraFileHashes(this.options.leadFolder); } catch { /* best effort: no tamper note for this head */ }
@@ -491,7 +496,9 @@ export class HelperService {
     if (outside.length) return this.checkFailed(jobId, attempts, maxAttempts, `These files are outside your write scope (${job.writeScope.join(', ') || '(whole repository)'}):\n${outside.join('\n')}\nUndo those changes in a new commit, then call hydra_done again.`, [], note);
     // 1.1: the gate floor — the snapshot's own definition for every gate id it already had, plus
     // any gate added to today's config since (see gateFloor's own comment for the full rule).
-    const floor = gateFloor(job.gatesAtStart, gates);
+    // O6: rigor is re-applied here, the same way headStartSnapshot applied it at start; the
+    // snapshot already has it under the same id, so the floor treats it as known, not new.
+    const floor = gateFloor(job.gatesAtStart, { ...gates, gates: applyRigor(gates.gates, job.rigor) });
     // The scope and git-metadata checks first, then the gates in order (docs/Gates_Plan.md, "Heads").
     // A listed pack that can't run reports its gates as not run (docs/Packs_Plan.md); those never block.
     const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, await this.gateContext(job, attempts, signal)) : [], ...floor.notRun];
@@ -530,6 +537,7 @@ export class HelperService {
   private async gateContext(job: Job, attempt: number, signal?: AbortSignal): Promise<GateContext> {
     return {
       author: job.provider, title: job.title, brief: job.brief, writeScope: job.writeScope,
+      ...(job.priorProviders?.length ? { priorAuthors: job.priorProviders } : {}),
       logDirectory: await freshDirectory(this.options.logDirectory, `${job.id}-gates-${attempt}`),
       executable: provider => this.options.executable(provider),
       ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
@@ -770,8 +778,11 @@ export class HelperService {
     if (!job || job.leadKey !== this.options.leadKey) throw new Error(`No head ${jobId} in this window.`);
     if (job.state !== 'failed' || !job.limitHit) throw new Error(`Head ${jobId} did not fail from a usage limit.`);
     const brief = clip(`${job.brief}\n\n## Handoff\n\n${handoffMarkdown.trim()}`, maxBriefLength);
+    // O6: once this job has run under both providers, no review of it is truly independent
+    // any more (gates/review.ts's chooseReviewer); priorProviders is what tells it that.
+    const priorProviders = [...new Set([...(job.priorProviders ?? []), job.provider])];
     const updated = await this.options.store.transition(jobId, 'queued', continuedHistoryReason(job.provider, provider), {
-      provider, model: undefined, brief, attempts: 0, nudged: false, limitHit: false,
+      provider, model: undefined, brief, attempts: 0, nudged: false, limitHit: false, priorProviders,
     });
     this.changed();
     void this.dispatch();
@@ -861,8 +872,13 @@ export class HelperService {
     if (!plan) throw new Error(`No plan ${String(id)} in this window.`);
     return plan;
   }
+  private parseRigor(value: unknown, key: string): PlanRigor | undefined {
+    if (value === undefined) return undefined;
+    if (value !== 'quick' && value !== 'standard' && value !== 'strict') throw new Error(`Job "${key}" has an unknown rigor.`);
+    return value;
+  }
   private parsePlanLeadJob(value: unknown): PlanLeadJobInput {
-    const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; role?: unknown } | undefined;
+    const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; role?: unknown; rigor?: unknown } | undefined;
     if (!job || typeof job !== 'object') throw new Error('Each job must be an object.');
     if (typeof job.key !== 'string') throw new Error('Each job needs a key.');
     if (typeof job.title !== 'string') throw new Error(`Job "${job.key}" needs a title.`);
@@ -871,10 +887,12 @@ export class HelperService {
     if (job.depends_on !== undefined && (!Array.isArray(job.depends_on) || job.depends_on.some(key => typeof key !== 'string'))) throw new Error(`Job "${job.key}" has an invalid depends_on.`);
     if (job.provider !== undefined && job.provider !== 'claude' && job.provider !== 'codex') throw new Error(`Job "${job.key}" has an unknown provider.`);
     if (job.role !== undefined && typeof job.role !== 'string') throw new Error(`Job "${job.key}" has an invalid role.`);
+    const rigor = this.parseRigor(job.rigor, job.key);
     return {
       key: job.key, title: job.title, brief: job.brief, write_scope: job.write_scope as string[],
       ...(job.depends_on ? { depends_on: job.depends_on as string[] } : {}),
       ...(job.provider ? { provider: job.provider as Provider } : {}), ...(job.role ? { role: job.role as string } : {}),
+      ...(rigor ? { rigor } : {}),
     };
   }
   private parsePlanLeadJobs(value: unknown, max: number): PlanLeadJobInput[] {
@@ -915,30 +933,34 @@ export class HelperService {
   private parsePlanRetries(value: unknown): PlanLeadRetry[] {
     if (!Array.isArray(value)) throw new Error('retry must be a list.');
     return value.map(item => {
-      const retry = item as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; provider?: unknown } | undefined;
+      const retry = item as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; provider?: unknown; rigor?: unknown } | undefined;
       if (!retry || typeof retry.key !== 'string') throw new Error('Each retry needs a job key.');
       if (retry.title !== undefined && typeof retry.title !== 'string') throw new Error(`Job "${retry.key}"'s title must be text.`);
       if (retry.brief !== undefined && typeof retry.brief !== 'string') throw new Error(`Job "${retry.key}"'s brief must be text.`);
       if (retry.write_scope !== undefined && (!Array.isArray(retry.write_scope) || retry.write_scope.length < 1 || retry.write_scope.some(path => typeof path !== 'string'))) throw new Error(`Job "${retry.key}"'s write_scope must be a non-empty list of paths.`);
       if (retry.provider !== undefined && retry.provider !== 'claude' && retry.provider !== 'codex') throw new Error(`Job "${retry.key}" has an unknown provider.`);
+      const rigor = this.parseRigor(retry.rigor, retry.key);
       return {
         key: retry.key, ...(retry.title !== undefined ? { title: retry.title as string } : {}), ...(retry.brief !== undefined ? { brief: retry.brief as string } : {}),
         ...(retry.write_scope !== undefined ? { write_scope: retry.write_scope as string[] } : {}), ...(retry.provider !== undefined ? { provider: retry.provider as Provider } : {}),
+        ...(rigor ? { rigor } : {}),
       };
     });
   }
   private parsePlanEdits(value: unknown): PlanLeadEdit[] {
     if (!Array.isArray(value)) throw new Error('edit must be a list.');
     return value.map(item => {
-      const edit = item as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown } | undefined;
+      const edit = item as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; rigor?: unknown } | undefined;
       if (!edit || typeof edit.key !== 'string') throw new Error('Each edit needs a job key.');
       if (edit.title !== undefined && typeof edit.title !== 'string') throw new Error(`Job "${edit.key}"'s title must be text.`);
       if (edit.brief !== undefined && typeof edit.brief !== 'string') throw new Error(`Job "${edit.key}"'s brief must be text.`);
       if (edit.write_scope !== undefined && (!Array.isArray(edit.write_scope) || edit.write_scope.some(path => typeof path !== 'string'))) throw new Error(`Job "${edit.key}"'s write_scope must be a list of paths.`);
       if (edit.depends_on !== undefined && (!Array.isArray(edit.depends_on) || edit.depends_on.some(key => typeof key !== 'string'))) throw new Error(`Job "${edit.key}"'s depends_on must be a list of keys.`);
+      const rigor = this.parseRigor(edit.rigor, edit.key);
       return {
         key: edit.key, ...(edit.title !== undefined ? { title: edit.title as string } : {}), ...(edit.brief !== undefined ? { brief: edit.brief as string } : {}),
         ...(edit.write_scope !== undefined ? { write_scope: edit.write_scope as string[] } : {}), ...(edit.depends_on !== undefined ? { depends_on: edit.depends_on as string[] } : {}),
+        ...(rigor ? { rigor } : {}),
       };
     });
   }

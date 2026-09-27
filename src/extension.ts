@@ -428,6 +428,8 @@ class Manager {
         if (!this.helpers) throw new Error('Hydra heads are still starting.');
         await this.helpers.service.continueWith(jobId, provider, markdown);
       },
+      // O6: a plan job fails over on its own, unless turned off.
+      autoContinuePlan: jobId => vscode.workspace.getConfiguration('hydra').get<boolean>('limits.autoContinuePlans', true) && !!this.jobPlanFor(jobId),
       log: line => this.output.appendLine(line),
       tracker: this.limitOfferTracker,
     }));

@@ -7,7 +7,7 @@ import { git } from '../src/core/git';
 import { gateBlocks, gateKind, gateState, processAlive, type JobCheckResult } from '../src/core/jobs';
 import type { ProbeOutput } from '../src/core/process';
 import { terminateProcessTree } from '../src/core/process';
-import { findBrowser, gateFailureMessage, gateOrder, loadGates, parseGatesConfig, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
+import { applyRigor, findBrowser, gateFailureMessage, gateOrder, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
 import { browserCandidates } from '../src/core/gates/browser';
 import { resolveCommand } from '../src/core/gates/command';
 import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewFails, reviewPrompt } from '../src/core/gates/review';
@@ -294,6 +294,21 @@ test('review: the other agent reviews; the same one stands in when the other is 
   assert.deepEqual(await chooseReviewer('codex', 'claude', only('claude')), { notRun: 'Codex isn\'t available (not installed), so nobody reviewed this.' });
   assert.deepEqual(await chooseReviewer('other', 'claude', async wanted => ({ ok: false, reason: `${wanted} missing` })), { notRun: 'codex missing, and claude missing, so nobody reviewed this.' });
 
+  // O6: after a usage-limit handoff, both providers wrote the diff; "other" has no independent
+  // choice left, so it reviews with the current author anyway and says the review isn't independent.
+  const handoffPick = await chooseReviewer('other', 'codex', both, ['claude']);
+  assert.equal('provider' in handoffPick && handoffPick.provider, 'codex', 'the current author, not a fake "other"');
+  assert.match('note' in handoffPick ? handoffPick.note! : '', /both worked on this change.*codex reviewed anyway/i);
+  // The other direction: codex ran first, then claude took over.
+  const handoffPick2 = await chooseReviewer('other', 'claude', both, ['codex']);
+  assert.equal('provider' in handoffPick2 && handoffPick2.provider, 'claude');
+  // A forced choice ('same', 'claude', 'codex') is untouched by priorAuthors: only "other" has no clean pick.
+  assert.deepEqual(await chooseReviewer('same', 'codex', both, ['claude']), { provider: 'codex', executable: 'x' });
+  // priorAuthors that doesn't include the true "other" changes nothing (no handoff away from the current author).
+  assert.deepEqual(await chooseReviewer('other', 'claude', both, ['claude']), { provider: 'codex', executable: 'x' });
+  // Both wrote it, and even the current author can't run right now: nobody reviews, and it says why.
+  assert.deepEqual(await chooseReviewer('other', 'codex', async () => ({ ok: false, reason: 'Codex is at its usage limit' }), ['claude']), { notRun: 'Codex is at its usage limit, and it\'s the only agent that worked on this change, so nobody reviewed this.' });
+
   // Through the gate: Codex is at its limit, so Claude reviews Claude's work, and says so.
   const f = await repository();
   const reviewer = fakeReviewer(() => ({ stdout: claudeEnvelope('```json\n{"verdict": "fail", "summary": "It never sets the flag.", "findings": [{"file": "src/feature.ts", "line": 1, "severity": "blocker", "note": "The flag is always true."}]}\n```') }));
@@ -309,6 +324,25 @@ test('review: the other agent reviews; the same one stands in when the other is 
     assert.ok(await exists(result!.evidence![0]!), 'the reply is kept');
     assert.match(gateFailureMessage([result!]), /- review \(review by Claude Code\): Codex is at its usage limit[\s\S]*\n  - blocker src\/feature\.ts:1: The flag is always true\./);
   } finally { await f.close(); }
+});
+
+test('applyRigor (O6): quick adds nothing; standard and strict add a review only when one is missing', () => {
+  const command: Gate = { id: 'unit', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 };
+  assert.deepEqual(applyRigor([command], undefined), [command], 'no rigor: unchanged, like every plan before rigor existed');
+  assert.deepEqual(applyRigor([command], 'quick'), [command]);
+  const withStandard = applyRigor([command], 'standard');
+  assert.deepEqual(withStandard, [command, { id: rigorReviewGateId, type: 'review', required: true, reviewer: 'other', focus: 'Review this change for correctness, safety and fit with the task.' }]);
+  assert.deepEqual(applyRigor([command], 'strict'), withStandard, 'strict adds the same review; screenshots and the integration gate need a project that already has them');
+  // The project's own review, of any kind, is never replaced or duplicated.
+  const ownReview: Gate = { id: 'my-review', type: 'review', required: false, reviewer: 'claude', focus: 'x' };
+  assert.deepEqual(applyRigor([command, ownReview], 'strict'), [command, ownReview]);
+});
+
+test('applyRigor (O6): the same gate id both times, so a snapshot taken at head start and the floor computed at hydra_done agree it\'s already known, not newly added', () => {
+  const before = applyRigor([], 'standard');
+  const after = applyRigor([], 'standard');
+  assert.deepEqual(before, after);
+  assert.equal(before[0]!.id, after[0]!.id);
 });
 
 test('review: "not run" with the reason when it can\'t run, and that never fails the work', async () => {

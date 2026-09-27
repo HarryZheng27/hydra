@@ -31,6 +31,8 @@ export interface LimitOfferDeps {
   handoffDeps?: HandoffDeps;
   now?: () => Date;
   log?: (line: string) => void;
+  /** O6: true when this head runs a plan job and hydra.limits.autoContinuePlans is on; it then fails over without asking, since an unattended plan may have nobody watching. */
+  autoContinuePlan?: (jobId: string) => boolean;
   /**
    * Shared with the lane banner (extensionLanes.ts LanesController), so
    * "otherStillLimited" reflects every chat, head and lane in this window, not
@@ -52,7 +54,11 @@ export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
   async function handle(event: LimitEvent): Promise<void> {
     // Lane events are shown on the lane's tile (LanesController.onLimitEvent), never as a notification.
     if (event.source === 'lane') return;
-    if (!deps.offerEnabled()) return;
+    // O6: a plan job fails over on its own — nobody may be watching an unattended plan — bypassing
+    // the interactive offer (and hydra.limits.offerHandoff) entirely, as long as the other provider
+    // is actually ready and not itself limited; otherwise it falls through to the ordinary offer.
+    const autoContinue = event.source === 'head' && !!event.jobId && !!deps.autoContinuePlan?.(event.jobId);
+    if (!autoContinue && !deps.offerEnabled()) return;
     const considered = tracker.consider(event, now());
     if (!considered) return; // a repeat of the same chat/head within the dedupe window
     const job = event.source === 'head' && event.jobId ? deps.job(event.jobId) : undefined;
@@ -60,6 +66,14 @@ export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
     const file = await saveHandoff(deps.storageDir, event, handoff.markdown);
     const other = otherProvider(event.provider);
     const otherReady = considered.otherAlsoLimited ? false : await deps.otherReady(other).catch(() => false);
+    if (autoContinue && otherReady) {
+      await continueInOther(event, other, handoff.markdown, deps);
+      log(`[limits] plan job ${event.jobId}: continued automatically in ${other} after ${event.provider}'s usage limit`);
+      return;
+    }
+    // Auto-continue wanted it but couldn't (both limited, or the other isn't set up): falls
+    // through to the ordinary offer below, same as any other head.
+    if (!deps.offerEnabled()) return;
     const offer = buildOffer(event, now(), considered.otherAlsoLimited, otherReady);
     const choice = await vscode.window.showInformationMessage(offer.message, ...offer.buttons.map(button => button.label));
     const button = offer.buttons.find(candidate => candidate.label === choice);
