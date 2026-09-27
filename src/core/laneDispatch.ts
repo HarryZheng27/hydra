@@ -49,6 +49,8 @@ const describe = (error: unknown) => error instanceof Error ? error.message : St
 
 export class LaneDispatch {
   private readonly checking = new Map<string, Promise<DispatchCheck>>();
+  /** Lanes whose hydra_job_ready is still looking at what to hand on: a second call waits its turn as one in flight. */
+  private readonly starting = new Set<string>();
   constructor(private readonly options: LaneDispatchOptions) {}
 
   /** Whether hydra_job_ready from this lane is Hydra's to check: its job is running, in a plan that auto-dispatches. */
@@ -68,8 +70,9 @@ export class LaneDispatch {
     const runner = this.options.runner();
     const found = runner?.jobForLane(laneId);
     if (!runner || !found) throw new Error('This lane doesn\'t run a plan job, so there is nothing to check.');
-    if (this.checking.has(laneId)) return { checking: true, message: 'Hydra is already running the gates for this job. Wait: if they fail, the failures are typed here.' };
-    const work = await this.options.lanes.handOn(laneId);
+    if (this.checking.has(laneId) || this.starting.has(laneId)) return { checking: true, message: 'Hydra is already running the gates for this job. Wait: if they fail, the failures are typed here.' };
+    this.starting.add(laneId);
+    const work = await this.options.lanes.handOn(laneId).finally(() => this.starting.delete(laneId));
     if (!work.ok) return { checking: false, message: work.reason === 'dirty' ? `${work.message} Then call hydra_job_ready again.` : 'Nothing to hand on yet: commit your work, then call hydra_job_ready again.' };
     const check = this.check(laneId, note, work.commit, { planId: found.plan.id, key: found.job.key, planTitle: found.plan.title, jobTitle: found.job.title })
       .catch((error): DispatchCheck => ({ kind: 'error', message: describe(error) }))

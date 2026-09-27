@@ -186,6 +186,15 @@ Apart from plans (below), the view never starts work itself; everything else on 
   - A head that hit its limit holds the jobs after it until it goes on.
   - After Hydra restarts, a plan's lanes show Exited under the plan and nothing starts by itself. A lane job that was ready shows **Start lane**.
 
+**Auto-dispatch to lanes** ([Hydra_Improvements_Pt_2.md](Hydra_Improvements_Pt_2.md), Step C) is a switch in the plan's header on the canvas, for a plan with lane jobs:
+- **Settings:** **Lanes** at once (1–4, 2 by default), the **Agent** for its new lanes (a job's own provider or role still comes first), and **Tries** (1–5, 3 by default).
+- **Starting:** each ready lane job starts as a lane when one of the plan's slots is free, as a lane job always starts (its base commit, brief and scope). It also starts after Hydra restarts: lanes that already exist are adopted first, so nothing starts twice. Nothing starts while agents are stopped.
+- **Finishing:** when the lane's agent calls `hydra_job_ready`, Hydra runs the gates itself, as **Mark job done** does, with no dialogs.
+  - If they pass, the job is done with the lane's commit and its evidence status, and the next job takes the slot.
+  - If they fail, Hydra types the failures into that lane, as **Send to lane** does, and presses Enter. That counts a try; the tile says "Auto-dispatched · attempt 2 of 3".
+  - When the tries run out, the job fails ("Gates failed 3 times: …") and the jobs after it are skipped. **Retry failed jobs** starts over with every try.
+- **You stay in charge:** you can still type in the lane, **Mark job done**, or **Cancel job**. What you do wins over a check in progress. Turning the switch off leaves running lanes alone; ready lane jobs then wait for **Start lane**.
+
 ### Lanes
 
 Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `codex` terminal, signed in with your own account, working in its own git worktree and branch ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 1). The Agents tab has two views, **Canvas | Lanes**.
