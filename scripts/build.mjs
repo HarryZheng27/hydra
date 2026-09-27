@@ -10,5 +10,7 @@ await Promise.all([
   build({ entryPoints: ['src/hydraMcp.ts'], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: 'dist/hydra-mcp.cjs', define: { HYDRA_VERSION: JSON.stringify(JSON.parse(await (await import('node:fs/promises')).readFile('package.json', 'utf8')).version) } }),
   // Claude Code's StopFailure hook: tells Hydra's windows a chat hit its usage limit.
   build({ entryPoints: ['src/hydraLimitHook.ts'], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: 'dist/hydra-limit-hook.cjs' }),
+  // Run by the Windows uninstaller: removes this install's entries from Claude Code's and Codex's settings.
+  build({ entryPoints: ['src/uninstall.ts'], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: 'dist/hydra-uninstall.cjs' }),
   build({ entryPoints: ['tests/smoke.ts'], bundle: true, platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'], outfile: 'dist/smoke.cjs' })
 ]);

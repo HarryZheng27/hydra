@@ -58,10 +58,42 @@ export function isHydraLimitGroup(value: unknown): boolean {
   return line.includes(limitHookMarker);
 }
 
+const quoteChars = '\'‘’‚‛';
+/** Read one PowerShell single-quoted literal starting at `at` (the inverse of powershellLiteral). */
+function readPowershellLiteral(text: string, at: number): { value: string; end: number } | undefined {
+  if (!quoteChars.includes(text[at] ?? '')) return undefined;
+  let value = '';
+  for (let i = at + 1; i < text.length; i++) {
+    const char = text[i]!;
+    if (!quoteChars.includes(char)) { value += char; continue; }
+    if (text[i + 1] === char) { value += char; i++; continue; }
+    return { value, end: i + 1 };
+  }
+  return undefined;
+}
+/**
+ * The executable and script a Hydra group runs: the inverse of limitHookGroup, for
+ * both its Windows (PowerShell `& 'exe' 'script'`) and POSIX (`/bin/sh -c … exe script`)
+ * forms. Empty when the group isn't in either shape, so nothing is claimed by guesswork.
+ */
+export function limitHookPaths(group: unknown): { executable?: string; script?: string } {
+  if (!isHydraLimitGroup(group)) return {};
+  const hook = (group as LimitHookGroup).hooks[0]!;
+  const args = Array.isArray(hook.args) ? hook.args : [];
+  if (hook.command === '/bin/sh') return typeof args[2] === 'string' && typeof args[3] === 'string' ? { executable: args[2], script: args[3] } : {};
+  const run = args[args.length - 1];
+  if (typeof run !== 'string') return {};
+  const call = run.indexOf('; & ');
+  if (call < 0) return {};
+  const executable = readPowershellLiteral(run, call + 4);
+  const script = executable && run[executable.end] === ' ' ? readPowershellLiteral(run, executable.end + 1) : undefined;
+  return executable && script ? { executable: executable.value, script: script.value } : {};
+}
+
 // ---- A JSON scanner that keeps source positions, so edits touch only Hydra's bytes ----
 
-interface JsonNode { start: number; end: number; kind: 'object' | 'array' | 'value'; members?: { key: string; keyStart: number; value: JsonNode }[]; elements?: JsonNode[] }
-function scanJson(text: string): JsonNode {
+export interface JsonNode { start: number; end: number; kind: 'object' | 'array' | 'value'; members?: { key: string; keyStart: number; value: JsonNode }[]; elements?: JsonNode[] }
+export function scanJson(text: string): JsonNode {
   let at = 0;
   const space = () => { while (at < text.length && ' \t\r\n\uFEFF'.includes(text[at]!)) at++; };
   const string = (): string => {
@@ -157,11 +189,11 @@ function insert(text: string, group: unknown): string {
 }
 
 interface Found { root: JsonNode; hooks: NonNullable<ReturnType<typeof member>>; stop: NonNullable<ReturnType<typeof member>>; index: number }
-function findHydraGroup(text: string): Found | undefined {
+function findHydraGroup(text: string, which: (group: unknown) => boolean = () => true): Found | undefined {
   const root = scanJson(text);
   const hooks = member(root, 'hooks'), stop = hooks && member(hooks.value, 'StopFailure');
   if (!hooks || !stop || stop.value.kind !== 'array') return undefined;
-  const index = stop.value.elements!.findIndex(node => { try { return isHydraLimitGroup(JSON.parse(text.slice(node.start, node.end))); } catch { return false; } });
+  const index = stop.value.elements!.findIndex(node => { try { const group = JSON.parse(text.slice(node.start, node.end)) as unknown; return isHydraLimitGroup(group) && which(group); } catch { return false; } });
   return index < 0 ? undefined : { root, hooks, stop, index };
 }
 const splice = (text: string, from: number, to: number, replacement = '') => text.slice(0, from) + replacement + text.slice(to);
@@ -187,11 +219,15 @@ function removeOne(text: string, found: Found): string {
   return withoutElement;
 }
 
-/** Settings text with every Hydra StopFailure group removed, and whether there was one. */
-export function removeClaudeLimitHook(text: string | undefined): { text: string | undefined; had: boolean } {
+/**
+ * Settings text with every Hydra StopFailure group removed, and whether there was one.
+ * `which` narrows it to some Hydra groups: the uninstaller removes only its own
+ * install's group and leaves another Hydra's (a dev build, a second install) working.
+ */
+export function removeClaudeLimitHook(text: string | undefined, which?: (group: unknown) => boolean): { text: string | undefined; had: boolean } {
   if (text === undefined || !text.trim()) return { text, had: false };
   let current = text, had = false;
-  for (let found = findHydraGroup(current); found; found = findHydraGroup(current)) { current = removeOne(current, found); had = true; }
+  for (let found = findHydraGroup(current, which); found; found = findHydraGroup(current, which)) { current = removeOne(current, found); had = true; }
   return { text: current, had };
 }
 /** Insert the group, replacing an older Hydra group (a moved Hydra install). Unchanged when it's already there. */
