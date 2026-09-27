@@ -329,12 +329,16 @@ export interface IntegrationLeadView {
   queue: string[];
   gate: { label: string; tip?: string; stale?: boolean; running?: boolean; checks?: { id: string; kind: string; state: string; required: boolean; summary?: string }[] };
   can_merge: boolean;
+  /** The integration gate passed every required gate on the branch as it is now ("Passed required gates"). */
+  passed: boolean;
+  /** Nothing more is coming from the integration gate on its own (integrationSettled): what `hydra plan wait` waits for. */
+  settled: boolean;
   merge_refused?: string;
   merged?: PlanIntegration['merged'];
   error?: string;
 }
 /** The lead's view of the integration branch (pure). */
-export function integrationLeadView(plan: { title: string; integration?: PlanIntegration }): IntegrationLeadView | undefined {
+export function integrationLeadView(plan: { title: string; state: string; integration?: PlanIntegration }): IntegrationLeadView | undefined {
   const integration = plan.integration;
   if (!integration) return undefined;
   const gate = integration.gate;
@@ -347,7 +351,7 @@ export function integrationLeadView(plan: { title: string; integration?: PlanInt
       ...(gate ? { tip: gate.tip, ...(gate.tip !== integration.tip ? { stale: true } : {}), ...(gate.running ? { running: true } : {}) } : {}),
       ...(gate?.checks.length ? { checks: gate.checks.map(check => ({ id: check.id, kind: gateKind(check), state: gateState(check), required: check.required, ...(check.summary ? { summary: check.summary } : {}) })) } : {}),
     },
-    can_merge: !refusal, ...(refusal ? { merge_refused: refusal } : {}),
+    can_merge: !refusal, passed: integrationPassed(integration), settled: integrationSettled(plan), ...(refusal ? { merge_refused: refusal } : {}),
     ...(integration.merged ? { merged: integration.merged } : {}),
     ...(integration.error ? { error: integration.error } : {}),
   };

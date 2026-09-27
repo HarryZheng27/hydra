@@ -760,6 +760,7 @@ test('hydra_plan_* tools need a bridge session (a lead token minted without one 
     create: async () => { throw new Error('should not be called'); }, get: () => undefined,
     wait: async () => { throw new Error('should not be called'); }, amend: async () => { throw new Error('should not be called'); }, cancel: async () => { throw new Error('should not be called'); },
     message: async () => { throw new Error('should not be called'); }, integrate: async () => { throw new Error('should not be called'); }, merge: async () => { throw new Error('should not be called'); },
+    run: async () => { throw new Error('should not be called'); }, report: async () => { throw new Error('should not be called'); },
   } });
   try {
     // fixture()'s own default lead token has no leadSessionId.

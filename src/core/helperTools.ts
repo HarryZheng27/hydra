@@ -144,6 +144,17 @@ export const leadTools: readonly HelperToolDefinition[] = [
     description: 'Land a plan: merge its integration branch into the branch the plan started from (a fast-forward when nothing else moved it), or with via "pr" push the branch for a pull request. Refused unless the integration gate passed every required gate ("Passed required gates") on the branch as it is now, or the user chose to merge anyway on the Agents canvas; the refusal says why. Use this instead of merging a plan\'s job branches yourself.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId, via: string('"merge" (the default) or "pr".', { enum: ['merge', 'pr'] }) } },
   },
+  // ---- O8b: running a plan again, and its report (docs/Heads.md, "Scripts and CI") ----
+  {
+    name: 'hydra_plan_run',
+    description: 'Run a plan that is waiting: a draft (a plan made while Hydra Settings says plans need approval) starts, and an incomplete one retries its failed, cancelled and skipped jobs, each as a new attempt. Refused for a plan that is running or done.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId } },
+  },
+  {
+    name: 'hydra_plan_report',
+    description: 'A plan\'s report, as Markdown: each job\'s status, provider, attempts, time, changed files and gates, the amendments made, the integration gate\'s result, and what still needs you. The same report an unattended plan writes when it ends.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId } },
+  },
   // ---- Packs (docs/Packs_Plan.md, decision 6). Never listed to the model: a lead's bridge asks for the roles itself, when it starts. ----
   {
     name: 'hydra_active_roles',
@@ -182,6 +193,9 @@ export const resumeTool = 'hydra_resume';
 export const userLeadToolNames: readonly string[] = [
   'hydra_list_heads', 'hydra_get_head', 'hydra_lanes',
   'hydra_plan_create', 'hydra_plan_get', 'hydra_plan_wait', 'hydra_plan_amend', 'hydra_plan_cancel', 'hydra_plan_message',
+  // O8b: the `hydra` command's plan run <id> and report <id>. Never hydra_plan_merge or hydra_plan_integrate: landing
+  // a plan on your branch stays with you (the canvas) or a chat.
+  'hydra_plan_run', 'hydra_plan_report',
 ];
 export const userTools: readonly HelperToolDefinition[] = [
   ...leadTools.filter(tool => userLeadToolNames.includes(tool.name)),

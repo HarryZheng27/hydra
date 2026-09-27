@@ -1,0 +1,1 @@
+`code.cmd` and `code.sh` are `resources/win32/bin/code.cmd` and `code.sh` from the editor source at the commit pinned in `desktop/upstream.json` (MIT). `tests/desktop.test.mjs` patches them with `brandedLauncherCmd`/`brandedLauncherSh` and runs them, so a change to either patch is tested against the real launcher text.

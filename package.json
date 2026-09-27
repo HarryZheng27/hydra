@@ -45,6 +45,12 @@
     "test:smoke": "node scripts/smoke.mjs"
   },
   "contributes": {
+    "jsonValidation": [
+      {
+        "fileMatch": ".hydra/plans/*.json",
+        "url": "./schemas/hydra-plan.schema.json"
+      }
+    ],
     "commands": [
       {
         "command": "hydra.openQuotaStatus",

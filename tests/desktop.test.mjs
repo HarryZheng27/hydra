@@ -5,7 +5,9 @@ import path from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
-import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, installerIncludes, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root } from '../scripts/desktop.mjs';
+import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, installerIncludes, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root, brandedLauncherCmd, brandedLauncherSh, verifyLaunchers, hydraCliCommands } from '../scripts/desktop.mjs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 
 test('pinned Electron app uses only Hydra update service on Windows and refuses source drift', () => {
   const source = "import { Win32UpdateService } from '../../platform/update/electron-main/updateService.win32.js';\nservices.set(IUpdateService, new SyncDescriptor(Win32UpdateService));";
@@ -271,6 +273,8 @@ test('standalone staging embeds the real Hydra runtime and themes with an app-on
     assert.equal(original.contributes.configurationDefaults?.['workbench.colorTheme'], undefined);
     assert.deepEqual(await fs.readFile(path.join(fixture, 'dist', 'extension.cjs')), await fs.readFile(path.join(root, 'dist', 'extension.cjs')));
     assert.deepEqual(await fs.readFile(path.join(fixture, 'hydra-logo.png')), await fs.readFile(path.join(root, 'hydra-logo.png')));
+    // O8b: the plan-file schema (package.json's jsonValidation) ships with the app's extension too.
+    assert.deepEqual(await fs.readFile(path.join(fixture, 'schemas', 'hydra-plan.schema.json')), await fs.readFile(path.join(root, 'schemas', 'hydra-plan.schema.json')));
     await fs.access(path.join(fixture, 'themes', 'hydra-light.json'));
     // The built-in packs (docs/Packs_Plan.md) are read from <extensionPath>/packs.
     await fs.access(path.join(fixture, 'packs', 'coding', 'pack.json'));
@@ -386,4 +390,67 @@ test('the extension gallery is accepted only when every URL points at Open VSX',
   const { nlsBaseUrl, ...missing } = good;
   assert.throws(() => openVsxGallery(missing), /expected exactly/);
   assert.throws(() => openVsxGallery(undefined), /missing gallery/);
+});
+
+// ---- O8b: the hydra command, in the app's own bin/hydra launchers ----
+
+/** A fake install: Node stands in for Hydra.exe, and two scripts for the editor's CLI and Hydra's own. */
+async function launcherInstall() {
+  const app = await fs.mkdtemp(path.join(tmpdir(), 'hydra-launcher-'));
+  const upstream = path.join(root, 'tests', 'fixtures', 'upstream-launcher');
+  const fill = text => text.split('@@NAME@@').join('Hydra').split('@@APPNAME@@').join('hydra').split('@@COMMIT@@').join('0'.repeat(40)).split('@@QUALITY@@').join('stable').split('@@SERVERDATAFOLDER@@').join('.hydra-server');
+  await fs.mkdir(path.join(app, 'bin'), { recursive: true });
+  await fs.writeFile(path.join(app, 'bin', 'hydra.cmd'), fill(brandedLauncherCmd(await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8'))));
+  await fs.writeFile(path.join(app, 'bin', 'hydra'), fill(brandedLauncherSh(await fs.readFile(path.join(upstream, 'code.sh'), 'utf8'))), { mode: 0o755 });
+  await fs.link(process.execPath, path.join(app, 'Hydra.exe')).catch(() => fs.copyFile(process.execPath, path.join(app, 'Hydra.exe')));
+  const report = name => `process.stdout.write(JSON.stringify({ ran: '${name}', args: process.argv.slice(2), node: process.env.ELECTRON_RUN_AS_NODE }));`;
+  await fs.mkdir(path.join(app, 'resources', 'app', 'out'), { recursive: true });
+  await fs.writeFile(path.join(app, 'resources', 'app', 'out', 'cli.js'), report('editor'));
+  const dist = path.join(app, 'resources', 'app', 'extensions', 'hydra-agent-manager', 'dist');
+  await fs.mkdir(dist, { recursive: true });
+  await fs.writeFile(path.join(dist, 'hydra-cli.cjs'), `${report('hydra-cli')} process.exitCode = 3;`);
+  return { app, close: () => fs.rm(app, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }) };
+}
+const ran = result => { try { return JSON.parse(result.stdout.toString()); } catch { throw new Error(`launcher printed: ${result.stdout}${result.stderr}`); } };
+
+test('the pinned launchers patch once, and the built pair is checked for the dispatch', async () => {
+  const upstream = path.join(root, 'tests', 'fixtures', 'upstream-launcher');
+  const cmd = await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8'), sh = await fs.readFile(path.join(upstream, 'code.sh'), 'utf8');
+  assert.deepEqual([...hydraCliCommands], ['status', 'plan', 'heads', 'stop', 'resume', 'report']);
+  assert.doesNotThrow(() => verifyLaunchers(brandedLauncherCmd(cmd), brandedLauncherSh(sh)));
+  assert.throws(() => verifyLaunchers(cmd, brandedLauncherSh(sh)), /hydra\.cmd does not dispatch/);
+  assert.throws(() => verifyLaunchers(brandedLauncherCmd(cmd), sh), /bin\/hydra does not dispatch/);
+  assert.throws(() => brandedLauncherCmd(cmd.replace('set ELECTRON_RUN_AS_NODE=1', 'set X=1')), /Pinned Windows launcher changed/);
+  assert.throws(() => brandedLauncherSh(sh + sh), /Pinned shell launcher changed/);
+});
+
+test('bin\\hydra.cmd runs the hydra command for its own commands, with its exit code, and opens the editor for anything else', { skip: process.platform !== 'win32' }, async () => {
+  const install = await launcherInstall();
+  try {
+    const run = (...args) => spawnSync('cmd.exe', ['/d', '/c', path.join(install.app, 'bin', 'hydra.cmd'), ...args], { windowsHide: true, timeout: 60_000 });
+    for (const command of hydraCliCommands) {
+      const result = run(command, '--json');
+      assert.deepEqual(ran(result), { ran: 'hydra-cli', args: [command, '--json'], node: '1' });
+      assert.equal(result.status, 3, "the hydra command's own exit code comes back");
+    }
+    assert.deepEqual(ran(run('PLAN', 'run', 'my plan.json')).args, ['PLAN', 'run', 'my plan.json'], 'any case, and arguments with spaces');
+    const editor = run('.');
+    assert.deepEqual(ran(editor), { ran: 'editor', args: ['.'], node: '1' });
+    assert.equal(editor.status, 0);
+    assert.equal(ran(run('statusx')).ran, 'editor', 'only the exact command words');
+    assert.equal(ran(run()).ran, 'editor');
+  } finally { await install.close(); }
+});
+
+test('bin/hydra (sh) runs the hydra command for its own commands, with its exit code, and opens the editor for anything else', { skip: spawnSync('sh', ['-c', 'exit 0'], { windowsHide: true }).status !== 0 }, async () => {
+  const install = await launcherInstall();
+  try {
+    const run = (...args) => spawnSync('sh', [path.join(install.app, 'bin', 'hydra').split(path.sep).join('/'), ...args], { windowsHide: true, timeout: 60_000, env: { ...process.env, WSL_DISTRO_NAME: '' } });
+    const cli = run('plan', 'wait', 'abcdefabcdef');
+    assert.deepEqual(ran(cli), { ran: 'hydra-cli', args: ['plan', 'wait', 'abcdefabcdef'], node: '1' });
+    assert.equal(cli.status, 3);
+    const editor = run('README.md');
+    assert.equal(ran(editor).ran, 'editor');
+    assert.deepEqual(ran(editor).args, ['README.md']);
+  } finally { await install.close(); }
 });

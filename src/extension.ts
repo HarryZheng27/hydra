@@ -1133,7 +1133,19 @@ class Manager {
       message: (id, leadSessionId, input) => this.planLeadMessage(id, leadSessionId, input),
       integrate: (id, leadSessionId) => this.planLeadIntegrate(id, leadSessionId),
       merge: (id, leadSessionId, via) => this.planLeadMerge(id, leadSessionId, via),
+      run: (id, leadSessionId) => this.planLeadRun(id, leadSessionId),
+      report: async (id, leadSessionId) => this.planReportMarkdown(this.planLeadOwn(id, leadSessionId)),
     };
+  }
+  /** O8b: hydra_plan_run — a draft starts (as Run plan does); an incomplete plan retries its failed jobs (as Retry failed jobs does). */
+  private async planLeadRun(id: string, leadSessionId: string): Promise<PlanLeadPlan> {
+    const plan = this.planLeadOwn(id, leadSessionId);
+    const runner = this.requirePlanRunner();
+    if (plan.state === 'draft') await runner.run(id);
+    else if (plan.state === 'incomplete') await runner.retry(id);
+    else throw new Error(`Plan "${plan.title}" is ${plan.state}; only a draft or an incomplete plan can be run.`);
+    this.plansChanged();
+    return this.planLeadSummary(this.planLeadOwn(id, leadSessionId));
   }
   /** A plan as hydra_plan_* show it to the lead that made it: each job's run status from the plan runner, and the board. */
   private planLeadSummary(plan: Plan): PlanLeadPlan {
@@ -1552,6 +1564,12 @@ class Manager {
   private async writePlanReport(plan: Plan): Promise<void> {
     const plans = this.plans;
     if (!plans) return;
+    const file = await plans.store.writeReport(plan.id, this.planReportMarkdown(plan));
+    try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ }
+    void vscode.window.showInformationMessage(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'} — its report is open.`);
+  }
+  /** A plan's report as Markdown: the morning report (O7) and hydra_plan_report (O8b) are the same text. */
+  private planReportMarkdown(plan: Plan): string {
     const defaultHeadBudgetUsd = vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5);
     const details: PlanReportJobDetail[] = plan.jobs.map(job => {
       const head = job.jobId ? this.helpers?.store.get(job.jobId) : undefined;
@@ -1570,10 +1588,7 @@ class Manager {
         ...(head?.question ? { question: head.question } : {}),
       };
     });
-    const markdown = buildPlanReport(plan, details, defaultHeadBudgetUsd);
-    const file = await plans.store.writeReport(plan.id, markdown);
-    try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ }
-    void vscode.window.showInformationMessage(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'} — its report is open.`);
+    return buildPlanReport(plan, details, defaultHeadBudgetUsd);
   }
   /** O7: unattended plans cancel themselves when their wall-clock budget runs out; checked on HelperService's own watchdog tick. */
   private async enforceUnattendedBudgets(): Promise<void> {

@@ -378,7 +378,7 @@ async function leadEndpoint(f: Repo, runner: () => PlanRunner, store: () => Plan
   };
   const refuse = async () => { throw new Error('not in this test'); };
   const plans: PlanLeadBridge = {
-    create: refuse, get: id => summary(id), wait: refuse, amend: refuse, cancel: refuse, message: refuse,
+    create: refuse, get: id => summary(id), wait: refuse, amend: refuse, cancel: refuse, message: refuse, run: refuse, report: refuse,
     integrate: async id => { await runner().integrate(id); return summary(id); },
     merge: async (id, _session, via) => { const result = await runner().merge(id, via); return { plan: summary(id), ...(result.commit ? { commit: result.commit } : {}), ...(result.into ? { into: result.into } : {}) }; },
   };
