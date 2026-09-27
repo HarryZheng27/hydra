@@ -10,6 +10,21 @@ export interface HelperToolDefinition { name: string; description: string; input
 
 const string = (description: string, extra: Record<string, unknown> = {}) => ({ type: 'string', description, ...extra });
 const jobId = string('A head job id returned by hydra_start_head.', { pattern: '^[a-f0-9]{12}$' });
+const planId = string('A plan id returned by hydra_plan_create.', { pattern: '^[a-f0-9]{12}$' });
+const jobKey = string('A job\'s key within its plan, e.g. "schema".', { pattern: '^[a-z0-9-]{1,24}$' });
+/** hydra_plan_create's per-job shape (docs/Heads.md, "Plans from the chat"): the same fields as hydra_start_head, keyed so dependencies name each other by key instead of by an id that doesn't exist yet. */
+const planJobSchema = {
+  type: 'object', additionalProperties: false, required: ['key', 'title', 'brief', 'write_scope'],
+  properties: {
+    key: jobKey,
+    title: string('A short name for the job, under 80 characters.'),
+    brief: string('Everything the job needs: goal, constraints, files, and how to know it is done. It has no other context beyond this and what its dependencies handed on.'),
+    write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32, description: 'Repository-relative paths this job may change. Changes outside are refused.' },
+    depends_on: { type: 'array', items: jobKey, maxItems: 11, description: 'Keys of jobs in this same plan that must finish first. This job then starts from their results and is told what they did.' },
+    provider: string('Which agent runs this job. Defaults to the plan\'s, else yours.', { enum: ['claude', 'codex'] }),
+    role: string('A role from an active pack, as "pack/role", if one fits this job.'),
+  },
+};
 
 export const leadTools: readonly HelperToolDefinition[] = [
   {
@@ -43,6 +58,48 @@ export const leadTools: readonly HelperToolDefinition[] = [
     name: 'hydra_lanes',
     description: 'List the Hydra lanes open in this window. A lane is a Claude Code or Codex terminal the user drives, in its own git worktree and branch. For each lane: its goal, branch and state, the files it is changing, the lanes it would conflict with (and in which files), files that would conflict with its target branch, how many commits it is behind, its running heads, and the plan job it runs, if any. `you` is your own lane, if you are in one. Checks fresh before answering. Call it before you start and before large changes, and avoid editing files other lanes are changing.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+  },
+  // ---- Plans from the chat (O1, docs/Heads.md, "Plans from the chat"): a graph of head jobs run under this same lead, shown on the Agents canvas. ----
+  {
+    name: 'hydra_plan_create',
+    description: 'Create a Hydra plan: a dependency graph of jobs, each run as a head under this same lead, shown together on the Agents canvas. Use this instead of separate hydra_start_head calls when a task has three or more independent pieces, or any dependency between pieces (one job needs another\'s result first). For one-off independent work, keep using hydra_start_head. Unless Hydra Settings says plans need approval first, it starts running immediately: jobs with no dependencies start now, others as their dependencies finish. Call hydra_plan_wait for the result.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['title', 'jobs', 'idempotency_key'],
+      properties: {
+        title: string('A short name for the plan, under 200 characters.'),
+        brief: string('Optional: the task this plan comes from, for context.'),
+        jobs: { type: 'array', items: planJobSchema, minItems: 1, maxItems: 12, description: 'The plan\'s jobs. Keys must be unique within this plan; dependencies must form no cycle.' },
+        idempotency_key: string('A unique key for this request. Repeating a call with the same key returns the same plan instead of making another.'),
+      },
+    },
+  },
+  {
+    name: 'hydra_plan_get',
+    description: 'One plan\'s jobs: each one\'s status, and for a started job its branch, commit, changed files and gate results.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId } },
+  },
+  {
+    name: 'hydra_plan_wait',
+    description: 'Wait until the plan finishes (every job done, or nothing left to wait for) or a job asks a question, then return its jobs. Returns early with current states after max_wait_s. Safe to call again.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId, max_wait_s: { type: 'number', description: 'Longest wait in seconds, 1–3000. Default 1800.' } } },
+  },
+  {
+    name: 'hydra_plan_amend',
+    description: 'Change a plan that hasn\'t finished: add jobs, or edit or skip jobs that haven\'t started yet. Skipping a job that others depend on tells them why, as a note. A job that has already started can\'t be changed or skipped this way; start a new job depending on what you need instead.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['plan_id'],
+      properties: {
+        plan_id: planId,
+        add: { type: 'array', items: planJobSchema, maxItems: 12, description: 'New jobs to add to the plan.' },
+        edit: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32 }, depends_on: { type: 'array', items: jobKey, maxItems: 11 } } }, maxItems: 12, description: 'Changes to jobs that haven\'t started yet.' },
+        skip: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'reason'], properties: { key: jobKey, reason: string('Why, told to jobs that depend on it.') } }, maxItems: 12, description: 'Jobs to skip instead of running; jobs that haven\'t started only.' },
+      },
+    },
+  },
+  {
+    name: 'hydra_plan_cancel',
+    description: 'Stop every job of a plan that hasn\'t finished (running heads are cancelled; their branches are kept). The plan becomes incomplete.',
+    inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId, reason: string('Why, for the record.') } },
   },
   // ---- Packs (docs/Packs_Plan.md, decision 6). Never listed to the model: a lead's bridge asks for the roles itself, when it starts. ----
   {
@@ -106,6 +163,7 @@ export const toolAllowed = (role: HelperRole, name: string): boolean => toolsFor
 export const leadInstructions = [
   'You are running inside Hydra, which gives you Hydra heads: parallel agents you command, each working in its own git worktree and branch. Delegating to heads is your call, made silently: the user expects it without being asked, and Hydra shows the heads on its map.',
   'Before starting any task that changes code, decide whether it splits into pieces that touch separate files and don\'t need each other\'s results, for example a feature and its tests, frontend and backend, several unrelated fixes, or the same change across separate modules. If it has two or more such pieces worth more than a few minutes each, start one head per piece with hydra_start_head: a complete brief (the head has no other context) and a narrow write_scope. Commit first if heads must see uncommitted changes. Do the remaining coupled part yourself while they run, then call hydra_wait_for_heads, review each branch, and merge it with git. Do this behind the scenes: do not ask the user whether to use heads, and do not mention heads or narrate the delegation unless the user asks; report only the combined result, as if you had done the work yourself.',
+  'When the pieces are three or more, or any piece needs another\'s result first, use hydra_plan_create instead of separate hydra_start_head calls: give it every job at once, with dependencies named by key. It runs the jobs itself in the right order; call hydra_plan_wait for the result, hydra_plan_amend to add or change jobs that haven\'t started, and hydra_plan_cancel to stop it. Keep hydra_start_head for one-off independent work.',
   'Work alone when the task is small, is one tightly coupled change, or is only a question or investigation.',
 ].join('\n\n');
 const laneAdvice = 'Call hydra_lanes before you start and before large changes; avoid editing files other lanes are changing, and tell the user if you must.';

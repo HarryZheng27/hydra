@@ -11,6 +11,8 @@ export const preferenceOnlySettings: ReadonlySet<string> = new Set([
   'hydra.packs.folder',
   // Only changes what Connect/Repair do next; nothing about the current provider connection.
   'hydra.claudeMem.enabled',
+  // O1: read fresh by hydra_plan_create; nothing about the current provider connection.
+  'hydra.plans.leadPlansNeedApproval',
 ]);
 
 /**

@@ -19,6 +19,34 @@ import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
+import type { PlanLeadJobInput, PlanState } from './plans';
+import type { PlanJobStatus } from './planRunner';
+
+// ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+
+export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string }
+export interface PlanLeadEdit { key: string; title?: string; brief?: string; write_scope?: string[]; depends_on?: string[] }
+export interface PlanLeadSkip { key: string; reason: string }
+export interface PlanLeadAmendInput { add?: PlanLeadJobInput[]; edit?: PlanLeadEdit[]; skip?: PlanLeadSkip[] }
+/** One job as hydra_plan_get/_wait/_create/_amend/_cancel show it; jobId (if any) is enriched with head detail by HelperService itself. */
+export interface PlanLeadJobView { key: string; title: string; status: PlanJobStatus; reason?: string; jobId?: string }
+export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[] }
+/**
+ * The plan runner and store, narrowed to what a lead's hydra_plan_* calls need.
+ * Implemented in extension.ts, which owns the real PlanStore and PlanRunner.
+ */
+export interface PlanLeadBridge {
+  /** hydra_plan_create. Repeating the same idempotencyKey from the same leadSessionId returns the existing plan. */
+  create(input: PlanLeadCreateInput, leadSessionId: string): Promise<{ plan: PlanLeadPlan; created: boolean }>;
+  /** hydra_plan_get. Undefined if no such plan, or it wasn't created by this leadSessionId. */
+  get(id: string, leadSessionId: string): PlanLeadPlan | undefined;
+  /** hydra_plan_wait. */
+  wait(id: string, leadSessionId: string, maxWaitS: number, signal: AbortSignal): Promise<PlanLeadPlan>;
+  /** hydra_plan_amend. */
+  amend(id: string, leadSessionId: string, input: PlanLeadAmendInput): Promise<PlanLeadPlan>;
+  /** hydra_plan_cancel. */
+  cancel(id: string, leadSessionId: string, reason: string): Promise<PlanLeadPlan>;
+}
 
 /**
  * Hydra helpers, end to end (docs/Official_Extensions_Plan.md, Phases 4 and 6).
@@ -56,6 +84,12 @@ export interface HelperServiceOptions {
     /** hydra_job_ready from a lane that runs a plan job (docs/Plan_Lanes_Plan.md, decision 6): ask the user to mark it done. */
     jobReady?(laneId: string, note?: string): Promise<unknown>;
   };
+  /**
+   * O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Without it, the
+   * hydra_plan_* tools are refused. `leadSessionId` scopes idempotency and ownership
+   * to the calling chat's own bridge session (minted once when it connects).
+   */
+  plans?: PlanLeadBridge;
   /** Gates (docs/Gates_Plan.md): whether a provider is at its usage limit now, so a review uses the other one. */
   providerLimited?: (provider: Provider) => boolean;
   /** Gates: test seams for the reviewer, the browser and the clock. */
@@ -139,6 +173,12 @@ export class HelperService {
         case 'hydra_lanes':
           if (!this.options.lanes) throw new Error('Lanes are not available in this Hydra window.');
           return this.options.lanes.describe(caller.lane);
+        // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+        case 'hydra_plan_create': return this.planCreate(args, this.requireLeadSession(caller));
+        case 'hydra_plan_get': return this.planView(this.requirePlan(args.plan_id, this.requireLeadSession(caller)));
+        case 'hydra_plan_wait': return this.planWait(args, this.requireLeadSession(caller), signal);
+        case 'hydra_plan_amend': return this.planAmend(args, this.requireLeadSession(caller));
+        case 'hydra_plan_cancel': return this.planCancel(args, this.requireLeadSession(caller));
         // Packs (docs/Packs_Plan.md, decision 6): a lead's bridge asks once, for its instructions and hydra_start_head's `role`.
         case 'hydra_active_roles': return { roles: await this.activeRoles() };
         // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6): a lane's agent asks the user; it never marks the job itself ----
@@ -753,6 +793,117 @@ export class HelperService {
       const dependency = this.options.store.get(id);
       return dependency?.state === 'done' && dependency.result ? [{ id, kind: 'head' as const, title: dependency.title, summary: dependency.result.summary, commit: dependency.result.commit, ...(dependency.branch ? { branch: dependency.branch } : {}), changedFiles: dependency.result.changedFiles }] : [];
     });
+  }
+
+  // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+
+  private requirePlanBridge(): PlanLeadBridge {
+    if (!this.options.plans) throw new Error('Plans are not available in this Hydra window.');
+    return this.options.plans;
+  }
+  private requireLeadSession(caller: HelperCaller): string {
+    if (!caller.leadSessionId) throw new Error('This bridge has no lead session yet.');
+    return caller.leadSessionId;
+  }
+  private planId(value: unknown): string {
+    if (typeof value !== 'string' || !/^[a-f0-9]{12}$/.test(value)) throw new Error('plan_id must be a plan id.');
+    return value;
+  }
+  private requirePlan(id: unknown, leadSessionId: string): PlanLeadPlan {
+    const plan = this.requirePlanBridge().get(this.planId(id), leadSessionId);
+    if (!plan) throw new Error(`No plan ${String(id)} in this window.`);
+    return plan;
+  }
+  private parsePlanLeadJob(value: unknown): PlanLeadJobInput {
+    const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; role?: unknown } | undefined;
+    if (!job || typeof job !== 'object') throw new Error('Each job must be an object.');
+    if (typeof job.key !== 'string') throw new Error('Each job needs a key.');
+    if (typeof job.title !== 'string') throw new Error(`Job "${job.key}" needs a title.`);
+    if (typeof job.brief !== 'string') throw new Error(`Job "${job.key}" needs a brief.`);
+    if (!Array.isArray(job.write_scope) || job.write_scope.some(path => typeof path !== 'string')) throw new Error(`Job "${job.key}" needs a write_scope of paths.`);
+    if (job.depends_on !== undefined && (!Array.isArray(job.depends_on) || job.depends_on.some(key => typeof key !== 'string'))) throw new Error(`Job "${job.key}" has an invalid depends_on.`);
+    if (job.provider !== undefined && job.provider !== 'claude' && job.provider !== 'codex') throw new Error(`Job "${job.key}" has an unknown provider.`);
+    if (job.role !== undefined && typeof job.role !== 'string') throw new Error(`Job "${job.key}" has an invalid role.`);
+    return {
+      key: job.key, title: job.title, brief: job.brief, write_scope: job.write_scope as string[],
+      ...(job.depends_on ? { depends_on: job.depends_on as string[] } : {}),
+      ...(job.provider ? { provider: job.provider as Provider } : {}), ...(job.role ? { role: job.role as string } : {}),
+    };
+  }
+  private parsePlanLeadJobs(value: unknown, max: number): PlanLeadJobInput[] {
+    if (!Array.isArray(value)) throw new Error('jobs must be a list.');
+    if (value.length > max) throw new Error(`At most ${max} jobs at once.`);
+    return value.map(job => this.parsePlanLeadJob(job));
+  }
+  /** hydra_plan_create: a plan of head jobs, run under this same lead. Repeats return the existing plan. */
+  private async planCreate(args: Record<string, unknown>, leadSessionId: string) {
+    if (typeof args.title !== 'string') throw new Error('title must be text.');
+    if (typeof args.idempotency_key !== 'string' || !args.idempotency_key.trim()) throw new Error('idempotency_key must be text.');
+    if (!Array.isArray(args.jobs) || args.jobs.length < 1) throw new Error('A plan needs at least one job.');
+    const jobs = this.parsePlanLeadJobs(args.jobs, 12);
+    const input: PlanLeadCreateInput = { title: args.title, ...(typeof args.brief === 'string' ? { brief: args.brief } : {}), jobs, idempotencyKey: args.idempotency_key };
+    const { plan, created } = await this.requirePlanBridge().create(input, leadSessionId);
+    return {
+      ...this.planView(plan), created,
+      ...(plan.state === 'draft' ? { note: 'This plan is waiting for the user\'s OK to run it, from the Agents canvas.' } : {}),
+    };
+  }
+  /** hydra_plan_wait: like hydra_wait_for_heads, but for a whole plan. */
+  private async planWait(args: Record<string, unknown>, leadSessionId: string, signal: AbortSignal) {
+    const id = this.planId(args.plan_id);
+    const maxWaitS = Math.max(1, Math.min(3000, typeof args.max_wait_s === 'number' ? args.max_wait_s : 1800));
+    const plan = await this.requirePlanBridge().wait(id, leadSessionId, maxWaitS, signal);
+    return this.planView(plan);
+  }
+  /** hydra_plan_amend: add, edit or skip jobs that haven't started. */
+  private async planAmend(args: Record<string, unknown>, leadSessionId: string) {
+    const id = this.planId(args.plan_id);
+    const add = args.add !== undefined ? this.parsePlanLeadJobs(args.add, 12) : undefined;
+    const edit = args.edit !== undefined ? this.parsePlanEdits(args.edit) : undefined;
+    const skip = args.skip !== undefined ? this.parsePlanSkips(args.skip) : undefined;
+    const plan = await this.requirePlanBridge().amend(id, leadSessionId, { ...(add ? { add } : {}), ...(edit ? { edit } : {}), ...(skip ? { skip } : {}) });
+    return this.planView(plan);
+  }
+  private parsePlanEdits(value: unknown): PlanLeadEdit[] {
+    if (!Array.isArray(value)) throw new Error('edit must be a list.');
+    return value.map(item => {
+      const edit = item as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown } | undefined;
+      if (!edit || typeof edit.key !== 'string') throw new Error('Each edit needs a job key.');
+      if (edit.title !== undefined && typeof edit.title !== 'string') throw new Error(`Job "${edit.key}"'s title must be text.`);
+      if (edit.brief !== undefined && typeof edit.brief !== 'string') throw new Error(`Job "${edit.key}"'s brief must be text.`);
+      if (edit.write_scope !== undefined && (!Array.isArray(edit.write_scope) || edit.write_scope.some(path => typeof path !== 'string'))) throw new Error(`Job "${edit.key}"'s write_scope must be a list of paths.`);
+      if (edit.depends_on !== undefined && (!Array.isArray(edit.depends_on) || edit.depends_on.some(key => typeof key !== 'string'))) throw new Error(`Job "${edit.key}"'s depends_on must be a list of keys.`);
+      return {
+        key: edit.key, ...(edit.title !== undefined ? { title: edit.title as string } : {}), ...(edit.brief !== undefined ? { brief: edit.brief as string } : {}),
+        ...(edit.write_scope !== undefined ? { write_scope: edit.write_scope as string[] } : {}), ...(edit.depends_on !== undefined ? { depends_on: edit.depends_on as string[] } : {}),
+      };
+    });
+  }
+  private parsePlanSkips(value: unknown): PlanLeadSkip[] {
+    if (!Array.isArray(value)) throw new Error('skip must be a list.');
+    return value.map(item => {
+      const skip = item as { key?: unknown; reason?: unknown } | undefined;
+      if (!skip || typeof skip.key !== 'string') throw new Error('Each skip needs a job key.');
+      if (typeof skip.reason !== 'string' || !skip.reason.trim()) throw new Error(`Job "${skip.key}" needs a reason to skip it.`);
+      return { key: skip.key, reason: skip.reason };
+    });
+  }
+  /** hydra_plan_cancel: stop every unfinished job and fail the plan. */
+  private async planCancel(args: Record<string, unknown>, leadSessionId: string) {
+    const id = this.planId(args.plan_id);
+    const reason = typeof args.reason === 'string' ? clip(args.reason, 500) : 'Cancelled by the lead.';
+    const plan = await this.requirePlanBridge().cancel(id, leadSessionId, reason);
+    return this.planView(plan);
+  }
+  /** A plan as hydra_plan_* return it: each job's status, and a started job's own head detail. */
+  private planView(plan: PlanLeadPlan) {
+    return {
+      plan_id: plan.planId, title: plan.title, state: plan.state, ...(plan.error ? { error: plan.error } : {}),
+      jobs: plan.jobs.map(job => {
+        const head = job.jobId ? this.options.store.get(job.jobId) : undefined;
+        return { key: job.key, title: job.title, status: job.status, ...(job.reason ? { reason: job.reason } : {}), ...(head ? { head: this.describe(head, true) } : {}) };
+      }),
+    };
   }
 
   private ownJob(id: unknown): Job {

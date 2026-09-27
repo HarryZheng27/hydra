@@ -18,7 +18,7 @@ import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
 type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
-async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number }) {
+async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -37,7 +37,7 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
     store, endpoint, leadFolder: repo, leadKey: 'window', worktreeRoot: () => path.join(root, 'worktrees'),
     executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => options.maxConcurrent ?? 2, now: options.now, watchdogMs: 20,
-    gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo),
+    gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo), plans: options.plans,
     startRun: spec => {
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
@@ -639,5 +639,173 @@ test('heads queued behind a head that hit its usage limit wait for it (decision 
     assert.equal(gone.state, 'failed'); assert.match(gone.reason, /depends on did not finish/);
     assert.equal(f.store.get(abandoned.job_id)!.limitHit, false);
     await assert.rejects(f.service.continueWith(abandoned.job_id, 'codex', 'x'), /did not fail from a usage limit/);
+  } finally { await f.close(); }
+});
+
+// ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+
+test('hydra_plan_* tools are refused when the window has no plans bridge', async () => {
+  const f = await fixture({ script: async () => {} });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    const result = await call('hydra_plan_create', { title: 'A plan', jobs: [{ key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] }], idempotency_key: 'k1' });
+    assert.equal(result.ok, false);
+    assert.match(result.error!, /Plans are not available/);
+  } finally { await f.close(); }
+});
+
+test('hydra_plan_* tools need a bridge session (a lead token minted without one is refused)', async () => {
+  const f = await fixture({ script: async () => {}, plans: {
+    create: async () => { throw new Error('should not be called'); }, get: () => undefined,
+    wait: async () => { throw new Error('should not be called'); }, amend: async () => { throw new Error('should not be called'); }, cancel: async () => { throw new Error('should not be called'); },
+  } });
+  try {
+    // fixture()'s own default lead token has no leadSessionId.
+    const result = await f.call('hydra_plan_create', { title: 'A plan', jobs: [{ key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] }], idempotency_key: 'k1' });
+    assert.equal(result.ok, false);
+    assert.match(result.error!, /no lead session/);
+  } finally { await f.close(); }
+});
+
+/** A fake PlanLeadBridge, in memory, that records every call it gets. */
+function fakePlanBridge() {
+  const calls: { method: string; args: unknown[] }[] = [];
+  const plans = new Map<string, any>();
+  const bridge = {
+    create: async (input: any, leadSessionId: string) => {
+      calls.push({ method: 'create', args: [input, leadSessionId] });
+      const plan = { planId: 'aaaaaaaa0001', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })) };
+      plans.set(plan.planId, plan);
+      return { plan, created: true };
+    },
+    get: (id: string, leadSessionId: string) => { calls.push({ method: 'get', args: [id, leadSessionId] }); return plans.get(id); },
+    wait: async (id: string, leadSessionId: string, maxWaitS: number, signal: AbortSignal) => {
+      calls.push({ method: 'wait', args: [id, leadSessionId, maxWaitS, signal.aborted] });
+      const plan = plans.get(id); if (!plan) throw new Error(`No plan ${id} in this window.`); return plan;
+    },
+    amend: async (id: string, leadSessionId: string, input: any) => {
+      calls.push({ method: 'amend', args: [id, leadSessionId, input] });
+      const plan = plans.get(id); if (!plan) throw new Error(`No plan ${id} in this window.`);
+      if (input.add?.length) plan.jobs.push(...input.add.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })));
+      if (input.skip?.length) for (const skip of input.skip) { const job = plan.jobs.find((item: any) => item.key === skip.key); if (job) { job.status = 'skipped'; job.reason = skip.reason; } }
+      return plan;
+    },
+    cancel: async (id: string, leadSessionId: string, reason: string) => {
+      calls.push({ method: 'cancel', args: [id, leadSessionId, reason] });
+      const plan = plans.get(id); if (!plan) throw new Error(`No plan ${id} in this window.`);
+      plan.state = 'incomplete'; for (const job of plan.jobs) if (job.status === 'active') job.status = 'cancelled';
+      return plan;
+    },
+  };
+  return { bridge: bridge as unknown as HelperServiceOptions['plans'], calls, plans };
+}
+
+test('hydra_plan_create parses jobs, delegates to the bridge with the calling session, and shapes the result', async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    const result = await call('hydra_plan_create', {
+      title: 'Checkout refactor', brief: 'Split it up.',
+      jobs: [{ key: 'schema', title: 'Schema', brief: 'Do the schema.', write_scope: ['src/schema/'] }, { key: 'api', title: 'API', brief: 'Do the api.', write_scope: ['src/api/'], depends_on: ['schema'], provider: 'codex' }],
+      idempotency_key: 'plan-1',
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls[0]!.method, 'create');
+    assert.equal(calls[0]!.args[1], 'abcdef012345', 'the calling session, not a made-up one');
+    const input = calls[0]!.args[0] as any;
+    assert.equal(input.idempotencyKey, 'plan-1');
+    assert.equal(input.jobs[1].depends_on[0], 'schema');
+    assert.equal(input.jobs[1].provider, 'codex');
+    assert.deepEqual(result.result, { plan_id: 'aaaaaaaa0001', title: 'Checkout refactor', state: 'running', jobs: [{ key: 'schema', title: 'Schema', status: 'active' }, { key: 'api', title: 'API', status: 'active' }], created: true });
+  } finally { await f.close(); }
+});
+
+test('hydra_plan_create refuses a job with no write_scope, and a plan with no jobs, before ever reaching the bridge', async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    const noScope = await call('hydra_plan_create', { title: 'X', jobs: [{ key: 'a', title: 'A', brief: 'Do a.' }], idempotency_key: 'k' });
+    assert.equal(noScope.ok, false); assert.match(noScope.error!, /write_scope/);
+    const noJobs = await call('hydra_plan_create', { title: 'X', jobs: [], idempotency_key: 'k2' });
+    assert.equal(noJobs.ok, false); assert.match(noJobs.error!, /at least one job/);
+    assert.equal(calls.length, 0, 'the bridge is never called for input that fails parsing');
+  } finally { await f.close(); }
+});
+
+test("hydra_plan_get returns a job enriched with its head's own detail when it has started as a head", async () => {
+  const { bridge, plans } = fakePlanBridge();
+  const f = await fixture({ checks: passCheck, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const x = 1;\n');
+    await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    helper.endTurn();
+  }, plans: bridge });
+  try {
+    const started = await f.start('for-plan');
+    plans.set('aaaaaaaa0002', { planId: 'aaaaaaaa0002', title: 'Has a head', state: 'running', jobs: [{ key: 'a', title: 'A', status: 'active', jobId: started.job_id }] });
+    await until(() => f.store.get(started.job_id)?.state === 'done', 'head done');
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const result = await callHelperEndpoint(f.endpoint.port, chat, 'hydra_plan_get', { plan_id: 'aaaaaaaa0002' });
+    assert.equal(result.ok, true);
+    const job = (result.result as any).jobs[0];
+    assert.equal(job.head.job_id, started.job_id);
+    assert.equal(job.head.state, 'done');
+    assert.equal(job.head.summary, 'Added fixed.ts');
+  } finally { await f.close(); }
+});
+
+test('hydra_plan_get on an unknown plan is a clear error, not a bare undefined', async () => {
+  const { bridge } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const result = await callHelperEndpoint(f.endpoint.port, chat, 'hydra_plan_get', { plan_id: 'ffffffffffff' });
+    assert.equal(result.ok, false);
+    assert.match(result.error!, /No plan/);
+  } finally { await f.close(); }
+});
+
+test("hydra_plan_wait forwards max_wait_s (clamped) and the abort signal, and returns the bridge's plan", async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    await callHelperEndpoint(f.endpoint.port, chat, 'hydra_plan_create', { title: 'X', jobs: [{ key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] }], idempotency_key: 'k' });
+    const result = await callHelperEndpoint(f.endpoint.port, chat, 'hydra_plan_wait', { plan_id: 'aaaaaaaa0001', max_wait_s: 999999 });
+    assert.equal(result.ok, true);
+    const waitCall = calls.find(c => c.method === 'wait')!;
+    assert.equal(waitCall.args[2], 3000, 'max_wait_s is clamped the same way hydra_wait_for_heads clamps it');
+  } finally { await f.close(); }
+});
+
+test('hydra_plan_amend parses add/edit/skip and delegates each list, and hydra_plan_cancel delegates a default reason', async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    await call('hydra_plan_create', { title: 'X', jobs: [{ key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] }], idempotency_key: 'k' });
+    const amended = await call('hydra_plan_amend', {
+      plan_id: 'aaaaaaaa0001',
+      add: [{ key: 'b', title: 'B', brief: 'Do b.', write_scope: ['src/b/'] }],
+      skip: [{ key: 'a', reason: 'Not needed any more.' }],
+    });
+    assert.equal(amended.ok, true, amended.error);
+    const amendCall = calls.find(c => c.method === 'amend')!;
+    assert.equal((amendCall.args[2] as any).add[0].key, 'b');
+    assert.equal((amendCall.args[2] as any).skip[0].reason, 'Not needed any more.');
+    const result = amended.result as any;
+    assert.ok(result.jobs.some((job: any) => job.key === 'b'));
+    assert.equal(result.jobs.find((job: any) => job.key === 'a').status, 'skipped');
+
+    const cancelled = await call('hydra_plan_cancel', { plan_id: 'aaaaaaaa0001' });
+    assert.equal(cancelled.ok, true, cancelled.error);
+    const cancelCall = calls.find(c => c.method === 'cancel')!;
+    assert.equal(cancelCall.args[2], 'Cancelled by the lead.');
+    assert.equal((cancelled.result as any).state, 'incomplete');
   } finally { await f.close(); }
 });
