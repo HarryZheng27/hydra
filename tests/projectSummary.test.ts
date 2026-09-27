@@ -199,3 +199,19 @@ test('a publisher only ever writes its own id: two publishers in the same direct
   assert.equal(fileB.pid, 222);
   await a.dispose(); await b.dispose();
 });
+
+test('a clean close leaves a summary that reads as closed; one closed over a day ago is pruned', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hydra-summary-'));
+  const clock = fakeClock();
+  const empty = { heads: { running: 0, blocked: 0, done: 0 }, lanes: { running: 0, exited: 0 }, plans: { live: 0, lines: [] }, blocked: [], evidence: { passed: 0, partial: 0, none: 0, 'none-chosen': 0, override: 0 }, providers: [] };
+  const publisher = startProjectSummaryPublisher({ dir, id: 'closing', pid: process.pid, clock, build: () => ({ folder: '/repo/c', name: 'c', ...empty }) });
+  await delay(20);
+  await publisher.dispose('closed');
+  // Its pid is alive (this process), yet it reads as closed, because the window said so.
+  const [view] = await readProjectSummaries(dir, new Date(0), () => true);
+  assert.equal(view!.liveness, 'closed');
+  assert.ok(view!.closedAt);
+  // A day later it's pruned, file and all.
+  assert.deepEqual(await readProjectSummaries(dir, new Date(25 * 60 * 60 * 1000), () => true), []);
+  await assert.rejects(stat(path.join(dir, 'closing.summary.json')));
+});

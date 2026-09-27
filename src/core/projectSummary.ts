@@ -28,11 +28,15 @@ export interface ProjectSummary {
   blocked: { title: string; reason: string }[];
   evidence: Record<EvidenceStatus, number>;
   providers: Provider[];
+  /** Set by the window's own clean close, so the view says "Closed" rather than dropping the project. */
+  closedAt?: string;
 }
 
 export const maxBlockedInSummary = 10;
 /** A summary older than this reads as "not responding", even if its pid is still alive. */
 export const summaryStaleAfterMs = 3 * 60 * 1000;
+/** A closed window's summary is pruned after a day, so the list doesn't keep every project ever opened. */
+export const closedSummaryKeptMs = 24 * 60 * 60 * 1000;
 
 const runningHeadStates = new Set(['queued', 'starting', 'running', 'checking']);
 const emptyEvidence = (): Record<EvidenceStatus, number> => ({ passed: 0, partial: 0, none: 0, 'none-chosen': 0, override: 0 });
@@ -115,9 +119,11 @@ export async function readProjectSummaries(dir: string, now: Date, isAlive: (pid
     let summary: ProjectSummary;
     try { summary = JSON.parse(await readFile(path.join(dir, name), 'utf8')); } catch { continue; }
     if (summary?.version !== 1 || typeof summary.pid !== 'number' || typeof summary.folder !== 'string') continue;
-    const alive = isAlive(summary.pid);
-    const stale = now.getTime() - new Date(summary.updatedAt).getTime() > summaryStaleAfterMs;
-    out.push({ ...summary, liveness: !alive ? 'closed' : stale ? 'not-responding' : 'running' });
+    const closed = !!summary.closedAt || !isAlive(summary.pid);
+    const age = now.getTime() - new Date(summary.closedAt ?? summary.updatedAt).getTime();
+    // A window gone for over a day: its file is pruned, the same way findWindowFor prunes dead window records.
+    if (closed && age > closedSummaryKeptMs) { await rm(path.join(dir, name), { force: true }).catch(() => undefined); continue; }
+    out.push({ ...summary, liveness: closed ? 'closed' : age > summaryStaleAfterMs ? 'not-responding' : 'running' });
   }
   return out;
 }
@@ -141,8 +147,11 @@ export const realProjectSummaryClock: ProjectSummaryClock = {
 export interface ProjectSummaryPublisher {
   /** Call after any head, lane or plan change. Writes at once if a second has passed since the last write, else once, trailing, when it has. */
   changed(): void;
-  /** Stops the heartbeat and removes this window's summary file (the window is closing). */
-  dispose(): Promise<void>;
+  /**
+   * Stops the heartbeat. `closed` (the window is closing) leaves a final summary marked closed, so
+   * other windows show it as closed; `remove` (the default: this id is being replaced) deletes the file.
+   */
+  dispose(mode?: 'closed' | 'remove'): Promise<void>;
 }
 export interface ProjectSummaryPublisherOptions {
   dir: string;
@@ -183,12 +192,14 @@ export function startProjectSummaryPublisher(options: ProjectSummaryPublisherOpt
 
   return {
     changed,
-    dispose: async () => {
+    dispose: async (mode = 'remove') => {
       if (disposed) return;
       disposed = true;
       if (trailing !== undefined) clock.clearTimeout(trailing);
       clock.clearInterval(heartbeat);
-      await removeProjectSummary(dir, id).catch(() => undefined);
+      if (mode === 'remove') { await removeProjectSummary(dir, id).catch(() => undefined); return; }
+      const at = clock.now().toISOString();
+      await writeProjectSummary(dir, id, { version: 1, pid, updatedAt: at, closedAt: at, ...build() }).catch(error => onError(error));
     },
   };
 }

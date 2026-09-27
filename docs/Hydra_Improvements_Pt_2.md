@@ -1,6 +1,6 @@
 # Hydra improvements, part 2: product and release parity
 
-Status (2026-09-26): Steps A and B done (see "As built"); Steps C–E to follow, in order. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
+Status (2026-09-26): Steps A, B and D done (see "As built"); Steps C and E to follow. `Hydra_Improvements.md` stays the record for security hardening and release trust; this file starts where that one ends.
 
 ## Why this exists
 
@@ -368,3 +368,34 @@ Run by the main session (Opus) on Hydra 0.24.0 at `e2f422a`, Claude only. The fu
 - A development window said "Connected, updating for this Hydra…" about an update it never makes.
 
 **Still open:** code signing, an update host and key custody (the release owner), then the native install step and a signed upgrade. Also Open PR against a real GitHub repository, and a clean-machine run with a signed installer. Each is listed with its owner in the record.
+
+### Step D (2026-09-26)
+
+Built by one Sonnet subagent (`hydra-wt/projects`), alongside Step C. The main session reviewed the diff, fixed what it found and ran the live checks.
+
+**What it does:**
+- **`src/core/projectSummary.ts`:** each window writes `helpers/windows/<id>.summary.json` beside its discovery record, 0600 and atomically. It holds:
+  - the folder, with its name shown only locally;
+  - counts of heads, lanes and live plans, with the plans' progress lines;
+  - blocked heads and their questions, up to 10;
+  - evidence counts (Step A);
+  - the providers in use.
+
+  It's written on change at most once a second, with a 60-second heartbeat.
+- **Hydra: Show All Projects** is read-only and lists every window's summary, marking this one.
+  - A window whose process is gone, or that closed, reads **Closed**. One whose heartbeat is over 3 minutes old reads **Not responding**.
+  - Choosing a live project asks VS Code to open its folder, which focuses the window that already has it. Choosing a closed one only says so.
+  - There is no command or endpoint that changes another window's jobs.
+
+**Fixed in review:** a clean close deleted the window's summary, so the project vanished from the list instead of showing as closed, as the spec asks.
+- Closing the window now writes a final summary marked `closedAt`.
+- Re-keying (the window's record id changes when its open worktrees do) still deletes the old file.
+- The reader prunes a closed summary after a day, as `findWindowFor` prunes dead window records.
+
+**Live checks (probe, two windows of one instance):**
+1. Each window wrote its own summary, and **Show All Projects** in one listed both, its own marked "This window".
+2. Choosing the other project neither replaced the current window nor opened a third. Whether it came to the front couldn't be checked: another app had the foreground, and Windows doesn't let a background app take focus.
+3. After **View: Close Window** in the second window, the first listed it as "Closed · … This window has closed." Choosing it opened nothing.
+4. Nico's Claude and Codex settings were unchanged.
+
+**Tests:** `tests/projectSummary.test.ts`, 11 tests, including the closed and pruned case. `hydraTree` 9 is unchanged.

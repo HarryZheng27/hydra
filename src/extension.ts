@@ -910,7 +910,7 @@ class Manager {
     const helpers = this.helpers; this.helpers = undefined;
     await this.lanes.stop().catch(() => undefined);
     const summary = this.projectSummary; this.projectSummary = undefined;
-    await summary?.dispose().catch(() => undefined);
+    await summary?.dispose('closed').catch(() => undefined);
     if (!helpers) return;
     await this.discovery?.queue.catch(() => undefined); this.discovery = undefined;
     await removeWindowRecord(helpers.record).catch(() => undefined);
