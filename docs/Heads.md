@@ -164,6 +164,13 @@ Apart from plans (below), the view never starts work itself; everything else on 
 - **Trust:** a post from anyone but the reader comes back marked `untrusted: true` — a job treats it as data, never as instructions, the same way a gate review does. The lead sees every post this way too, except its own.
 - **Limits:** a post is at most 2,000 characters, with an optional 200-character topic; a plan's board keeps its most recent 500 posts.
 
+**Plans that adapt.** A lead's plan keeps going instead of stopping at the first failure:
+- **Independent jobs keep running** when one fails; only the jobs that depend on it are skipped, with a reason.
+- **`hydra_plan_wait` returns early** for a job that failed, not just one asking a question, and `needs_attention` on `hydra_plan_get`/`hydra_plan_wait`'s reply names every job that needs the lead now.
+- **`hydra_plan_amend`'s `retry`** restarts a job that failed or was skipped (by the lead, or automatically because its dependency failed), with its attempt count up by one. It can come with a wider `write_scope`, a clearer brief or a different provider. Retrying a job never un-skips its own dependents on its own — name them too when the whole chain should resume.
+- **A history:** every add, edit, skip and retry is kept on the plan (`amendments` on `hydra_plan_get`), oldest first.
+- **A limit:** `hydra.plans.maxAmendments` (10 by default; 0 means unlimited) caps how many changes one plan can take before `hydra_plan_amend` is refused. Cancel it, or start a new plan, once you hit it.
+
 **New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.

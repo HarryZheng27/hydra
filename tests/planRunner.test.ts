@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createPlan, planFromLeadInput, PlanStore, type Plan, type PlanJob, type PlanLeadJobInput } from '../src/core/plans';
+import { applyPlanAmendment, createPlan, planFromLeadInput, PlanStore, type Plan, type PlanJob, type PlanLeadJobInput } from '../src/core/plans';
 import { planHeadInput, planHeadKey, planRunRefusal, planSteps, PlanRunner, type PlanHeadLook, type PlanLaneLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import { parseJobInput } from '../src/core/jobs';
 import type { DependencyResult } from '../src/core/headStart';
@@ -398,6 +398,48 @@ test('a diamond plan built by planFromLeadInput (schema -> api, schema -> ui, ap
     assert.equal(f.get().state, 'running', 'e2e itself has not finished yet');
     f.world.finish(ids.get('e2e')!);
     await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'done');
+  } finally { await f.close(); }
+});
+
+// ---- O5: plans that adapt (docs/Heads.md, "Plans that adapt") ----
+
+test('O5: an independent job\'s failure leaves the plan incomplete without stopping the rest; hydra_plan_amend\'s retry (applyPlanAmendment) brings it back to done', async () => {
+  // a and b are independent heads; c is a lane, so unlike a dependent head (which starts
+  // alongside its dependency, per the diamond test above) it genuinely waits for b to finish.
+  const f = await fixture([job('a'), job('b'), lane('c', { dependsOn: ['b'] })]);
+  try {
+    await f.runner.run(f.plan.id);
+    assert.deepEqual(f.started.map(item => item.key), ['a', 'b'], 'c waits: a lane job needs its dependency done, not just started');
+    const ids = new Map(f.started.map(item => [item.key, item.id]));
+    f.world.finish(ids.get('a')!);
+    f.world.heads.get(ids.get('b')!)!.state = 'failed';
+    f.world.heads.get(ids.get('b')!)!.reason = 'Gates failed 3 times.';
+    await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'incomplete', 'nothing left to wait for: a is done, b failed, c can only be skipped');
+    assert.equal(f.status('a').status, 'done', 'the independent job finished normally');
+    assert.equal(f.byKey('c').outcome?.state, 'skipped', 'c is skipped, not stuck, since it depends only on the failed job');
+    assert.equal(f.started.some(item => item.key === 'c'), false, 'c never started');
+
+    // hydra_plan_amend's retry: the same pure function extension.ts's Manager.planLeadAmend calls,
+    // applied to the plan exactly as it's stored, then written back with the plan set running again.
+    // c was skipped only because b failed, so it's retried alongside b to resume the whole chain.
+    const plan = f.get();
+    const result = applyPlanAmendment(plan, { retry: [{ key: 'b' }, { key: 'c' }] }, key => f.status(key).status);
+    assert.equal(result.jobs.find(item => item.key === 'b')!.outcome, undefined);
+    assert.equal(result.jobs.find(item => item.key === 'c')!.outcome, undefined);
+    await f.store.update(f.plan.id, current => ({ ...current, jobs: result.jobs, amendments: result.amendments, state: 'running' }));
+    await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'running', 'b is queued again; c is not skipped any more once b restarts');
+    assert.equal(f.byKey('c').outcome, undefined);
+    assert.equal(f.started.some(item => item.key === 'c'), false, 'c still waits for the retried b to finish');
+    const retriedB = f.started.filter(item => item.key === 'b');
+    assert.equal(retriedB.length, 2, 'b started a second time');
+    f.world.finish(retriedB[1]!.id);
+    await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'running', 'c starts once b is done');
+    const cStarted = f.started.find(item => item.key === 'c')!;
+    await f.runner.markLaneDone(f.plan.id, 'c', cStarted.id, { commit: sha('c'), changedFiles: ['src/c.ts'] });
     assert.equal(f.get().state, 'done');
   } finally { await f.close(); }
 });

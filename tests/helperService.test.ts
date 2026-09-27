@@ -694,7 +694,7 @@ function fakePlanBridge() {
   const bridge = {
     create: async (input: any, leadSessionId: string) => {
       calls.push({ method: 'create', args: [input, leadSessionId] });
-      const plan = { planId: 'aaaaaaaa0001', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })), board: [] as any[] };
+      const plan = { planId: 'aaaaaaaa0001', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })), board: [] as any[], amendments: [] as any[] };
       plans.set(plan.planId, plan);
       return { plan, created: true };
     },
@@ -771,7 +771,7 @@ test("hydra_plan_get returns a job enriched with its head's own detail when it h
   }, plans: bridge });
   try {
     const started = await f.start('for-plan');
-    plans.set('aaaaaaaa0002', { planId: 'aaaaaaaa0002', title: 'Has a head', state: 'running', jobs: [{ key: 'a', title: 'A', status: 'active', jobId: started.job_id }], board: [] });
+    plans.set('aaaaaaaa0002', { planId: 'aaaaaaaa0002', title: 'Has a head', state: 'running', jobs: [{ key: 'a', title: 'A', status: 'active', jobId: started.job_id }], board: [], amendments: [] });
     await until(() => f.store.get(started.job_id)?.state === 'done', 'head done');
     const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
     const result = await callHelperEndpoint(f.endpoint.port, chat, 'hydra_plan_get', { plan_id: 'aaaaaaaa0002' });
@@ -835,6 +835,29 @@ test('hydra_plan_amend parses add/edit/skip and delegates each list, and hydra_p
   } finally { await f.close(); }
 });
 
+// ---- O5: plans that adapt (docs/Heads.md, "Plans that adapt") ----
+
+test('hydra_plan_amend parses retry and delegates it, and refuses a malformed retry list before ever reaching the bridge', async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    await call('hydra_plan_create', { title: 'X', jobs: [{ key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] }], idempotency_key: 'k' });
+    const retried = await call('hydra_plan_amend', { plan_id: 'aaaaaaaa0001', retry: [{ key: 'a', write_scope: ['src/wider/'], provider: 'codex' }] });
+    assert.equal(retried.ok, true, retried.error);
+    const retryCall = calls.find(c => c.method === 'amend' && (c.args[2] as any).retry)!;
+    assert.equal((retryCall.args[2] as any).retry[0].key, 'a');
+    assert.equal((retryCall.args[2] as any).retry[0].write_scope[0], 'src/wider/');
+    assert.equal((retryCall.args[2] as any).retry[0].provider, 'codex');
+
+    const noKey = await call('hydra_plan_amend', { plan_id: 'aaaaaaaa0001', retry: [{ write_scope: ['src/'] }] });
+    assert.equal(noKey.ok, false); assert.match(noKey.error!, /needs a job key/);
+    const badProvider = await call('hydra_plan_amend', { plan_id: 'aaaaaaaa0001', retry: [{ key: 'a', provider: 'gpt' }] });
+    assert.equal(badProvider.ok, false); assert.match(badProvider.error!, /unknown provider/);
+  } finally { await f.close(); }
+});
+
 // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
 
 /**
@@ -848,7 +871,7 @@ function fakePlanWorld() {
   const untrust = (post: any, key: string) => ({ ...post, untrusted: !(post.from.kind === 'job' && post.from.key === key) });
   const leadBridge = {
     create: async (input: any) => {
-      const plan = { planId: 'aaaaaaaa0003', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })), board: [] as any[] };
+      const plan = { planId: 'aaaaaaaa0003', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })), board: [] as any[], amendments: [] as any[] };
       plans.set(plan.planId, plan);
       return { plan, created: true };
     },

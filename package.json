@@ -446,6 +446,13 @@
           "type": "boolean",
           "default": false,
           "description": "A plan the lead creates from the chat (hydra_plan_create) opens as a draft for you to run yourself, instead of starting right away."
+        },
+        "hydra.plans.maxAmendments": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 10,
+          "description": "How many times hydra_plan_amend can change a plan (adding, editing, skipping or retrying a job each count once) before it's refused. 0 means unlimited."
         }
       }
     }

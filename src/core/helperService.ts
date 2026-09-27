@@ -19,23 +19,25 @@ import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
-import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost } from './plans';
+import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost, type PlanAmendment } from './plans';
 import { HeadSync, headSyncIntervalMs, type HeadConflict } from './headSync';
 export type { HeadConflict } from './headSync';
-import type { PlanLeadJobInput, PlanState } from './plans';
+import type { PlanAmendEdit, PlanAmendRetry, PlanAmendSkip, PlanLeadJobInput, PlanState } from './plans';
 import type { PlanJobStatus } from './planRunner';
 
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
 
 export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string }
-export interface PlanLeadEdit { key: string; title?: string; brief?: string; write_scope?: string[]; depends_on?: string[] }
-export interface PlanLeadSkip { key: string; reason: string }
-export interface PlanLeadAmendInput { add?: PlanLeadJobInput[]; edit?: PlanLeadEdit[]; skip?: PlanLeadSkip[] }
+export type PlanLeadEdit = PlanAmendEdit;
+export type PlanLeadSkip = PlanAmendSkip;
+/** O5: retry a job that failed or was skipped, optionally with changes (docs/Heads.md, "Plans that adapt"). */
+export type PlanLeadRetry = PlanAmendRetry;
+export interface PlanLeadAmendInput { add?: PlanLeadJobInput[]; edit?: PlanLeadEdit[]; skip?: PlanLeadSkip[]; retry?: PlanLeadRetry[] }
 /** One job as hydra_plan_get/_wait/_create/_amend/_cancel show it; jobId (if any) is enriched with head detail by HelperService itself. */
 export interface PlanLeadJobView { key: string; title: string; status: PlanJobStatus; reason?: string; jobId?: string }
 /** A board post as a lead's hydra_plan_* tools show it: `untrusted` is true for everything but the lead's own posts (boardForLead, plans.ts). */
 export type PlanLeadBoardPost = BoardPost & { untrusted: boolean };
-export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[] }
+export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[] }
 export interface PlanLeadMessageInput { to: 'all' | string[]; topic?: string; body: string }
 /**
  * The plan runner and store, narrowed to what a lead's hydra_plan_* calls need.
@@ -906,8 +908,24 @@ export class HelperService {
     const add = args.add !== undefined ? this.parsePlanLeadJobs(args.add, 12) : undefined;
     const edit = args.edit !== undefined ? this.parsePlanEdits(args.edit) : undefined;
     const skip = args.skip !== undefined ? this.parsePlanSkips(args.skip) : undefined;
-    const plan = await this.requirePlanBridge().amend(id, leadSessionId, { ...(add ? { add } : {}), ...(edit ? { edit } : {}), ...(skip ? { skip } : {}) });
+    const retry = args.retry !== undefined ? this.parsePlanRetries(args.retry) : undefined;
+    const plan = await this.requirePlanBridge().amend(id, leadSessionId, { ...(add ? { add } : {}), ...(edit ? { edit } : {}), ...(skip ? { skip } : {}), ...(retry ? { retry } : {}) });
     return this.planView(plan);
+  }
+  private parsePlanRetries(value: unknown): PlanLeadRetry[] {
+    if (!Array.isArray(value)) throw new Error('retry must be a list.');
+    return value.map(item => {
+      const retry = item as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; provider?: unknown } | undefined;
+      if (!retry || typeof retry.key !== 'string') throw new Error('Each retry needs a job key.');
+      if (retry.title !== undefined && typeof retry.title !== 'string') throw new Error(`Job "${retry.key}"'s title must be text.`);
+      if (retry.brief !== undefined && typeof retry.brief !== 'string') throw new Error(`Job "${retry.key}"'s brief must be text.`);
+      if (retry.write_scope !== undefined && (!Array.isArray(retry.write_scope) || retry.write_scope.length < 1 || retry.write_scope.some(path => typeof path !== 'string'))) throw new Error(`Job "${retry.key}"'s write_scope must be a non-empty list of paths.`);
+      if (retry.provider !== undefined && retry.provider !== 'claude' && retry.provider !== 'codex') throw new Error(`Job "${retry.key}" has an unknown provider.`);
+      return {
+        key: retry.key, ...(retry.title !== undefined ? { title: retry.title as string } : {}), ...(retry.brief !== undefined ? { brief: retry.brief as string } : {}),
+        ...(retry.write_scope !== undefined ? { write_scope: retry.write_scope as string[] } : {}), ...(retry.provider !== undefined ? { provider: retry.provider as Provider } : {}),
+      };
+    });
   }
   private parsePlanEdits(value: unknown): PlanLeadEdit[] {
     if (!Array.isArray(value)) throw new Error('edit must be a list.');
@@ -942,13 +960,19 @@ export class HelperService {
   }
   /** A plan as hydra_plan_* return it: each job's status, a started job's own head detail, and the board. */
   private planView(plan: PlanLeadPlan) {
+    const jobs = plan.jobs.map(job => {
+      const head = job.jobId ? this.options.store.get(job.jobId) : undefined;
+      return { key: job.key, title: job.title, status: job.status, ...(job.reason ? { reason: job.reason } : {}), ...(head ? { head: this.describe(head, true) } : {}) };
+    });
+    // O5: which jobs need the lead now, so a plan that keeps most of itself running doesn't get missed
+    // amid the rest — a job that ran out of attempts (evidence is in its own `head`), or one asking a question.
+    const needsAttention = jobs.filter(job => job.status === 'failed' || job.head?.question).map(job => job.key);
     return {
       plan_id: plan.planId, title: plan.title, state: plan.state, ...(plan.error ? { error: plan.error } : {}),
-      jobs: plan.jobs.map(job => {
-        const head = job.jobId ? this.options.store.get(job.jobId) : undefined;
-        return { key: job.key, title: job.title, status: job.status, ...(job.reason ? { reason: job.reason } : {}), ...(head ? { head: this.describe(head, true) } : {}) };
-      }),
+      jobs,
+      ...(needsAttention.length ? { needs_attention: needsAttention } : {}),
       ...(plan.board.length ? { board: plan.board } : {}),
+      ...(plan.amendments.length ? { amendments: plan.amendments } : {}),
     };
   }
 

@@ -13,6 +13,8 @@ export const preferenceOnlySettings: ReadonlySet<string> = new Set([
   'hydra.claudeMem.enabled',
   // O1: read fresh by hydra_plan_create; nothing about the current provider connection.
   'hydra.plans.leadPlansNeedApproval',
+  // O5: read fresh by hydra_plan_amend; nothing about the current provider connection.
+  'hydra.plans.maxAmendments',
 ]);
 
 /**
