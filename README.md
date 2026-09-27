@@ -23,6 +23,14 @@ npm.cmd run desktop:smoke
 
 The build lives in `.desktop/VSCode-win32-x64/`. The Windows CI job builds the same standalone app and runs the existing acceptance suite against its built-in Hydra module, using a separate empty test harness. A source `.vsix` does not satisfy the standalone release gate. Releases are published from that same CI run, with a `SHA256SUMS` file and a build-provenance attestation; see [Releasing Hydra](docs/Releases.md).
 
+## Uninstall
+
+Uninstall Hydra from **Windows Settings → Apps → Installed apps**, or run `unins000.exe` in Hydra's install folder.
+
+- If you connected Claude Code or Codex to Hydra (**Settings → Connectors**), uninstalling removes what Hydra added to them: its `hydra` MCP server, allow rule and usage-limit hook in Claude Code, and its block and guidance in Codex. Entries from another Hydra, such as a development build, are left alone. What was done is logged to `%TEMP%\hydra-uninstall.log`.
+- Uninstall asks whether to also remove your Hydra settings, history and extensions (`%APPDATA%\Hydra` and `%USERPROFILE%\.hydra`). The answer defaults to No. Your projects and your Claude and Codex sign-ins are never touched.
+- A silent uninstall keeps that data unless you add `/HYDRAREMOVEDATA`, for example `unins000.exe /VERYSILENT /HYDRAREMOVEDATA`.
+
 ## Available features
 
 - Open **Hydra: Toggle Editor / Agents** from the Command Palette or press **Ctrl+Alt+A**. The Agents view is a live canvas of Hydra heads: blank until a Claude Code or Codex chat starts heads, which grow out of that chat, show what they're working on and how they depend on each other, and leave once merged. See [the Agents view](docs/Heads.md#the-agents-view).
