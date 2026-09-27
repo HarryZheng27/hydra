@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  appendAmendment, appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, refuseScopeOverlap, validatePlan, writeScopeOverlap,
-  type BoardPost, type Plan, type PlanAmendment, type PlanJob, type PlanLeadJobInput,
+  appendAmendment, appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPlanReport, findPlanByIdempotencyKey, planFromLeadInput, refuseOverBudget, refuseScopeOverlap, validatePlan, writeScopeOverlap,
+  type BoardPost, type Plan, type PlanAmendment, type PlanJob, type PlanLeadJobInput, type PlanReportJobDetail,
 } from '../src/core/plans';
 
 const leadJob = (key: string, extra: Partial<PlanLeadJobInput> = {}): PlanLeadJobInput => ({
@@ -259,4 +259,92 @@ test('applyPlanAmendment: throws for the whole call when any part of it is inval
   // The caller only persists what applyPlanAmendment returns; since it throws, nothing from
   // the retry that ran first is ever written back to the plan.
   assert.throws(() => applyPlanAmendment({ jobs }, { retry: [{ key: 'a' }], add: [{ key: 'a', title: 'Dup', brief: 'x', write_scope: ['src/'] }] }), /already used/);
+});
+
+// ---- O7: unattended plans and the morning report (docs/Heads.md, "Unattended plans") ----
+
+test('planFromLeadInput (O7): run "unattended" needs a budget, and validates each dimension', () => {
+  const jobs = [leadJob('a')];
+  assert.throws(() => planFromLeadInput({ title: 'No budget', jobs, run: 'unattended' }, origin), /needs at least one of usd, wall_clock_minutes or max_jobs/);
+  assert.throws(() => planFromLeadInput({ title: 'Bad usd', jobs, run: 'unattended', budget: { usd: -1 } }, origin), /budget.usd must be a positive number/);
+  assert.throws(() => planFromLeadInput({ title: 'Bad minutes', jobs, run: 'unattended', budget: { wall_clock_minutes: 0 } }, origin), /wallClockMinutes must be 1 to 10080/);
+  assert.throws(() => planFromLeadInput({ title: 'Bad jobs', jobs, run: 'unattended', budget: { max_jobs: 0 } }, origin), /maxJobs must be 1-/);
+  const plan = planFromLeadInput({ title: 'Fine', jobs, run: 'unattended', budget: { usd: 20, wall_clock_minutes: 60, max_jobs: 5 } }, origin);
+  assert.deepEqual(plan.unattended, { usd: 20, wallClockMinutes: 60, maxJobs: 5 });
+  assert.doesNotThrow(() => validatePlan(plan));
+});
+
+test('planFromLeadInput (O7): without run: "unattended", a budget is ignored and the plan is an ordinary attended one', () => {
+  const plan = planFromLeadInput({ title: 'Attended', jobs: [leadJob('a')], budget: { usd: 1 } }, origin);
+  assert.equal(plan.unattended, undefined);
+});
+
+test('refuseOverBudget (O7): a job count over max_jobs is refused outright, regardless of dollars', () => {
+  assert.throws(() => refuseOverBudget({ maxJobs: 2 }, 3, 5), /allows at most 2 jobs; it would have 3/);
+  assert.doesNotThrow(() => refuseOverBudget({ maxJobs: 3 }, 3, 5));
+});
+
+test('refuseOverBudget (O7): a worst-case dollar estimate (job count × the default per-head budget) over budget.usd is refused', () => {
+  assert.throws(() => refuseOverBudget({ usd: 10 }, 3, 5), /could reach \$15/);
+  assert.doesNotThrow(() => refuseOverBudget({ usd: 15 }, 3, 5));
+});
+
+test('planFromLeadInput (O7): an unattended plan is refused up front when its own job count already exceeds its budget', () => {
+  const jobs = [leadJob('a'), leadJob('b'), leadJob('c')];
+  assert.throws(() => planFromLeadInput({ title: 'Too many', jobs, run: 'unattended', budget: { max_jobs: 2 } }, origin), /allows at most 2 jobs/);
+  assert.throws(() => planFromLeadInput({ title: 'Too pricey', jobs, run: 'unattended', budget: { usd: 1 } }, origin), /could reach/);
+});
+
+test('applyPlanAmendment (O7): re-enforces an unattended plan\'s budget after adding jobs', () => {
+  const jobs = [{ key: 'a', title: 'A', brief: 'x', dependsOn: [] }];
+  const unattended = { maxJobs: 1 };
+  assert.throws(
+    () => applyPlanAmendment({ jobs, unattended }, { add: [{ key: 'b', title: 'B', brief: 'x', write_scope: ['src/b/'] }] }),
+    /allows at most 1 job/,
+  );
+  // Skipping or editing (no new job) never grows the count, so it's unaffected by the same cap.
+  assert.doesNotThrow(() => applyPlanAmendment({ jobs, unattended }, { edit: [{ key: 'a', title: 'A2' }] }));
+});
+
+test('validatePlan (O7): an unattended plan takes heads only — a lane job is refused', () => {
+  const attended = { version: 1, id: 'a'.repeat(12), title: 'P', state: 'draft', jobs: [{ key: 'a', title: 'A', brief: 'x', dependsOn: [], runAs: 'lane' }], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as unknown as Plan;
+  assert.doesNotThrow(() => validatePlan(attended));
+  const unattended: Plan = { ...attended, unattended: { maxJobs: 5 } };
+  assert.throws(() => validatePlan(unattended), /takes heads only.*runs as a lane/);
+});
+
+test('buildPlanReport (O7): a snapshot of the morning report\'s shape for a mixed-outcome plan', () => {
+  const plan: Plan = {
+    id: 'p'.repeat(12), title: 'Nightly cleanup', state: 'incomplete',
+    unattended: { usd: 20, wallClockMinutes: 120, maxJobs: 3 }, startedAt: '2026-01-01T00:00:00.000Z',
+    jobs: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    amendments: [{ at: '2026-01-01T00:10:00.000Z', kind: 'retry', key: 'lint', detail: 'Retried: lint' }],
+  } as unknown as Plan;
+  const details: PlanReportJobDetail[] = [
+    {
+      key: 'build', title: 'Build the API', status: 'done', provider: 'claude', attempts: 1,
+      startedAt: '2026-01-01T00:00:00.000Z', finishedAt: '2026-01-01T00:20:00.000Z',
+      summary: 'Added the /orders endpoint.', changedFiles: ['src/orders.ts'],
+      checks: [{ id: 'unit', required: true, passed: true }, { id: 'review', required: true, passed: true, summary: 'Looks good.' }],
+    },
+    {
+      key: 'lint', title: 'Fix lint', status: 'failed', provider: 'codex', priorProviders: ['claude'], attempts: 2,
+      startedAt: '2026-01-01T00:00:00.000Z', finishedAt: '2026-01-01T00:05:00.000Z', reason: 'Usage limit reached twice.',
+    },
+  ];
+  const report = buildPlanReport(plan, details, 5);
+  assert.match(report, /^# Nightly cleanup$/m);
+  assert.match(report, /Budget: \$20, 120 minute\(s\), 3 job\(s\) at once\./);
+  assert.match(report, /## Build the API/);
+  assert.match(report, /Provider: claude\./);
+  assert.match(report, /Cost: not tracked live; budgeted up to \$5\./);
+  assert.match(report, /Gates:\n- ✓ unit\n- ✓ review: Looks good\./);
+  assert.match(report, /## Fix lint/);
+  assert.match(report, /Provider: codex \(handed off from claude\)\./);
+  assert.match(report, /## Amendments/);
+  assert.match(report, /Retried: lint/);
+  assert.match(report, /## Integration gate/);
+  assert.match(report, /Not available/);
+  assert.match(report, /## Needs you/);
+  assert.match(report, /- Fix lint: Usage limit reached twice\./);
 });

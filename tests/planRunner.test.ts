@@ -443,3 +443,41 @@ test('O5: an independent job\'s failure leaves the plan incomplete without stopp
     assert.equal(f.get().state, 'done');
   } finally { await f.close(); }
 });
+
+// ---- O7: unattended plans and the morning report (docs/Heads.md, "Unattended plans") ----
+
+test('O7: Run sets startedAt once; onSettled fires with the plan (and its budget) once it leaves running', async () => {
+  const settled: Plan[] = [];
+  const f = await fixture([job('a')], { onSettled: plan => settled.push(plan) });
+  try {
+    await f.store.update(f.plan.id, current => ({ ...current, unattended: { usd: 10, maxJobs: 1 } }));
+    assert.equal(f.get().startedAt, undefined, 'not started yet');
+    await f.runner.run(f.plan.id);
+    const startedAt = f.get().startedAt;
+    assert.ok(startedAt, 'Run stamps startedAt the first time it moves the plan to running');
+    assert.equal(settled.length, 0, 'still running: a is active');
+    const id = f.started[0]!.id;
+    f.world.finish(id);
+    await f.runner.advance(f.plan.id);
+    assert.equal(f.get().state, 'done');
+    assert.equal(f.get().startedAt, startedAt, 'startedAt never moves once set');
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]!.state, 'done');
+    assert.deepEqual(settled[0]!.unattended, { usd: 10, maxJobs: 1 });
+  } finally { await f.close(); }
+});
+
+test('O7: cancelling every unfinished job (what a wall-clock budget timeout does) settles an unattended plan to incomplete, firing onSettled', async () => {
+  const settled: Plan[] = [];
+  const f = await fixture([job('a'), job('b')], { onSettled: plan => settled.push(plan) });
+  try {
+    await f.store.update(f.plan.id, current => ({ ...current, unattended: { wallClockMinutes: 60 } }));
+    await f.runner.run(f.plan.id);
+    assert.equal(f.started.length, 2, 'both independent heads start together');
+    for (const started of f.started) await f.runner.cancelJob(f.plan.id, started.key, 'Unattended budget: the 60 minute wall-clock limit was reached.');
+    assert.equal(f.get().state, 'incomplete');
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]!.state, 'incomplete');
+    assert.equal(settled[0]!.jobs.every(item => item.outcome?.state === 'cancelled'), true);
+  } finally { await f.close(); }
+});

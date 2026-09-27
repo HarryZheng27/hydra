@@ -844,6 +844,26 @@ test('hydra_plan_create refuses a job with no write_scope, and a plan with no jo
   } finally { await f.close(); }
 });
 
+test('hydra_plan_create (O7): run "unattended" needs a budget, refused before ever reaching the bridge; a valid one is passed through', async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    const job = { key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] };
+    const noBudget = await call('hydra_plan_create', { title: 'X', jobs: [job], idempotency_key: 'k1', run: 'unattended' });
+    assert.equal(noBudget.ok, false); assert.match(noBudget.error!, /needs a budget/);
+    const badRun = await call('hydra_plan_create', { title: 'X', jobs: [job], idempotency_key: 'k2', run: 'sideways' });
+    assert.equal(badRun.ok, false); assert.match(badRun.error!, /"attended" or "unattended"/);
+    assert.equal(calls.length, 0, 'the bridge is never called for input that fails parsing');
+    const ok = await call('hydra_plan_create', { title: 'X', jobs: [job], idempotency_key: 'k3', run: 'unattended', budget: { usd: 20, wall_clock_minutes: 60 } });
+    assert.equal(ok.ok, true);
+    const input = calls[0]!.args[0] as any;
+    assert.equal(input.run, 'unattended');
+    assert.deepEqual(input.budget, { usd: 20, wall_clock_minutes: 60 });
+  } finally { await f.close(); }
+});
+
 test("hydra_plan_get returns a job enriched with its head's own detail when it has started as a head", async () => {
   const { bridge, plans } = fakePlanBridge();
   const f = await fixture({ checks: passCheck, script: async helper => {

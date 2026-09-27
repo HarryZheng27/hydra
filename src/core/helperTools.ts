@@ -63,7 +63,7 @@ export const leadTools: readonly HelperToolDefinition[] = [
   // ---- Plans from the chat (O1, docs/Heads.md, "Plans from the chat"): a graph of head jobs run under this same lead, shown on the Agents canvas. ----
   {
     name: 'hydra_plan_create',
-    description: 'Create a Hydra plan: a dependency graph of jobs, each run as a head under this same lead, shown together on the Agents canvas. Use this instead of separate hydra_start_head calls when a task has three or more independent pieces, or any dependency between pieces (one job needs another\'s result first). For one-off independent work, keep using hydra_start_head. Refused if two jobs that don\'t depend on each other would change the same path: give them a dependency, or narrow their write_scope. Unless Hydra Settings says plans need approval first, it starts running immediately: jobs with no dependencies start now, others as their dependencies finish. Call hydra_plan_wait for the result.',
+    description: 'Create a Hydra plan: a dependency graph of jobs, each run as a head under this same lead, shown together on the Agents canvas. Use this instead of separate hydra_start_head calls when a task has three or more independent pieces, or any dependency between pieces (one job needs another\'s result first). For one-off independent work, keep using hydra_start_head. Refused if two jobs that don\'t depend on each other would change the same path: give them a dependency, or narrow their write_scope. Unless Hydra Settings says plans need approval first, it starts running immediately: jobs with no dependencies start now, others as their dependencies finish. Call hydra_plan_wait for the result. Pass run: "unattended" with a budget to start a plan you won\'t watch: it takes heads only (no lanes), never asks anything while it runs, and is capped by the budget you give it; when it ends (or the budget runs out) Hydra writes a Markdown report and notifies you.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['title', 'jobs', 'idempotency_key'],
       properties: {
@@ -71,6 +71,16 @@ export const leadTools: readonly HelperToolDefinition[] = [
         brief: string('Optional: the task this plan comes from, for context.'),
         jobs: { type: 'array', items: planJobSchema, minItems: 1, maxItems: 12, description: 'The plan\'s jobs. Keys must be unique within this plan; dependencies must form no cycle.' },
         idempotency_key: string('A unique key for this request. Repeating a call with the same key returns the same plan instead of making another.'),
+        run: { type: 'string', enum: ['attended', 'unattended'], description: 'Optional, defaults to "attended". "unattended" takes heads only, needs a budget, and never asks anything while it runs.' },
+        budget: {
+          type: 'object', additionalProperties: false,
+          description: 'Required when run is "unattended": at least one cap. Refused if the plan\'s job count already exceeds max_jobs, or could plausibly cost more than usd.',
+          properties: {
+            usd: { type: 'number', description: 'Total dollars across every job in the plan, checked against a worst-case estimate (job count × the per-head default budget) when the plan is created or amended — not a live spend meter, since Hydra doesn\'t track actual cost.' },
+            wall_clock_minutes: { type: 'number', description: 'Minutes from when the plan starts running. Hydra cancels whatever is still going when it elapses.' },
+            max_jobs: { type: 'number', description: 'The most jobs this plan may ever have, counting amendments.' },
+          },
+        },
       },
     },
   },
