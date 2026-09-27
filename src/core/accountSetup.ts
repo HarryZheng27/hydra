@@ -1,14 +1,15 @@
 import { spawn } from 'node:child_process';
 import { CodexMessages, record } from './codexProtocol';
 import { processLaunch, terminateProcessTree } from './process';
+import { supportedCliVersion, type CliProvider } from './cliVersions';
 import type { GetAccountParams } from './generated/codex-0.154.0/v2/GetAccountParams';
 import type { LoginAccountParams } from './generated/codex-0.154.0/v2/LoginAccountParams';
 import type { CancelLoginAccountParams } from './generated/codex-0.154.0/v2/CancelLoginAccountParams';
 
 export type AccountState = { status: 'unchecked'|'working'|'pending'|'signed-in'|'signed-out'|'other'|'cancelled'|'error'; text: string };
-export const accountVersions = { claude:'2.1.270',codex:'0.154.0' };
-export function supportedAccountVersion(provider:keyof typeof accountVersions,output:string):boolean {
-  return new RegExp(`(?:^|\\s)${accountVersions[provider].replaceAll('.','\\.')}(?:\\s|$)`).test(output);
+/** Account setup follows the same rule as heads (cliVersions.ts): the tested release or newer, same major version. */
+export function supportedAccountVersion(provider:CliProvider,output:string):boolean {
+  return supportedCliVersion(provider,output);
 }
 export function publicClaudeAccount(exitCode:number|null,error?:string,output=''):AccountState {
   if(error||![0,1].includes(exitCode!))throw new Error('Claude Code could not report account status. Retry or use its official client.');

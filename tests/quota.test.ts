@@ -43,9 +43,13 @@ test('quota refresh is passive until invoked and closes after metadata-only requ
   assert.equal(connected, 0);
   const result = await readCodexQuota(connect);
   assert.deepEqual(calls, ['initialize', 'account/rateLimits/read']); assert.equal(closed, 1); assert.equal(result.buckets[0]?.primary?.remainingPercent, 75);
-  for (const userAgent of ['codex/0.154.1', 'codex/0.154.0-alpha.6.2', 'codex/0.154.0-custom', undefined]) {
+  // A newer Codex (same major) reads limits too; an older one, a pre-release or no user agent doesn't.
+  calls.length = 0;
+  await readCodexQuota(() => ({ async request(method) { calls.push(method); return method === 'initialize' ? { userAgent: 'hydra_quota_status/0.157.1 (Windows 10.0.26200; x86_64)' } : legacy; }, async close() {} }));
+  assert.deepEqual(calls, ['initialize', 'account/rateLimits/read']);
+  for (const userAgent of ['codex/0.153.9', 'codex/0.154.0-alpha.6.2', 'codex/0.154.0-custom', undefined]) {
     calls.length = 0;
-    await assert.rejects(readCodexQuota(() => ({ async request(method) { calls.push(method); return { userAgent }; }, async close() {} })), /tested Codex/);
+    await assert.rejects(readCodexQuota(() => ({ async request(method) { calls.push(method); return { userAgent }; }, async close() {} })), /Codex 0.154.0 or newer/);
     assert.deepEqual(calls, ['initialize']);
   }
 });
