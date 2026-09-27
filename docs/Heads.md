@@ -8,16 +8,19 @@ This replaces the old Auto delegation, which read a `HYDRA_DELEGATION_V1` line o
 
 ## Connecting Claude Code and Codex
 
-Connect in onboarding (step 03, Providers) or in **Hydra Settings → Connectors**, which also shows the exact entries Hydra wrote and has a **Repair** button for claude-mem. Each agent has one row with a single **Connect to Hydra** button:
+Connect in onboarding (step 03, Providers) or in **Hydra Settings → Connectors**, which also shows the exact entries Hydra wrote. Each agent has one row with a single **Connect to Hydra** button:
 
 1. It installs the official extension if it's missing. It uses the extension gallery, or downloads straight from Open VSX when the editor has none.
 2. It connects the extension to Hydra.
-3. For Claude, it also sets up [claude-mem](https://github.com/thedotmack/claude-mem) memory:
-   - installs Bun into `~/.bun/bin` from Bun's official release, if missing;
-   - installs claude-mem through `claude plugin` if missing, or updates it;
-   - installs claude-mem's dependencies.
 
-Hydra redistributes neither Bun nor claude-mem. The row also has Disconnect and Sign in. Claude Code and Codex keep their own sign-in and billing.
+The row also has Disconnect and Sign in. Claude Code and Codex keep their own sign-in and billing.
+
+**Memory (claude-mem), opt-in:** the Claude row in Settings → Connectors has a separate **Memory (claude-mem)** toggle for [claude-mem](https://github.com/thedotmack/claude-mem), a third-party memory plugin — off by default (`hydra.claudeMem.enabled`). Connect never touches it on its own. Turning it on asks once, then:
+- installs Bun into `~/.bun/bin` from Bun's official release, if missing;
+- installs claude-mem through `claude plugin` if missing, or updates it;
+- installs claude-mem's dependencies.
+
+Hydra redistributes neither Bun nor claude-mem. Turning the toggle off only stops Hydra from managing it; anything already installed stays, and a **Repair** button (shown once the setting is on) re-runs the same setup to fix or update it.
 
 Connecting adds Hydra as a user-level tool server named `hydra`. That's per user, never per project; nothing is written inside a repository.
 
