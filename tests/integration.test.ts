@@ -7,8 +7,8 @@ import { git, gitRun } from '../src/core/git';
 import { createPlan, PlanStore, applyPlanAmendment, type Plan, type PlanJob } from '../src/core/plans';
 import { PlanRunner, planHeadInput, type PlanHeadLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import {
-  applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, landCommit, mergeRefusal, newIntegration, reconcile,
-  releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
+  applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, integrationSettled, landCommit, mergeRefusal, newIntegration, reconcile,
+  reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
 } from '../src/core/integration';
 import { parseGatesConfig, runGateList } from '../src/core/gates';
 import { JobStore, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
@@ -73,7 +73,7 @@ interface Started { key: string; id: string; dependsOn: string[]; inputs: Depend
 const headJob = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], runAs: 'head', ...extra });
 
 /** A plan runner over a real repository, with fake heads that a test finishes with real commits. */
-async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; directory?: string } = {}) {
+async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; directory?: string; now?: () => Date } = {}) {
   const directory = options.directory ?? path.join(repo.root, `plans-${++counter}`);
   const heads = new Map<string, PlanHeadLook>();
   const started: Started[] = [];
@@ -92,6 +92,7 @@ async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: Non
     unlinkLane: async () => undefined,
     commitSubjects: async () => [], changedFiles: async () => [],
     terminalsAvailable: () => true, debounceMs: 1,
+    ...(options.now ? { now: options.now } : {}),
     integration: { runGate: options.runGate ?? passingGate, ...(options.attempts ? { attempts: options.attempts } : {}) },
   });
   let store = new PlanStore(directory);
@@ -144,10 +145,11 @@ test('reconcile (O3): the recorded queue and the real branch — landed before a
   const flight = { key: 'api', attempt: 0, commit: sha('b'), from: sha('a'), at: '2026-09-27T00:00:00.000Z' };
   assert.deepEqual(reconcile({ tip: sha('a') }, { actual: sha('a'), containsTip: true, containsInFlight: false }), { kind: 'ok' });
   assert.deepEqual(reconcile({ tip: sha('a'), inFlight: flight }, { actual: sha('a'), containsTip: true, containsInFlight: false }), { kind: 'retry' }, 'the branch never moved: land it again');
-  assert.deepEqual(reconcile({ tip: sha('a'), inFlight: flight }, { actual: sha('c'), containsTip: true, containsInFlight: true }), { kind: 'landedBeforeRestart', tip: sha('c'), via: 'merge' });
-  assert.deepEqual(reconcile({ tip: sha('a'), inFlight: flight }, { actual: sha('b'), containsTip: true, containsInFlight: true }), { kind: 'landedBeforeRestart', tip: sha('b'), via: 'fast-forward' });
-  assert.deepEqual(reconcile({ tip: sha('a') }, { actual: sha('e'), containsTip: true, containsInFlight: false }), { kind: 'adopt', tip: sha('e') });
-  assert.deepEqual(reconcile({ tip: sha('a') }, { actual: sha('f'), containsTip: false, containsInFlight: false }), { kind: 'moved', actual: sha('f') });
+  assert.deepEqual(reconcile({ tip: sha('a'), inFlight: flight }, { actual: sha('c'), containsTip: true, containsInFlight: true, landedExactly: true }), { kind: 'landedBeforeRestart', tip: sha('c'), via: 'merge' });
+  assert.deepEqual(reconcile({ tip: sha('a'), inFlight: flight }, { actual: sha('b'), containsTip: true, containsInFlight: true, landedExactly: true }), { kind: 'landedBeforeRestart', tip: sha('b'), via: 'fast-forward' });
+  assert.deepEqual(reconcile({ tip: sha('a'), inFlight: flight }, { actual: sha('c'), containsTip: true, containsInFlight: true, landedExactly: false }), { kind: 'moved', actual: sha('c'), added: true }, 'the in-flight landing plus something else on top is not Hydra\'s landing');
+  assert.deepEqual(reconcile({ tip: sha('a') }, { actual: sha('e'), containsTip: true, containsInFlight: false }), { kind: 'moved', actual: sha('e'), added: true }, 'commits added on top are never taken in');
+  assert.deepEqual(reconcile({ tip: sha('a') }, { actual: sha('f'), containsTip: false, containsInFlight: false }), { kind: 'moved', actual: sha('f'), added: false });
   assert.deepEqual(reconcile({ tip: sha('a') }, { containsTip: false, containsInFlight: false }), { kind: 'recreate' });
 });
 
@@ -166,6 +168,21 @@ test('mergeRefusal (O3): only a gate that passed on the current tip lets Merge p
   assert.equal(mergeRefusal(plan({ tip: sha('c'), gate: gate({ status: 'passed' }) })), undefined);
   assert.equal(mergeRefusal(plan({ tip: sha('c'), gate: gate({ failed: true }), override: { tip: sha('c'), at: '2026-09-27T00:00:00.000Z' } })), undefined, 'merged anyway, on the canvas');
   assert.match(mergeRefusal(plan({ tip: sha('e'), gate: gate({ failed: true }), override: { tip: sha('c'), at: '2026-09-27T00:00:00.000Z' } }))!, /older tip/, 'an override is for one tip only');
+});
+
+test('integrationSettled (O3): a done plan waits for its integration gate on the current tip; anything else is settled now', () => {
+  const base = newIntegration('aaaaaaaaaaaa', sha('a'), 'main');
+  const landed = { ...base, tip: sha('c') };
+  const gate = (extra: Partial<IntegrationGateRecord>): IntegrationGateRecord => ({ tip: sha('c'), at: '2026-09-27T00:00:00.000Z', checks: [passed()], ...extra });
+  assert.equal(integrationSettled({ state: 'done' }), true, 'no integration branch');
+  assert.equal(integrationSettled({ state: 'incomplete', integration: landed }), true);
+  assert.equal(integrationSettled({ state: 'done', integration: base }), true, 'nothing landed');
+  assert.equal(integrationSettled({ state: 'done', integration: landed }), false, 'the gate hasn\'t started yet');
+  assert.equal(integrationSettled({ state: 'done', integration: { ...landed, gate: gate({ running: true }) } }), false);
+  assert.equal(integrationSettled({ state: 'done', integration: { ...landed, gate: gate({ tip: sha('b'), status: 'passed' }) } }), false, 'a result for an older tip');
+  assert.equal(integrationSettled({ state: 'done', integration: { ...landed, gate: gate({ status: 'passed' }) } }), true);
+  assert.equal(integrationSettled({ state: 'done', integration: { ...landed, gate: gate({ failed: true }) } }), true);
+  assert.equal(integrationSettled({ state: 'done', integration: { ...landed, error: 'stopped' } }), true);
 });
 
 test('integrationGates (O3): the project\'s command gates always; a review of the whole diff only for a strict plan', () => {
@@ -482,6 +499,66 @@ test('O3: a branch moved by hand stops the queue with the reason, instead of lan
     assert.equal(await f.tip(p.get().integration!.branch), elsewhere, 'Hydra never moves it back or lands on it by itself');
     assert.match(mergeRefusal(p.get())!, /queue stopped/);
   } finally { p.dispose(); await f.close(); }
+});
+
+test('O3: commits added on top of the integration branch are never taken in; the queue stops, and goes on once the branch is back', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  let clock = Date.parse('2026-09-27T00:00:00.000Z');
+  const p = await planFixture(f, [headJob('a'), headJob('b')], { now: () => new Date(clock) });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a.txt': 'a\n' }, 'a'));
+    const branch = p.get().integration!.branch, afterA = p.get().integration!.tip;
+    // Something sharing the repository's git metadata (a head, say) puts its own commit on the branch.
+    const sneaky = await f.commitFrom(afterA, { 'src/outside-scope.txt': 'x\n' }, 'not a job');
+    await git(f.repo, ['update-ref', `refs/heads/${branch}`, sneaky]);
+    await p.finish('b', await f.commitFrom(f.base, { 'src/b.txt': 'b\n' }, 'b'));
+    assert.match(p.get().integration!.error!, /gained commits Hydra didn't land/);
+    assert.equal(p.get().integration!.tip, afterA, 'the record never moves onto the added commit');
+    assert.deepEqual(p.get().integration!.landed.map(entry => entry.key), ['a']);
+    assert.equal(await f.tip(branch), sneaky, 'and Hydra never moves the branch back by itself');
+
+    // Put back where Hydra left it: a plan event within the backoff leaves the queue stopped; after it, it goes on.
+    await git(f.repo, ['update-ref', `refs/heads/${branch}`, afterA]);
+    clock += 5_000; await p.runner.advance(p.plan.id);
+    assert.ok(p.get().integration!.error, 'still stopped inside the backoff');
+    clock += 30_000; await p.runner.advance(p.plan.id);
+    const integration = p.get().integration!;
+    assert.equal(integration.error, undefined);
+    assert.deepEqual(integration.landed.map(entry => entry.key), ['a', 'b']);
+    assert.equal(await f.isAncestor(sneaky, integration.tip), false, 'the added commit never reaches the integrated tree');
+    assert.equal(p.get().state, 'done');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('reconcileFacts (O3): only Hydra\'s own in-flight landing counts as landed before a restart — not one with more on top, nor a forged merge', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  try {
+    const branch = integrationBranch('bbbbbbbbbbbb');
+    await ensureIntegrationBranch(f.repo, branch, f.base);
+    const a = await f.commitFrom(f.base, { 'src/a.txt': 'a\n' }, 'a');
+    const b = await f.commitFrom(f.base, { 'src/b.txt': 'b\n' }, 'b');
+    await landCommit(f.repo, branch, f.base, a, 'land a');
+    const inFlight = { key: 'b', attempt: 0, commit: b, from: a, at: '2026-09-27T00:00:00.000Z' };
+    const landed = await landCommit(f.repo, branch, a, b, 'land b');
+    assert.equal(landed.kind, 'landed');
+    const real = await reconcileFacts(f.repo, { branch, tip: a, inFlight });
+    assert.equal(real.landedExactly, true);
+    assert.equal(reconcile({ tip: a, inFlight }, real).kind, 'landedBeforeRestart');
+
+    const onTop = await f.commitFrom(await f.tip(branch), { 'src/extra.txt': 'x\n' }, 'extra');
+    await git(f.repo, ['update-ref', `refs/heads/${branch}`, onTop]);
+    const more = await reconcileFacts(f.repo, { branch, tip: a, inFlight });
+    assert.equal(more.landedExactly, false);
+    assert.deepEqual(reconcile({ tip: a, inFlight }, more), { kind: 'moved', actual: onTop, added: true });
+
+    const forgedTree = (await git(f.repo, ['rev-parse', `${onTop}^{tree}`])).trim();
+    const forged = (await git(f.repo, ['commit-tree', forgedTree, '-p', a, '-p', b, '-m', 'looks like a landing'])).trim();
+    await git(f.repo, ['update-ref', `refs/heads/${branch}`, forged]);
+    const fake = await reconcileFacts(f.repo, { branch, tip: a, inFlight });
+    assert.equal(fake.landedExactly, false, 'the right parents but not their merge\'s tree');
+    assert.equal(reconcile({ tip: a, inFlight }, fake).kind, 'moved');
+  } finally { await f.close(); }
 });
 
 test('O3: a restart cut the integration gate short: it runs again on its own', async () => {

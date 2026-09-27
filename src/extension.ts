@@ -57,7 +57,7 @@ import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPl
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together"). Their own block. ----
-import { integrationLeadView, mergeRefusal } from './core/integration';
+import { integrationLeadView, integrationSettled, mergeRefusal } from './core/integration';
 import type { PlanMergeVia } from './core/planRunner';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
@@ -1193,8 +1193,8 @@ class Manager {
     const settled = () => {
       const plan = this.plans?.store.get(id);
       if (!plan || plan.leadOrigin?.leadSessionId !== leadSessionId) return true;
-      // O3: a finished plan's integration gate still running is worth waiting for.
-      if (plan.state !== 'running') return !plan.integration?.gate?.running;
+      // O3: a finished plan's integration gate (running, or about to start) is worth waiting for.
+      if (plan.state !== 'running') return integrationSettled(plan);
       // O5: a job that ran out of attempts, or one asking a question, needs the lead now, even mid-run
       // (independent jobs keep going regardless; only its own dependents wait for it).
       const views = this.planRunner?.statuses(id) ?? [];

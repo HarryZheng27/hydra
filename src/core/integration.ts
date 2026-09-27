@@ -216,6 +216,11 @@ export interface ReconcileFacts {
   containsTip: boolean;
   /** actual contains the in-flight commit. */
   containsInFlight: boolean;
+  /**
+   * actual is exactly the in-flight landing Hydra would have made from where it left the branch: the job's
+   * commit itself (a fast-forward), or a merge commit whose parents are those two and whose tree is their merge.
+   */
+  landedExactly?: boolean;
 }
 export type Reconcile =
   | { kind: 'ok' }
@@ -223,21 +228,23 @@ export type Reconcile =
   | { kind: 'landedBeforeRestart'; tip: string; via: 'fast-forward' | 'merge' }
   /** The in-flight landing never moved the branch: drop the note and land it again. */
   | { kind: 'retry' }
-  /** Someone added commits on top of the branch: carry on from there (a gate that ran is now stale). */
-  | { kind: 'adopt'; tip: string }
   /** The branch is gone: put it back where Hydra left it. */
   | { kind: 'recreate' }
-  /** The branch was moved somewhere that loses landed work: the queue stops for a person. */
-  | { kind: 'moved'; actual: string };
+  /**
+   * The branch isn't where Hydra left it and it wasn't Hydra's own landing: the queue stops for a person.
+   * `added`: it only gained commits on top. Those are never taken in: every commit on the branch must be a
+   * job's work that passed that job's own gates and write scope, and a head shares the repository's git
+   * metadata, so it could otherwise put anything there.
+   */
+  | { kind: 'moved'; actual: string; added: boolean };
 
 /** How the recorded state and the real branch fit together, and what to do about it (pure). Checked before every landing and on every start. */
 export function reconcile(integration: Pick<PlanIntegration, 'tip' | 'inFlight'>, facts: ReconcileFacts): Reconcile {
   const flight = integration.inFlight;
   if (!facts.actual) return { kind: 'recreate' };
   if (facts.actual === integration.tip) return flight ? { kind: 'retry' } : { kind: 'ok' };
-  if (flight && flight.from === integration.tip && facts.containsInFlight && facts.containsTip) return { kind: 'landedBeforeRestart', tip: facts.actual, via: facts.actual === flight.commit ? 'fast-forward' : 'merge' };
-  if (facts.containsTip) return { kind: 'adopt', tip: facts.actual };
-  return { kind: 'moved', actual: facts.actual };
+  if (flight && flight.from === integration.tip && facts.containsInFlight && facts.containsTip && facts.landedExactly) return { kind: 'landedBeforeRestart', tip: facts.actual, via: facts.actual === flight.commit ? 'fast-forward' : 'merge' };
+  return { kind: 'moved', actual: facts.actual, added: facts.containsTip };
 }
 
 /** The integration gate's one-line state, the honest label the plan shows. */
@@ -255,6 +262,18 @@ export function gateRecord(tip: string, checks: JobCheckResult[], configured: Ga
   const failed = checks.some(gateBlocks);
   const status = failed ? undefined : evidenceStatus({ checks, configured }) ?? (checks.length ? undefined : 'none-chosen');
   return { tip, at: now().toISOString(), checks, ...(failed ? { failed: true } : {}), ...(status ? { status } : {}) };
+}
+
+/**
+ * For a plan that has stopped running: true once its integration gate has nothing more to say on its own. A done
+ * plan with work landed runs the gate by itself, so until a result for the current tip is in, a wait keeps waiting
+ * (including the moment before that run starts). Anything else (incomplete, the queue stopped, already merged,
+ * nothing landed, no integration branch) is settled now.
+ */
+export function integrationSettled(plan: { state: string; integration?: Pick<PlanIntegration, 'tip' | 'base' | 'gate' | 'error' | 'merged'> }): boolean {
+  const integration = plan.integration;
+  if (!integration || plan.state !== 'done' || integration.error || integration.merged || integration.tip === integration.base) return true;
+  return !!integration.gate && !integration.gate.running && integration.gate.tip === integration.tip;
 }
 
 /** True when the integration gate passed every required gate on the branch's current tip. */
@@ -385,8 +404,18 @@ export async function reconcileFacts(repository: string, integration: Pick<PlanI
   const actual = await branchTip(repository, integration.branch);
   if (!actual || actual === integration.tip) return { ...(actual ? { actual } : {}), containsTip: !!actual, containsInFlight: false };
   const containsTip = await isAncestor(repository, integration.tip, actual).catch(() => false);
-  const containsInFlight = integration.inFlight ? await isAncestor(repository, integration.inFlight.commit, actual).catch(() => false) : false;
-  return { actual, containsTip, containsInFlight };
+  const flight = integration.inFlight;
+  const containsInFlight = flight ? await isAncestor(repository, flight.commit, actual).catch(() => false) : false;
+  const landedExactly = flight && containsInFlight && containsTip ? await isExactLanding(repository, flight, actual).catch(() => false) : false;
+  return { actual, containsTip, containsInFlight, landedExactly };
+}
+async function isExactLanding(repository: string, flight: Pick<IntegrationInFlight, 'from' | 'commit'>, actual: string): Promise<boolean> {
+  if (actual === flight.commit) return true;
+  const parents = (await git(repository, ['rev-list', '--parents', '-n', '1', actual])).trim().split(/\s+/).slice(1);
+  if (parents.length !== 2 || parents[0] !== flight.from || parents[1] !== flight.commit) return false;
+  const merged = await mergeTrees(repository, flight.from, flight.commit);
+  if ('conflicts' in merged) return false;
+  return (await git(repository, ['rev-parse', `${actual}^{tree}`])).trim() === merged.tree;
 }
 
 /** Puts a deleted integration branch back where Hydra left it; throws when that commit is gone too. */

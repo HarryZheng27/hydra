@@ -333,6 +333,8 @@ export interface PlanIntegrationOptions {
 }
 /** What hydra_plan_merge (or the canvas) asked for. */
 export type PlanMergeVia = 'merge' | 'pr';
+/** O3: how long a stopped landing queue waits before a plan event may try it again. */
+export const queueRetryMs = 30_000;
 
 /** What Mark job done records (docs/Plan_Lanes_Plan.md, "What done means for a lane job"). */
 export interface PlanLaneResultInput { commit: string; note?: string; changedFiles: string[]; status?: EvidenceStatus }
@@ -581,11 +583,23 @@ export class PlanRunner {
     for (let round = 0; round < 100 && !this.disposed; round++) {
       const plan = this.options.store.get(planId);
       const integration = plan?.integration;
-      if (!plan || !integration || integration.error || plan.state !== 'running') break;
+      if (!plan || !integration || plan.state !== 'running') break;
       let facts;
       try { facts = await reconcileFacts(repository, integration); }
-      catch (error) { await this.stopQueue(planId, `Hydra couldn't read ${integration.branch}: ${describe(error)}`); return true; }
+      catch (error) {
+        if (!integration.error) await this.stopQueue(planId, `Hydra couldn't read ${integration.branch}: ${describe(error)}`);
+        return !integration.error;
+      }
       const verdict = reconcile(integration, facts);
+      if (integration.error) {
+        // A stopped queue goes on once the branch is back where Hydra left it (the fix its reason asks for), at the
+        // next plan event at least queueRetryMs after it stopped, so a landing that keeps failing never spins.
+        const stopped = this.queueStops.get(planId);
+        if ((verdict.kind !== 'ok' && verdict.kind !== 'retry') || (stopped !== undefined && this.now().getTime() - stopped < queueRetryMs)) break;
+        await this.options.store.update(planId, current => { if (!current.integration) return undefined; const { error: _error, ...rest } = current.integration; return { ...current, integration: rest }; });
+        this.options.log?.(`[plans] ${planId}: ${integration.branch} is back at ${integration.tip.slice(0, 7)}; the landing queue goes on`);
+        progressed = true; continue;
+      }
       if (verdict.kind === 'recreate') {
         try { await recreateIntegrationBranch(repository, integration); }
         catch (error) { await this.stopQueue(planId, describe(error)); return true; }
@@ -593,18 +607,15 @@ export class PlanRunner {
         continue;
       }
       if (verdict.kind === 'moved') {
-        await this.stopQueue(planId, `${integration.branch} was moved by hand to ${verdict.actual.slice(0, 7)}, which doesn't contain what Hydra landed (${integration.tip.slice(0, 7)}). Move it back to ${integration.tip.slice(0, 7)} for the queue to go on.`);
+        await this.stopQueue(planId, verdict.added
+          ? `${integration.branch} gained commits Hydra didn't land (now at ${verdict.actual.slice(0, 7)}). Only jobs' checked work goes on this branch, so Hydra won't take them in. Move it back to ${integration.tip.slice(0, 7)} for the queue to go on; to add that work, give it to a job.`
+          : `${integration.branch} was moved by hand to ${verdict.actual.slice(0, 7)}, which doesn't contain what Hydra landed (${integration.tip.slice(0, 7)}). Move it back to ${integration.tip.slice(0, 7)} for the queue to go on.`);
         return true;
       }
       if (verdict.kind === 'landedBeforeRestart') {
         const flight = integration.inFlight!;
         await this.options.store.update(planId, current => current.integration ? { ...current, ...applyLanding(current, flight, { kind: 'landed', tip: verdict.tip, via: verdict.via }, () => this.now(), attempts) } : undefined);
         this.options.log?.(`[plans] ${planId}: job ${flight.key} had landed before Hydra stopped; recorded it`);
-        progressed = true; continue;
-      }
-      if (verdict.kind === 'adopt') {
-        await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, tip: verdict.tip } } : undefined);
-        this.options.log?.(`[plans] ${planId}: ${integration.branch} gained commits outside Hydra; going on from ${verdict.tip.slice(0, 7)}`);
         progressed = true; continue;
       }
       if (verdict.kind === 'retry') {
@@ -632,7 +643,9 @@ export class PlanRunner {
     return progressed;
   }
   /** The queue stops for a person: the reason shows on every job waiting to land, and Merge plan refuses. */
+  private readonly queueStops = new Map<string, number>();
   private async stopQueue(planId: string, reason: string): Promise<void> {
+    this.queueStops.set(planId, this.now().getTime());
     this.options.log?.(`[plans] ${planId} integration queue stopped: ${reason}`);
     await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, error: clip(reason, 2000) } } : undefined);
   }
