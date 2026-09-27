@@ -52,7 +52,7 @@ import { planBrief } from './core/planner';
 import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Their own block. ----
-import { appendBoardPost, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, planOutcomeReasonMax, refuseScopeOverlap, validatePlanJobs, type BoardFrom, type PlanJobOutcome } from './core/plans';
+import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom } from './core/plans';
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
@@ -1100,6 +1100,7 @@ class Manager {
         return { key: job.key, title: job.title, status: view?.status ?? 'draft', ...(view?.reason ? { reason: view.reason } : {}), ...(job.jobId ? { jobId: job.jobId } : {}) };
       }),
       board: boardForLead(plan.board),
+      amendments: plan.amendments ?? [],
     };
   }
   /** hydra_plan_create: a repeated idempotency key from the same chat returns the plan it already made. */
@@ -1131,9 +1132,10 @@ class Manager {
       const plan = this.plans?.store.get(id);
       if (!plan || plan.leadOrigin?.leadSessionId !== leadSessionId) return true;
       if (plan.state !== 'running') return true;
-      // A job's head asking a question needs the lead now, even mid-run.
+      // O5: a job that ran out of attempts, or one asking a question, needs the lead now, even mid-run
+      // (independent jobs keep going regardless; only its own dependents wait for it).
       const views = this.planRunner?.statuses(id) ?? [];
-      return views.some(view => view.jobId && this.helpers?.store.get(view.jobId)?.state === 'blocked');
+      return views.some(view => view.status === 'failed' || (view.jobId && this.helpers?.store.get(view.jobId)?.state === 'blocked'));
     };
     const deadline = Date.now() + maxWaitS * 1000;
     while (!settled() && !signal.aborted && Date.now() < deadline) {
@@ -1145,46 +1147,30 @@ class Manager {
     }
     return this.planLeadSummary(this.planLeadOwn(id, leadSessionId));
   }
-  /** hydra_plan_amend: add, edit or skip jobs that haven't started yet, then let the runner advance. */
+  /**
+   * hydra_plan_amend: add, edit or skip jobs that haven't started, retry a failed one (O5,
+   * docs/Heads.md, "Plans that adapt"), then let the runner advance. Capped by
+   * hydra.plans.maxAmendments (default 10, 0 means unlimited), counting every change ever
+   * made this way; every one is kept in the plan's own history.
+   */
   private async planLeadAmend(id: string, leadSessionId: string, input: PlanLeadAmendInput): Promise<PlanLeadPlan> {
     const plans = this.requirePlans();
     const owned = this.planLeadOwn(id, leadSessionId);
-    if (owned.state !== 'draft' && owned.state !== 'running') throw new Error(`Plan "${owned.title}" is ${owned.state}, so it can't be amended.`);
+    if (owned.state !== 'draft' && owned.state !== 'running' && owned.state !== 'incomplete') throw new Error(`Plan "${owned.title}" is ${owned.state}, so it can't be amended.`);
+    const requested = (input.add?.length ?? 0) + (input.edit?.length ?? 0) + (input.skip?.length ?? 0) + (input.retry?.length ?? 0);
+    const max = Math.max(0, vscode.workspace.getConfiguration('hydra').get<number>('plans.maxAmendments', 10));
+    const already = owned.amendments?.length ?? 0;
+    if (max > 0 && already + requested > max) throw new Error(`Plan "${owned.title}" has ${already} of ${max} amendments already; this would add ${requested}. Cancel the plan, or start a new one for the rest.`);
     const runner = this.requirePlanRunner();
     const changed = await runner.withPlan(id, async () => {
+      // A head's failure lives only in its own job, never written back to the plan's job (PlanRunner.statuses
+      // reads it live); retry needs this to know a head job failed at all, so it's read once, just before applying.
+      const statuses = new Map((runner.statuses(id) ?? []).map(view => [view.key, view.status as string]));
       const updated = await plans.store.update(id, plan => {
-        let jobs = plan.jobs;
-        for (const skip of input.skip ?? []) {
-          const job = jobs.find(item => item.key === skip.key);
-          if (!job) throw new Error(`No job "${skip.key}" in this plan.`);
-          if (jobStarted(job)) throw new Error(`Job "${job.title}" has already started, so it can't be skipped.`);
-          const outcome: PlanJobOutcome = { state: 'skipped', reason: skip.reason.length > planOutcomeReasonMax ? `${skip.reason.slice(0, planOutcomeReasonMax - 1)}…` : skip.reason, at: new Date().toISOString() };
-          jobs = jobs.map(item => item.key === skip.key ? { ...item, outcome } : item);
-        }
-        for (const edit of input.edit ?? []) {
-          const job = jobs.find(item => item.key === edit.key);
-          if (!job) throw new Error(`No job "${edit.key}" in this plan.`);
-          if (jobStarted(job)) throw new Error(`Job "${job.title}" has already started, so it can't be edited.`);
-          jobs = jobs.map(item => item.key === edit.key ? {
-            ...item,
-            ...(edit.title !== undefined ? { title: edit.title } : {}), ...(edit.brief !== undefined ? { brief: edit.brief } : {}),
-            ...(edit.write_scope !== undefined ? { writeScope: edit.write_scope } : {}), ...(edit.depends_on !== undefined ? { dependsOn: edit.depends_on } : {}),
-          } : item);
-        }
-        if (input.add?.length) {
-          const keys = new Set(jobs.map(item => item.key));
-          const added: PlanJob[] = input.add.map(job => {
-            if (keys.has(job.key)) throw new Error(`Job key "${job.key}" is already used in this plan.`);
-            keys.add(job.key);
-            return { key: job.key, title: job.title, brief: job.brief, writeScope: job.write_scope, dependsOn: job.depends_on ?? [], runAs: 'head', ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}) };
-          });
-          jobs = [...jobs, ...added];
-        }
-        validatePlanJobs(jobs);
-        const cycle = findCycle(jobs);
-        if (cycle) throw new Error(cycleMessage(jobs, cycle));
-        refuseScopeOverlap(jobs);
-        return { ...plan, jobs };
+        const result = applyPlanAmendment(plan, input, key => statuses.get(key));
+        // A retry (or a new job) can make an incomplete plan worth running again; pass() settles
+        // it back to incomplete on its own if nothing it just changed can actually start.
+        return { ...plan, jobs: result.jobs, amendments: result.amendments, ...(plan.state === 'incomplete' ? { state: 'running' as const } : {}) };
       });
       if (!updated) throw new Error(`No plan ${id} in this window.`);
       return updated;

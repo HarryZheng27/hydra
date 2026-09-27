@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  appendBoardPost, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, refuseScopeOverlap, validatePlan, writeScopeOverlap,
-  type BoardPost, type Plan, type PlanJob, type PlanLeadJobInput,
+  appendAmendment, appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, refuseScopeOverlap, validatePlan, writeScopeOverlap,
+  type BoardPost, type Plan, type PlanAmendment, type PlanJob, type PlanLeadJobInput,
 } from '../src/core/plans';
 
 const leadJob = (key: string, extra: Partial<PlanLeadJobInput> = {}): PlanLeadJobInput => ({
@@ -162,3 +162,84 @@ test('validatePlan: refuses a board post addressed to an unknown job key, over t
 function createBoardPlan(): Plan {
   return planFromLeadInput({ title: 'Board plan', jobs: [leadJob('a')] }, { leadSessionId: 'x', idempotencyKey: 'y' });
 }
+
+// ---- O5: plans that adapt (docs/Heads.md, "Plans that adapt") ----
+
+test('appendAmendment: appends one entry with a fresh time', () => {
+  const now = () => new Date('2026-09-27T12:00:00.000Z');
+  const history = appendAmendment(undefined, { kind: 'skip', key: 'a', detail: 'Skipped: not needed.' }, now);
+  assert.deepEqual(history, [{ at: '2026-09-27T12:00:00.000Z', kind: 'skip', key: 'a', detail: 'Skipped: not needed.' }]);
+  const grown = appendAmendment(history, { kind: 'add', key: 'b', detail: 'Added.' }, now);
+  assert.equal(grown.length, 2);
+});
+
+const failedJob = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({
+  key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], writeScope: [`src/${key}/`], attempt: 1,
+  outcome: { state: 'failed', reason: 'Gates failed 3 times.', at: '2026-09-27T11:00:00.000Z' }, ...extra,
+});
+
+test('applyPlanAmendment: retry clears the outcome and bumps the attempt, only for a job that failed', () => {
+  const jobs = [failedJob('a')];
+  const result = applyPlanAmendment({ jobs }, { retry: [{ key: 'a' }] });
+  assert.equal(result.jobs[0]!.outcome, undefined);
+  assert.equal(result.jobs[0]!.attempt, 2);
+  assert.equal(result.amendments[0]!.kind, 'retry');
+  assert.match(result.amendments[0]!.detail, /attempt 2/);
+
+  assert.throws(() => applyPlanAmendment({ jobs: [{ key: 'a', title: 'A', brief: 'x', dependsOn: [] }] }, { retry: [{ key: 'a' }] }), /is not started, so there's nothing to retry/);
+  assert.throws(() => applyPlanAmendment({ jobs: [{ key: 'a', title: 'A', brief: 'x', dependsOn: [], outcome: { state: 'cancelled', reason: 'x', at: '2026-09-27T11:00:00.000Z' } }] }, { retry: [{ key: 'a' }] }), /is cancelled, so there's nothing to retry/);
+});
+
+test('applyPlanAmendment: retry also un-skips a job the lead skipped, or one skipped automatically because its dependency failed', () => {
+  const autoSkipped: PlanJob = { key: 'c', title: 'C', brief: 'x', dependsOn: ['b'], outcome: { state: 'skipped', reason: 'B did not finish.', at: '2026-09-27T11:00:00.000Z' } };
+  const result = applyPlanAmendment({ jobs: [failedJob('b'), autoSkipped] }, { retry: [{ key: 'b' }, { key: 'c' }] });
+  assert.equal(result.jobs.find(job => job.key === 'b')!.outcome, undefined);
+  assert.equal(result.jobs.find(job => job.key === 'c')!.outcome, undefined);
+  assert.deepEqual(result.amendments.map(entry => entry.kind), ['retry', 'retry']);
+});
+
+test('applyPlanAmendment: a retry can change the write_scope, brief, title or provider, and still re-checks scope overlap', () => {
+  const jobs = [failedJob('a'), { key: 'b', title: 'B', brief: 'x', dependsOn: [], writeScope: ['src/b/'] }];
+  // a and b are independent; widening a's scope onto b's is refused, exactly like hydra_plan_create would.
+  assert.throws(() => applyPlanAmendment({ jobs }, { retry: [{ key: 'a', write_scope: ['src/b/'] }] }), /both change src\/b\//);
+  const ok = applyPlanAmendment({ jobs }, { retry: [{ key: 'a', write_scope: ['src/a2/'], brief: 'Try harder.', provider: 'codex' }] });
+  assert.deepEqual(ok.jobs[0]!.writeScope, ['src/a2/']);
+  assert.equal(ok.jobs[0]!.brief, 'Try harder.');
+  assert.equal(ok.jobs[0]!.provider, 'codex');
+});
+
+test('applyPlanAmendment: skip, edit and add each record one amendment, and re-validate the whole plan', () => {
+  const jobs = [
+    { key: 'a', title: 'A', brief: 'x', dependsOn: [], writeScope: ['src/a/'] },
+    { key: 'b', title: 'B', brief: 'x', dependsOn: [], writeScope: ['src/b/'] },
+  ];
+  const result = applyPlanAmendment({ jobs }, {
+    skip: [{ key: 'b', reason: 'Not needed.' }],
+    edit: [{ key: 'a', title: 'A (renamed)' }],
+    add: [{ key: 'c', title: 'C', brief: 'x', write_scope: ['src/c/'], depends_on: ['a'] }],
+  });
+  assert.equal(result.jobs.find(job => job.key === 'a')!.title, 'A (renamed)');
+  assert.equal(result.jobs.find(job => job.key === 'b')!.outcome!.state, 'skipped');
+  assert.ok(result.jobs.some(job => job.key === 'c'));
+  assert.deepEqual(result.amendments.map(entry => entry.kind), ['skip', 'edit', 'add']);
+});
+
+test('applyPlanAmendment: refuses an edit or a skip on a job that has already started', () => {
+  const started: PlanJob = { key: 'a', title: 'A', brief: 'x', dependsOn: [], jobId: 'a'.repeat(12) };
+  assert.throws(() => applyPlanAmendment({ jobs: [started] }, { skip: [{ key: 'a', reason: 'x' }] }), /already started, so it can't be skipped/);
+  assert.throws(() => applyPlanAmendment({ jobs: [started] }, { edit: [{ key: 'a', title: 'New' }] }), /already started, so it can't be edited/);
+});
+
+test('applyPlanAmendment: refuses a cycle or a duplicate key from add, exactly like planFromLeadInput', () => {
+  const jobs = [{ key: 'a', title: 'A', brief: 'x', dependsOn: [] }];
+  assert.throws(() => applyPlanAmendment({ jobs }, { add: [{ key: 'a', title: 'Dup', brief: 'x', write_scope: ['src/'] }] }), /already used/);
+  const withB = [...jobs, { key: 'b', title: 'B', brief: 'x', dependsOn: ['a'] }];
+  assert.throws(() => applyPlanAmendment({ jobs: withB }, { edit: [{ key: 'a', depends_on: ['b'] }] }), /dependency cycle/);
+});
+
+test('applyPlanAmendment: throws for the whole call when any part of it is invalid, even after an earlier part (retry, processed first) would have succeeded', () => {
+  const jobs = [failedJob('a'), { key: 'b', title: 'B', brief: 'x', dependsOn: [] }];
+  // The caller only persists what applyPlanAmendment returns; since it throws, nothing from
+  // the retry that ran first is ever written back to the plan.
+  assert.throws(() => applyPlanAmendment({ jobs }, { retry: [{ key: 'a' }], add: [{ key: 'a', title: 'Dup', brief: 'x', write_scope: ['src/'] }] }), /already used/);
+});

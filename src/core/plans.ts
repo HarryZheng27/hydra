@@ -110,6 +110,121 @@ export interface Plan {
   leadOrigin?: { leadSessionId: string; idempotencyKey: string };
   /** O4: structured messages between the lead and its plan's jobs (docs/Heads.md, "The plan board"). */
   board?: BoardPost[];
+  /** O5: every hydra_plan_amend change, oldest first (docs/Heads.md, "Plans that adapt"). Its length is the amendment count hydra.plans.maxAmendments limits. */
+  amendments?: PlanAmendment[];
+}
+
+// ---- O5: plans that adapt (docs/Heads.md, "Plans that adapt") ----
+
+export const amendmentDetailMax = 500;
+export interface PlanAmendment { at: string; kind: 'add' | 'edit' | 'skip' | 'retry'; key?: string; detail: string }
+
+function validateAmendments(amendments: unknown): void {
+  if (!Array.isArray(amendments)) throw new Error('A plan\'s amendments must be a list.');
+  for (const value of amendments) {
+    const item = value as Partial<PlanAmendment> | undefined;
+    if (!item || typeof item !== 'object') throw new Error('Each amendment must be an object.');
+    if (!isTime(item.at)) throw new Error('An amendment has an invalid time.');
+    if (item.kind !== 'add' && item.kind !== 'edit' && item.kind !== 'skip' && item.kind !== 'retry') throw new Error('An amendment has an unknown kind.');
+    if (item.key !== undefined && (typeof item.key !== 'string' || !planJobKeyPattern.test(item.key))) throw new Error('An amendment has an invalid key.');
+    if (typeof item.detail !== 'string' || !item.detail.trim() || item.detail.length > amendmentDetailMax) throw new Error(`An amendment's detail must be 1-${amendmentDetailMax} characters.`);
+  }
+}
+
+/** Appends one entry to a plan's amendment history. Pure: the caller persists the result. */
+export function appendAmendment(amendments: readonly PlanAmendment[] | undefined, entry: Omit<PlanAmendment, 'at'>, now: () => Date = () => new Date()): PlanAmendment[] {
+  return [...(amendments ?? []), { at: now().toISOString(), ...entry }];
+}
+
+export interface PlanAmendEdit { key: string; title?: string; brief?: string; write_scope?: string[]; depends_on?: string[] }
+export interface PlanAmendSkip { key: string; reason: string }
+/** Retry a job that failed or was skipped, optionally with changes; refused for a job that's running, done or not started. */
+export interface PlanAmendRetry { key: string; title?: string; brief?: string; write_scope?: string[]; provider?: Provider }
+export interface PlanAmendInput { add?: PlanLeadJobInput[]; edit?: PlanAmendEdit[]; skip?: PlanAmendSkip[]; retry?: PlanAmendRetry[] }
+
+/**
+ * A job's live status ('failed', 'skipped', 'running', 'done', …), the same
+ * words PlanRunner.statuses() uses. A head's failure lives only there — it's
+ * never written to PlanJob.outcome — so retry needs this to know a head job
+ * failed at all; add/edit/skip never do. Defaults to reading PlanJob.outcome
+ * (right for a lane job, and enough for testing this function on its own).
+ */
+export type PlanJobStatusOf = (key: string) => string | undefined;
+const statusFromOutcome = (jobs: readonly PlanJob[]): PlanJobStatusOf => key => {
+  const job = jobs.find(item => item.key === key);
+  if (!job) return undefined;
+  return job.outcome?.state ?? (jobStarted(job) ? 'running' : 'not started');
+};
+
+/**
+ * Applies one hydra_plan_amend call: add jobs, edit or skip jobs that haven't
+ * started, or retry a failed one, then re-checks the whole plan (validatePlanJobs,
+ * cycles, scope overlap) the same way a fresh plan is checked. Pure: the caller
+ * persists the result and decides whether the plan's state needs to change (a
+ * retry can make an incomplete plan worth running again). Throws the first
+ * problem found, and appends nothing if it throws.
+ */
+export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendments?: readonly PlanAmendment[] }, input: PlanAmendInput, statusOf: PlanJobStatusOf = statusFromOutcome(current.jobs), now: () => Date = () => new Date()): { jobs: PlanJob[]; amendments: PlanAmendment[] } {
+  let jobs = [...current.jobs];
+  let amendments = current.amendments as PlanAmendment[] | undefined;
+  const record = (kind: PlanAmendment['kind'], key: string, detail: string) => { amendments = appendAmendment(amendments, { kind, key, detail }, now); };
+  for (const skip of input.skip ?? []) {
+    const job = jobs.find(item => item.key === skip.key);
+    if (!job) throw new Error(`No job "${skip.key}" in this plan.`);
+    if (jobStarted(job)) throw new Error(`Job "${job.title}" has already started, so it can't be skipped.`);
+    const reason = skip.reason.length > planOutcomeReasonMax ? `${skip.reason.slice(0, planOutcomeReasonMax - 1)}…` : skip.reason;
+    const outcome: PlanJobOutcome = { state: 'skipped', reason, at: now().toISOString() };
+    jobs = jobs.map(item => item.key === skip.key ? { ...item, outcome } : item);
+    record('skip', skip.key, `Skipped: ${reason}`);
+  }
+  for (const edit of input.edit ?? []) {
+    const job = jobs.find(item => item.key === edit.key);
+    if (!job) throw new Error(`No job "${edit.key}" in this plan.`);
+    if (jobStarted(job)) throw new Error(`Job "${job.title}" has already started, so it can't be edited.`);
+    jobs = jobs.map(item => item.key === edit.key ? {
+      ...item,
+      ...(edit.title !== undefined ? { title: edit.title } : {}), ...(edit.brief !== undefined ? { brief: edit.brief } : {}),
+      ...(edit.write_scope !== undefined ? { writeScope: edit.write_scope } : {}), ...(edit.depends_on !== undefined ? { dependsOn: edit.depends_on } : {}),
+    } : item);
+    const changed = [edit.title !== undefined && 'title', edit.brief !== undefined && 'brief', edit.write_scope !== undefined && 'write_scope', edit.depends_on !== undefined && 'depends_on'].filter(Boolean);
+    record('edit', edit.key, `Edited: ${changed.join(', ')}`);
+  }
+  for (const retry of input.retry ?? []) {
+    const job = jobs.find(item => item.key === retry.key);
+    if (!job) throw new Error(`No job "${retry.key}" in this plan.`);
+    // A job the lead skipped, or one skipped automatically because a dependency failed, is just as
+    // retriable as one that failed itself: retrying the dependency alone never un-skips it, so the
+    // lead names it too when the whole chain should resume.
+    const status = statusOf(retry.key);
+    if (status !== 'failed' && status !== 'skipped') throw new Error(`Job "${job.title}" is ${status ?? 'not started'}, so there's nothing to retry.`);
+    const nextAttempt = (job.attempt ?? 0) + 1;
+    const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, gateFailures: _gateFailures, ...rest } = job;
+    jobs = jobs.map(item => item.key === retry.key ? {
+      ...rest, attempt: nextAttempt,
+      ...(retry.title !== undefined ? { title: retry.title } : {}), ...(retry.brief !== undefined ? { brief: retry.brief } : {}),
+      ...(retry.write_scope !== undefined ? { writeScope: retry.write_scope } : {}), ...(retry.provider !== undefined ? { provider: retry.provider } : {}),
+    } : item);
+    const changed = [retry.title !== undefined && 'title', retry.brief !== undefined && 'brief', retry.write_scope !== undefined && 'write_scope', retry.provider !== undefined && 'provider'].filter(Boolean);
+    record('retry', retry.key, `Retried (attempt ${nextAttempt})${changed.length ? `, with a new ${changed.join(', ')}` : ''}.`);
+  }
+  if (input.add?.length) {
+    const keys = new Set(jobs.map(item => item.key));
+    const added: PlanJob[] = input.add.map(job => {
+      if (keys.has(job.key)) throw new Error(`Job key "${job.key}" is already used in this plan.`);
+      keys.add(job.key);
+      return {
+        key: job.key, title: job.title, brief: job.brief, writeScope: job.write_scope, dependsOn: job.depends_on ?? [], runAs: 'head',
+        ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}),
+      };
+    });
+    jobs = [...jobs, ...added];
+    for (const job of input.add) record('add', job.key, `Added, depending on ${job.depends_on?.length ? job.depends_on.join(', ') : 'nothing'}.`);
+  }
+  validatePlanJobs(jobs);
+  const cycle = findCycle(jobs);
+  if (cycle) throw new Error(cycleMessage(jobs, cycle));
+  refuseScopeOverlap(jobs);
+  return { jobs, amendments: amendments ?? [] };
 }
 
 // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
@@ -241,6 +356,7 @@ export function validatePlan(plan: Plan): void {
     }
   }
   if (plan.board !== undefined) validateBoard(plan.board, new Set(plan.jobs.map(job => job.key)));
+  if (plan.amendments !== undefined) validateAmendments(plan.amendments);
   validatePlanJobs(plan.jobs);
 }
 

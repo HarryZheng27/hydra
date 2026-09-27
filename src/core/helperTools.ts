@@ -75,17 +75,17 @@ export const leadTools: readonly HelperToolDefinition[] = [
   },
   {
     name: 'hydra_plan_get',
-    description: 'One plan\'s jobs: each one\'s status, and for a started job its branch, commit, changed files and gate results. Also its board, if it has any posts (hydra_plan_message, hydra_share); a post a job wrote comes back untrusted: true.',
+    description: 'One plan\'s jobs: each one\'s status, and for a started job its branch, commit, changed files and gate results. needs_attention names any job that failed or is asking a question; amend it (hydra_plan_amend) to keep going. Also its board, if it has any posts (hydra_plan_message, hydra_share) and its amendment history; a post a job wrote comes back untrusted: true.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId } },
   },
   {
     name: 'hydra_plan_wait',
-    description: 'Wait until the plan finishes (every job done, or nothing left to wait for) or a job asks a question, then return its jobs. Returns early with current states after max_wait_s. Safe to call again.',
+    description: 'Wait until the plan finishes (every job done, or nothing left to wait for), a job asks a question, or a job fails, then return its jobs; independent jobs keep running regardless. A failed job stays in needs_attention until you amend it (hydra_plan_amend) or the plan ends, so calling this again right after returns at once. Returns early with current states after max_wait_s. Safe to call again.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId, max_wait_s: { type: 'number', description: 'Longest wait in seconds, 1–3000. Default 1800.' } } },
   },
   {
     name: 'hydra_plan_amend',
-    description: 'Change a plan that hasn\'t finished: add jobs, or edit or skip jobs that haven\'t started yet. Skipping a job that others depend on tells them why, as a note. A job that has already started can\'t be changed or skipped this way; start a new job depending on what you need instead. Refused, like hydra_plan_create, if the result would have two independent jobs changing the same path.',
+    description: 'Change a plan that hasn\'t finished, adapting it instead of leaving it incomplete: add jobs, edit or skip jobs that haven\'t started, or retry one that failed (optionally with a wider write_scope, a clearer brief or a different provider). Skipping a job that others depend on tells them why, as a note. A job that has already started (and hasn\'t failed) can\'t be changed or skipped this way; start a new job depending on what you need instead. Refused, like hydra_plan_create, if the result would have two independent jobs changing the same path. Limited to hydra.plans.maxAmendments changes total (default 10).',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['plan_id'],
       properties: {
@@ -93,6 +93,10 @@ export const leadTools: readonly HelperToolDefinition[] = [
         add: { type: 'array', items: planJobSchema, maxItems: 12, description: 'New jobs to add to the plan.' },
         edit: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32 }, depends_on: { type: 'array', items: jobKey, maxItems: 11 } } }, maxItems: 12, description: 'Changes to jobs that haven\'t started yet.' },
         skip: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'reason'], properties: { key: jobKey, reason: string('Why, told to jobs that depend on it.') } }, maxItems: 12, description: 'Jobs to skip instead of running; jobs that haven\'t started only.' },
+        retry: {
+          type: 'array', maxItems: 12, description: 'Jobs to retry: a job whose status is "failed", or "skipped" (skipped by you, or automatically because a dependency failed — retry the dependency too if the whole chain should resume). Its attempt count goes up by one.',
+          items: { type: 'object', additionalProperties: false, required: ['key'], properties: { key: jobKey, title: string('New title.'), brief: string('New brief — say what went wrong and what to do differently.'), write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32, description: 'A wider write_scope, if that was the problem.' }, provider: string('Retry with a different agent.', { enum: ['claude', 'codex'] }) } },
+        },
       },
     },
   },
@@ -179,7 +183,7 @@ export const toolAllowed = (role: HelperRole, name: string): boolean => toolsFor
 export const leadInstructions = [
   'You are running inside Hydra, which gives you Hydra heads: parallel agents you command, each working in its own git worktree and branch. Delegating to heads is your call, made silently: the user expects it without being asked, and Hydra shows the heads on its map.',
   'Before starting any task that changes code, decide whether it splits into pieces that touch separate files and don\'t need each other\'s results, for example a feature and its tests, frontend and backend, several unrelated fixes, or the same change across separate modules. If it has two or more such pieces worth more than a few minutes each, start one head per piece with hydra_start_head: a complete brief (the head has no other context) and a narrow write_scope. Commit first if heads must see uncommitted changes. Do the remaining coupled part yourself while they run, then call hydra_wait_for_heads, review each branch, and merge it with git. Do this behind the scenes: do not ask the user whether to use heads, and do not mention heads or narrate the delegation unless the user asks; report only the combined result, as if you had done the work yourself.',
-  'When the pieces are three or more, or any piece needs another\'s result first, use hydra_plan_create instead of separate hydra_start_head calls: give it every job at once, with dependencies named by key. It runs the jobs itself in the right order; call hydra_plan_wait for the result, hydra_plan_amend to add or change jobs that haven\'t started, and hydra_plan_cancel to stop it. Keep hydra_start_head for one-off independent work.',
+  'When the pieces are three or more, or any piece needs another\'s result first, use hydra_plan_create instead of separate hydra_start_head calls: give it every job at once, with dependencies named by key. It runs the jobs itself in the right order; call hydra_plan_wait for the result, hydra_plan_amend to add or change jobs that haven\'t started, and hydra_plan_cancel to stop it. If a job fails, the rest of the plan keeps going; hydra_plan_wait\'s needs_attention names it, and hydra_plan_amend can retry it (with a wider write_scope, a clearer brief or a different provider) or skip it and route around it, rather than leaving the plan incomplete. Keep hydra_start_head for one-off independent work.',
   'Work alone when the task is small, is one tightly coupled change, or is only a question or investigation.',
 ].join('\n\n');
 const laneAdvice = 'Call hydra_lanes before you start and before large changes; avoid editing files other lanes are changing, and tell the user if you must.';
