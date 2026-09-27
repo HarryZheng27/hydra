@@ -52,7 +52,7 @@ import { planBrief } from './core/planner';
 import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Their own block. ----
-import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom } from './core/plans';
+import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPlanReport, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, type PlanReportJobDetail } from './core/plans';
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
@@ -551,6 +551,8 @@ class Manager {
       // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
       plans: this.createPlanLeadBridge(),
       planBoard: this.createPlanBoardBridge(),
+      // ---- O7: unattended plans (docs/Heads.md, "Unattended plans") ----
+      enforceUnattendedBudgets: () => this.enforceUnattendedBudgets(),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
@@ -1103,6 +1105,7 @@ class Manager {
       }),
       board: boardForLead(plan.board),
       amendments: plan.amendments ?? [],
+      ...(plan.unattended ? { unattended: plan.unattended } : {}),
     };
   }
   /** hydra_plan_create: a repeated idempotency key from the same chat returns the plan it already made. */
@@ -1110,7 +1113,8 @@ class Manager {
     const plans = this.requirePlans();
     const repeat = findPlanByIdempotencyKey(plans.store.list(), leadSessionId, input.idempotencyKey);
     if (repeat) return { plan: this.planLeadSummary(repeat), created: false };
-    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey });
+    const defaultHeadBudgetUsd = vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5);
+    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey }, defaultHeadBudgetUsd);
     await plans.store.save(plan);
     this.plansChanged();
     const needsApproval = vscode.workspace.getConfiguration('hydra').get<boolean>('plans.leadPlansNeedApproval', false);
@@ -1168,8 +1172,9 @@ class Manager {
       // A head's failure lives only in its own job, never written back to the plan's job (PlanRunner.statuses
       // reads it live); retry needs this to know a head job failed at all, so it's read once, just before applying.
       const statuses = new Map((runner.statuses(id) ?? []).map(view => [view.key, view.status as string]));
+      const defaultHeadBudgetUsd = vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5);
       const updated = await plans.store.update(id, plan => {
-        const result = applyPlanAmendment(plan, input, key => statuses.get(key));
+        const result = applyPlanAmendment(plan, input, key => statuses.get(key), () => new Date(), defaultHeadBudgetUsd);
         // A retry (or a new job) can make an incomplete plan worth running again; pass() settles
         // it back to incomplete on its own if nothing it just changed can actually start.
         return { ...plan, jobs: result.jobs, amendments: result.amendments, ...(plan.state === 'incomplete' ? { state: 'running' as const } : {}) };
@@ -1453,10 +1458,55 @@ class Manager {
         void vscode.window.showInformationMessage(`Plan ${plan.title} started lane ${this.lanes.laneName(laneId) ?? job.title}.`, 'Show lane')
           .then(pick => { if (pick) void this.lanes.show('lanes', laneId); });
       },
+      // O7: an unattended plan writes its morning report and notifies when it settles; an attended one is unaffected.
+      onSettled: plan => { if (plan.unattended) void this.writePlanReport(plan); },
       log: line => this.output.appendLine(line),
       // ---- Stop all (5.3) ----
       stop: this.stop,
     });
+  }
+  /** O7: the morning report (docs/Heads.md, "Unattended plans") — written next to plans.json, opened as a tab, and notified. */
+  private async writePlanReport(plan: Plan): Promise<void> {
+    const plans = this.plans;
+    if (!plans) return;
+    const defaultHeadBudgetUsd = vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5);
+    const details: PlanReportJobDetail[] = plan.jobs.map(job => {
+      const head = job.jobId ? this.helpers?.store.get(job.jobId) : undefined;
+      const view = this.planRunner?.statuses(plan.id)?.find(item => item.key === job.key);
+      return {
+        key: job.key, title: job.title, status: view?.status ?? job.outcome?.state ?? 'draft',
+        ...(head?.provider ? { provider: head.provider } : {}),
+        ...(head?.priorProviders?.length ? { priorProviders: head.priorProviders } : {}),
+        ...(head?.attempts !== undefined ? { attempts: head.attempts } : {}),
+        ...(head?.startedAt ? { startedAt: head.startedAt } : {}),
+        ...(head?.finishedAt ? { finishedAt: head.finishedAt } : {}),
+        ...(head?.result?.summary ? { summary: head.result.summary } : {}),
+        ...(head?.result?.changedFiles?.length ? { changedFiles: head.result.changedFiles } : {}),
+        ...(head?.result?.checks?.length ? { checks: head.result.checks.map(check => ({ id: check.id, required: check.required, passed: check.passed, ...(check.state ? { state: check.state } : {}), ...(check.summary ? { summary: check.summary } : {}) })) } : {}),
+        ...(job.outcome?.reason ? { reason: job.outcome.reason } : head?.reason ? { reason: head.reason } : {}),
+        ...(head?.question ? { question: head.question } : {}),
+      };
+    });
+    const markdown = buildPlanReport(plan, details, defaultHeadBudgetUsd);
+    const file = await plans.store.writeReport(plan.id, markdown);
+    try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ }
+    void vscode.window.showInformationMessage(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'} — its report is open.`);
+  }
+  /** O7: unattended plans cancel themselves when their wall-clock budget runs out; checked on HelperService's own watchdog tick. */
+  private async enforceUnattendedBudgets(): Promise<void> {
+    const running = this.plans?.store.list().filter(plan => plan.state === 'running' && plan.unattended?.wallClockMinutes !== undefined && plan.startedAt);
+    const runner = this.planRunner;
+    if (!running?.length || !runner) return;
+    const endedStatuses: PlanJobStatus[] = ['done', 'failed', 'cancelled', 'skipped'];
+    for (const plan of running) {
+      const limitMs = plan.unattended!.wallClockMinutes! * 60_000;
+      if (Date.now() - new Date(plan.startedAt!).getTime() < limitMs) continue;
+      const reason = `Unattended budget: the ${plan.unattended!.wallClockMinutes} minute wall-clock limit was reached.`;
+      for (const view of runner.statuses(plan.id) ?? []) {
+        if (endedStatuses.includes(view.status)) continue;
+        await runner.cancelJob(plan.id, view.key, reason).catch(error => this.output.appendLine(`[plans] ${plan.id}: couldn't cancel job ${view.key}: ${this.describe(error)}`));
+      }
+    }
   }
   /** Each plan's job statuses, for plans that have run. */
   private planJobViews(): Record<string, PlanJobView[]> {

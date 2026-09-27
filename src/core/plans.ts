@@ -120,6 +120,125 @@ export interface Plan {
   board?: BoardPost[];
   /** O5: every hydra_plan_amend change, oldest first (docs/Heads.md, "Plans that adapt"). Its length is the amendment count hydra.plans.maxAmendments limits. */
   amendments?: PlanAmendment[];
+  /** O7 (docs/Heads.md, "Unattended plans"): present means this plan runs unattended, capped by this budget. */
+  unattended?: PlanBudget;
+  /** O7: when Run first moved this plan to 'running'. Measures the wall-clock budget, and used in the report. */
+  startedAt?: string;
+}
+
+// ---- O7: unattended plans (docs/Heads.md, "Unattended plans") ----
+
+/** All optional: an unset dimension isn't capped. */
+export interface PlanBudget { usd?: number; wallClockMinutes?: number; maxJobs?: number }
+
+function validateBudget(budget: unknown): PlanBudget {
+  const source = budget as Partial<PlanBudget> | undefined;
+  if (!source || typeof source !== 'object') throw new Error('An unattended plan\'s budget must be an object.');
+  if (source.usd !== undefined && (typeof source.usd !== 'number' || !Number.isFinite(source.usd) || source.usd <= 0)) throw new Error('budget.usd must be a positive number.');
+  if (source.wallClockMinutes !== undefined && (typeof source.wallClockMinutes !== 'number' || !Number.isInteger(source.wallClockMinutes) || source.wallClockMinutes < 1 || source.wallClockMinutes > 7 * 24 * 60)) throw new Error('budget.wallClockMinutes must be 1 to 10080 (a week).');
+  if (source.maxJobs !== undefined && (typeof source.maxJobs !== 'number' || !Number.isInteger(source.maxJobs) || source.maxJobs < 1 || source.maxJobs > maxPlanJobs)) throw new Error(`budget.maxJobs must be 1-${maxPlanJobs}.`);
+  if (source.usd === undefined && source.wallClockMinutes === undefined && source.maxJobs === undefined) throw new Error('An unattended plan\'s budget needs at least one of usd, wall_clock_minutes or max_jobs.');
+  return { ...(source.usd !== undefined ? { usd: source.usd } : {}), ...(source.wallClockMinutes !== undefined ? { wallClockMinutes: source.wallClockMinutes } : {}), ...(source.maxJobs !== undefined ? { maxJobs: source.maxJobs } : {}) };
+}
+
+/**
+ * Refuses a job count this plan's own budget wouldn't cover, before anything is created or added:
+ * `maxJobs` directly, and `usd` estimated as `jobCount × defaultHeadBudgetUsd`, since a plan job has
+ * no budget of its own yet (every job uses the window's own per-head default). Both are static caps
+ * checked up front, not a running total of what was actually spent, which Hydra has no way to see.
+ */
+export function refuseOverBudget(budget: PlanBudget, jobCount: number, defaultHeadBudgetUsd: number): void {
+  if (budget.maxJobs !== undefined && jobCount > budget.maxJobs) throw new Error(`This plan's budget allows at most ${budget.maxJobs} jobs; it would have ${jobCount}.`);
+  if (budget.usd !== undefined) {
+    const estimate = jobCount * defaultHeadBudgetUsd;
+    if (estimate > budget.usd) throw new Error(`This plan's budget is $${budget.usd}; ${jobCount} jobs at up to $${defaultHeadBudgetUsd} each could reach $${estimate}. Lower the job count, or raise the budget.`);
+  }
+}
+
+// ---- O7: the morning report (docs/Heads.md, "Unattended plans") ----
+
+/** One job's detail for the report, assembled by the caller from the plan job and (for a started one) its head. */
+export interface PlanReportJobDetail {
+  key: string;
+  title: string;
+  status: string;
+  provider?: Provider;
+  /** O6: a usage-limit handoff — the providers this job ran under before `provider`. */
+  priorProviders?: Provider[];
+  attempts?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  summary?: string;
+  changedFiles?: string[];
+  checks?: { id: string; required: boolean; passed: boolean; state?: string; summary?: string }[];
+  reason?: string;
+  question?: string;
+}
+
+const reportDuration = (startedAt?: string, finishedAt?: string): string | undefined => {
+  if (!startedAt) return undefined;
+  const ms = (finishedAt ? new Date(finishedAt).getTime() : Date.now()) - new Date(startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return undefined;
+  const minutes = Math.round(ms / 60000);
+  return minutes < 1 ? '<1m' : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+};
+
+/**
+ * The morning report (docs/Heads.md, "Unattended plans"): what an unattended plan did, written as Markdown,
+ * kept with the plan and opened as a tab when the plan ends. Pure and snapshot-testable; the caller (extension.ts)
+ * assembles each job's detail from the head store, since this module never reads one itself.
+ */
+export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended' | 'startedAt' | 'amendments'>, jobs: readonly PlanReportJobDetail[], defaultHeadBudgetUsd = 5): string {
+  const lines: string[] = [`# ${plan.title}`, ''];
+  const ended = plan.state === 'done' ? 'finished' : plan.state === 'incomplete' ? 'stopped incomplete' : plan.state;
+  lines.push(`Unattended plan, ${ended}.`);
+  if (plan.unattended) {
+    const parts: string[] = [];
+    if (plan.unattended.usd !== undefined) parts.push(`$${plan.unattended.usd}`);
+    if (plan.unattended.wallClockMinutes !== undefined) parts.push(`${plan.unattended.wallClockMinutes} minute(s)`);
+    if (plan.unattended.maxJobs !== undefined) parts.push(`${plan.unattended.maxJobs} job(s) at once`);
+    if (parts.length) lines.push(`Budget: ${parts.join(', ')}.`);
+  }
+  const overall = reportDuration(plan.startedAt, undefined);
+  if (overall) lines.push(`Ran for ${overall}.`);
+  lines.push('');
+  for (const job of jobs) {
+    lines.push(`## ${job.title}`, '');
+    lines.push(`Status: ${job.status}.`);
+    if (job.provider) {
+      const handoff = job.priorProviders?.length ? ` (handed off from ${job.priorProviders.join(', ')})` : '';
+      lines.push(`Provider: ${job.provider}${handoff}.`);
+    }
+    if (job.attempts !== undefined) lines.push(`Attempts: ${job.attempts}.`);
+    const duration = reportDuration(job.startedAt, job.finishedAt);
+    if (duration) lines.push(`Time: ${duration}.`);
+    // No live spend tracking exists (only wall-clock is enforced), so cost is the same worst-case estimate the budget check uses, not an actual charge.
+    lines.push(`Cost: not tracked live; budgeted up to $${defaultHeadBudgetUsd}.`);
+    if (job.summary) lines.push('', job.summary);
+    if (job.changedFiles?.length) lines.push('', 'Changed files:', ...job.changedFiles.map(file => `- ${file}`));
+    if (job.checks?.length) {
+      lines.push('', 'Gates:');
+      for (const check of job.checks) {
+        const icon = check.state === 'notRun' ? '–' : check.passed ? '✓' : '✗';
+        lines.push(`- ${icon} ${check.id}${check.required ? '' : ' (optional)'}${check.summary ? `: ${check.summary}` : ''}`);
+      }
+    }
+    if (job.reason) lines.push('', `Reason: ${job.reason}`);
+    if (job.question) lines.push('', `Asked: ${job.question}`);
+    lines.push('');
+  }
+  if (plan.amendments?.length) {
+    lines.push('## Amendments', '');
+    for (const amendment of plan.amendments) lines.push(`- ${amendment.at}: ${amendment.detail}`);
+    lines.push('');
+  }
+  lines.push('## Integration gate', '');
+  lines.push('Not available: Hydra doesn\'t yet run an integration gate across a plan\'s jobs (planned separately).', '');
+  const needsYou = jobs.filter(job => job.status === 'failed' || job.question);
+  lines.push('## Needs you', '');
+  if (!needsYou.length) lines.push('Nothing — every job finished or was skipped on purpose.');
+  else for (const job of needsYou) lines.push(`- ${job.title}: ${job.question ? `asked "${job.question}"` : job.reason ? job.reason : 'failed'}`);
+  return lines.join('\n');
 }
 
 // ---- O5: plans that adapt (docs/Heads.md, "Plans that adapt") ----
@@ -172,7 +291,7 @@ const statusFromOutcome = (jobs: readonly PlanJob[]): PlanJobStatusOf => key => 
  * retry can make an incomplete plan worth running again). Throws the first
  * problem found, and appends nothing if it throws.
  */
-export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendments?: readonly PlanAmendment[] }, input: PlanAmendInput, statusOf: PlanJobStatusOf = statusFromOutcome(current.jobs), now: () => Date = () => new Date()): { jobs: PlanJob[]; amendments: PlanAmendment[] } {
+export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendments?: readonly PlanAmendment[]; unattended?: PlanBudget }, input: PlanAmendInput, statusOf: PlanJobStatusOf = statusFromOutcome(current.jobs), now: () => Date = () => new Date(), defaultHeadBudgetUsd = 5): { jobs: PlanJob[]; amendments: PlanAmendment[] } {
   let jobs = [...current.jobs];
   let amendments = current.amendments as PlanAmendment[] | undefined;
   const record = (kind: PlanAmendment['kind'], key: string, detail: string) => { amendments = appendAmendment(amendments, { kind, key, detail }, now); };
@@ -234,6 +353,8 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
   const cycle = findCycle(jobs);
   if (cycle) throw new Error(cycleMessage(jobs, cycle));
   refuseScopeOverlap(jobs);
+  // O7: an unattended plan's own budget still applies to a job an amendment adds.
+  if (current.unattended) refuseOverBudget(current.unattended, jobs.length, defaultHeadBudgetUsd);
   return { jobs, amendments: amendments ?? [] };
 }
 
@@ -368,6 +489,13 @@ export function validatePlan(plan: Plan): void {
   }
   if (plan.board !== undefined) validateBoard(plan.board, new Set(plan.jobs.map(job => job.key)));
   if (plan.amendments !== undefined) validateAmendments(plan.amendments);
+  if (plan.unattended !== undefined) validateBudget(plan.unattended);
+  if (plan.startedAt !== undefined && !isTime(plan.startedAt)) throw new Error('Invalid startedAt.');
+  // O7: unattended plans take heads only — a lane needs a terminal someone drives, which unattended can't ask for.
+  if (plan.unattended) {
+    const lane = plan.jobs.find(job => job.runAs === 'lane');
+    if (lane) throw new Error(`An unattended plan takes heads only; "${lane.title}" runs as a lane.`);
+  }
   validatePlanJobs(plan.jobs);
 }
 
@@ -531,14 +659,16 @@ export function createPlan(input: { title: string; brief?: string; state?: PlanS
 export interface PlanLeadJobInput {
   key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; role?: string; rigor?: PlanRigor;
 }
-export interface PlanCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[] }
+/** O7: hydra_plan_create's own shape for a budget (snake_case, at the MCP boundary). */
+export interface PlanBudgetInput { usd?: number; wall_clock_minutes?: number; max_jobs?: number }
+export interface PlanCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; run?: 'attended' | 'unattended'; budget?: PlanBudgetInput }
 
 /**
  * Builds a draft plan from a lead's hydra_plan_create arguments, run as heads only
  * (a lane job stays a user choice on the canvas). Throws the first problem found,
  * the same way validatePlan does; nothing here starts a process or touches storage.
  */
-export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSessionId: string; idempotencyKey: string }): Plan {
+export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSessionId: string; idempotencyKey: string }, defaultHeadBudgetUsd = 5): Plan {
   if (!input || typeof input !== 'object') throw new Error('hydra_plan_create needs an object.');
   if (!Array.isArray(input.jobs) || input.jobs.length < 1) throw new Error('A plan needs at least one job.');
   if (input.jobs.length > maxPlanJobs) throw new Error(`A plan may have at most ${maxPlanJobs} jobs.`);
@@ -553,7 +683,15 @@ export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSess
       ...(job.role !== undefined ? { role: job.role } : {}),
     };
   });
-  const plan: Plan = { ...createPlan({ title: input.title, brief: input.brief, state: 'draft' }), jobs, leadOrigin };
+  // O7: unattended plans (docs/Heads.md, "Unattended plans"): heads only (already every job a lead's
+  // plan makes), and a budget checked up front, before the plan runs unwatched.
+  const unattended: PlanBudget | undefined = input.run === 'unattended' ? validateBudget({
+    ...(input.budget?.usd !== undefined ? { usd: input.budget.usd } : {}),
+    ...(input.budget?.wall_clock_minutes !== undefined ? { wallClockMinutes: input.budget.wall_clock_minutes } : {}),
+    ...(input.budget?.max_jobs !== undefined ? { maxJobs: input.budget.max_jobs } : {}),
+  }) : undefined;
+  if (unattended) refuseOverBudget(unattended, jobs.length, defaultHeadBudgetUsd);
+  const plan: Plan = { ...createPlan({ title: input.title, brief: input.brief, state: 'draft' }), jobs, leadOrigin, ...(unattended ? { unattended } : {}) };
   validatePlan(plan);
   const cycle = findCycle(plan.jobs);
   if (cycle) throw new Error(cycleMessage(plan.jobs, cycle));
@@ -626,6 +764,14 @@ export class PlanStore {
   private loaded = false;
   constructor(private readonly directory: string, private readonly now: () => Date = () => new Date()) {}
   get file(): string { return path.join(this.directory, 'plans.json'); }
+  /** O7: where an unattended plan's morning report is kept, alongside plans.json. */
+  reportPath(id: string): string { return path.join(this.directory, 'reports', `${id}.md`); }
+  async writeReport(id: string, markdown: string): Promise<string> {
+    const file = this.reportPath(id);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, markdown, 'utf8');
+    return file;
+  }
 
   /** Load the store. A plan left "planning" when Hydra stopped lost its planner process, so it is failed with the reason. */
   async load(): Promise<Plan[]> {

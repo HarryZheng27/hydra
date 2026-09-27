@@ -182,6 +182,15 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
 - **A guaranteed independent reviewer, honestly.** When a job's usage-limit handoff means both Claude Code and Codex wrote part of its diff, "the other agent" has no independent choice left. Hydra reviews with the job's current agent anyway and says so plainly in the evidence, rather than quietly picking one and calling it independent.
 - **Plan jobs fail over on their own.** With `hydra.limits.autoContinuePlans` (on by default), a plan's job that hits its usage limit continues in the other provider right away — nobody may be watching an unattended plan to answer the usual prompt. Turn it off to have a plan job's limit offered like any other head's.
 
+**Unattended plans.** Start a plan, walk away, and read what happened. Pass `run: "unattended"` and a `budget` to `hydra_plan_create` (a lead's plan; the canvas's own **New plan** doesn't have this yet):
+- **Heads only.** An unattended plan can't have a lane job — nobody may be there to drive it — and `hydra_plan_create`/`hydra_plan_amend` refuse one outright.
+- **A budget, checked up front and enforced while it runs:**
+  - **`usd`** and **`max_jobs`** are checked when the plan is created or amended: `max_jobs` refuses a job count over the cap outright, and `usd` refuses a worst-case estimate (job count × `hydra.heads.defaultBudgetUsd`) over the cap. Hydra has no live spend meter — only wall-clock time is ever actually enforced while a job runs — so both are honest estimates checked at the door, not a running total.
+  - **`wall_clock_minutes`** is enforced for real: once that many minutes have passed since the plan started running, Hydra cancels whatever is still going, the same as **Cancel job**.
+- **It asks nothing while it runs:** it always behaves as if `hydra.limits.autoContinuePlans` were on, regardless of that setting.
+- **Stop All Agents still latches** — it stops an unattended plan exactly like any other.
+- **The report.** When the plan ends (finishes, or its wall-clock budget runs out), Hydra writes a Markdown report next to the plan, opens it as a tab, and shows a notification. For each job: what changed, its gates and evidence, its attempts, provider (and any usage-limit handoff) and time, plus every amendment made to the plan. It also lists what still needs you (a job that failed, or is asking a question) and, once Hydra has one, the integration gate's result across the whole plan.
+
 **New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.

@@ -22,12 +22,12 @@ import type { AuditEvent } from './audit';
 import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost, type PlanAmendment } from './plans';
 import { HeadSync, headSyncIntervalMs, type HeadConflict } from './headSync';
 export type { HeadConflict } from './headSync';
-import type { PlanAmendEdit, PlanAmendRetry, PlanAmendSkip, PlanLeadJobInput, PlanState } from './plans';
+import type { PlanAmendEdit, PlanAmendRetry, PlanAmendSkip, PlanBudget, PlanBudgetInput, PlanLeadJobInput, PlanState } from './plans';
 import type { PlanJobStatus } from './planRunner';
 
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
 
-export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string }
+export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string; run?: 'attended' | 'unattended'; budget?: PlanBudgetInput }
 export type PlanLeadEdit = PlanAmendEdit;
 export type PlanLeadSkip = PlanAmendSkip;
 /** O5: retry a job that failed or was skipped, optionally with changes (docs/Heads.md, "Plans that adapt"). */
@@ -37,7 +37,7 @@ export interface PlanLeadAmendInput { add?: PlanLeadJobInput[]; edit?: PlanLeadE
 export interface PlanLeadJobView { key: string; title: string; status: PlanJobStatus; reason?: string; jobId?: string }
 /** A board post as a lead's hydra_plan_* tools show it: `untrusted` is true for everything but the lead's own posts (boardForLead, plans.ts). */
 export type PlanLeadBoardPost = BoardPost & { untrusted: boolean };
-export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[] }
+export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[]; unattended?: PlanBudget }
 export interface PlanLeadMessageInput { to: 'all' | string[]; topic?: string; body: string }
 /**
  * The plan runner and store, narrowed to what a lead's hydra_plan_* calls need.
@@ -101,6 +101,8 @@ export interface HelperServiceOptions {
   watchdogMs?: number;
   /** O2: how often running heads are checked against each other for a predicted merge conflict. Defaults to headSyncIntervalMs (headSync.ts). */
   headSyncIntervalMs?: number;
+  /** O7: checked on the same watchdog tick — cancels an unattended plan's unfinished jobs once its wall-clock budget elapses. */
+  enforceUnattendedBudgets?: () => Promise<void>;
   /**
    * This window's lanes (docs/Lanes_And_Planner_Plan.md): the hydra_lanes answer,
    * and the name a lane's heads are labelled with.
@@ -180,7 +182,7 @@ export class HelperService {
   private readonly headSyncTimer: ReturnType<typeof setInterval>;
   constructor(private readonly options: HelperServiceOptions) {
     this.now = options.now || Date.now;
-    this.watchdog = setInterval(() => { void this.enforceLimits(); void this.refreshMerged(); }, options.watchdogMs ?? 5000);
+    this.watchdog = setInterval(() => { void this.enforceLimits(); void this.refreshMerged(); void this.options.enforceUnattendedBudgets?.(); }, options.watchdogMs ?? 5000);
     this.watchdog.unref?.();
     this.headSyncTimer = setInterval(() => { void this.runHeadSync(); }, options.headSyncIntervalMs ?? headSyncIntervalMs);
     this.headSyncTimer.unref?.();
@@ -877,6 +879,17 @@ export class HelperService {
     if (value !== 'quick' && value !== 'standard' && value !== 'strict') throw new Error(`Job "${key}" has an unknown rigor.`);
     return value;
   }
+  private parseBudget(value: unknown): PlanBudgetInput {
+    const budget = value as { usd?: unknown; wall_clock_minutes?: unknown; max_jobs?: unknown } | undefined;
+    if (!budget || typeof budget !== 'object') throw new Error('An unattended plan needs a budget.');
+    if (budget.usd !== undefined && typeof budget.usd !== 'number') throw new Error('budget.usd must be a number.');
+    if (budget.wall_clock_minutes !== undefined && typeof budget.wall_clock_minutes !== 'number') throw new Error('budget.wall_clock_minutes must be a number.');
+    if (budget.max_jobs !== undefined && typeof budget.max_jobs !== 'number') throw new Error('budget.max_jobs must be a number.');
+    return {
+      ...(budget.usd !== undefined ? { usd: budget.usd as number } : {}), ...(budget.wall_clock_minutes !== undefined ? { wall_clock_minutes: budget.wall_clock_minutes as number } : {}),
+      ...(budget.max_jobs !== undefined ? { max_jobs: budget.max_jobs as number } : {}),
+    };
+  }
   private parsePlanLeadJob(value: unknown): PlanLeadJobInput {
     const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; role?: unknown; rigor?: unknown } | undefined;
     if (!job || typeof job !== 'object') throw new Error('Each job must be an object.');
@@ -906,7 +919,12 @@ export class HelperService {
     if (typeof args.idempotency_key !== 'string' || !args.idempotency_key.trim()) throw new Error('idempotency_key must be text.');
     if (!Array.isArray(args.jobs) || args.jobs.length < 1) throw new Error('A plan needs at least one job.');
     const jobs = this.parsePlanLeadJobs(args.jobs, 12);
-    const input: PlanLeadCreateInput = { title: args.title, ...(typeof args.brief === 'string' ? { brief: args.brief } : {}), jobs, idempotencyKey: args.idempotency_key };
+    if (args.run !== undefined && args.run !== 'attended' && args.run !== 'unattended') throw new Error('run must be "attended" or "unattended".');
+    const budget = args.run === 'unattended' ? this.parseBudget(args.budget) : undefined;
+    const input: PlanLeadCreateInput = {
+      title: args.title, ...(typeof args.brief === 'string' ? { brief: args.brief } : {}), jobs, idempotencyKey: args.idempotency_key,
+      ...(args.run === 'unattended' ? { run: 'unattended' as const, budget } : {}),
+    };
     const { plan, created } = await this.requirePlanBridge().create(input, leadSessionId);
     return {
       ...this.planView(plan), created,
@@ -995,6 +1013,8 @@ export class HelperService {
       ...(needsAttention.length ? { needs_attention: needsAttention } : {}),
       ...(plan.board.length ? { board: plan.board } : {}),
       ...(plan.amendments.length ? { amendments: plan.amendments } : {}),
+      // O7: an unattended plan's budget, so the lead (and hydra_plan_get callers) can see the cap it's running under.
+      ...(plan.unattended ? { unattended: plan.unattended } : {}),
     };
   }
 

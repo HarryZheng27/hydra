@@ -256,6 +256,8 @@ export interface PlanRunnerOptions {
   terminalsAvailable(): boolean;
   /** A plan's jobs or statuses changed. */
   onChange?(planId: string): void;
+  /** O7: a plan just left 'running' (done or incomplete) — the morning report and its notification go here. */
+  onSettled?(plan: Plan): void;
   /** The runner started a plan's lane (the extension says so, with Show lane). */
   onLaneStarted?(plan: Plan, job: PlanJob, laneId: string): void;
   log?(line: string): void;
@@ -356,7 +358,11 @@ export class PlanRunner {
       const refusal = planRunRefusal(plan, this.options.terminalsAvailable());
       if (refusal) throw new Error(refusal);
       this.undispatched.delete(planId);
-      await this.options.store.update(planId, current => ({ ...current, state: 'running', error: undefined, jobs: current.jobs.map(({ draft: _draft, ...job }) => job) }));
+      await this.options.store.update(planId, current => ({
+        ...current, state: 'running', error: undefined, jobs: current.jobs.map(({ draft: _draft, ...job }) => job),
+        // O7: the wall-clock budget (docs/Heads.md, "Unattended plans") measures from here, set once.
+        ...(current.startedAt ? {} : { startedAt: new Date().toISOString() }),
+      }));
       await this.pass(planId, {});
     });
   }
@@ -512,8 +518,9 @@ export class PlanRunner {
         }
         if (progressed) continue;
         if (steps.state !== 'running') {
-          await this.options.store.update(planId, current => current.state === 'running' ? { ...current, state: steps.state } : undefined);
+          const settled = await this.options.store.update(planId, current => current.state === 'running' ? { ...current, state: steps.state } : undefined);
           this.options.log?.(`[plans] ${planId} is ${steps.state}`);
+          if (settled) this.options.onSettled?.(settled);
         }
         break;
       }
