@@ -31,7 +31,8 @@ export async function writeWindowRecord(helpersRoot: string, record: Omit<Helper
 
 export async function removeWindowRecord(file: string): Promise<void> { await rm(file, { force: true }); }
 
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } };
+// Exported for src/core/projectSummary.ts (Step D): readProjectSummaries takes the same liveness check.
+export const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } };
 
 /** The live window whose folder contains `cwd`; the deepest folder wins. Records of dead windows are removed. */
 export async function findWindowFor(helpersRoot: string, cwd: string): Promise<HelperWindowRecord | undefined> {
