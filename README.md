@@ -23,6 +23,14 @@ npm.cmd run desktop:smoke
 
 The build lives in `.desktop/VSCode-win32-x64/`. The Windows CI job builds the same standalone app and runs the existing acceptance suite against its built-in Hydra module, using a separate empty test harness. A source `.vsix` does not satisfy the standalone release gate. Releases are published from that same CI run, with a `SHA256SUMS` file and a build-provenance attestation; see [Releasing Hydra](docs/Releases.md).
 
+## Install
+
+```powershell
+irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex
+```
+
+This downloads the latest release, checks it against `SHA256SUMS`, and installs it for your user only (no admin needed). Or download `HydraSetup.exe` by hand from the [latest release](https://github.com/ndunl075/hydra/releases/latest/download/HydraSetup.exe).
+
 ## Updating
 
 Hydra installed with `HydraSetup.exe` checks GitHub for a newer release 30 seconds after it starts and then once a day. When there is one, it shows **Update**, **Release notes** and **Skip this version**. You can also run **Hydra: Check for Updates** from the Command Palette at any time.
