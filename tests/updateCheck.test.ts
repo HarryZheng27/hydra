@@ -10,7 +10,7 @@ import path from 'node:path';
 import { preferenceOnlySettings } from '../src/core/settingsRefresh';
 import {
   allowedDownloadUrl, compareVersions, downloadVerified, installerArguments, isNewer, latestRelease, parseSums, psQuote, releaseFromPayload,
-  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, nextAutoCheckDelay, updateOffer, type FetchLike, type LatestRelease,
+  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
 } from '../src/core/updateCheck';
 
 const tag = 'v0.25.0';
@@ -314,4 +314,8 @@ test('updateOffer: automatic checks respect Skip this version; a manual check al
   assert.deepEqual(updateOffer('0.24.1', '0.24.1', undefined, true), { kind: 'latest', message: "You're on the latest version (0.24.1)." });
   assert.equal(updateOffer('0.24.0', '0.24.1', undefined, true).kind, 'latest');
   assert.equal(updateOffer('0.25.0', '0.24.1-dev', undefined, true).kind, 'unknown');
+});
+
+test('helperEnvironment drops Electron and VS Code variables so the reopened Hydra opens a window', () => {
+  assert.deepEqual(helperEnvironment({ PATH: 'C:\\Windows', TEMP: 'C:\\Temp', ELECTRON_RUN_AS_NODE: '1', VSCODE_IPC_HOOK: 'x', vscode_pid: '1', ELECTRON_NO_ATTACH_CONSOLE: '1' }), { PATH: 'C:\\Windows', TEMP: 'C:\\Temp' });
 });

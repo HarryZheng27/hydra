@@ -5,7 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  checkIntervalMs, downloadVerified, latestRelease, nextAutoCheckDelay, runningNotice, updateEligibility, updateHelperFileContents, updateOffer, type LatestRelease,
+  checkIntervalMs, downloadVerified, helperEnvironment, latestRelease, nextAutoCheckDelay, runningNotice, updateEligibility, updateHelperFileContents, updateOffer, type LatestRelease,
 } from './core/updateCheck';
 
 /**
@@ -112,7 +112,7 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
       await writeFile(helper, updateHelperFileContents({ installer: file, installDir: eligible.installDir, exe: process.execPath, log: path.join(os.tmpdir(), 'hydra-update.log') }));
       const systemRoot = process.env.SystemRoot || process.env.windir;
       const powershell = systemRoot ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : 'powershell.exe';
-      const child = spawn(existsSync(powershell) ? powershell : 'powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', helper], { detached: true, stdio: 'ignore', windowsHide: true });
+      const child = spawn(existsSync(powershell) ? powershell : 'powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', helper], { detached: true, stdio: 'ignore', windowsHide: true, env: helperEnvironment(process.env) });
       await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); });
       child.unref();
       log(`[updates] started the update helper (${helper}); quitting so it can install ${release.version}`);

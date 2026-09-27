@@ -365,3 +365,12 @@ export function updateOffer(latest: string, current: string, skipped: string | u
   if (!manual && skipped === latest) return { kind: 'skipped' };
   return { kind: 'offer', message: `Hydra ${latest} is available (you have ${current}).` };
 }
+
+/**
+ * The helper's environment: the extension host's, minus Electron's and VS Code's own
+ * variables. ELECTRON_RUN_AS_NODE in particular would make the reopened Hydra.exe run
+ * as plain Node instead of opening a window.
+ */
+export function helperEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^(ELECTRON_|VSCODE_)/i.test(key)));
+}
