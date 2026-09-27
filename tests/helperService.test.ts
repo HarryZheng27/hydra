@@ -18,7 +18,7 @@ import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
 type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
-async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans'] }) {
+async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -37,7 +37,7 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
     store, endpoint, leadFolder: repo, leadKey: 'window', worktreeRoot: () => path.join(root, 'worktrees'),
     executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => options.maxConcurrent ?? 2, now: options.now, watchdogMs: 20,
-    gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo), plans: options.plans,
+    gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo), plans: options.plans, planBoard: options.planBoard,
     startRun: spec => {
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
@@ -677,6 +677,7 @@ test('hydra_plan_* tools need a bridge session (a lead token minted without one 
   const f = await fixture({ script: async () => {}, plans: {
     create: async () => { throw new Error('should not be called'); }, get: () => undefined,
     wait: async () => { throw new Error('should not be called'); }, amend: async () => { throw new Error('should not be called'); }, cancel: async () => { throw new Error('should not be called'); },
+    message: async () => { throw new Error('should not be called'); },
   } });
   try {
     // fixture()'s own default lead token has no leadSessionId.
@@ -693,7 +694,7 @@ function fakePlanBridge() {
   const bridge = {
     create: async (input: any, leadSessionId: string) => {
       calls.push({ method: 'create', args: [input, leadSessionId] });
-      const plan = { planId: 'aaaaaaaa0001', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })) };
+      const plan = { planId: 'aaaaaaaa0001', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })), board: [] as any[] };
       plans.set(plan.planId, plan);
       return { plan, created: true };
     },
@@ -713,6 +714,12 @@ function fakePlanBridge() {
       calls.push({ method: 'cancel', args: [id, leadSessionId, reason] });
       const plan = plans.get(id); if (!plan) throw new Error(`No plan ${id} in this window.`);
       plan.state = 'incomplete'; for (const job of plan.jobs) if (job.status === 'active') job.status = 'cancelled';
+      return plan;
+    },
+    message: async (id: string, leadSessionId: string, input: any) => {
+      calls.push({ method: 'message', args: [id, leadSessionId, input] });
+      const plan = plans.get(id); if (!plan) throw new Error(`No plan ${id} in this window.`);
+      plan.board.push({ id: 'b'.repeat(12), at: new Date().toISOString(), from: { kind: 'lead' }, to: input.to, ...(input.topic ? { topic: input.topic } : {}), body: input.body, untrusted: false });
       return plan;
     },
   };
@@ -764,7 +771,7 @@ test("hydra_plan_get returns a job enriched with its head's own detail when it h
   }, plans: bridge });
   try {
     const started = await f.start('for-plan');
-    plans.set('aaaaaaaa0002', { planId: 'aaaaaaaa0002', title: 'Has a head', state: 'running', jobs: [{ key: 'a', title: 'A', status: 'active', jobId: started.job_id }] });
+    plans.set('aaaaaaaa0002', { planId: 'aaaaaaaa0002', title: 'Has a head', state: 'running', jobs: [{ key: 'a', title: 'A', status: 'active', jobId: started.job_id }], board: [] });
     await until(() => f.store.get(started.job_id)?.state === 'done', 'head done');
     const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
     const result = await callHelperEndpoint(f.endpoint.port, chat, 'hydra_plan_get', { plan_id: 'aaaaaaaa0002' });
@@ -825,5 +832,126 @@ test('hydra_plan_amend parses add/edit/skip and delegates each list, and hydra_p
     const cancelCall = calls.find(c => c.method === 'cancel')!;
     assert.equal(cancelCall.args[2], 'Cancelled by the lead.');
     assert.equal((cancelled.result as any).state, 'incomplete');
+  } finally { await f.close(); }
+});
+
+// ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+
+/**
+ * A minimal PlanLeadBridge + PlanBoardBridge sharing one in-memory plan store, the same
+ * way extension.ts's two bridges share one real PlanStore. attachJob simulates a plan
+ * job actually starting as a head (extension.ts's jobPlanFor finds it the same way,
+ * by which plan job carries the head's job id).
+ */
+function fakePlanWorld() {
+  const plans = new Map<string, any>();
+  const untrust = (post: any, key: string) => ({ ...post, untrusted: !(post.from.kind === 'job' && post.from.key === key) });
+  const leadBridge = {
+    create: async (input: any) => {
+      const plan = { planId: 'aaaaaaaa0003', title: input.title, state: 'running', jobs: input.jobs.map((job: any) => ({ key: job.key, title: job.title, status: 'active' })), board: [] as any[] };
+      plans.set(plan.planId, plan);
+      return { plan, created: true };
+    },
+    get: (id: string) => plans.get(id),
+    wait: async (id: string) => plans.get(id),
+    amend: async (id: string) => plans.get(id),
+    cancel: async (id: string) => plans.get(id),
+    message: async (id: string, _leadSessionId: string, input: any) => {
+      const plan = plans.get(id); if (!plan) throw new Error(`No plan ${id}.`);
+      plan.board.push({ id: 'm'.repeat(12), at: new Date().toISOString(), from: { kind: 'lead' }, to: input.to, ...(input.topic ? { topic: input.topic } : {}), body: input.body });
+      return { ...plan, board: plan.board.map((post: any) => untrust(post, '')) };
+    },
+  };
+  const boardBridge = {
+    jobPlan: (jobId: string) => {
+      for (const plan of plans.values()) { const job = plan.jobs.find((item: any) => item.jobId === jobId); if (job) return { planId: plan.planId, jobKey: job.key }; }
+      return undefined;
+    },
+    post: async (planId: string, input: any) => {
+      const plan = plans.get(planId); if (!plan) throw new Error(`No plan ${planId}.`);
+      plan.board.push({ id: 'p'.repeat(12), at: new Date().toISOString(), ...input });
+    },
+    boardFor: (planId: string, jobKey: string) => {
+      const plan = plans.get(planId); if (!plan) return [];
+      return plan.board.filter((post: any) => post.to === 'all' || (Array.isArray(post.to) && post.to.includes(jobKey)) || (post.from.kind === 'job' && post.from.key === jobKey)).map((post: any) => untrust(post, jobKey));
+    },
+  };
+  const attachJob = (planId: string, key: string, jobId: string) => { plans.get(planId).jobs.find((job: any) => job.key === key).jobId = jobId; };
+  return { plans, leadBridge: leadBridge as unknown as HelperServiceOptions['plans'], planBoard: boardBridge as unknown as HelperServiceOptions['planBoard'], attachJob };
+}
+
+test('hydra_share/hydra_board: a job reads the lead\'s message and its own share; a post from elsewhere is untrusted, its own isn\'t', async () => {
+  const world = fakePlanWorld();
+  let boardResult: any;
+  const f = await fixture({ plans: world.leadBridge, planBoard: world.planBoard, script: async helper => {
+    // Retries because the test attaches this head to its plan job right after hydra_start_head returns,
+    // which can land after this script's first tick.
+    let shared: any; for (let i = 0; i < 100 && !shared?.ok; i++) { shared = await helper.call('hydra_share', { topic: 'Schema', body: 'The schema is in db/schema.sql.' }); if (!shared.ok) await new Promise(resolve => setTimeout(resolve, 20)); }
+    boardResult = await helper.call('hydra_board');
+    helper.endTurn();
+  } });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    await call('hydra_plan_create', { title: 'X', jobs: [{ key: 'a', title: 'A', brief: 'x', write_scope: ['src/'] }, { key: 'b', title: 'B', brief: 'x', write_scope: ['src/b/'] }], idempotency_key: 'k' });
+    await call('hydra_plan_message', { plan_id: 'aaaaaaaa0003', to: 'all', body: 'Welcome to the plan.' });
+    await call('hydra_plan_message', { plan_id: 'aaaaaaaa0003', to: ['b'], body: 'Only for b.' });
+    const started = await f.start('for-board');
+    world.attachJob('aaaaaaaa0003', 'a', started.job_id);
+    await until(() => boardResult !== undefined, 'the head read its board');
+    assert.equal(boardResult.ok, true, boardResult.error);
+    const posts = boardResult.result.posts as any[];
+    assert.deepEqual(posts.map(post => post.body), ['Welcome to the plan.', 'The schema is in db/schema.sql.'], '"Only for b." is addressed to job b, not a');
+    assert.deepEqual(posts.map(post => post.untrusted), [true, false], 'the lead\'s message is untrusted; its own share isn\'t');
+  } finally { await f.close(); }
+});
+
+test('hydra_plan_message validates its arguments before reaching the bridge; hydra_share/hydra_board refuse a loose head', async () => {
+  const world = fakePlanWorld();
+  const f = await fixture({ plans: world.leadBridge, planBoard: world.planBoard, script: async () => {} });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    const badTo = await call('hydra_plan_message', { plan_id: 'aaaaaaaa0003', to: 'nobody', body: 'x' });
+    assert.equal(badTo.ok, false); assert.match(badTo.error!, /"all" or a list/);
+    const noBody = await call('hydra_plan_message', { plan_id: 'aaaaaaaa0003', to: 'all' });
+    assert.equal(noBody.ok, false); assert.match(noBody.error!, /body must be/);
+    // A loose head (this window has no plan bridge at all) has no board.
+    let sharedResult: any, boardResult: any;
+    const g = await fixture({ script: async helper => {
+      sharedResult = await helper.call('hydra_share', { body: 'x' });
+      boardResult = await helper.call('hydra_board');
+      helper.endTurn();
+    } });
+    try {
+      await g.start('loose');
+      await until(() => !!sharedResult && !!boardResult, 'the loose head tried both board tools');
+      assert.equal(sharedResult.ok, false); assert.match(sharedResult.error!, /plan board is not available/);
+      assert.equal(boardResult.ok, false); assert.match(boardResult.error!, /plan board is not available/);
+    } finally { await g.close(); }
+  } finally { await f.close(); }
+});
+
+test('hydra_progress/hydra_done: name how many board posts are waiting (excluding this job\'s own), only when there are any', async () => {
+  const world = fakePlanWorld();
+  let progressResult: any, doneResult: any;
+  const f = await fixture({ checks: passCheck, plans: world.leadBridge, planBoard: world.planBoard, script: async helper => {
+    let progressed: any; for (let i = 0; i < 100 && !progressed?.ok; i++) { progressed = await helper.call('hydra_progress', { note: 'Starting.' }); if (!progressed.ok) await new Promise(resolve => setTimeout(resolve, 20)); }
+    progressResult = progressed;
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    doneResult = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    helper.endTurn();
+  } });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    await call('hydra_plan_create', { title: 'X', jobs: [{ key: 'a', title: 'A', brief: 'x', write_scope: ['src/'] }], idempotency_key: 'k' });
+    await call('hydra_plan_message', { plan_id: 'aaaaaaaa0003', to: 'all', body: 'Read this.' });
+    const started = await f.start('for-progress');
+    world.attachJob('aaaaaaaa0003', 'a', started.job_id);
+    await until(() => !!progressResult, 'progress reported');
+    assert.equal(progressResult.result.board_posts, 1);
+    await until(() => !!doneResult, 'done reported');
+    assert.equal(doneResult.result.board_posts, 1);
   } finally { await f.close(); }
 });

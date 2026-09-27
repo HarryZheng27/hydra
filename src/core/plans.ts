@@ -108,6 +108,59 @@ export interface Plan {
    * another; `hydra_plan_amend` and `hydra_plan_cancel` work only on a plan that has this.
    */
   leadOrigin?: { leadSessionId: string; idempotencyKey: string };
+  /** O4: structured messages between the lead and its plan's jobs (docs/Heads.md, "The plan board"). */
+  board?: BoardPost[];
+}
+
+// ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+
+export const boardBodyMax = 2000;
+export const boardTopicMax = 200;
+/** Oldest posts drop off past this many, so a long-running plan's board can't grow without bound. */
+export const boardPostsMax = 500;
+export type BoardFrom = { kind: 'lead' } | { kind: 'job'; key: string };
+export interface BoardPost { id: string; at: string; from: BoardFrom; to: 'all' | string[]; topic?: string; body: string }
+
+function validateBoard(board: unknown, jobKeys: ReadonlySet<string>): void {
+  if (!Array.isArray(board)) throw new Error('A plan\'s board must be a list.');
+  for (const value of board) {
+    const post = value as Partial<BoardPost> | undefined;
+    if (!post || typeof post !== 'object') throw new Error('Each board post must be an object.');
+    if (typeof post.id !== 'string' || !hexId.test(post.id)) throw new Error('Invalid board post id.');
+    if (!isTime(post.at)) throw new Error('A board post has an invalid time.');
+    const from = post.from as Partial<BoardFrom> | undefined;
+    if (!from || typeof from !== 'object' || (from.kind !== 'lead' && from.kind !== 'job')) throw new Error('A board post has an invalid from.');
+    if (from.kind === 'job' && (typeof from.key !== 'string' || !planJobKeyPattern.test(from.key))) throw new Error('A board post\'s from.key is invalid.');
+    if (post.to !== 'all' && (!Array.isArray(post.to) || post.to.length < 1 || post.to.some(key => typeof key !== 'string' || !jobKeys.has(key)))) {
+      throw new Error('A board post\'s to must be "all" or this plan\'s job keys.');
+    }
+    if (post.topic !== undefined && (typeof post.topic !== 'string' || post.topic.length > boardTopicMax)) throw new Error(`A board post's topic must be at most ${boardTopicMax} characters.`);
+    if (typeof post.body !== 'string' || !post.body.trim() || post.body.length > boardBodyMax) throw new Error(`A board post's body must be 1-${boardBodyMax} characters.`);
+  }
+}
+
+/** Appends a post, trimming the oldest once the board passes boardPostsMax. Pure: the caller persists the result. */
+export function appendBoardPost(board: readonly BoardPost[] | undefined, post: { from: BoardFrom; to: 'all' | string[]; topic?: string; body: string }, now: () => Date = () => new Date()): BoardPost[] {
+  const entry: BoardPost = { id: randomBytes(6).toString('hex'), at: now().toISOString(), ...post };
+  const next = [...(board ?? []), entry];
+  return next.length > boardPostsMax ? next.slice(next.length - boardPostsMax) : next;
+}
+
+/**
+ * A job's own view of the board (hydra_board): posts addressed to it or to
+ * everyone, plus its own posts (so it can see what it already said). `untrusted`
+ * is true for everything but the reader's own posts — the job's tool result
+ * fences them the same way, but this is what decides which posts qualify.
+ */
+export function boardForJob(board: readonly BoardPost[] | undefined, key: string): (BoardPost & { untrusted: boolean })[] {
+  return (board ?? [])
+    .filter(post => post.to === 'all' || (Array.isArray(post.to) && post.to.includes(key)) || (post.from.kind === 'job' && post.from.key === key))
+    .map(post => ({ ...post, untrusted: !(post.from.kind === 'job' && post.from.key === key) }));
+}
+
+/** The lead's own view (hydra_plan_get/_wait/_create/_amend/_cancel): every post; a job's is untrusted, the lead's own isn't. */
+export function boardForLead(board: readonly BoardPost[] | undefined): (BoardPost & { untrusted: boolean })[] {
+  return (board ?? []).map(post => ({ ...post, untrusted: post.from.kind === 'job' }));
 }
 
 const trimmed = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -187,6 +240,7 @@ export function validatePlan(plan: Plan): void {
       throw new Error('Invalid leadOrigin.');
     }
   }
+  if (plan.board !== undefined) validateBoard(plan.board, new Set(plan.jobs.map(job => job.key)));
   validatePlanJobs(plan.jobs);
 }
 

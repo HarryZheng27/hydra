@@ -29,7 +29,7 @@ import type { LimitEvent } from './core/limitEvents';
 import { ClaudeChatLimits, CodexChatLimits } from './extensionLimits';
 import type { ProviderConnectionView } from './helperConnectionsView';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from './core/mcpServers';
-import { createRedactor } from './core/redact';
+import { createRedactor, redactText } from './core/redact';
 import { checkProvider } from './core/diagnostics';
 import { settingsRequiringRefresh } from './core/settingsRefresh';
 import { parseHandoff, officialProviders } from './core/handoff';
@@ -52,8 +52,8 @@ import { planBrief } from './core/planner';
 import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Their own block. ----
-import { findPlanByIdempotencyKey, planFromLeadInput, planOutcomeReasonMax, refuseScopeOverlap, validatePlanJobs, type PlanJobOutcome } from './core/plans';
-import type { PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadPlan } from './core/helperService';
+import { appendBoardPost, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, planOutcomeReasonMax, refuseScopeOverlap, validatePlanJobs, type BoardFrom, type PlanJobOutcome } from './core/plans';
+import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
@@ -548,6 +548,7 @@ class Manager {
       audit: event => this.audit.record(event),
       // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
       plans: this.createPlanLeadBridge(),
+      planBoard: this.createPlanBoardBridge(),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
@@ -1085,9 +1086,10 @@ class Manager {
       wait: (id, leadSessionId, maxWaitS, signal) => this.planLeadWait(id, leadSessionId, maxWaitS, signal),
       amend: (id, leadSessionId, input) => this.planLeadAmend(id, leadSessionId, input),
       cancel: (id, leadSessionId, reason) => this.planLeadCancel(id, leadSessionId, reason),
+      message: (id, leadSessionId, input) => this.planLeadMessage(id, leadSessionId, input),
     };
   }
-  /** A plan as hydra_plan_* show it to the lead that made it: each job's run status from the plan runner. */
+  /** A plan as hydra_plan_* show it to the lead that made it: each job's run status from the plan runner, and the board. */
   private planLeadSummary(plan: Plan): PlanLeadPlan {
     const views = this.requirePlanRunner().statuses(plan.id) ?? [];
     const viewByKey = new Map(views.map(view => [view.key, view]));
@@ -1097,6 +1099,7 @@ class Manager {
         const view = viewByKey.get(job.key);
         return { key: job.key, title: job.title, status: view?.status ?? 'draft', ...(view?.reason ? { reason: view.reason } : {}), ...(job.jobId ? { jobId: job.jobId } : {}) };
       }),
+      board: boardForLead(plan.board),
     };
   }
   /** hydra_plan_create: a repeated idempotency key from the same chat returns the plan it already made. */
@@ -1201,6 +1204,44 @@ class Manager {
       await runner.cancelJob(id, view.key, reason).catch(error => this.output.appendLine(`[plans] ${id}: couldn't cancel job ${view.key}: ${this.describe(error)}`));
     }
     return this.planLeadSummary(this.planLeadOwn(id, leadSessionId));
+  }
+  /** hydra_plan_message: the lead posts to specific jobs (checked against this plan's own keys) or the whole plan. */
+  private async planLeadMessage(id: string, leadSessionId: string, input: PlanLeadMessageInput): Promise<PlanLeadPlan> {
+    const owned = this.planLeadOwn(id, leadSessionId);
+    if (input.to !== 'all') {
+      const keys = new Set(owned.jobs.map(job => job.key));
+      for (const key of input.to) if (!keys.has(key)) throw new Error(`No job "${key}" in this plan.`);
+    }
+    await this.planBoardPost(id, { from: { kind: 'lead' }, to: input.to, ...(input.topic ? { topic: input.topic } : {}), body: input.body });
+    return this.planLeadSummary(this.plans!.store.get(id) ?? owned);
+  }
+
+  // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
+
+  private createPlanBoardBridge(): PlanBoardBridge {
+    return {
+      jobPlan: jobId => this.jobPlanFor(jobId),
+      post: (planId, input) => this.planBoardPost(planId, input),
+      boardFor: (planId, jobKey) => boardForJob(this.plans?.store.get(planId)?.board, jobKey),
+    };
+  }
+  /** The plan and job key a running head belongs to: found by which plan job carries this head's job id. */
+  private jobPlanFor(jobId: string): { planId: string; jobKey: string } | undefined {
+    for (const plan of this.plans?.store.list() ?? []) {
+      const job = plan.jobs.find(item => item.jobId === jobId);
+      if (job) return { planId: plan.id, jobKey: job.key };
+    }
+    return undefined;
+  }
+  /** Appends a post to a plan's board, redacted, on the plan runner's own queue so it can't race an amendment or a job landing. */
+  private async planBoardPost(planId: string, input: { from: BoardFrom; to: 'all' | string[]; topic?: string; body: string }): Promise<void> {
+    const plans = this.requirePlans();
+    const runner = this.requirePlanRunner();
+    await runner.withPlan(planId, async () => {
+      const updated = await plans.store.update(planId, plan => ({ ...plan, board: appendBoardPost(plan.board, { from: input.from, to: input.to, ...(input.topic ? { topic: input.topic } : {}), body: redactText(input.body) }) }));
+      if (!updated) throw new Error(`No plan ${planId} in this window.`);
+    });
+    this.plansChanged();
   }
   // ---- Canvas tidy-up (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up") ----
   /** The Finished tray's Clear button: hide these heads from the tray, kept across reloads; a new finished head still shows up. */
