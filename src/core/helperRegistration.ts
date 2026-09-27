@@ -27,8 +27,8 @@ export interface ConnectionStatus { provider: ConnectableProvider; connected: bo
 
 export const serverName = 'hydra';
 export const claudeAllowRule = 'mcp__hydra';
-const blockStart = '# >>> Hydra helpers (managed by Hydra: connect or disconnect in Hydra Settings)';
-const blockEnd = '# <<< Hydra helpers';
+export const blockStart = '# >>> Hydra helpers (managed by Hydra: connect or disconnect in Hydra Settings)';
+export const blockEnd = '# <<< Hydra helpers';
 
 export interface ProviderPaths { claudeJson: string; claudeSettings: string; codexConfig: string; claudeProjects: string }
 export function providerPaths(env: NodeJS.ProcessEnv = process.env): ProviderPaths {

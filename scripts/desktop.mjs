@@ -121,6 +121,8 @@ export function isolatedEditorTypes(upstream, declaration, typeRoots) {
     ...(typeRoots ? { typeRoots: upstream.compilerOptions?.typeRoots ?? typeRoots } : {}),
     paths: { ...upstream.compilerOptions?.paths, vscode: [declaration] } } };
 }
+/** Hydra's Inno Setup includes, copied next to the pinned code.iss that brandedInstaller includes them from. */
+export const installerIncludes = ['hydra-update-mode.iss', 'hydra-uninstall.iss'];
 export function brandedInstaller(text) {
   const replaceOnce = (before, after) => {
     if (text.split(before).length !== 2) throw new Error(`Pinned installer changed: ${before}`);
@@ -166,6 +168,10 @@ begin
   replaceOnce('    end else begin\n      if IsVersionedUpdate() then begin',
     '    end else if not IsHydraUpdate() then begin\n      if IsVersionedUpdate() then begin');
   replaceOnce('    if ShouldRestartTunnelService then', '    if ShouldRestartTunnelService and not IsHydraUpdate() then');
+  // Uninstall cleanup (desktop/hydra-uninstall.iss) runs first at every uninstall
+  // step, before upstream's early exit for steps other than usUninstall.
+  const uninstallStep = 'procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);\nvar\n  Path: string;\n  VSCodePath: string;\n  Parts: TArrayOfString;\n  NewPath: string;\n  i: Integer;\nbegin\n';
+  replaceOnce(uninstallStep, `#include "hydra-uninstall.iss"\n${uninstallStep}  HydraUninstallCleanup(CurUninstallStep);\n`);
   if (!/Name: "desktopicon";[^\r\n]*Flags: unchecked/.test(text) || !/Tasks: desktopicon/.test(text)) throw new Error('Installer desktop-shortcut checkbox contract changed.');
   const deleteSection = '[InstallDelete]';
   if (text.split(deleteSection).length !== 2) throw new Error('Pinned installer delete section changed.');
@@ -701,7 +707,7 @@ export async function prepare() {
   const original = JSON.parse(await git(['show', `${pin.commit}:product.json`]));
   await fs.writeFile(path.join(source, 'product.json'), JSON.stringify(brandedProduct(original, manifest.version), null, 2) + '\n');
   const installer = await git(['show', `${pin.commit}:build/win32/code.iss`]);
-  await fs.copyFile(path.join(root, 'desktop', 'hydra-update-mode.iss'), path.join(source, 'build', 'win32', 'hydra-update-mode.iss'));
+  for (const name of installerIncludes) await fs.copyFile(path.join(root, 'desktop', name), path.join(source, 'build', 'win32', name));
   await fs.writeFile(path.join(source, 'build', 'win32', 'code.iss'), brandedInstaller(installer));
   const electron = await git(['show', `${pin.commit}:build/lib/electron.ts`]);
   if (!electron.includes("companyName: 'Microsoft Corporation'")) throw new Error('Pinned executable publisher metadata changed.');
@@ -816,6 +822,8 @@ export async function verify() {
   const bundled = path.join(output, 'resources', 'app', 'extensions', 'hydra-agent-manager');
   const manifest = await readJson(path.join(bundled, 'package.json'));
   if (manifest.publisher !== 'nico-dunlap' || manifest.name !== 'hydra-agent-manager') throw new Error('Built-in Hydra extension is missing.');
+  // The uninstaller runs this to remove Hydra's entries from Claude Code's and Codex's settings.
+  await fs.access(path.join(bundled, 'dist', 'hydra-uninstall.cjs')).catch(() => { throw new Error('Built-in Hydra extension is missing its uninstall cleanup.'); });
   const release = await readJson(path.join(root, 'package.json'));
   if (product.hydraVersion !== release.version || manifest.version !== release.version) throw new Error('Desktop product and bundled module versions differ from the Hydra release.');
   const nativeHelperPath = path.join(output, 'tools', 'HydraUpdateVerify.exe');
@@ -883,7 +891,7 @@ export async function installer() {
   await fs.writeFile(path.join(source, sourcePath), installerInventorySource(
     installerVersionSource(await git(['show', `${pin.commit}:${sourcePath}`]), manifest.version),
     path.join(root, 'scripts', 'desktop-installed-inventory.mjs'), pin.commit));
-  await fs.copyFile(path.join(root, 'desktop', 'hydra-update-mode.iss'), path.join(source, 'build', 'win32', 'hydra-update-mode.iss'));
+  for (const name of installerIncludes) await fs.copyFile(path.join(root, 'desktop', name), path.join(source, 'build', 'win32', name));
   await fs.writeFile(path.join(source, 'build', 'win32', 'code.iss'), brandedInstaller(await git(['show', `${pin.commit}:build/win32/code.iss`])));
   // The standalone app task does not stage installer-specific updater tools.
   // Use the pinned task, including Hydra's icon, before compiling [Files].

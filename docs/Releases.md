@@ -8,7 +8,7 @@ How a Hydra release is built, published and checked, and what's still needed bef
 2. Run the **Windows desktop** workflow by hand (**Actions → Windows desktop → Run workflow**) on `main`, with:
    - **release_tag:** `v<that version>`, for example `v0.25.0`;
    - **prerelease:** on, until installers are code-signed.
-3. The `desktop` job builds and tests everything, as on a pull request: the build, smoke, the installer's install, reinstall and uninstall, the upgrade from the pinned previous release, and the MSIX checks.
+3. The `desktop` job builds and tests everything, as on a pull request: the build, smoke, the installer's install, reinstall and uninstall, the upgrade from the pinned previous release, and the MSIX checks. The uninstall test checks that uninstalling removes only this install's Claude Code and Codex entries, keeps Hydra's data by default, and removes it with `/HYDRAREMOVEDATA` (see [Uninstall](../README.md#uninstall)).
 4. Only if all of that passes, the `release` job:
    - checks that the tag matches `package.json` and isn't already a release;
    - writes `SHA256SUMS` for the tested installer;
