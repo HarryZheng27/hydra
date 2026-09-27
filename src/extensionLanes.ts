@@ -8,6 +8,7 @@ import { LaneStore, isLaneId, laneGoalMax, parseLaneName, type Lane } from './co
 import { LaneService, gatesPassNote, maxOpenLanes } from './core/laneService';
 import { defaultCommitMessage, laneDiffFiles, type CloseMode } from './core/laneFinish';
 import { flattenGateFailureMessage, summarizeGateFailures, type GatesLoader, type GatesOutcome } from './core/gates';
+import { parsePreviewConfig, savePreviewConfig, splitPreviewCommand, type PreviewConfig } from './core/lanePreview';
 import type { EvidenceStatus, JobCheckResult } from './core/jobs';
 import { laneActions, type AgentsView, type LaneAction, type LaneClientMessage, type LaneLimitOfferView, type LaneOfferButtonId, type LaneServerMessage, type LaneView, type Provider } from './core/model';
 import { otherProvider, type LimitEvent } from './core/limitEvents';
@@ -166,6 +167,7 @@ export class LanesController implements vscode.Disposable {
       gatesExecutable: provider => this.host.gatesExecutable(provider),
       gatesLimited: provider => this.host.gatesLimited(provider),
       gatesLogDirectory: path.join(storageDirectory, 'lanes', 'gates'),
+      previewLogDirectory: path.join(storageDirectory, 'lanes', 'preview'),
       planOf: id => { const job = this.planJobOf(id); return job ? { title: job.planTitle, job: job.jobTitle, dependents: job.dependents } : undefined; },
       ...(this.host.gates ? { gates: this.host.gates } : {}),
       ...(this.host.roles ? { roles: this.host.roles } : {}),
@@ -642,6 +644,9 @@ export class LanesController implements vscode.Disposable {
         await vscode.commands.executeCommand('hydra.openEvidence', 'lane', lane.id);
         return undefined;
       }
+      // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+      case 'preview': return this.previewLane(service, lane, interactive);
+      case 'stopPreview': await service.stopPreview(lane.id); this.postState(true); return { stopped: true };
       // ---- Plan lanes (docs/Plan_Lanes_Plan.md, "What done means for a lane job" and "Failures") ----
       case 'markJobDone': return this.markJobDone(service, lane, interactive, options);
       case 'cancelJob': {
@@ -801,6 +806,62 @@ export class LanesController implements vscode.Disposable {
     });
     await vscode.commands.executeCommand('vscode.changes', `Lane ${lane.name} (${lane.branch})`, resources);
     return { files: files.length };
+  }
+
+  /**
+   * Preview app (Step E, docs/Hydra_Improvements_Pt_2.md): the project's screenshots gate wins;
+   * else `.hydra/preview.json`; else ask once and save it. Then start the server in the lane's
+   * worktree and open the page in Simple Browser. Reusing an already-running preview just reopens it.
+   */
+  private async previewLane(service: LaneService, lane: Lane, interactive: boolean): Promise<unknown> {
+    let config: PreviewConfig | undefined;
+    try { config = await service.previewConfig(lane.id); }
+    catch (error) { if (!interactive) throw error; void vscode.window.showErrorMessage(`Hydra: ${describe(error)}`); return undefined; }
+    if (!config) {
+      if (!interactive) throw new Error(`Lane ${lane.name} has no preview command yet; set .hydra/preview.json or a screenshots gate.`);
+      config = await this.askPreviewConfig(lane);
+      if (!config) return undefined;
+    }
+    const already = service.previewOf(lane.id);
+    try {
+      const entry = already ?? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Starting the preview for lane ${lane.name}…` }, () => service.startPreview(lane.id, config!));
+      await this.openPreview(entry.url);
+      return entry;
+    } catch (error) {
+      if (!interactive) throw error;
+      void vscode.window.showErrorMessage(`Hydra: the preview didn't start. ${describe(error)}`);
+      return undefined;
+    }
+  }
+
+  /** Asked once, per project, when there's neither a screenshots gate nor `.hydra/preview.json` yet. */
+  private async askPreviewConfig(lane: Lane): Promise<PreviewConfig | undefined> {
+    const command = await vscode.window.showInputBox({
+      title: 'Preview command', prompt: 'The command that starts the dev server; use {port} for the port Hydra picks',
+      placeHolder: 'npm run dev -- --port {port}', ignoreFocusOut: true,
+      validateInput: value => splitPreviewCommand(value).length ? undefined : 'Enter a command.',
+    });
+    if (command === undefined) return undefined;
+    const url = await vscode.window.showInputBox({
+      title: 'Preview URL', prompt: 'Where the app answers once it is ready', value: 'http://127.0.0.1:{port}/', ignoreFocusOut: true,
+      validateInput: value => { try { parsePreviewConfig({ command: ['x'], url: value }); return undefined; } catch (error) { return describe(error); } },
+    });
+    if (url === undefined) return undefined;
+    const config: PreviewConfig = { command: splitPreviewCommand(command), url };
+    await savePreviewConfig(lane.repository, config);
+    return config;
+  }
+
+  private warnedNoSimpleBrowser = false;
+  /** VS Code's built-in Simple Browser (decision 4, docs/Hydra_Improvements_Pt_2.md): untrusted content, no Hydra access. */
+  private async openPreview(url: string): Promise<void> {
+    const commands = await vscode.commands.getCommands(true);
+    if (commands.includes('simpleBrowser.show')) { await vscode.commands.executeCommand('simpleBrowser.show', url); return; }
+    if (!this.warnedNoSimpleBrowser) {
+      this.warnedNoSimpleBrowser = true;
+      void vscode.window.showInformationMessage('Hydra: Simple Browser isn\'t available in this build; opening the preview in your default browser instead.');
+    }
+    await vscode.env.openExternal(vscode.Uri.parse(url, true));
   }
 
   /** A file's content at the lane's base commit, for the diff's left side. Only an open lane's files, at a full commit id. */

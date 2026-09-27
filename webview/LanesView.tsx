@@ -239,6 +239,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
       </span>}
       {lane.roleNote && <span className="lane-role-note" role="note">{lane.roleNote}</span>}
       {lane.resumeNote && <span className="lane-role-note" role="note">{lane.resumeNote}</span>}
+      {lane.previewNote && <span className="lane-role-note" role="note">{lane.previewNote}</span>}
       <div className="lane-chips">
         {lane.planJob && <PlanChip planJob={lane.planJob} />}
         {conflict && <Chip tone="warning" title={sync!.conflicts.flatMap(item => item.files).join(', ')}>Conflicts with {laneName(conflict.laneId) || 'another lane'}{conflict.files[0] ? ` · ${conflict.files[0]}` : ''}</Chip>}
@@ -247,6 +248,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
         {merges && <Chip tone="good">Merges cleanly</Chip>}
         {lane.state === 'merged' && <Chip tone="neutral">Merged</Chip>}
         <EvidenceChip lane={lane} />
+        {lane.preview && <Chip tone="info">Preview on :{lane.preview.port} <button className="text-button" onClick={() => act('stopPreview')}>Stop</button></Chip>}
       </div>
     </header>
     <GateChips results={gates?.done ?? lane.lastGates?.results ?? []} running={gates?.running} />
@@ -274,6 +276,9 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
             <button role="menuitem" onClick={() => { setMenuOpen(false); act('update'); }}>Update from {lane.target}</button>
             <button role="menuitem" onClick={() => { setMenuOpen(false); act('runGates'); }}>Run gates</button>
             {!!lane.lastGates?.results.length && <button role="menuitem" onClick={() => { setMenuOpen(false); act('evidence'); }}>View evidence</button>}
+            {lane.preview
+              ? <button role="menuitem" onClick={() => { setMenuOpen(false); act('stopPreview'); }}>Stop preview</button>
+              : <button role="menuitem" onClick={() => { setMenuOpen(false); act('preview'); }}>Preview app</button>}
             <button role="menuitem" onClick={() => { setMenuOpen(false); act('pr'); }}>Open PR</button>
             <button role="menuitem" onClick={() => { setMenuOpen(false); act('openWindow'); }}>Open in new window</button>
             <button role="menuitem" onClick={() => { setMenuOpen(false); act('resume'); }}>Resume</button>
