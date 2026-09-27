@@ -376,7 +376,67 @@ export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSess
   validatePlan(plan);
   const cycle = findCycle(plan.jobs);
   if (cycle) throw new Error(cycleMessage(plan.jobs, cycle));
+  refuseScopeOverlap(plan.jobs);
   return plan;
+}
+
+// ---- O2: scope contracts (docs/Heads.md, "Coordination") ----
+
+/** Same prefix rule as inScope (src/core/helperService.ts): a trailing slash is stripped, and '.' means the whole repository, like an empty entry. */
+function scopePrefix(entry: string): string {
+  const normalized = entry.replace(/\\/g, '/').replace(/\/+$/, '');
+  return normalized === '.' ? '' : normalized;
+}
+function prefixesOverlap(a: string, b: string): boolean {
+  if (a === '' || b === '') return true; // the whole repository overlaps everything
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+}
+/**
+ * The first path two write scopes share, comparing case-insensitively (Hydra
+ * ships for Windows only today, where paths differing only in case are the same
+ * file). undefined when they share nothing. The shorter (more general) of the
+ * two matching entries is returned, since that's the one naming the shared area.
+ */
+export function writeScopeOverlap(a: readonly string[], b: readonly string[]): string | undefined {
+  for (const rawA of a) {
+    const prefixA = scopePrefix(rawA);
+    for (const rawB of b) {
+      const prefixB = scopePrefix(rawB);
+      if (!prefixesOverlap(prefixA.toLowerCase(), prefixB.toLowerCase())) continue;
+      return prefixA.length <= prefixB.length ? (rawA || '.') : (rawB || '.');
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Refuses a plan whose independent jobs (neither depends on the other, even
+ * through others) would change the same path: they'd run at the same time with
+ * no way to keep their changes apart, so this catches the collision before
+ * either starts rather than at merge time. Only checked between jobs that both
+ * name a write_scope; a canvas-drafted job that never sets one (the canvas has
+ * no write_scope field yet) is skipped, so this never refuses one of those.
+ */
+export function refuseScopeOverlap(jobs: readonly PlanJob[]): void {
+  const byKey = new Map(jobs.map(job => [job.key, job]));
+  const reachable = (start: string): Set<string> => {
+    const seen = new Set<string>(), queue = [start];
+    while (queue.length) {
+      const current = queue.shift()!;
+      for (const dependency of byKey.get(current)?.dependsOn ?? []) if (!seen.has(dependency)) { seen.add(dependency); queue.push(dependency); }
+    }
+    return seen;
+  };
+  const closure = new Map(jobs.map(job => [job.key, reachable(job.key)]));
+  for (let i = 0; i < jobs.length; i++) {
+    for (let j = i + 1; j < jobs.length; j++) {
+      const a = jobs[i]!, b = jobs[j]!;
+      if (!a.writeScope?.length || !b.writeScope?.length) continue;
+      if (closure.get(a.key)!.has(b.key) || closure.get(b.key)!.has(a.key)) continue;
+      const path = writeScopeOverlap(a.writeScope, b.writeScope);
+      if (path) throw new Error(`Job "${a.key}" and job "${b.key}" both change ${path}, but neither depends on the other. Add a dependency between them, or narrow their write_scope so they don't share paths.`);
+    }
+  }
 }
 
 export class PlanStore {

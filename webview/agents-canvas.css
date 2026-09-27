@@ -88,6 +88,8 @@ body.vscode-light .agents-canvas { --canvas-claude: #b8552f; --canvas-codex: #3d
 body.vscode-high-contrast .gate-chip { border-width: 2px; }
 /* Step A: the same evidence-status label everywhere; text, not colour. */
 .canvas-node-evidence { margin: 4px 0 0; font-size: 10.5px; color: var(--muted); }
+/* O2: a head predicted to conflict with another running head (docs/Heads.md, "Coordination"); text, not colour alone. */
+.canvas-node-conflict { margin: 4px 0 0; font-size: 10.5px; color: var(--canvas-wait); }
 .canvas-node-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11px; color: var(--muted); }
 .canvas-node-foot code { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 10.5px var(--vscode-editor-font-family, Consolas, monospace); }
 .canvas-node-more { width: 22px; height: 20px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; }

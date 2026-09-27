@@ -203,6 +203,12 @@ Apart from plans (below), the view never starts work itself; everything else on 
   - When the tries run out, the job fails ("Gates failed 3 times: …") and the jobs after it are skipped. **Retry failed jobs** starts over with every try.
 - **You stay in charge:** you can still type in the lane, **Mark job done**, or **Cancel job**. What you do wins over a check in progress. Turning the switch off leaves running lanes alone; ready lane jobs then wait for **Start lane**.
 
+**Scope contracts.** A plan the lead creates or amends is refused if two of its jobs would run at the same time (neither depends on the other, even through others) and their `write_scope`s share a path: the error names both jobs and the path, and asks for a dependency between them or a narrower scope. Only checked between jobs that both name a `write_scope` — canvas-drafted jobs, which don't set one yet, are never refused this way.
+
+**Conflict prediction between heads.** Every 30 seconds, Hydra checks every pair of running heads with `git merge-tree` — the same check lanes already use against each other, extended to heads. It snapshots each head's current work (committed and uncommitted) without touching its files, and predicts whether two heads would conflict if both merged now. A predicted conflict shows as a red dashed line between the two heads on the Agents canvas, and each head's card names the other. Like lane conflict prediction, this only warns; it never stops a head or refuses a merge. It works across chats and plans: two unrelated heads working on the same file are flagged even if nothing connects them.
+
+A loose `hydra_start_head` call never refuses for scope: instead, if the new head's scope overlaps a running head it doesn't depend on, the result names that head and the shared path, so the lead can add a dependency or narrow the scope itself.
+
 ### Lanes
 
 Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `codex` terminal, signed in with your own account, working in its own git worktree and branch ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 1). The Agents tab has two views, **Canvas | Lanes**.

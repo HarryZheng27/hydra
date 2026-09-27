@@ -253,7 +253,8 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
             <svg className="canvas-edges" width={model.width} height={model.height}>
               {model.edges.map(edge => {
                 if (edge.kind === 'conflict') {
-                  const from = leadAt.get(edge.from), to = leadAt.get(edge.to);
+                  // O2: a conflict edge joins two lanes (lead nodes) or two heads; never one of each.
+                  const from = leadAt.get(edge.from) ?? headAt.get(edge.from), to = leadAt.get(edge.to) ?? headAt.get(edge.to);
                   if (!from || !to) return null;
                   const start = edgeStart(from.x, from.y), end = edgeStart(to.x, to.y);
                   return <g key={edge.id} className="canvas-edge conflict" aria-hidden="true">
@@ -299,6 +300,7 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
               <span className="canvas-lead-copy"><em>Lead</em><b>{ghost.lead.label}</b><span>Done</span></span>
             </div>)}
             {model.heads.map(item => <HeadNode key={item.id} item={item} now={now} fresh={fresh.includes(item.id)} from={leadAt.get(item.lead)} selected={selected === item.id}
+              conflictNames={(item.head.conflicts || []).map(conflict => headAt.get(conflict.jobId)?.head.title || 'another head')}
               onSelect={() => setSelected(item.id)} onOpen={() => onAction('helperReview', item.id)} onMenu={(x, y) => openMenu(item.id, x, y)} onKey={event => onNodeKey(event, item.id)} />)}
             {ghosts.map(ghost => <div key={`ghost-${ghost.head.id}`} className={`canvas-node leaving provider-${ghost.head.head.provider}`} aria-hidden="true" style={{ transform: `translate(${ghost.head.x}px, ${ghost.head.y}px)`, '--to-x': `${ghost.to.x - ghost.head.x}px`, '--to-y': `${ghost.to.y - ghost.head.y}px` } as React.CSSProperties}>
               <div className="canvas-node-card"><strong>{ghost.head.head.title}</strong></div>
@@ -315,6 +317,7 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
               // Cancel job, Show lane).
               if (item.head) return <HeadNode key={item.id} item={{ id: item.head.id, lead: item.id, depth: 0, x: item.x, y: item.y, head: item.head }} now={now}
                 fresh={fresh.includes(item.head.id)} selected={selected === item.head.id}
+                conflictNames={(item.head.conflicts || []).map(conflict => headAt.get(conflict.jobId)?.head.title || 'another head')}
                 onSelect={() => setSelected(item.head!.id)} onOpen={() => onAction('helperReview', item.head!.id)}
                 onMenu={(x, y) => openMenu(item.head!.id, x, y)} onKey={event => onNodeKey(event, item.head!.id)} />;
               return <PlanRunningJobSlot key={item.id} item={item} onOpenMenu={(x, y) => setRunningJobMenu({ item, x, y })} onOpenLane={onOpenLane} onPlan={onPlan} />;
@@ -369,8 +372,8 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
   </section>;
 }
 
-function HeadNode({ item, now, fresh, from, selected, onSelect, onOpen, onMenu, onKey }: {
-  item: CanvasHead; now: number; fresh: boolean; from?: CanvasLead; selected: boolean;
+function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, onOpen, onMenu, onKey }: {
+  item: CanvasHead; now: number; fresh: boolean; from?: CanvasLead; selected: boolean; conflictNames?: string[];
   onSelect: () => void; onOpen: () => void; onMenu: (x: number, y: number) => void; onKey: (event: React.KeyboardEvent) => void;
 }) {
   const head = item.head, status = headStatus[head.state] || head.state, active = isActive(head);
@@ -394,6 +397,7 @@ function HeadNode({ item, now, fresh, from, selected, onSelect, onOpen, onMenu, 
         {head.checks.map(check => { const chip = gateChip(check); return <span key={chip.id} className={`gate-chip tone-${chip.tone}`} title={chip.title}>{chip.label}</span>; })}
       </div>}
       {head.status && <p className="canvas-node-evidence">{evidenceLabel(head.status)}</p>}
+      {!!conflictNames?.length && <p className="canvas-node-conflict" title={(head.conflicts || []).flatMap(conflict => conflict.files).join(', ')}>Conflicts with {conflictNames.join(', ')}</p>}
       <div className="canvas-node-foot">
         <code title={head.branch || head.writeScope?.join(', ')}>{head.branch ? head.branch.replace(/^agent\//, '') : (head.writeScope || []).join(' ') || 'not started'}</code>
         <span>{elapsedLabel(head, now)}</span>
