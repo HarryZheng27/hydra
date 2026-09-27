@@ -322,8 +322,9 @@ test('scope matching, head prompts, runner arguments and the supported CLI range
   assert.ok(codex.some(arg => arg === "mcp_servers.hydra.env={ HYDRA_HELPER_TOKEN = 'secret', HYDRA_HELPER_PORT = '1' }"), codex.join(' '));
   assert.ok(!codex.some(arg => arg.includes('"')), 'no double quotes in Codex arguments');
   assert.throws(() => codexHelperArguments({ ...spec, provider: 'codex', worktree: 'W', bridge: { ...spec.bridge, command: "C:/it's/Hydra.exe" } }), /quote/);
-  for (const [version, ok] of [['2.1.270 (Claude Code)', true], ['2.1.281', true], ['2.1.269', false], ['2.2.0', false], ['2.1.300-beta.1', false], ['nonsense', false]] as const) assert.equal(supportedCliVersion('claude', version), ok, version);
+  for (const [version, ok] of [['2.1.270 (Claude Code)', true], ['2.1.281', true], ['2.1.269', false], ['2.2.0', true], ['3.0.0', false], ['2.1.300-beta.1', false], ['nonsense', false]] as const) assert.equal(supportedCliVersion('claude', version), ok, version);
   assert.equal(supportedCliVersion('codex', 'codex-cli 0.154.3'), true); assert.equal(supportedCliVersion('codex', 'codex-cli 0.147.0-alpha.1.2'), false);
+  assert.equal(supportedCliVersion('codex', 'codex-cli 0.157.1'), true); assert.equal(supportedCliVersion('codex', 'codex-cli 0.153.9'), false); assert.equal(supportedCliVersion('codex', 'codex-cli 1.0.0'), false);
   assert.equal(supportedCliVersionIn('codex', 'codex_cli_rs/0.154.2 (Windows 10.0.26200; x86_64)'), '0.154.2');
 });
 

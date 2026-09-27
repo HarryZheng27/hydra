@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { accountRpc, supportedAccountVersion } from './core/accountSetup';
+import { supportedCliDescription } from './core/cliVersions';
 import { readCodexQuota, type QuotaState } from './core/quota';
 import { findProvider } from './core/providers';
 import { runProbe } from './core/process';
@@ -51,11 +52,11 @@ export class ProviderQuota implements vscode.Disposable {
       try {
         const found = await findProvider('codex', vscode.workspace.getConfiguration('hydra').get<string>('codexPath'));
         if (controller.signal.aborted) return;
-        if (!found.executable) throw new Error('Install official Codex 0.154.0 or set its executable path in Hydra settings.');
+        if (!found.executable) throw new Error(`Install ${supportedCliDescription('codex')} or set its executable path in Hydra settings.`);
         const cwd = this.context.globalStorageUri.fsPath; await mkdir(cwd, { recursive: true });
         const version = await runProbe(found.executable, ['--version'], cwd, { signal: controller.signal, timeoutMs: 8000, maxBytes: 16384 });
         if (controller.signal.aborted) return;
-        if (version.error || version.exitCode !== 0 || !supportedAccountVersion('codex', version.stdout)) throw new Error('Usage-limit refresh requires tested Codex 0.154.0. Use the official client for another version.');
+        if (version.error || version.exitCode !== 0 || !supportedAccountVersion('codex', version.stdout)) throw new Error(`Usage-limit refresh needs ${supportedCliDescription('codex')}. Update Codex, or use its official client.`);
         const snapshot = await readCodexQuota(() => accountRpc(found.executable!, cwd, () => {}, () => {}, 'quota'), controller.signal);
         if (!controller.signal.aborted && this.controller === controller) this.update({ status: 'checked', text: 'Provider-reported Codex usage limits. These are shared across the signed-in account.', snapshot });
       } catch {

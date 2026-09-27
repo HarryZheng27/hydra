@@ -7,7 +7,11 @@ import { accountRpc,CodexAccountFlow,publicCodexAccount,publicClaudeAccount,supp
 const account={account:{type:'chatgpt',email:'user@example.invalid',planType:'plus'},requiresOpenaiAuth:true};
 test('only pinned public auth contracts are accepted; Claude exit status does not promise a subscription',()=>{
   assert.equal(supportedAccountVersion('claude','2.1.270 (Claude Code)'),true);assert.equal(supportedAccountVersion('codex','codex-cli 0.154.0\n'),true);
-  for(const version of ['0.154.1','0.154.0-custom','0.154.01'])assert.equal(supportedAccountVersion('codex',version),false);
+  // The tested release or newer, same major version (cliVersions.ts): today's 2.1.282 and 0.157.1 sign in.
+  for(const version of ['2.1.282 (Claude Code)','2.2.0'])assert.equal(supportedAccountVersion('claude',version),true,version);
+  for(const version of ['codex-cli 0.154.1','codex-cli 0.157.1','codex-cli 0.200.0'])assert.equal(supportedAccountVersion('codex',version),true,version);
+  for(const version of ['2.1.269','3.0.0','2.1.300-beta.1'])assert.equal(supportedAccountVersion('claude',version),false,version);
+  for(const version of ['0.153.9','1.0.0','0.154.0-custom','nonsense'])assert.equal(supportedAccountVersion('codex',version),false,version);
   assert.equal(publicClaudeAccount(0).status,'signed-in');assert.match(publicClaudeAccount(0).text,/entitlement.*not been tested/);assert.equal(publicClaudeAccount(1).status,'signed-out');assert.throws(()=>publicClaudeAccount(null));assert.throws(()=>publicClaudeAccount(0,'timeout'));
 });
 test('Claude public auth mode distinguishes Claude.ai, API credentials and unknown schema without retaining identities',()=>{

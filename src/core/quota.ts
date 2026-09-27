@@ -1,3 +1,4 @@
+import { supportedCliDescription, supportedCliVersionIn } from './cliVersions';
 import type { AccountRpc } from './accountSetup';
 import type { GetAccountRateLimitsResponse } from './generated/codex-0.154.0/v2/GetAccountRateLimitsResponse';
 import type { RateLimitSnapshot } from './generated/codex-0.154.0/v2/RateLimitSnapshot';
@@ -62,7 +63,7 @@ export async function readCodexQuota(connect: () => AccountRpc, signal?: AbortSi
     if (signal?.aborted) throw new Error('Quota refresh cancelled.');
     const init = object(await Promise.race([rpc.request('initialize', { clientInfo: { name: 'hydra_quota_status', title: 'Hydra usage limits', version: '1' }, capabilities: { experimentalApi: false, requestAttestation: false } } satisfies InitializeParams), stopped]));
     if (signal?.aborted) throw new Error('Quota refresh cancelled.');
-    if (typeof init.userAgent !== 'string' || !/(?:^|[^0-9])0\.154\.0(?:[^0-9A-Za-z_.-]|$)/.test(init.userAgent)) throw new Error('Quota refresh requires tested Codex 0.154.0.');
+    if (typeof init.userAgent !== 'string' || !supportedCliVersionIn('codex', init.userAgent)) throw new Error(`Quota refresh needs ${supportedCliDescription('codex')}.`);
     const result = await Promise.race([rpc.request('account/rateLimits/read', undefined), stopped]);
     if (signal?.aborted) throw new Error('Quota refresh cancelled.');
     return publicCodexQuota(result);
