@@ -276,6 +276,17 @@ export function integrationSettled(plan: { state: string; integration?: Pick<Pla
   return !!integration.gate && !integration.gate.running && integration.gate.tip === integration.tip;
 }
 
+/**
+ * Why a plan lane's own Merge must refuse (pure): its plan lands through an integration branch, so the job's work
+ * reaches your branch only with the rest of the plan, after the integration gate. Mark job done lands it there.
+ * Undefined for a plan without one (it started before Hydra had them), or once the plan was merged.
+ */
+export function laneMergeRefusal(plan: { title: string; integration?: Pick<PlanIntegration, 'branch' | 'target' | 'merged'> }, job: { title: string }): string | undefined {
+  const integration = plan.integration;
+  if (!integration || integration.merged) return undefined;
+  return `This lane runs job "${job.title}" of plan "${plan.title}", which lands on ${integration.branch} and reaches ${integration.target ?? 'your branch'} only with the rest of the plan, once its integration gate has passed. Use Mark job done instead of Merge.`;
+}
+
 /** True when the integration gate passed every required gate on the branch's current tip. */
 export const integrationPassed = (integration: Pick<PlanIntegration, 'gate' | 'tip'>): boolean =>
   !!integration.gate && !integration.gate.running && integration.gate.tip === integration.tip && !integration.gate.failed && !integration.gate.error && integration.gate.status === 'passed';

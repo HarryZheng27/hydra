@@ -78,3 +78,27 @@ test('HeadSync: a worktree that no longer exists is skipped, not thrown', async 
     assert.deepEqual(results.get('gone'), []);
   } finally { await f.close(); }
 });
+
+test('HeadSync (O3): a plan head is checked against its integration branch\'s tip, on its own, and only a real overlap counts', async () => {
+  const f = await fixture();
+  try {
+    const wt = await f.worktree('dddddddddddd');
+    await f.commit(wt!, 'src/a.ts', 'export const a = 2;\n');
+    // Since the head started, another job landed on the integration branch: once on the same line, once elsewhere.
+    const base = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    await f.commit(f.repo, 'src/a.ts', 'export const a = 9;\n');
+    const clashing = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    await git(f.repo, ['reset', '-q', '--hard', base]);
+    await f.commit(f.repo, 'src/b.ts', 'export const b = 9;\n');
+    const clean = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
+    const sync = new HeadSync();
+    const branch = 'hydra/plan-aaaaaaaaaaaa';
+    const conflicting = await sync.runAll(f.repo, [{ id: 'd', worktree: wt!, integration: { branch, tip: clashing } }]);
+    assert.deepEqual(conflicting.integration.get('d'), { branch, tip: clashing, files: ['src/a.ts'] });
+    assert.deepEqual(conflicting.pairs.get('d'), [], 'no other head to conflict with');
+    const fine = await sync.runAll(f.repo, [{ id: 'd', worktree: wt!, integration: { branch, tip: clean } }]);
+    assert.equal(fine.integration.has('d'), false, 'a change elsewhere on the branch is no conflict');
+    const loose = await sync.runAll(f.repo, [{ id: 'd', worktree: wt! }]);
+    assert.equal(loose.integration.size, 0, 'a loose head has no integration branch');
+  } finally { await f.close(); }
+});

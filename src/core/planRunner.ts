@@ -308,6 +308,8 @@ export interface PlanRunnerOptions {
   onChange?(planId: string): void;
   /** O7: a plan just left 'running' (done or incomplete) — the morning report and its notification go here. */
   onSettled?(plan: Plan): void;
+  /** O3: a plan's integration gate run finished (its record is on the plan): the morning report waits for this. */
+  onGateDone?(plan: Plan): void;
   /** The runner started a plan's lane (the extension says so, with Show lane). */
   onLaneStarted?(plan: Plan, job: PlanJob, laneId: string): void;
   log?(line: string): void;
@@ -696,6 +698,8 @@ export class PlanRunner {
     await this.withPlan(planId, () => this.options.store.update(planId, current => current.integration?.gate?.running && current.integration.gate.tip === tip ? { ...current, integration: { ...current.integration, gate: record } } : undefined));
     this.options.log?.(`[plans] ${planId} integration gate on ${tip.slice(0, 7)}: ${record.error ? `couldn't run (${record.error})` : record.failed ? 'failed' : record.status ?? 'done'}`);
     this.notify(planId);
+    const finished = this.options.store.get(planId);
+    if (finished) this.options.onGateDone?.(finished);
     return record;
   }
   /** Whether this window is running a plan's integration gate now. */

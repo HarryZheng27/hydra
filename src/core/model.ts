@@ -36,6 +36,8 @@ export interface HelperJobView {
   status?: EvidenceStatus;
   /** O2: other running heads this one would conflict with if both merged now (docs/Heads.md, "Coordination"), from the last conflict-prediction pass. */
   conflicts?: { jobId: string; files: string[] }[];
+  /** O3: a plan head's predicted conflict with its plan's integration branch, which it has to land on. */
+  integrationConflict?: { branch: string; files: string[] };
 }
 /**
  * Packs (docs/Packs_Plan.md, "Picking a role"): one active role, for the New

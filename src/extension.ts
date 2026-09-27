@@ -57,7 +57,7 @@ import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPl
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together"). Their own block. ----
-import { integrationLeadView, integrationSettled, mergeRefusal } from './core/integration';
+import { integrationLeadView, integrationSettled, laneMergeRefusal, mergeRefusal } from './core/integration';
 import type { PlanMergeVia } from './core/planRunner';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
@@ -213,6 +213,7 @@ class Manager {
       planJob: laneId => this.planJobOfLane(laneId),
       markJobDone: (laneId, result) => this.markPlanJobDone(laneId, result),
       cancelPlanJob: laneId => this.cancelPlanJobOfLane(laneId),
+      planLaneMergeRefusal: laneId => this.planLaneMergeRefusal(laneId),
       // Step C: Auto-dispatch checks a job through the runner.
       planRunner: () => this.planRunner,
       gates: this.packs.gates, roles: this.packs,
@@ -1067,6 +1068,7 @@ class Manager {
       ...(job.role ? { role: { ref: job.role.ref, title: job.role.title, packTitle: job.role.packTitle } } : {}),
       ...(job.result?.status ? { status: job.result.status } : {}),
       ...(service.headConflicts(job.id).length ? { conflicts: service.headConflicts(job.id) } : {}),
+      ...(service.headIntegrationConflict(job.id) ? { integrationConflict: { branch: service.headIntegrationConflict(job.id)!.branch, files: service.headIntegrationConflict(job.id)!.files } } : {}),
     })).reverse();
   }
   /** Head changes go to the webview at once (the Agents canvas animates them); the full snapshot follows, debounced. */
@@ -1283,6 +1285,12 @@ class Manager {
   private createPlanBoardBridge(): PlanBoardBridge {
     return {
       jobPlan: jobId => this.jobPlanFor(jobId),
+      // O3: what a plan's head is checked against while it runs: its plan's integration branch, until the plan is merged.
+      integrationTarget: jobId => {
+        const found = this.jobPlanFor(jobId);
+        const integration = found ? this.plans?.store.get(found.planId)?.integration : undefined;
+        return integration && !integration.merged ? { branch: integration.branch, tip: integration.tip } : undefined;
+      },
       post: (planId, input) => this.planBoardPost(planId, input),
       boardFor: (planId, jobKey) => boardForJob(this.plans?.store.get(planId)?.board, jobKey),
     };
@@ -1528,7 +1536,10 @@ class Manager {
           .then(pick => { if (pick) void this.lanes.show('lanes', laneId); });
       },
       // O7: an unattended plan writes its morning report and notifies when it settles; an attended one is unaffected.
-      onSettled: plan => { if (plan.unattended) void this.writePlanReport(plan); },
+      // O7/O3: an unattended plan writes its morning report once there's nothing more to wait for: at once when it
+      // ends incomplete (or has no integration branch), else after its integration gate has a result for the tip.
+      onSettled: plan => { if (plan.unattended && integrationSettled(plan)) void this.writePlanReport(plan); },
+      onGateDone: plan => { if (plan.unattended && plan.state === 'done' && integrationSettled(plan)) void this.writePlanReport(plan); },
       log: line => this.output.appendLine(line),
       // ---- Stop all (5.3) ----
       stop: this.stop,
@@ -1561,12 +1572,18 @@ class Manager {
     await this.planMergeFromCanvas(id, 'merge');
   }
   /** O7: the morning report (docs/Heads.md, "Unattended plans") — written next to plans.json, opened as a tab, and notified. */
+  private readonly reportedPlans = new Map<string, string>();
   private async writePlanReport(plan: Plan): Promise<void> {
     const plans = this.plans;
     if (!plans) return;
     const file = await plans.store.writeReport(plan.id, this.planReportMarkdown(plan));
+    // A gate run again later rewrites the report; only a new ending opens it and tells you.
+    const ending = `${plan.state}:${plan.integration?.tip ?? ''}`;
+    if (this.reportedPlans.get(plan.id) === ending) return;
+    this.reportedPlans.set(plan.id, ending);
     try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ }
-    void vscode.window.showInformationMessage(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'} — its report is open.`);
+    const verdict = plan.integration && plan.state === 'done' ? ` Integration gate: ${integrationLeadView(plan)?.gate.label ?? 'not run'}.` : '';
+    void vscode.window.showInformationMessage(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'}.${verdict} Its report is open.`);
   }
   /** A plan's report as Markdown: the morning report (O7) and hydra_plan_report (O8b) are the same text. */
   private planReportMarkdown(plan: Plan): string {
@@ -1628,6 +1645,11 @@ class Manager {
       dependentsStarted: plan.jobs.filter(item => item.dependsOn.includes(job.key) && !!(item.jobId || item.laneId || item.result)).length,
       ...(view.dispatch ? { dispatch: view.dispatch } : {}),
     };
+  }
+  /** O3: a plan lane's own Merge refuses while its plan lands through an integration branch (laneMergeRefusal). */
+  private planLaneMergeRefusal(laneId: string): string | undefined {
+    const found = this.planRunner?.jobForLane(laneId);
+    return found ? laneMergeRefusal(found.plan, found.job) : undefined;
   }
   private async markPlanJobDone(laneId: string, result: PlanLaneResultInput): Promise<void> {
     const found = this.requirePlanRunner().jobForLane(laneId);
