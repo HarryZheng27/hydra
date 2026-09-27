@@ -38,22 +38,26 @@ function Invoke-InstallScript([string]$label, [string[]]$scriptArgs) {
   $process = Start-Process -FilePath 'powershell.exe' `
     -ArgumentList (@('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $installScript) + $scriptArgs) `
     -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-  if ($process.ExitCode -ne 0) {
-    Write-Output "---- $label stdout ----"; Get-Content -LiteralPath $stdout -ErrorAction SilentlyContinue
-    Write-Output "---- $label stderr ----"; Get-Content -LiteralPath $stderr -ErrorAction SilentlyContinue
-  }
-  return $process.ExitCode
+  # Write-Host, not Write-Output: anything written to the pipeline would become part of the return value.
+  $out = (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) + ''
+  $err = (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue) + ''
+  Write-Host "---- $label (exit $($process.ExitCode)) stdout ----"; Write-Host $out
+  if ($err.Trim()) { Write-Host "---- $label stderr ----"; Write-Host $err }
+  return [PSCustomObject]@{ ExitCode = $process.ExitCode; Output = $out + $err }
 }
 
 try {
-  # A wrong SHA256SUMS must be refused, even as a dry run, and must install nothing.
-  $wrongExit = Invoke-InstallScript 'dry-run-wrong-sums' @('-InstallerPath', $installer, '-SumsPath', $wrongSums, '-DryRun')
-  if ($wrongExit -eq 0) { throw 'install.ps1 -DryRun accepted a wrong SHA256SUMS.' }
+  # A wrong SHA256SUMS must be refused for the mismatch itself, even as a dry run, and must install nothing.
+  # Windows PowerShell runs install.ps1 here, started from PowerShell 7, as a user's might be.
+  $wrong = Invoke-InstallScript 'dry-run-wrong-sums' @('-InstallerPath', $installer, '-SumsPath', $wrongSums, '-DryRun')
+  if ($wrong.ExitCode -eq 0) { throw 'install.ps1 -DryRun accepted a wrong SHA256SUMS.' }
+  if ($wrong.Output -notmatch 'HydraSetup\.exe does not match SHA256SUMS') { throw 'install.ps1 failed the wrong SHA256SUMS for some other reason than the mismatch.' }
   if ((Test-Path -LiteralPath $installedExe) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'A refused dry run left something installed.' }
 
   # A real, correctly-verified install must land Hydra.exe under the default per-user folder.
-  $installExit = Invoke-InstallScript 'install' @('-InstallerPath', $installer, '-SumsPath', $realSums)
-  if ($installExit -ne 0) { throw "install.ps1 failed with exit code $installExit." }
+  $install = Invoke-InstallScript 'install' @('-InstallerPath', $installer, '-SumsPath', $realSums)
+  if ($install.ExitCode -ne 0) { throw "install.ps1 failed with exit code $($install.ExitCode)." }
+  if ($install.Output -notmatch 'Checksum matches\.') { throw 'install.ps1 installed without reporting a matching checksum.' }
   if (-not (Test-Path -LiteralPath $installedExe)) { throw 'install.ps1 reported success but Hydra.exe is missing.' }
   if (-not (Test-Path -LiteralPath $uninstallKey)) { throw 'install.ps1 reported success but Hydra is not registered.' }
 

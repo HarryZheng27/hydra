@@ -109,7 +109,7 @@ function Install-Hydra {
 
   Write-Host "Verifying $installerName against $sumsName..."
   $expectedHash = Read-InstallerSha256 -SumsPath $sumsFile -InstallerName $installerName
-  $actualHash = (Get-FileHash -LiteralPath $installerFile -Algorithm SHA256).Hash.ToLowerInvariant()
+  $actualHash = Get-Sha256 -Path $installerFile
   if ($actualHash -ne $expectedHash) {
     if ($downloadDir) { Remove-Item -LiteralPath $downloadDir -Recurse -Force -ErrorAction SilentlyContinue }
     throw "$installerName does not match $sumsName (expected $expectedHash, got $actualHash)."
@@ -197,6 +197,21 @@ function Read-InstallerSha256 {
   $pattern = "^([0-9a-fA-F]{64}) [ \*]$([regex]::Escape($InstallerName))`$"
   if ($lines[0].Trim() -match $pattern) { return $Matches[1].ToLowerInvariant() }
   throw "$SumsPath has no $InstallerName line."
+}
+
+# A file's SHA-256 in lowercase hex, through .NET rather than Get-FileHash. Windows
+# PowerShell 5.1 started from PowerShell 7 inherits 7's module path and then can't
+# load Get-FileHash, which is a script function in the Utility module.
+function Get-Sha256 {
+  param([string]$Path)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    return (($sha.ComputeHash($stream) | ForEach-Object { $_.ToString('x2') }) -join '')
+  } finally {
+    $stream.Dispose()
+    $sha.Dispose()
+  }
 }
 
 # Downloads a file with a short progress line either side. $ProgressPreference is

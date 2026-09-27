@@ -34,7 +34,10 @@ test('install.ps1 requires exactly one HydraSetup.exe and one SHA256SUMS asset f
 });
 
 test('install.ps1 verifies the installer\'s SHA-256 against SHA256SUMS before installing', () => {
-  assert.match(script, /Get-FileHash -LiteralPath \$installerFile -Algorithm SHA256/);
+  // .NET, not Get-FileHash: Windows PowerShell started from PowerShell 7 can't load Get-FileHash.
+  assert.match(script, /\$actualHash = Get-Sha256 -Path \$installerFile/);
+  assert.match(script, /\[System\.Security\.Cryptography\.SHA256\]::Create\(\)/);
+  assert.doesNotMatch(script, /Get-FileHash\s+-/, 'no call to Get-FileHash (comments may name it)');
   assert.match(script, /\$actualHash -ne \$expectedHash/);
   assert.match(script, /\[0-9a-fA-F\]\{64\}/);
   // A hash mismatch is checked, and the download is cleaned up, before the DryRun early-return,
