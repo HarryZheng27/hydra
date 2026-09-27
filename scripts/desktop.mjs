@@ -694,7 +694,8 @@ export function brandedLauncherCmd(text) {
     `"%~dp0..\\@@NAME@@.exe" "%~dp0..\\${hydraCliScript.join('\\')}" %*`,
     'exit /b %ERRORLEVEL%',
   ].join(eol);
-  return replaceOnceIn('Windows launcher', replaceOnceIn('Windows launcher', text, 'set ELECTRON_RUN_AS_NODE=1', dispatch), `endlocal${eol}`, `${cli}${eol}`);
+  // prepare() reads the pinned file through git(), which trims it: `endlocal` may be its very last word.
+  return `${replaceOnceIn('Windows launcher', replaceOnceIn('Windows launcher', text, 'set ELECTRON_RUN_AS_NODE=1', dispatch), 'endlocal', cli).trimEnd()}${eol}`;
 }
 /** resources/win32/bin/code.sh, which the build renames to bin/hydra (Git Bash, and anything else with sh). */
 export function brandedLauncherSh(text) {

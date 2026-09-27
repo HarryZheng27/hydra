@@ -394,8 +394,8 @@ test('the extension gallery is accepted only when every URL points at Open VSX',
 
 // ---- O8b: the hydra command, in the app's own bin/hydra launchers ----
 
-/** As prepare() reads them (git show: the pinned blobs, LF), whatever a checkout did to the fixtures' line endings. */
-const lf = text => text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));
+/** Exactly as prepare() reads them: git show (the pinned blobs, LF) through its git() helper, which trims. */
+const lf = text => text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10)).trim();
 
 /** A fake install: Node stands in for Hydra.exe, and two scripts for the editor's CLI and Hydra's own. */
 async function launcherInstall() {
