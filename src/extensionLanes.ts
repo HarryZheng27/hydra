@@ -7,7 +7,7 @@ import { loadNodePty, terminalText, terminalsUnavailable, type PtyModule } from 
 import { LaneStore, isLaneId, laneGoalMax, parseLaneName, type Lane } from './core/lanes';
 import { LaneService, gatesPassNote, maxOpenLanes } from './core/laneService';
 import { defaultCommitMessage, laneDiffFiles, type CloseMode } from './core/laneFinish';
-import { flattenGateFailureMessage, loadGates, summarizeGateFailures, type GatesLoader, type GatesOutcome } from './core/gates';
+import { flattenGateFailureMessage, summarizeGateFailures, type GatesLoader, type GatesOutcome } from './core/gates';
 import type { EvidenceStatus, JobCheckResult } from './core/jobs';
 import { laneActions, type AgentsView, type LaneAction, type LaneClientMessage, type LaneLimitOfferView, type LaneOfferButtonId, type LaneServerMessage, type LaneView, type Provider } from './core/model';
 import { otherProvider, type LimitEvent } from './core/limitEvents';
@@ -19,6 +19,8 @@ import { laneNameFromTitle, type LanePlanLink } from './core/lanes';
 import type { LanePlanJobView } from './core/model';
 import type { Plan, PlanJob } from './core/plans';
 import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from './core/planRunner';
+// ---- Auto-dispatch (Step C, docs/Hydra_Improvements_Pt_2.md) ----
+import { LaneDispatch, type DispatchCheck, type DispatchRunner } from './core/laneDispatch';
 // ---- Packs (docs/Packs_Plan.md) ----
 import type { RoleSource } from './core/packs/launch';
 // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
@@ -68,6 +70,8 @@ export interface LanesHost {
   audit?: (event: AuditEvent) => void;
   /** Step A (docs/Hydra_Improvements_Pt_2.md): offer the one-time "Starter gates" choice for a project with no gates.json yet, after a lane merges into it. Never blocks the merge; fire-and-forget. */
   offerStarterGates?: (repository: string) => void;
+  /** Step C (docs/Hydra_Improvements_Pt_2.md): the plan runner, for checking an auto-dispatched job when its lane calls hydra_job_ready. */
+  planRunner?: () => DispatchRunner | undefined;
 }
 /** Options for `hydra.lanes.action` (automation): no dialogs, so choices are passed in. */
 export interface LaneActionOptions { message?: string; close?: CloseMode }
@@ -105,6 +109,8 @@ export class LanesController implements vscode.Disposable {
   private readonly switchTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Lanes whose agent called hydra_job_ready and whose prompt is still showing (decision 6). */
   private readonly readyAsked = new Set<string>();
+  /** Step C: hydra_job_ready in a plan that auto-dispatches: Hydra runs the gates instead of asking. */
+  private dispatch?: LaneDispatch;
   /** Shared with registerLimitOffer's chat/head notifications, so "the other provider is limited too" sees every source. */
   constructor(private readonly host: LanesHost, private readonly limitTracker = new LimitOfferTracker()) {}
 
@@ -167,6 +173,12 @@ export class LanesController implements vscode.Disposable {
       ...(this.host.stop ? { stop: this.host.stop } : {}),
     });
     this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(baseScheme, { provideTextDocumentContent: uri => this.baseContent(uri) }));
+    this.dispatch = new LaneDispatch({
+      lanes: this.service, runner: () => this.host.planRunner?.(),
+      onGatesProgress: (id, progress) => this.host.post({ type: 'laneGates', id, done: progress.done, ...(progress.running ? { running: progress.running } : {}) }),
+      onChecked: (id, check, job) => this.dispatchChecked(id, check, job),
+      log: line => this.host.log(line),
+    });
     this.service.activate();
     this.host.log(`[lanes] ready (${store.open().length} open, terminals ${this.ptyModule() ? 'available' : 'unavailable'})`);
   }
@@ -362,12 +374,14 @@ export class LanesController implements vscode.Disposable {
       planId: plan.id, jobKey: job.key, planTitle: plan.title, jobTitle: job.title, ...(job.attempt ? { attempt: job.attempt } : {}),
       ...(start.dependencies.length ? { startsFrom: start.dependencies.slice(0, 12).map(dependency => ({ title: dependency.title.slice(0, 80), commit: dependency.commit })) } : {}),
       ...(job.writeScope?.length ? { writeScope: job.writeScope.slice(0, 32) } : {}),
+      ...(plan.dispatch ? { dispatched: true as const } : {}),
     };
     const file = planLaneBrief(plan.title, job, start.dependencies);
     // Packs (docs/Packs_Plan.md, "Plans"): the job's provider, then its role's, then hydra.defaultProvider. A role
     // that isn't active now still goes with the lane, which starts without it and says why on its tile.
     const roleProvider = job.role && !job.provider ? (await this.host.roles?.roles(this.repository ?? '').catch(() => []))?.find(role => role.ref === job.role)?.provider : undefined;
-    const lane = await service.create({ name: laneNameFromTitle(job.title), provider: job.provider ?? roleProvider ?? defaultProvider, goal, ...(job.role ? { role: job.role } : {}) }, { ...(start.baseCommit ? { baseCommit: start.baseCommit } : {}), plan: link, brief: file });
+    // Step C: an auto-dispatched plan's provider stands in for hydra.defaultProvider; the job's own choice still comes first.
+    const lane = await service.create({ name: laneNameFromTitle(job.title), provider: job.provider ?? roleProvider ?? plan.dispatch?.provider ?? defaultProvider, goal, ...(job.role ? { role: job.role } : {}) }, { ...(start.baseCommit ? { baseCommit: start.baseCommit } : {}), plan: link, brief: file });
     this.postState(true);
     return { laneId: lane.id };
   }
@@ -380,7 +394,8 @@ export class LanesController implements vscode.Disposable {
   planStatesChanged(): void { this.postState(); }
   /**
    * hydra_job_ready (decision 6): the lane's agent says its plan job is ready. You get a Mark job done
-   * prompt; Hydra never marks the job itself. Its note, if any, is the note's default.
+   * prompt; Hydra never marks the job itself. Its note, if any, is the note's default. In a plan that
+   * auto-dispatches (Step C), Hydra checks the job instead: LaneDispatch runs the gates and marks it or sends failures back.
    */
   async jobReady(laneId: string, note?: string): Promise<unknown> {
     const lane = this.service?.get(laneId);
@@ -388,6 +403,8 @@ export class LanesController implements vscode.Disposable {
     if (!lane || !job) throw new Error('This lane doesn\'t run a plan job, so there is nothing to mark done.');
     if (job.state === 'failed' || job.state === 'cancelled' || job.state === 'skipped') throw new Error(`Job ${job.jobTitle} has ended (${job.state}); it can't be marked done.`);
     if (job.dependentsStarted) throw new Error(`Job ${job.jobTitle} is done, and the jobs after it have already started from its result.`);
+    // Step C: the plan auto-dispatches, so Hydra checks the job itself; no prompt.
+    if (this.dispatch?.handles(laneId)) return this.dispatch.ready(laneId, note);
     if (this.readyAsked.has(laneId)) return { asked: true, message: 'The user already has a prompt to mark this job done. Wait for them.' };
     this.readyAsked.add(laneId);
     void vscode.window.showInformationMessage(`Lane ${lane.name} says job ${job.jobTitle} of plan ${job.planTitle} is ready.`, 'Mark job done', 'Show lane').then(async pick => {
@@ -396,6 +413,33 @@ export class LanesController implements vscode.Disposable {
       else if (pick === 'Show lane') await this.show('lanes', laneId);
     }, () => { this.readyAsked.delete(laneId); });
     return { asked: true, message: 'Hydra asked the user to mark the job done. It never marks the job by itself: the user decides, and may merge the lane instead. Wait for them.' };
+  }
+
+  /** Step C: how an auto-dispatched job's check ended, as a notification. A failure sent back to the lane needs none. */
+  private dispatchChecked(laneId: string, check: DispatchCheck, job: { planTitle: string; jobTitle: string }): void {
+    this.postState(true);
+    const name = this.laneName(laneId) ?? job.jobTitle;
+    const showLane = (pick: string | undefined) => { if (pick) void this.show('lanes', laneId); };
+    switch (check.kind) {
+      case 'passed':
+        void vscode.window.showInformationMessage(`Job ${job.jobTitle} of plan ${job.planTitle} passed its gates and is done at ${check.commit.slice(0, 7)}.`, 'Show lane').then(showLane);
+        return;
+      case 'failed':
+        void vscode.window.showWarningMessage(`Job ${job.jobTitle} of plan ${job.planTitle} failed. ${check.reason}`, 'Show lane').then(showLane);
+        return;
+      case 'error':
+        void vscode.window.showWarningMessage(`Hydra couldn't check job ${job.jobTitle} in lane ${name}: ${check.message} Mark it done yourself when it's ready.`, 'Show lane').then(showLane);
+        return;
+      case 'retry':
+        if (check.sent) return;
+        // Its session has ended (Stop all, or it exited). Nothing ran unasked: the clipboard is yours, so copying waits for you.
+        void vscode.window.showWarningMessage(`Gates failed for job ${job.jobTitle} (attempt ${check.failures}${check.attempts ? ` of ${check.attempts}` : ''}), but lane ${name} isn't running, so the failures weren't sent.`, 'Copy failures', 'Resume')
+          .then(async pick => {
+            if (pick === 'Copy failures') await vscode.env.clipboard.writeText(terminalText(check.text));
+            else if (pick === 'Resume') { await this.service?.resume(laneId); await this.show('lanes', laneId); }
+          });
+        return;
+    }
   }
 
   /** `hydra.openLanes` / `hydra.openCanvas`: open the Agents view on that view, optionally focusing a lane or head. */
@@ -691,20 +735,10 @@ export class LanesController implements vscode.Disposable {
    * work), `anyway`, or Cancel. Undefined means stop; `note` is what the confirmation adds.
    */
   private async gatesBefore(service: LaneService, lane: Lane, interactive: boolean, question: string, anyway: string): Promise<{ note: string } | undefined> {
-    // With packs, a listed pack that can't run still shows its gates as not run (docs/Packs_Plan.md).
-    const load: GatesLoader = this.host.gates ?? loadGates;
-    const gatesConfig = await load(lane.repository).catch(() => undefined);
-    if (!gatesConfig || gatesConfig.lanes !== 'onMerge' || !(gatesConfig.gates.length || gatesConfig.notRun?.length)) {
-      // Step A: no gates ran, so say which kind of "no gates" this is for the commit being merged.
-      // Gates that couldn't even be loaded get no label: that's not a project choice.
-      if (gatesConfig) {
-        const status = gatesConfig.source === 'none' && !gatesConfig.gates.length ? 'none' : 'none-chosen';
-        const commit = await git(lane.worktree, ['rev-parse', 'HEAD']).then(text => text.trim()).catch(() => undefined);
-        if (commit && /^[a-f0-9]{40,64}$/.test(commit)) await service.recordNoGates(lane.id, commit, status).catch(() => undefined);
-      }
-      return { note: '' };
-    }
-    const reused = await service.reusableGates(lane.id).catch(() => undefined);
+    // Step A: with no gates for lanes, handOnGates records which kind of "no gates" this is for the commit.
+    const gates = await service.handOnGates(lane.id);
+    if (gates.kind === 'none') return { note: '' };
+    const reused = gates.kind === 'reused' ? gates.record : undefined;
     if (reused?.commit) return { note: gatesPassNote(reused.results, ` on ${reused.commit.slice(0, 7)} at ${new Date(reused.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`) };
     const outcome = await this.runGatesFlow(service, lane, interactive);
     if (!outcome) return undefined; // cancelled, or gates couldn't run and this was interactive

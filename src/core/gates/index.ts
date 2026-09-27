@@ -160,8 +160,11 @@ export function summarizeGateFailures(results: readonly JobCheckResult[]): strin
     return `${result.id} (${kind}): ${detail}`;
   }).join('\n');
 }
-/** "Send to lane" (docs/Gates_Plan.md, "Merge"): gateFailureMessage flattened to one line, capped at ~1500 characters, so it fits a terminal's input line. A lane has no hydra_done. */
-export function flattenGateFailureMessage(results: readonly JobCheckResult[], max = 1500): string {
-  const flat = gateFailureMessage(results, 'Fix them and commit; the gates run again when the lane is merged.').replace(/\s+/g, ' ').trim();
+/**
+ * "Send to lane" (docs/Gates_Plan.md, "Merge"): gateFailureMessage flattened to one line, capped at ~1500 characters, so it fits a terminal's input line.
+ * A lane has no hydra_done. Auto-dispatch (Step C, docs/Hydra_Improvements_Pt_2.md) sends the same text with its own last line.
+ */
+export function flattenGateFailureMessage(results: readonly JobCheckResult[], max = 1500, ending = 'Fix them and commit; the gates run again when the lane is merged.'): string {
+  const flat = gateFailureMessage(results, ending).replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }

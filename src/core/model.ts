@@ -1,5 +1,5 @@
 import type { Lane } from './lanes';
-import type { Plan, PlanJobRunAs } from './plans';
+import type { Plan, PlanDispatch, PlanJobRunAs } from './plans';
 import type { PlanJobStatus, PlanJobView } from './planRunner';
 import type { EvidenceStatus, HeadCheckView, JobCheckResult } from './jobs';
 export type { HeadCheckView, EvidenceStatus } from './jobs';
@@ -77,7 +77,9 @@ export type ClientMessage =
   | { type: 'planAddDependency' | 'planRemoveDependency'; id: string; key: string; dependsOn: string }
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md): Retry failed jobs on an incomplete plan; Cancel job and Start lane on a job's node ----
   | { type: 'planRetryJobs'; id: string }
-  | { type: 'planCancelJob' | 'planStartJob'; id: string; key: string };
+  | { type: 'planCancelJob' | 'planStartJob'; id: string; key: string }
+  // ---- Auto-dispatch (Step C, docs/Hydra_Improvements_Pt_2.md): null turns it off ----
+  | { type: 'planDispatch'; id: string; dispatch: PlanDispatch | null };
 
 export function parseMessage(value: unknown): ClientMessage {
   if (!value || typeof value !== 'object') throw new Error('Invalid message.');
@@ -134,6 +136,14 @@ export function parseMessage(value: unknown): ClientMessage {
   }
   if (type === 'planRetryJobs') return { type, id: planId() };
   if (type === 'planCancelJob' || type === 'planStartJob') return { type, id: planId(), key: jobKey() };
+  if (type === 'planDispatch') {
+    // Checked again, fully, by the runner (validatePlanDispatch); plans.ts isn't imported here, since the webview imports this file.
+    const value = message.dispatch as Record<string, unknown> | null;
+    if (value === null) return { type, id: planId(), dispatch: null };
+    const whole = (item: unknown, max: number) => Number.isInteger(item) && (item as number) >= 1 && (item as number) <= max;
+    if (!value || typeof value !== 'object' || !whole(value.lanes, 4) || !whole(value.attempts, 5) || (value.provider !== 'claude' && value.provider !== 'codex')) throw new Error('Invalid auto-dispatch settings.');
+    return { type, id: planId(), dispatch: { lanes: value.lanes as number, provider: value.provider, attempts: value.attempts as number } };
+  }
   throw new Error('Unknown command.');
 }
 
@@ -160,6 +170,8 @@ export interface LaneSyncView {
 export interface LanePlanJobView {
   planId: string; planTitle: string; jobKey: string; jobTitle: string; state: PlanJobStatus;
   commit?: string; dependents: number; dependentsStarted: number;
+  /** Step C (docs/Hydra_Improvements_Pt_2.md): its plan auto-dispatches: "Auto-dispatched · attempt 2 of 3". */
+  dispatch?: { attempt: number; attempts: number };
 }
 /** A lane as the webview shows it: the record, its last sync, whether its terminal is alive and, for a plan lane, its job. */
 export type LaneView = Lane & {

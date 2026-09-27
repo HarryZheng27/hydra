@@ -74,12 +74,33 @@ export interface PlanJob {
    * A head job passes it to its head, a lane job to its lane; the job's provider comes first, then the role's.
    */
   role?: string;
+  /** Step C (docs/Hydra_Improvements_Pt_2.md): gate failures Hydra sent back to this try's auto-dispatched lane. Retry failed jobs clears it. */
+  gateFailures?: number;
+}
+/**
+ * Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes. Present means on: at most `lanes` of the
+ * plan's lane jobs run at once, each ready one starts by itself with `provider` (unless the job names its own),
+ * and hydra_job_ready runs the gates, with `attempts` tries before the job fails.
+ */
+export interface PlanDispatch { lanes: number; provider: Provider; attempts: number }
+export const planDispatchDefaults: PlanDispatch = { lanes: 2, provider: 'claude', attempts: 3 };
+export const planDispatchMaxLanes = 4;
+export const planDispatchMaxAttempts = 5;
+/** Throws the first problem found. */
+export function validatePlanDispatch(value: unknown): PlanDispatch {
+  const dispatch = value as Partial<PlanDispatch> | undefined;
+  if (!dispatch || typeof dispatch !== 'object' || Array.isArray(dispatch)) throw new Error('Auto-dispatch settings must be an object.');
+  if (!Number.isInteger(dispatch.lanes) || dispatch.lanes! < 1 || dispatch.lanes! > planDispatchMaxLanes) throw new Error(`Lanes at once must be 1-${planDispatchMaxLanes}.`);
+  if (dispatch.provider !== 'claude' && dispatch.provider !== 'codex') throw new Error('Auto-dispatch needs Claude or Codex as its provider.');
+  if (!Number.isInteger(dispatch.attempts) || dispatch.attempts! < 1 || dispatch.attempts! > planDispatchMaxAttempts) throw new Error(`Attempts must be 1-${planDispatchMaxAttempts}.`);
+  return { lanes: dispatch.lanes!, provider: dispatch.provider, attempts: dispatch.attempts! };
 }
 /** A plan job's role: "pack/role", as packs name their roles (src/core/packs/launch.ts). */
 export const planJobRolePattern = /^[a-z0-9-]{1,24}\/[a-z0-9-]{1,24}$/;
 export interface Plan {
   version: 1; id: string; title: string; brief?: string; createdAt: string; updatedAt: string;
   state: PlanState; error?: string; jobs: PlanJob[];
+  dispatch?: PlanDispatch;
 }
 
 const trimmed = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
@@ -117,6 +138,7 @@ function validateRunFields(job: PlanJob): void {
   if (job.result !== undefined && job.outcome !== undefined) throw new Error(`${where} can't have both a result and an outcome.`);
   if (job.attempt !== undefined && (!Number.isInteger(job.attempt) || job.attempt < 0 || job.attempt > 1000)) throw new Error(`${where} has an invalid attempt count.`);
   if (job.draft !== undefined && typeof job.draft !== 'boolean') throw new Error(`${where} has an invalid draft flag.`);
+  if (job.gateFailures !== undefined && (!lane || !Number.isInteger(job.gateFailures) || job.gateFailures < 0 || job.gateFailures > 1000)) throw new Error(`${where} has an invalid gate failure count.`);
 }
 
 /** Unique keys that exist, dependencies that resolve, and the plan's size and text limits. Throws the first problem found. */
@@ -151,6 +173,7 @@ export function validatePlan(plan: Plan): void {
   if (!trimmed(plan.title) || plan.title.length > planTitleMax) throw new Error(`Plan title must be 1-${planTitleMax} characters.`);
   if (plan.brief !== undefined && (typeof plan.brief !== 'string' || plan.brief.length > planBriefMax)) throw new Error(`Plan brief must be at most ${planBriefMax} characters.`);
   if (!planStates.includes(plan.state)) throw new Error('Invalid plan state.');
+  if (plan.dispatch !== undefined) validatePlanDispatch(plan.dispatch);
   validatePlanJobs(plan.jobs);
 }
 

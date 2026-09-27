@@ -4,7 +4,7 @@ import type { LaneCloseMode, LaneState } from './lanes';
 import type { StopSwitch } from './stopSwitch';
 import {
   cycleMessage, findCycle, jobRunAs, jobStarted, planOutcomeReasonMax, planResultFilesMax, planResultNoteMax, topologicalOrder,
-  type Plan, type PlanJob, type PlanJobOutcome, type PlanJobRunAs, type PlanStore,
+  validatePlanDispatch, type Plan, type PlanDispatch, type PlanJob, type PlanJobOutcome, type PlanJobRunAs, type PlanStore,
 } from './plans';
 
 /**
@@ -54,6 +54,8 @@ export interface PlanJobView {
   evidenceStatus?: EvidenceStatus;
   /** A lane job that was ready while the window started: Start lane starts it. */
   startable?: boolean;
+  /** Step C (docs/Hydra_Improvements_Pt_2.md): a lane job of a plan that auto-dispatches: its try against the gates ("attempt 2 of 3"). */
+  dispatch?: { attempt: number; attempts: number };
 }
 export type PlanRecord =
   | { key: string; kind: 'outcome'; outcome: Omit<PlanJobOutcome, 'at'> }
@@ -102,6 +104,18 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
   const adoptable = new Map<string, { laneId: string; attempt: number }>();
   if (lanesAvailable) for (const entry of look.planLanes(plan.id)) if (!adoptable.has(entry.jobKey)) adoptable.set(entry.jobKey, entry);
   const title = (key: string) => byKey.get(key)?.title ?? key;
+  // Step C: with Auto-dispatch on, a ready lane job starts when one of the plan's lane slots is free. Every lane
+  // job still running in a lane takes one, counted up front (adoptable lanes too), so a job walked early never
+  // takes the slot of a lane found later in the walk.
+  const dispatch = plan.dispatch;
+  let busy = 0;
+  if (dispatch && lanesAvailable) {
+    for (const job of plan.jobs) {
+      if (jobRunAs(job) !== 'lane' || job.outcome || job.result) continue;
+      if (job.laneId) { const lane = look.lane(job.laneId); if (lane && lane.state !== 'closed' && !lane.mergedHead) busy++; }
+      else if (adoptable.get(job.key)?.attempt === (job.attempt ?? 0)) busy++;
+    }
+  }
 
   for (const key of order) {
     const job = byKey.get(key)!;
@@ -109,6 +123,7 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
     const view: PlanJobView = { key, runAs, status: 'waiting', ...(job.jobId ? { jobId: job.jobId } : {}), ...(job.laneId ? { laneId: job.laneId } : {}) };
     views.set(key, view);
     const set = (next: PlanJobStatus, reason?: string) => { view.status = next; if (reason) view.reason = reason; status.set(key, next); };
+    if (dispatch && runAs === 'lane') view.dispatch = { attempt: Math.min((job.gateFailures ?? 0) + 1, dispatch.attempts), attempts: dispatch.attempts };
     const fail = (reason: string) => { record.push({ key, kind: 'outcome', outcome: { state: 'failed', reason } }); set('failed', reason); };
 
     if (job.outcome) { set(job.outcome.state, job.outcome.reason); continue; }
@@ -160,7 +175,10 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
     }
     if (runAs === 'head') { start.push({ key, runAs }); startingHeads.add(key); set('active', 'Starting…'); continue; }
     if (!lanesAvailable) { set('waiting', 'Waiting: lanes aren\'t available in this window.'); continue; }
-    if (options.deferred?.has(key)) { view.startable = true; set('waiting', 'Ready to start: press Start lane.'); continue; }
+    if (dispatch) {
+      if (busy >= dispatch.lanes) { set('waiting', `Waiting for a free lane (${dispatch.lanes} of ${dispatch.lanes} in use).`); continue; }
+      busy++;
+    } else if (options.deferred?.has(key)) { view.startable = true; set('waiting', 'Ready to start: press Start lane.'); continue; }
     start.push({ key, runAs });
     set('waiting', options.waits?.get(key) ?? 'Starting…');
   }
@@ -347,7 +365,7 @@ export class PlanRunner {
         ...current, state: 'running',
         jobs: current.jobs.map(job => {
           if (!again.has(job.key)) return job;
-          const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, ...rest } = job;
+          const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, gateFailures: _gateFailures, ...rest } = job;
           return { ...rest, attempt: (job.attempt ?? 0) + 1 };
         }),
       }));
@@ -368,12 +386,14 @@ export class PlanRunner {
    * Mark job done: record what a lane job hands on and start the jobs that wait for it. Pressing it
    * again moves the result forward, but only while no job that depends on it has started (decision 3).
    */
-  markLaneDone(planId: string, key: string, laneId: string, input: PlanLaneResultInput): Promise<void> {
+  markLaneDone(planId: string, key: string, laneId: string, input: PlanLaneResultInput, options: { first?: boolean } = {}): Promise<void> {
     return this.withPlan(planId, async () => {
       const plan = this.options.store.get(planId);
       const job = plan?.jobs.find(item => item.key === key);
       if (!plan || !job || jobRunAs(job) !== 'lane' || job.laneId !== laneId) throw new Error('That lane doesn\'t run this plan job any more.');
       if (job.outcome) throw new Error(`Job ${job.title} has already ended.`);
+      // Step C: Auto-dispatch never moves a result: one you recorded by hand while its gates ran wins.
+      if (options.first && job.result) throw new Error(`Job ${job.title} is already done.`);
       const started = plan.jobs.filter(item => item.dependsOn.includes(key) && (item.jobId || item.laneId || item.result));
       if (job.result && started.length) throw new Error(`${started.map(item => item.title).join(', ')} already started from ${job.result.commit.slice(0, 7)}, so this job's result can't move.`);
       if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(input.commit)) throw new Error('Mark job done needs a full commit id.');
@@ -405,6 +425,47 @@ export class PlanRunner {
     });
   }
 
+  // ---- Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes ----
+
+  /**
+   * Turn Auto-dispatch on (with its settings) or off. Turning it on starts the lane jobs that are ready, as
+   * slots allow; turning it off only stops new starts: lanes already running carry on, and are yours.
+   */
+  setDispatch(planId: string, dispatch: PlanDispatch | undefined): Promise<void> {
+    return this.withPlan(planId, async () => {
+      const next = dispatch && validatePlanDispatch(dispatch);
+      const plan = await this.options.store.update(planId, current => {
+        if (current.state === 'planning' || current.state === 'done') throw new Error(current.state === 'done' ? 'This plan is already done.' : 'This plan is still being drafted.');
+        const { dispatch: _dispatch, ...rest } = current;
+        return next ? { ...rest, dispatch: next } : rest;
+      });
+      if (!plan) throw new Error(`No plan ${planId}.`);
+      this.options.log?.(`[plans] ${planId} auto-dispatch ${next ? `on (${next.lanes} lanes, ${next.provider}, ${next.attempts} attempts)` : 'off'}`);
+      await this.pass(planId, {});
+    });
+  }
+
+  /**
+   * An auto-dispatched lane job's gates failed: count it. When that uses up the plan's attempts the job fails
+   * ("Gates failed 3 times: …") and the jobs after it are skipped. With Auto-dispatch turned off meanwhile the
+   * failure is counted but never fails the job: the lane is yours again. Undefined when the lane no longer
+   * runs this job, or the job has already ended (a manual Mark job done or Cancel job came first).
+   */
+  recordGateFailure(planId: string, key: string, laneId: string, summary: string): Promise<{ failures: number; attempts?: number; failed: boolean } | undefined> {
+    return this.withPlan(planId, async () => {
+      const plan = this.options.store.get(planId);
+      const job = plan?.jobs.find(item => item.key === key);
+      if (!plan || !job || job.laneId !== laneId || job.outcome || job.result) return undefined;
+      const failures = (job.gateFailures ?? 0) + 1, attempts = plan.dispatch?.attempts;
+      const failed = attempts !== undefined && failures >= attempts;
+      const outcome: PlanJobOutcome | undefined = failed ? { state: 'failed', reason: clip(`Gates failed ${failures} ${failures === 1 ? 'time' : 'times'}: ${summary.replace(/\s+/g, ' ').trim()}`, planOutcomeReasonMax), at: this.now().toISOString() } : undefined;
+      await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key && item.laneId === laneId && !item.outcome && !item.result ? { ...item, gateFailures: failures, ...(outcome ? { outcome } : {}) } : item) }));
+      this.options.log?.(`[plans] ${planId} job ${key}: gates failed (${failures}${attempts ? ` of ${attempts}` : ''})${failed ? '; the job failed' : ''}`);
+      await this.pass(planId, {});
+      return { failures, ...(attempts !== undefined ? { attempts } : {}), failed };
+    });
+  }
+
   // ---- The pass ----
 
   private stepOptions(planId: string): PlanStepOptions {
@@ -427,8 +488,9 @@ export class PlanRunner {
         let progressed = false;
         if (steps.record.length) progressed = await this.record(planId, steps.record) || progressed;
         for (const step of steps.start) {
-          if (step.runAs === 'lane' && options.startup) {
-            // Hydra never opens a lane terminal while a window is starting: the job shows Start lane instead.
+          if (step.runAs === 'lane' && options.startup && !plan.dispatch) {
+            // Hydra never opens a lane terminal while a window is starting: the job shows Start lane instead,
+            // unless the plan auto-dispatches (Step C), which is you asking for its lanes to start by themselves.
             this.deferred.add(`${planId}:${step.key}`);
             continue;
           }

@@ -46,7 +46,7 @@ import { createPackService } from './extensionPacks';
 import type { PackService } from './core/packs/service';
 import { parseMessage, type HelperJobView, type Provider, type ProviderDiagnostic, type Snapshot, type SnapshotRole, type Handoff, type HandoffTask } from './core/model';
 // ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4). Its own block; Phase 1 (Lanes) wires its own imports separately. ----
-import { createPlan, maxPlanJobs, PlanStore, type Plan, type PlanJob } from './core/plans';
+import { createPlan, maxPlanJobs, PlanStore, type Plan, type PlanDispatch, type PlanJob } from './core/plans';
 import { planBrief } from './core/planner';
 // ---- Plan lanes (docs/Plan_Lanes_Plan.md). Their own block. ----
 import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
@@ -204,6 +204,8 @@ class Manager {
       planJob: laneId => this.planJobOfLane(laneId),
       markJobDone: (laneId, result) => this.markPlanJobDone(laneId, result),
       cancelPlanJob: laneId => this.cancelPlanJobOfLane(laneId),
+      // Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch checks a job through the runner.
+      planRunner: () => this.planRunner,
       gates: this.packs.gates, roles: this.packs,
       // ---- Step 2 (docs/Hydra_Improvements.md): light limits for Claude lanes ----
       hydraStorage: context.globalStorageUri.fsPath,
@@ -290,6 +292,8 @@ class Manager {
     command('hydra.plans.retry', async (id: unknown) => { await this.requirePlanRunner().retry(planIdArgument(id)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     command('hydra.plans.cancelJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().cancelJob(planIdArgument(id), jobKeyArgument(key), 'Cancelled.'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     command('hydra.plans.startJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().startJob(planIdArgument(id), jobKeyArgument(key)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    // Step C: Auto-dispatch to lanes; null or nothing turns it off. setDispatch validates the settings.
+    command('hydra.plans.dispatch', async (id: unknown, dispatch?: unknown) => { await this.requirePlanRunner().setDispatch(planIdArgument(id), dispatch == null ? undefined : dispatch as PlanDispatch); this.plansChanged(); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
     // ---- Packs (docs/Packs_Plan.md, section 6). The Packs page and smoke tests call these; there is ----
     // ---- no hydra.packs.allow command — allowing a pack only ever happens from the review panel's   ----
     // ---- own button (src/settings/pages/packs.ts), never through a command any extension could call. ----
@@ -1289,6 +1293,7 @@ class Manager {
       planId: plan.id, planTitle: plan.title, jobKey: job.key, jobTitle: job.title, state: view.status, ...(view.commit ? { commit: view.commit } : {}),
       dependents: dependentsOf(plan.jobs, job.key).filter(item => !jobStarted(item)).length,
       dependentsStarted: plan.jobs.filter(item => item.dependsOn.includes(job.key) && !!(item.jobId || item.laneId || item.result)).length,
+      ...(view.dispatch ? { dispatch: view.dispatch } : {}),
     };
   }
   private async markPlanJobDone(laneId: string, result: PlanLaneResultInput): Promise<void> {
@@ -1394,6 +1399,8 @@ class Manager {
     if (message.type === 'planRetryJobs') { await this.requirePlanRunner().retry(message.id); return; }
     if (message.type === 'planCancelJob') { await this.planCancelJob(message.id, message.key); return; }
     if (message.type === 'planStartJob') { await this.requirePlanRunner().startJob(message.id, message.key); return; }
+    // Step C: Auto-dispatch to lanes, on (with its settings) or off. Stop all may leave the runner quiet, so say it changed.
+    if (message.type === 'planDispatch') { await this.requirePlanRunner().setDispatch(message.id, message.dispatch ?? undefined); this.plansChanged(); return; }
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace to use Hydra.');
     if (this.disabled) throw new Error('Hydra is disabled in this window. Resolve the ownership or handoff error and reload this window.');
     if (message.type === 'checkProvider') {
