@@ -10,10 +10,12 @@ import { Onboarding } from './extensionOnboarding';
 import { ProviderAccounts } from './extensionAccounts';
 import { ProviderQuota } from './extensionQuota';
 import { findProvider } from './core/providers';
-import { JobStore, finalJobStates, resolveHeadDefaults } from './core/jobs';
+import { JobStore, evidenceLabel, finalJobStates, resolveHeadDefaults, type EvidenceStatus } from './core/jobs';
 import { HelperEndpoint } from './core/helperEndpoint';
 import { HelperService } from './core/helperService';
-import { removeWindowRecord, writeWindowRecord } from './core/helperDiscovery';
+import { alive as isWindowAlive, discoveryDirectory, removeWindowRecord, writeWindowRecord } from './core/helperDiscovery';
+// ---- Step D (docs/Hydra_Improvements_Pt_2.md): a read-only view across projects ----
+import { buildProjectSummary, readProjectSummaries, startProjectSummaryPublisher, type ProjectSummaryPublisher } from './core/projectSummary';
 import { startHelperRun } from './core/helperRunner';
 import { HeadSandbox } from './core/headSandbox';
 import { headShellSentence } from './core/confine';
@@ -149,6 +151,8 @@ class Manager {
   private readyPanel?: vscode.WebviewPanel;
   /** The window's discovery record lists its folders plus open lanes' worktrees. */
   private discovery?: { port: number; folders: string[]; written: string; queue: Promise<void> };
+  /** Step D: this window's small summary, published beside its discovery record for "Hydra: Show All Projects". */
+  private projectSummary?: ProjectSummaryPublisher;
   // ---- Gates (docs/Gates_Plan.md): each provider's latest usage limit, so a review gate uses the other agent while one is limited ----
   private readonly latestLimits = new Map<Provider, LimitEvent>();
   // ---- Canvas tidy-up (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): the Finished tray's Clear button, kept across reloads. ----
@@ -341,6 +345,8 @@ class Manager {
     });
     // ---- The Hydra panel (docs/Lanes_And_Planner_Plan.md, section 3) ----
     this.context.subscriptions.push(vscode.window.createTreeView('hydra.overview', { treeDataProvider: this.tree }));
+    // ---- Step D (docs/Hydra_Improvements_Pt_2.md): a read-only view across projects ----
+    command('hydra.showAllProjects', () => this.showAllProjects());
     command('hydra.overview.mergeLane', (row: { item?: { id?: string } } = {}) => row.item?.id && this.lanes.action(row.item.id, 'merge', true));
     command('hydra.overview.closeLane', (row: { item?: { id?: string } } = {}) => row.item?.id && this.lanes.action(row.item.id, 'close', true));
     // Not in the palette: fires a made-up limit event, for the handoff UI and smoke tests.
@@ -529,6 +535,7 @@ class Manager {
     const record = await writeWindowRecord(path.join(this.context.globalStorageUri.fsPath, 'helpers'), { port, pid: process.pid, folders: [...folders, ...this.lanes.openWorktrees()] });
     this.discovery = { port, folders, written: JSON.stringify(this.lanes.openWorktrees()), queue: Promise.resolve() };
     this.helpers = { store, endpoint, service, record };
+    this.startProjectSummary(record, leadFolder);
     // Plans need the same trusted repository as heads (they read it, and running one starts heads in it).
     const planStore = new PlanStore(path.join(this.storageDirectory, 'plans'));
     await planStore.load();
@@ -650,6 +657,63 @@ class Manager {
   }
   // ---- Lanes (docs/Lanes_And_Planner_Plan.md). The editor side is LanesController (src/extensionLanes.ts). ----
   /** Unfinished heads started from a lane. */
+  // ---- Step D (docs/Hydra_Improvements_Pt_2.md): a read-only view across projects ----
+  /**
+   * (Re)starts this window's summary publisher, keyed by the discovery record's own file name
+   * (so both files sit beside each other under the same id). Called once at startup and again
+   * whenever the record's id changes (its folders changed, so its hash did too); the old
+   * publisher's file is removed by its own dispose() before the new one starts.
+   */
+  private startProjectSummary(record: string, folder: string): void {
+    const previous = this.projectSummary;
+    const id = path.basename(record, '.json');
+    const dir = discoveryDirectory(path.join(this.context.globalStorageUri.fsPath, 'helpers'));
+    this.projectSummary = startProjectSummaryPublisher({
+      dir, id, pid: process.pid,
+      build: () => {
+        const heads = this.headViews() ?? [];
+        const lanes = this.lanes.state().lanes;
+        const providers = [...new Set([...heads.map(head => head.provider), ...lanes.map(lane => lane.provider)])];
+        return buildProjectSummary({ pid: process.pid, folder, heads, lanes, plans: this.plans?.store.list() ?? [], planJobs: this.planJobViews(), providers });
+      },
+      onError: error => this.output.appendLine(`[projects] summary not written: ${this.describe(error)}`),
+    });
+    void previous?.dispose().catch(() => undefined);
+  }
+  /**
+   * "Hydra: Show All Projects" (Step D): every open window's summary, read-only. Selecting a
+   * live entry opens its folder — VS Code focuses that folder's window if it already has one
+   * open, rather than opening a second window on it, so this passes forceNewWindow: false,
+   * forceReuseWindow: false (neither "always a new window" nor "always reuse this one"). A
+   * closed or not-responding entry has nothing to focus, so it only explains itself.
+   */
+  private async showAllProjects(): Promise<void> {
+    const dir = discoveryDirectory(path.join(this.context.globalStorageUri.fsPath, 'helpers'));
+    const summaries = await readProjectSummaries(dir, new Date(), isWindowAlive);
+    if (!summaries.length) { void vscode.window.showInformationMessage('No Hydra projects found.'); return; }
+    const livenessLabel = { running: undefined, 'not-responding': 'Not responding', closed: 'Closed' } as const;
+    const items = summaries
+      .slice()
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map(summary => {
+        const isThisWindow = summary.pid === process.pid && summary.folder === this.helpers?.service.leadFolder;
+        const counts = [
+          summary.heads.running ? `${summary.heads.running} head${summary.heads.running === 1 ? '' : 's'} running` : undefined,
+          summary.lanes.running ? `${summary.lanes.running} lane${summary.lanes.running === 1 ? '' : 's'}` : undefined,
+          summary.blocked.length ? `${summary.blocked.length} blocked` : undefined,
+        ].filter(Boolean).join(' · ') || 'Nothing running';
+        const label = livenessLabel[summary.liveness];
+        const detail = summary.liveness === 'closed' ? 'This window has closed.'
+          : summary.liveness === 'not-responding' ? 'No update from this window in over 3 minutes.'
+          : summary.blocked.length ? summary.blocked.map(item => `${item.title}: ${item.reason}`).join(' · ')
+          : Object.entries(summary.evidence).filter(([, count]) => count).map(([status, count]) => `${count} ${evidenceLabel(status as EvidenceStatus)}`).join(' · ') || 'No evidence recorded yet.';
+        return { label: summary.name, description: [isThisWindow ? 'This window' : undefined, label, counts].filter(Boolean).join(' · '), detail, summary, isThisWindow };
+      });
+    const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Every Hydra project window (read-only)', matchOnDetail: true });
+    if (!pick || pick.isThisWindow) return;
+    if (pick.summary.liveness === 'closed') { void vscode.window.showInformationMessage(`${pick.summary.name}'s window has closed.`); return; }
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(pick.summary.folder), { forceNewWindow: false, forceReuseWindow: false });
+  }
   private laneHeads(laneId: string): number {
     return this.helpers?.service.list().filter(job => job.lead?.lane === laneId && !finalJobStates.has(job.state)).length ?? 0;
   }
@@ -661,6 +725,7 @@ class Manager {
     this.tree.update({ lanes: this.lanes.state().lanes });
     // Plan lanes: a lane merged, marked, closed or started may move its plan along.
     this.planRunner?.advanceSoon();
+    this.projectSummary?.changed();
     const discovery = this.discovery;
     if (!discovery) return;
     const worktrees = this.lanes.openWorktrees(), key = JSON.stringify(worktrees);
@@ -670,7 +735,8 @@ class Manager {
       const helpers = this.helpers;
       if (!helpers || this.discovery !== discovery) return;
       const next = await writeWindowRecord(path.join(this.context.globalStorageUri.fsPath, 'helpers'), { port: discovery.port, pid: process.pid, folders: [...discovery.folders, ...worktrees] });
-      if (next !== helpers.record) { await removeWindowRecord(helpers.record).catch(() => undefined); helpers.record = next; }
+      // The record's file name (the summary's id) is a hash of its folders: a new one means a new id.
+      if (next !== helpers.record) { await removeWindowRecord(helpers.record).catch(() => undefined); helpers.record = next; this.startProjectSummary(next, helpers.service.leadFolder); }
     }).catch(error => this.output.appendLine(`[lanes] discovery record not updated: ${this.describe(error)}`));
   }
   // ---- Connecting Claude Code and Codex to Hydra (plan, Phase 5) ----
@@ -843,6 +909,8 @@ class Manager {
     for (const controller of plans?.planning.values() ?? []) controller.abort();
     const helpers = this.helpers; this.helpers = undefined;
     await this.lanes.stop().catch(() => undefined);
+    const summary = this.projectSummary; this.projectSummary = undefined;
+    await summary?.dispose().catch(() => undefined);
     if (!helpers) return;
     await this.discovery?.queue.catch(() => undefined); this.discovery = undefined;
     await removeWindowRecord(helpers.record).catch(() => undefined);
@@ -935,6 +1003,7 @@ class Manager {
     this.tree.update({ heads });
     // Plan lanes: the runner moves running plans along (it also makes them done or incomplete).
     this.planRunner?.advanceSoon();
+    this.projectSummary?.changed();
     this.publishSoon();
     // Step A (docs/Hydra_Improvements_Pt_2.md): a head just finished — the one-time starter-gates offer, non-blocking.
     if (this.helpers && heads.some(head => head.state === 'done')) void this.offerStarterGatesIfNeeded(this.helpers.service.leadFolder);
@@ -966,6 +1035,7 @@ class Manager {
     void this.broadcast({ type: 'plans', plans, planJobs: this.planJobViews() }).catch(() => undefined);
     this.tree.update({ plans, planJobs: this.planJobViews() });
     this.lanes.planStatesChanged();
+    this.projectSummary?.changed();
     this.publishSoon();
   }
   private requirePlans(): { store: PlanStore; planning: Map<string, AbortController> } {

@@ -227,6 +227,10 @@ In the Lanes view, running lanes come first. Exited lanes are compact rows with 
 
 New to all this? **Hydra: Learn Heads, Lanes, Plans and Gates** opens a short walkthrough. It also opens by itself the first time you open the Agents view, and the empty Agents and Lanes views link to it.
 
+### All projects
+
+**Hydra: Show All Projects** lists every open Hydra window, across every project, read-only. Each window writes a small summary of its own heads, lanes, plans and evidence beside its discovery record, at most once a second plus a heartbeat every 60 seconds, in Hydra's global storage — never in a repository, so a head can't reach it. A window whose process has exited shows as "Closed"; one whose heartbeat is over three minutes old shows as "Not responding". Selecting a running project opens its folder, which focuses that window if it's already open. There is no action here that changes another window's jobs.
+
 ## Packs
 
 A **pack** bundles what one kind of work needs: **roles** for lanes, heads and plan jobs, **gates**, **MCP servers** and **skills** ([Packs_Plan.md](Packs_Plan.md)).

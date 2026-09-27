@@ -29,7 +29,7 @@ test('buildProjectSummary counts heads, lanes, live plans and evidence, and caps
   ];
   const lanes = [
     lane('l1', { state: 'running' }),
-    lane('l2', { state: 'exited', lastGates: { commit: 'a'.repeat(40), at: at(0), status: 'none-chosen', checks: [] } as LaneView['lastGates'] }),
+    lane('l2', { state: 'exited', lastGates: { source: 'none', commit: 'a'.repeat(40), at: at(0), status: 'none-chosen', results: [] } }),
     lane('l3', { state: 'merged' }),
   ];
   const summary = buildProjectSummary({ pid: 4242, folder: '/repo/my-project', heads, lanes, plans: [], providers: ['claude'] });

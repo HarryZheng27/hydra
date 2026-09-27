@@ -114,6 +114,10 @@
         "title": "Hydra: Open Audit Log"
       },
       {
+        "command": "hydra.showAllProjects",
+        "title": "Hydra: Show All Projects"
+      },
+      {
         "command": "hydra.newLane",
         "title": "Hydra: New Lane",
         "icon": "$(add)"
