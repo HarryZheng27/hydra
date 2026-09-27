@@ -54,7 +54,7 @@ export const connectorsPage: SettingsPage = {
       if (c.error) text = 'Error: ' + c.error;
       else {
         const parts = [c.extensionInstalled ? ('Installed' + (c.extensionVersion ? ' (v' + c.extensionVersion + ')' : '')) : 'Not installed'];
-        parts.push(c.connected ? (c.current ? 'Connected to Hydra' : 'Connected, updating for this Hydra…') : 'Not connected to Hydra');
+        parts.push(c.connected ? (c.current ? 'Connected to Hydra' : c.development ? 'Connected to another Hydra (a development window leaves it as it is)' : 'Connected, updating for this Hydra…') : 'Not connected to Hydra');
         if (c.signedIn === 'signed-in') parts.push('Signed in');
         else if (c.signedIn === 'signed-out') parts.push('Signed out');
         text = parts.join(' · ');

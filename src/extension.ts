@@ -682,9 +682,10 @@ class Manager {
     const accounts = this.accounts.snapshot();
     const claudeExtension = vscode.extensions.getExtension('anthropic.claude-code');
     const codexExtension = vscode.extensions.getExtension('openai.chatgpt');
+    const development = this.context.extensionMode !== vscode.ExtensionMode.Production;
     return [
-      { ...claude, name: 'Claude Code', extensionInstalled: !!claudeExtension, extensionVersion: (claudeExtension?.packageJSON as { version?: string } | undefined)?.version, memory: memory.plugin && memory.bun && memory.dependencies ? 'ready' : 'missing', signedIn: accounts.claude.status },
-      { ...codex, name: 'Codex', extensionInstalled: !!codexExtension, extensionVersion: (codexExtension?.packageJSON as { version?: string } | undefined)?.version, signedIn: accounts.codex.status },
+      { ...claude, name: 'Claude Code', extensionInstalled: !!claudeExtension, extensionVersion: (claudeExtension?.packageJSON as { version?: string } | undefined)?.version, memory: memory.plugin && memory.bun && memory.dependencies ? 'ready' : 'missing', signedIn: accounts.claude.status, ...(development ? { development } : {}) },
+      { ...codex, name: 'Codex', extensionInstalled: !!codexExtension, extensionVersion: (codexExtension?.packageJSON as { version?: string } | undefined)?.version, signedIn: accounts.codex.status, ...(development ? { development } : {}) },
     ];
   }
   /** "What Hydra wrote" (Settings, Connectors): the exact user-level entries read back off disk, secrets masked. */
