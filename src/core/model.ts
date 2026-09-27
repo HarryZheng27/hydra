@@ -81,7 +81,10 @@ export type ClientMessage =
   | { type: 'planRetryJobs'; id: string }
   | { type: 'planCancelJob' | 'planStartJob'; id: string; key: string }
   // ---- Auto-dispatch (Step C): null turns it off ----
-  | { type: 'planDispatch'; id: string; dispatch: PlanDispatch | null };
+  | { type: 'planDispatch'; id: string; dispatch: PlanDispatch | null }
+  // ---- O3: the integration gate, Merge plan (or Open PR) and Merge anyway ----
+  | { type: 'planIntegrate' | 'planMergeAnyway'; id: string }
+  | { type: 'planMerge'; id: string; via: 'merge' | 'pr' };
 
 export function parseMessage(value: unknown): ClientMessage {
   if (!value || typeof value !== 'object') throw new Error('Invalid message.');
@@ -138,6 +141,12 @@ export function parseMessage(value: unknown): ClientMessage {
   }
   if (type === 'planRetryJobs') return { type, id: planId() };
   if (type === 'planCancelJob' || type === 'planStartJob') return { type, id: planId(), key: jobKey() };
+  if (type === 'planIntegrate' || type === 'planMergeAnyway') return { type, id: planId() };
+  if (type === 'planMerge') {
+    const via = message.via;
+    if (via !== 'merge' && via !== 'pr') throw new Error('Merge plan is "merge" or "pr".');
+    return { type, id: planId(), via };
+  }
   if (type === 'planDispatch') {
     // Checked again, fully, by the runner (validatePlanDispatch); plans.ts isn't imported here, since the webview imports this file.
     const value = message.dispatch as Record<string, unknown> | null;

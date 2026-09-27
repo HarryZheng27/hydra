@@ -410,6 +410,38 @@ const evidenceLabels: Readonly<Record<EvidenceStatus, string>> = {
 };
 export const evidenceLabel = (status: EvidenceStatus): string => evidenceLabels[status];
 
+/**
+ * O3 (docs/Heads.md, "Landing a plan together"): a plan's integration branch as its header on the canvas
+ * shows it: the gate's honest label and which of Run integration gate, Merge plan / Open PR, and Merge anyway
+ * it offers. The same rules as src/core/integration.ts's integrationGateLabel and mergeRefusal, duplicated
+ * here for the same Node-import reason as evidenceLabel above; the extension checks again before acting.
+ */
+export interface CanvasIntegrationView { branch: string; label: string; tone: 'good' | 'bad' | 'neutral'; canRunGate: boolean; canMerge: boolean; canMergeAnyway: boolean; merged?: string }
+export function integrationCanvasView(plan: Pick<Plan, 'integration'>): CanvasIntegrationView | undefined {
+  const integration = plan.integration;
+  if (!integration) return undefined;
+  const gate = integration.gate, tip = integration.tip;
+  const landing = integration.queue.length > 0 || !!integration.inFlight;
+  const current = !!gate && !gate.running && gate.tip === tip;
+  const passed = current && !gate!.failed && !gate!.error && gate!.status === 'passed';
+  const label = integration.error ? `Landing stopped: ${integration.error}`
+    : landing ? `Landing on ${integration.branch} (${integration.queue.length || 1} waiting)`
+    : !gate ? (tip === integration.base ? 'Nothing landed yet' : 'Integration gate not run')
+    : gate.running ? 'Integration gate running'
+    : gate.tip !== tip ? 'Integration gate out of date (more work landed since)'
+    : gate.error ? `Integration gate couldn't run: ${gate.error}`
+    : gate.failed ? 'Integration gate failed'
+    : gate.status ? evidenceLabel(gate.status) : 'Integration gate not run';
+  const merged = integration.merged && integration.merged.tip === tip ? (integration.merged.via === 'pr' ? 'Pushed for a pull request' : `Merged into ${integration.merged.into ?? 'its branch'}`) : undefined;
+  const settled = !integration.error && !landing && tip !== integration.base && !gate?.running && !merged;
+  const overridden = integration.override?.tip === tip;
+  return {
+    branch: integration.branch, label, tone: passed ? 'good' : current && (gate!.failed || gate!.error) ? 'bad' : 'neutral',
+    canRunGate: settled, canMerge: settled && (passed || overridden), canMergeAnyway: settled && !passed && !overridden && !!gate,
+    ...(merged ? { merged } : {}),
+  };
+}
+
 /** A short, human state for a head. */
 export const headStatus: Record<string, string> = {
   queued: 'Queued', starting: 'Starting', running: 'Working', blocked: 'Needs an answer', checking: 'Checking',

@@ -5,6 +5,7 @@ import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
 import type { EvidenceStatus } from './jobs';
 import type { PlanRigor } from './gates/config';
+import { releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
 
 /**
  * Hydra plans (docs/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
@@ -84,6 +85,12 @@ export interface PlanJob {
    * behaves as 'quick', which is every plan saved before rigor existed.
    */
   rigor?: PlanRigor;
+  /**
+   * O3 (docs/Heads.md, "Landing a plan together"): why this job's last try couldn't land on the plan's
+   * integration branch, and the commit its next try carries over. `held` once its tries ran out: it
+   * shows as failed, for the lead, until a retry.
+   */
+  conflict?: PlanJobConflict;
 }
 /**
  * Step C: Auto-dispatch to lanes. Present means on: at most `lanes` of the
@@ -124,6 +131,11 @@ export interface Plan {
   unattended?: PlanBudget;
   /** O7: when Run first moved this plan to 'running'. Measures the wall-clock budget, and used in the report. */
   startedAt?: string;
+  /**
+   * O3 (docs/Heads.md, "Landing a plan together"): the plan's integration branch, its landing queue and
+   * its integration gate. Set on the first Run; a plan that ran before O3 has none and runs as it did.
+   */
+  integration?: PlanIntegration;
 }
 
 // ---- O7: unattended plans (docs/Heads.md, "Unattended plans") ----
@@ -326,9 +338,11 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
     const status = statusOf(retry.key);
     if (status !== 'failed' && status !== 'skipped') throw new Error(`Job "${job.title}" is ${status ?? 'not started'}, so there's nothing to retry.`);
     const nextAttempt = (job.attempt ?? 0) + 1;
-    const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, gateFailures: _gateFailures, ...rest } = job;
+    const { jobId: _jobId, laneId: _laneId, result: _result, outcome: _outcome, gateFailures: _gateFailures, conflict, ...rest } = job;
+    // O3: a job held after running out of tries to land gets a fresh set; its conflict files and commit stay for its next brief.
+    const released = releaseConflict(conflict);
     jobs = jobs.map(item => item.key === retry.key ? {
-      ...rest, attempt: nextAttempt,
+      ...rest, attempt: nextAttempt, ...(released ? { conflict: released } : {}),
       ...(retry.title !== undefined ? { title: retry.title } : {}), ...(retry.brief !== undefined ? { brief: retry.brief } : {}),
       ...(retry.write_scope !== undefined ? { writeScope: retry.write_scope } : {}), ...(retry.provider !== undefined ? { provider: retry.provider } : {}),
       ...(retry.rigor !== undefined ? { rigor: retry.rigor } : {}),
@@ -445,6 +459,7 @@ function validateRunFields(job: PlanJob): void {
   if (job.attempt !== undefined && (!Number.isInteger(job.attempt) || job.attempt < 0 || job.attempt > 1000)) throw new Error(`${where} has an invalid attempt count.`);
   if (job.draft !== undefined && typeof job.draft !== 'boolean') throw new Error(`${where} has an invalid draft flag.`);
   if (job.gateFailures !== undefined && (!lane || !Number.isInteger(job.gateFailures) || job.gateFailures < 0 || job.gateFailures > 1000)) throw new Error(`${where} has an invalid gate failure count.`);
+  if (job.conflict !== undefined) validateJobConflict(job.conflict, where);
 }
 
 /** Unique keys that exist, dependencies that resolve, and the plan's size and text limits. Throws the first problem found. */
@@ -491,6 +506,7 @@ export function validatePlan(plan: Plan): void {
   if (plan.amendments !== undefined) validateAmendments(plan.amendments);
   if (plan.unattended !== undefined) validateBudget(plan.unattended);
   if (plan.startedAt !== undefined && !isTime(plan.startedAt)) throw new Error('Invalid startedAt.');
+  if (plan.integration !== undefined) validateIntegration(plan.integration, plan.id);
   // O7: unattended plans take heads only — a lane needs a terminal someone drives, which unattended can't ask for.
   if (plan.unattended) {
     const lane = plan.jobs.find(job => job.runAs === 'lane');

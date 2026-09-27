@@ -7,8 +7,9 @@ import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from '
 import { otherWorktrees, storageListing } from './confineFiles';
 import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
-import { createWorktree } from './worktrees';
-import { defaultMaxAttempts, evidenceStatus, finalJobStates, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
+import { createWorktree, defaultWorktreeRoot } from './worktrees';
+import { defaultMaxAttempts, evidenceStatus, finalJobStates, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
+import { carryOver, integrationAuthors, integrationGates, withGateWorktree, type IntegrationLeadView } from './integration';
 import { applyRigor, freshDirectory, gateFailureMessage, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
 import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
@@ -34,10 +35,12 @@ export type PlanLeadSkip = PlanAmendSkip;
 export type PlanLeadRetry = PlanAmendRetry;
 export interface PlanLeadAmendInput { add?: PlanLeadJobInput[]; edit?: PlanLeadEdit[]; skip?: PlanLeadSkip[]; retry?: PlanLeadRetry[] }
 /** One job as hydra_plan_get/_wait/_create/_amend/_cancel show it; jobId (if any) is enriched with head detail by HelperService itself. */
-export interface PlanLeadJobView { key: string; title: string; status: PlanJobStatus; reason?: string; jobId?: string }
+export interface PlanLeadJobView { key: string; title: string; status: PlanJobStatus; reason?: string; jobId?: string; conflict?: string[] }
+/** O3: a plan's integration branch as the lead's hydra_plan_* tools show it (integrationLeadView, integration.ts). */
+export type PlanLeadIntegration = IntegrationLeadView;
 /** A board post as a lead's hydra_plan_* tools show it: `untrusted` is true for everything but the lead's own posts (boardForLead, plans.ts). */
 export type PlanLeadBoardPost = BoardPost & { untrusted: boolean };
-export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[]; unattended?: PlanBudget }
+export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[]; unattended?: PlanBudget; integration?: PlanLeadIntegration }
 export interface PlanLeadMessageInput { to: 'all' | string[]; topic?: string; body: string }
 /**
  * The plan runner and store, narrowed to what a lead's hydra_plan_* calls need.
@@ -56,6 +59,10 @@ export interface PlanLeadBridge {
   cancel(id: string, leadSessionId: string, reason: string): Promise<PlanLeadPlan>;
   /** hydra_plan_message (O4, docs/Heads.md, "The plan board"). Throws if `to` names an unknown job key. */
   message(id: string, leadSessionId: string, input: PlanLeadMessageInput): Promise<PlanLeadPlan>;
+  /** O3: hydra_plan_integrate. Runs the integration gate on the plan's integration branch and waits for it. */
+  integrate(id: string, leadSessionId: string, signal: AbortSignal): Promise<PlanLeadPlan>;
+  /** O3: hydra_plan_merge. Throws (with the reason) unless the integration gate passed on the current tip, or the user overrode it. */
+  merge(id: string, leadSessionId: string, via: 'merge' | 'pr'): Promise<{ plan: PlanLeadPlan; commit?: string; into?: string; compareUrl?: string }>;
 }
 
 // ---- O8a: the user role (docs/Heads.md, "Scripts and CI") ----
@@ -206,13 +213,27 @@ export class HelperService {
     this.headSyncTimer.unref?.();
   }
 
-  /** After a restart no helper process survives, so a helper that was waiting for an answer can't continue. */
+  /**
+   * After a restart no helper process survives, so a helper that was waiting for an answer can't continue.
+   * O3: a plan's job goes back in the queue instead, in its own worktree, and is told why (its plan waits
+   * for it rather than failing it); a loose head fails, as before.
+   */
   async recover(): Promise<void> {
     for (const job of this.options.store.list(this.options.leadKey)) {
-      if (job.state === 'blocked') await this.options.store.transition(job.id, 'failed', 'Hydra restarted while this head was waiting for an answer.').catch(() => {});
+      if (job.state !== 'blocked') continue;
+      if (this.options.planBoard?.jobPlan(job.id)) { await this.requeueAfterRestart(job).catch(error => this.options.log?.(`[heads] ${job.id}: couldn't requeue after the restart: ${error instanceof Error ? error.message : String(error)}`)); continue; }
+      await this.options.store.transition(job.id, 'failed', 'Hydra restarted while this head was waiting for an answer.').catch(() => {});
     }
     this.changed();
     void this.dispatch();
+  }
+
+  /** O3: a plan's blocked head, after a restart: back to queued (through failed, the one way back), with a "## Restarted" note. */
+  private async requeueAfterRestart(job: Job): Promise<void> {
+    const asked = job.question ? ` to your question: "${clip(job.question, 1000)}"` : '';
+    const note = `## Restarted\n\nHydra restarted while you were waiting for the lead's answer${asked}. No answer arrived, and your earlier work is still in this worktree (uncommitted changes included). Carry on from there; if you still need the answer, call hydra_stuck again.`;
+    await this.options.store.transition(job.id, 'failed', 'Hydra restarted while this head was waiting for an answer; as a plan job it goes back in the queue.');
+    await this.options.store.transition(job.id, 'queued', 'Back in the queue after Hydra restarted.', { brief: clip(`${job.brief}\n\n${note}`, maxBriefLength), question: undefined, nudged: false });
   }
 
   /** The endpoint handler. */
@@ -236,6 +257,9 @@ export class HelperService {
         case 'hydra_plan_amend': return this.planAmend(args, this.requireLeadSession(caller));
         case 'hydra_plan_cancel': return this.planCancel(args, this.requireLeadSession(caller));
         case 'hydra_plan_message': return this.planMessage(args, this.requireLeadSession(caller));
+        // ---- O3: the integration gate and Merge plan (docs/Heads.md, "Landing a plan together") ----
+        case 'hydra_plan_integrate': return this.planIntegrate(args, this.requireLeadSession(caller), signal);
+        case 'hydra_plan_merge': return this.planMerge(args, this.requireLeadSession(caller));
         // Packs (docs/Packs_Plan.md, decision 6): a lead's bridge asks once, for its instructions and hydra_start_head's `role`.
         case 'hydra_active_roles': return { roles: await this.activeRoles() };
         // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6): a lane's agent asks the user; it never marks the job itself ----
@@ -336,9 +360,10 @@ export class HelperService {
    * the plan's lead (`plan-<id>`), plus `inputs`, the results of the lane jobs it
    * depends on. Only Hydra passes inputs; a lead's call never can.
    */
-  async startForPlan(args: Record<string, unknown>, leadSessionId: string, inputs: readonly DependencyResult[] = [], defaultProvider?: Provider) {
+  async startForPlan(args: Record<string, unknown>, leadSessionId: string, inputs: readonly DependencyResult[] = [], defaultProvider?: Provider, start?: PlanHeadStart) {
     if (inputs.length > 16 || inputs.some(input => !isDependencyResult(input))) throw new Error('A plan head\'s inputs are malformed.');
-    return this.startHelper(args, { role: 'lead', leadKey: this.options.leadKey, leadSessionId }, inputs, defaultProvider);
+    if (start && (!fullSha.test(start.baseCommit) || (start.carry !== undefined && !fullSha.test(start.carry)))) throw new Error('A plan head\'s start commit is malformed.');
+    return this.startHelper(args, { role: 'lead', leadKey: this.options.leadKey, leadSessionId }, inputs, defaultProvider, start);
   }
 
   /**
@@ -346,7 +371,7 @@ export class HelperService {
    * else `defaultProvider` (a plan's hydra.defaultProvider), else Claude. A role must be active now;
    * it is resolved again from its pack's checked copy when the head starts.
    */
-  private async startHelper(args: Record<string, unknown>, caller?: HelperCaller, inputs: readonly DependencyResult[] = [], defaultProvider?: Provider) {
+  private async startHelper(args: Record<string, unknown>, caller?: HelperCaller, inputs: readonly DependencyResult[] = [], defaultProvider?: Provider, start?: PlanHeadStart) {
     this.options.stop?.assertRunning('Starting a head');
     const parsed = parseJobInput(args);
     const open = this.list().filter(job => !finalJobStates.has(job.state)).length;
@@ -364,11 +389,14 @@ export class HelperService {
     const lead = caller?.leadSessionId ? { sessionId: caller.leadSessionId, ...(caller.provider ? { provider: caller.provider } : {}), ...(laneName ? { lane: caller.lane } : {}) } : undefined;
     // A plan head that depends only on lane jobs starts from their results, which never move, so its
     // base is known now: hydra_get_head shows it at once, and results that conflict refuse the start.
-    const inputBase = inputs.length && !input.dependsOn?.length && !repeat ? await dependencyBase(this.options.leadFolder, input.title, inputs) : undefined;
+    // O3: a plan job with an integration branch starts from its tip, which already has every dependency landed and
+    // merged, so there is nothing to merge in memory here: `inputs` then only tell it what they did.
+    const inputBase = start && !input.dependsOn?.length ? start.baseCommit
+      : inputs.length && !input.dependsOn?.length && !repeat ? await dependencyBase(this.options.leadFolder, input.title, inputs) : undefined;
     // O6: a plan job's rigor (planHeadInput sets it on the raw args; hydra_start_head's schema
     // has no such property, so a lead's own call can never set it).
     const rigor: PlanRigor | undefined = args.rigor === 'quick' || args.rigor === 'standard' || args.rigor === 'strict' ? args.rigor : undefined;
-    const withInputs = { ...(inputs.length ? { ...input, inputs: [...inputs] } : input), ...(rigor ? { rigor } : {}) };
+    const withInputs = { ...(inputs.length ? { ...input, inputs: [...inputs] } : input), ...(rigor ? { rigor } : {}), ...(start?.carry ? { carry: start.carry } : {}) };
     // Step 1 hardening: a snapshot of the gates, the git metadata and
     // the .hydra files a repeated idempotency key would reuse an existing job for anyway, so it's
     // skipped there — `store.create` returns that job untouched before looking at these fields.
@@ -379,7 +407,7 @@ export class HelperService {
     if (created && (!dependent || inputBase)) await this.options.store.update(job.id, { baseCommit: inputBase ?? head });
     this.changed();
     void this.dispatch();
-    const base = created ? (dependent ? inputBase : head) : this.options.store.get(job.id)?.baseCommit;
+    const base = created ? (inputBase ?? (dependent ? undefined : head)) : this.options.store.get(job.id)?.baseCommit;
     // O2: a loose head never refuses for this (one-offs stay cheap), but names a running head it
     // would collide with — one it doesn't depend on and that doesn't depend on it — so the caller
     // can add a dependency or narrow the scope itself before the two run at the same time.
@@ -700,6 +728,14 @@ export class HelperService {
         ? { worktree: job.worktree, branch: job.branch, baseCommit: job.baseCommit }
         : await createWorktree(this.options.leadFolder, job.title, job.id, this.options.worktreeRoot?.(), job.baseCommit ?? (dependencies.length ? await dependencyBase(this.options.leadFolder, job.title, dependencies) : undefined));
       await this.options.store.update(job.id, { worktree: created.worktree, branch: created.branch, baseCommit: created.baseCommit });
+      // O3: a plan job re-queued after a conflict on its integration branch: its previous try is merged into the
+      // fresh worktree (hooks off, never committed), so only the conflicting files are left for it to resolve.
+      if (job.carry && !job.worktree) {
+        await mkdir(this.tempRoot, { recursive: true });
+        const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
+        try { const carried = await carryOver(created.worktree, job.carry, hooksOff); this.options.log?.(`[heads] ${job.id}: carried over ${job.carry.slice(0, 7)} (${carried})`); }
+        finally { await rm(hooksOff, { recursive: true, force: true }).catch(() => undefined); }
+      }
       // Step 2: its settings file (Claude), its own TEMP and its allowlisted environment. A settings file
       // Hydra can't build correctly stops the head here, rather than letting it run unconfined.
       await mkdir(this.tempRoot, { recursive: true });
@@ -1043,11 +1079,28 @@ export class HelperService {
     const plan = await this.requirePlanBridge().cancel(id, leadSessionId, reason);
     return this.planView(plan);
   }
+  /** O3: hydra_plan_integrate — the integration gate, now, on everything landed so far; waits for the result. */
+  private async planIntegrate(args: Record<string, unknown>, leadSessionId: string, signal: AbortSignal) {
+    const id = this.planId(args.plan_id);
+    return this.planView(await this.requirePlanBridge().integrate(id, leadSessionId, signal));
+  }
+  /** O3: hydra_plan_merge — Merge plan (or Open PR), refused unless the integration gate passed on the branch as it is now. */
+  private async planMerge(args: Record<string, unknown>, leadSessionId: string) {
+    const id = this.planId(args.plan_id);
+    if (args.via !== undefined && args.via !== 'merge' && args.via !== 'pr') throw new Error('via must be "merge" or "pr".');
+    const via = args.via === 'pr' ? 'pr' : 'merge';
+    const result = await this.requirePlanBridge().merge(id, leadSessionId, via);
+    return {
+      ...this.planView(result.plan),
+      ...(result.commit ? { merged_commit: result.commit } : {}), ...(result.into ? { merged_into: result.into } : {}),
+      ...(result.compareUrl ? { pull_request_url: result.compareUrl } : {}),
+    };
+  }
   /** A plan as hydra_plan_* return it: each job's status, a started job's own head detail, and the board. */
   private planView(plan: PlanLeadPlan) {
     const jobs = plan.jobs.map(job => {
       const head = job.jobId ? this.options.store.get(job.jobId) : undefined;
-      return { key: job.key, title: job.title, status: job.status, ...(job.reason ? { reason: job.reason } : {}), ...(head ? { head: this.describe(head, true) } : {}) };
+      return { key: job.key, title: job.title, status: job.status, ...(job.reason ? { reason: job.reason } : {}), ...(job.conflict?.length ? { conflict_files: job.conflict } : {}), ...(head ? { head: this.describe(head, true) } : {}) };
     });
     // O5: which jobs need the lead now, so a plan that keeps most of itself running doesn't get missed
     // amid the rest — a job that ran out of attempts (evidence is in its own `head`), or one asking a question.
@@ -1060,6 +1113,8 @@ export class HelperService {
       ...(plan.amendments.length ? { amendments: plan.amendments } : {}),
       // O7: an unattended plan's budget, so the lead (and hydra_plan_get callers) can see the cap it's running under.
       ...(plan.unattended ? { unattended: plan.unattended } : {}),
+      // O3: the integration branch, what has landed, the integration gate's label, and whether Merge plan is allowed.
+      ...(plan.integration ? { integration: plan.integration } : {}),
     };
   }
 
@@ -1134,6 +1189,38 @@ export class HelperService {
     this.options.onChange?.();
   }
 
+  // ---- O3: the integration gate (docs/Heads.md, "Landing a plan together") ----
+
+  /**
+   * Runs a plan's integration gate: its gates (integrationGates: the project's command gates, and for a strict
+   * plan a review of the whole diff by an agent that wrote none of it, when there is one) in a detached worktree
+   * at the integration branch's tip, read from the lead folder exactly as a head's are. The review sees
+   * base..tip, every job's work together.
+   */
+  async runIntegrationGate(input: { planId: string; title: string; brief?: string; base: string; tip: string; strict: boolean; providers: Provider[]; signal?: AbortSignal }): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }> {
+    const config = await (this.options.gates ?? loadGates)(this.options.leadFolder);
+    const { gates, notRun } = integrationGates(config, input.strict);
+    const configured = gatesConfigured(config.source, gates.length + notRun.length);
+    if (!gates.length) return { checks: notRun, configured };
+    const root = this.options.worktreeRoot?.() ?? defaultWorktreeRoot(this.options.leadFolder);
+    const { author, priorAuthors } = integrationAuthors(input.providers, 'claude');
+    const checks = await withGateWorktree(this.options.leadFolder, root, input.planId, input.tip, async worktree => runGateList(gates, worktree, input.base, {
+      author, ...(priorAuthors.length ? { priorAuthors } : {}),
+      title: `Plan "${input.title}": every job's work together`,
+      brief: input.brief || `The combined work of every job in plan "${input.title}", merged on its integration branch.`,
+      writeScope: [],
+      logDirectory: await freshDirectory(this.options.logDirectory, `plan-${input.planId}-integration`),
+      executable: provider => this.options.executable(provider),
+      ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
+      ...(this.options.sandbox ? { sandbox: this.options.sandbox, tempRoot: this.tempRoot } : {}),
+      spawned: pid => { this.helperPids.add(pid); },
+      ...(input.signal ? { signal: input.signal } : {}),
+      ...(this.options.log ? { log: this.options.log } : {}),
+      ...(this.options.gateRuntime ? { runtime: this.options.gateRuntime } : {}),
+    }));
+    return { checks: [...checks, ...notRun], configured };
+  }
+
   // ---- O2: conflict prediction between running heads (docs/Heads.md, "Coordination") ----
 
   /** Heads this one would conflict with if both merged now, from the last conflict-prediction pass. */
@@ -1193,6 +1280,10 @@ export async function commitAll(worktree: string, message: string, hooksOff: str
     await git(worktree, [...noHooks(hooksOff), '-c', 'user.name=Hydra head', '-c', 'user.email=helper@hydra.invalid', 'commit', '-q', '-m', message]);
   }
 }
+
+const fullSha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
+/** O3: where a plan head starts when its plan has an integration branch, and a previous try to carry over. */
+export interface PlanHeadStart { baseCommit: string; carry?: string }
 
 /** A plan head's input, checked before it is stored: Hydra builds these, but they are written to disk and read back. */
 function isDependencyResult(value: unknown): value is DependencyResult {
