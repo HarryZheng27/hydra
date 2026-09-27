@@ -29,7 +29,7 @@ const planJobSchema = {
 export const leadTools: readonly HelperToolDefinition[] = [
   {
     name: 'hydra_start_head',
-    description: 'Start a Hydra head: a separate agent that works on one independent piece of this task in its own git worktree and branch, branched from this folder\'s current HEAD (commit first if the head must see your changes); a head with depends_on starts from their results instead. Use it on your own initiative whenever a task splits into independent pieces with separate files; start several at once for parallel work. Returns a job id immediately; call hydra_wait_for_heads to get results. Merge a finished head\'s branch yourself with git.',
+    description: 'Start a Hydra head: a separate agent that works on one independent piece of this task in its own git worktree and branch, branched from this folder\'s current HEAD (commit first if the head must see your changes); a head with depends_on starts from their results instead. Use it on your own initiative whenever a task splits into independent pieces with separate files; start several at once for parallel work. Returns a job id immediately; call hydra_wait_for_heads to get results. Merge a finished head\'s branch yourself with git. If the result names a scope_overlap with another running head you don\'t depend on, the two may change the same files at the same time; consider adding a dependency between them or narrowing write_scope, though this call never refuses on its own.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['title', 'brief', 'write_scope', 'idempotency_key'],
       properties: {
@@ -62,7 +62,7 @@ export const leadTools: readonly HelperToolDefinition[] = [
   // ---- Plans from the chat (O1, docs/Heads.md, "Plans from the chat"): a graph of head jobs run under this same lead, shown on the Agents canvas. ----
   {
     name: 'hydra_plan_create',
-    description: 'Create a Hydra plan: a dependency graph of jobs, each run as a head under this same lead, shown together on the Agents canvas. Use this instead of separate hydra_start_head calls when a task has three or more independent pieces, or any dependency between pieces (one job needs another\'s result first). For one-off independent work, keep using hydra_start_head. Unless Hydra Settings says plans need approval first, it starts running immediately: jobs with no dependencies start now, others as their dependencies finish. Call hydra_plan_wait for the result.',
+    description: 'Create a Hydra plan: a dependency graph of jobs, each run as a head under this same lead, shown together on the Agents canvas. Use this instead of separate hydra_start_head calls when a task has three or more independent pieces, or any dependency between pieces (one job needs another\'s result first). For one-off independent work, keep using hydra_start_head. Refused if two jobs that don\'t depend on each other would change the same path: give them a dependency, or narrow their write_scope. Unless Hydra Settings says plans need approval first, it starts running immediately: jobs with no dependencies start now, others as their dependencies finish. Call hydra_plan_wait for the result.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['title', 'jobs', 'idempotency_key'],
       properties: {
@@ -85,7 +85,7 @@ export const leadTools: readonly HelperToolDefinition[] = [
   },
   {
     name: 'hydra_plan_amend',
-    description: 'Change a plan that hasn\'t finished: add jobs, or edit or skip jobs that haven\'t started yet. Skipping a job that others depend on tells them why, as a note. A job that has already started can\'t be changed or skipped this way; start a new job depending on what you need instead.',
+    description: 'Change a plan that hasn\'t finished: add jobs, or edit or skip jobs that haven\'t started yet. Skipping a job that others depend on tells them why, as a note. A job that has already started can\'t be changed or skipped this way; start a new job depending on what you need instead. Refused, like hydra_plan_create, if the result would have two independent jobs changing the same path.',
     inputSchema: {
       type: 'object', additionalProperties: false, required: ['plan_id'],
       properties: {

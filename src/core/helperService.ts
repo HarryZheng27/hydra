@@ -19,6 +19,9 @@ import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
+import { writeScopeOverlap } from './plans';
+import { HeadSync, headSyncIntervalMs, type HeadConflict } from './headSync';
+export type { HeadConflict } from './headSync';
 import type { PlanLeadJobInput, PlanState } from './plans';
 import type { PlanJobStatus } from './planRunner';
 
@@ -73,6 +76,8 @@ export interface HelperServiceOptions {
   log?: (line: string) => void;
   now?: () => number;
   watchdogMs?: number;
+  /** O2: how often running heads are checked against each other for a predicted merge conflict. Defaults to headSyncIntervalMs (headSync.ts). */
+  headSyncIntervalMs?: number;
   /**
    * This window's lanes (docs/Lanes_And_Planner_Plan.md): the hydra_lanes answer,
    * and the name a lane's heads are labelled with.
@@ -144,10 +149,16 @@ export class HelperService {
   private disposed = false;
   private readonly watchdog: ReturnType<typeof setInterval>;
   private readonly now: () => number;
+  // ---- O2: conflict prediction between running heads (docs/Heads.md, "Coordination") ----
+  private readonly headSyncer = new HeadSync();
+  private readonly headConflictsById = new Map<string, HeadConflict[]>();
+  private readonly headSyncTimer: ReturnType<typeof setInterval>;
   constructor(private readonly options: HelperServiceOptions) {
     this.now = options.now || Date.now;
     this.watchdog = setInterval(() => { void this.enforceLimits(); void this.refreshMerged(); }, options.watchdogMs ?? 5000);
     this.watchdog.unref?.();
+    this.headSyncTimer = setInterval(() => { void this.runHeadSync(); }, options.headSyncIntervalMs ?? headSyncIntervalMs);
+    this.headSyncTimer.unref?.();
   }
 
   /** After a restart no helper process survives, so a helper that was waiting for an answer can't continue. */
@@ -232,7 +243,7 @@ export class HelperService {
 
   /** Window closing: stop every helper and record why. */
   async dispose(): Promise<void> {
-    this.disposed = true; clearInterval(this.watchdog);
+    this.disposed = true; clearInterval(this.watchdog); clearInterval(this.headSyncTimer);
     await this.dispatchRun.catch(() => undefined);
     const files = [...this.active.values()].flatMap(active => [active.mcpConfigFile, active.settingsFile, active.temp].filter((file): file is string => !!file));
     await Promise.all([...this.active.keys()].map(id => this.finish(id, 'failed', 'The Hydra window closed while this head was running.').catch(() => undefined)));
@@ -290,6 +301,12 @@ export class HelperService {
     this.changed();
     void this.dispatch();
     const base = created ? (dependent ? inputBase : head) : this.options.store.get(job.id)?.baseCommit;
+    // O2: a loose head never refuses for this (one-offs stay cheap), but names a running head it
+    // would collide with — one it doesn't depend on and that doesn't depend on it — so the caller
+    // can add a dependency or narrow the scope itself before the two run at the same time.
+    const overlapping = created ? this.list().filter(other =>
+      other.id !== job.id && !finalJobStates.has(other.state) && other.writeScope.length && job.writeScope.length &&
+      !job.dependsOn.includes(other.id) && !other.dependsOn.includes(job.id) && writeScopeOverlap(job.writeScope, other.writeScope)) : [];
     return {
       job_id: job.id, state: job.state, created, provider: job.provider,
       ...(job.role ? { role: job.role.ref } : {}),
@@ -298,6 +315,7 @@ export class HelperService {
       ...(created && dirty ? { warning: laneWorktree
         ? 'Your lane has uncommitted changes. The head starts from the lane\'s last commit and will not see them; commit first if it needs them.'
         : 'Your folder has uncommitted changes. The head starts from the last commit and will not see them; commit first if it needs them.' } : {}),
+      ...(overlapping.length ? { scope_overlap: overlapping.map(other => ({ job_id: other.id, title: other.title, path: writeScopeOverlap(job.writeScope, other.writeScope)! })) } : {}),
     };
   }
 
@@ -928,6 +946,27 @@ export class HelperService {
   private changed(): void {
     for (const wake of [...this.waiters]) wake();
     this.options.onChange?.();
+  }
+
+  // ---- O2: conflict prediction between running heads (docs/Heads.md, "Coordination") ----
+
+  /** Heads this one would conflict with if both merged now, from the last conflict-prediction pass. */
+  headConflicts(id: string): HeadConflict[] { return this.headConflictsById.get(id) ?? []; }
+
+  private async runHeadSync(): Promise<void> {
+    if (this.disposed) return;
+    const heads = this.list().filter(job => !finalJobStates.has(job.state) && job.worktree).map(job => ({ id: job.id, worktree: job.worktree! }));
+    if (heads.length < 2) {
+      if (this.headConflictsById.size) { this.headConflictsById.clear(); this.changed(); }
+      return;
+    }
+    const results = await this.headSyncer.run(this.options.leadFolder, heads).catch(() => new Map<string, HeadConflict[]>());
+    if (this.disposed) return;
+    const same = (a: Map<string, HeadConflict[]>, b: Map<string, HeadConflict[]>) => JSON.stringify([...a]) === JSON.stringify([...b]);
+    if (same(results, this.headConflictsById)) return;
+    this.headConflictsById.clear();
+    for (const [id, conflicts] of results) this.headConflictsById.set(id, conflicts);
+    this.changed();
   }
 }
 

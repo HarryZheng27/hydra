@@ -642,6 +642,24 @@ test('heads queued behind a head that hit its usage limit wait for it (decision 
   } finally { await f.close(); }
 });
 
+// ---- O2: scope contracts (docs/Heads.md, "Coordination") ----
+
+test('hydra_start_head: names a running head with an overlapping write_scope, unless one depends on the other; never refuses', async () => {
+  const f = await fixture({ script: async () => {} });
+  try {
+    const a = await f.start('a', { write_scope: ['src/shared/'] });
+    assert.equal(a.scope_overlap, undefined, 'nothing running yet to overlap with');
+    const b = await f.start('b', { write_scope: ['src/shared/util.ts'] });
+    assert.deepEqual(b.scope_overlap, [{ job_id: a.job_id, title: 'Job a', path: 'src/shared/' }]);
+    // A dependency between them excuses it, in either direction.
+    const c = await f.start('c', { write_scope: ['src/shared/other.ts'], depends_on: [a.job_id] });
+    assert.equal(c.scope_overlap, undefined, 'c depends on a');
+    // A disjoint scope never overlaps.
+    const d = await f.start('d', { write_scope: ['src/unrelated/'] });
+    assert.equal(d.scope_overlap, undefined);
+  } finally { await f.close(); }
+});
+
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
 
 test('hydra_plan_* tools are refused when the window has no plans bridge', async () => {

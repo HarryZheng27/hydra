@@ -136,6 +136,22 @@ test('buildCanvas draws one red dashed conflict edge per conflicting pair of lan
   assert.equal(model.leads.find(item => item.key === '111111111111')!.status, 'Conflicts with Lane 2');
 });
 
+test('buildCanvas draws one red dashed conflict edge per conflicting pair of heads, even across different chats', () => {
+  const a = head('111111111111', 'running', { conflicts: [{ jobId: '222222222222', files: ['src/a.ts'] }] });
+  const b = head('222222222222', 'running', { conflicts: [{ jobId: '111111111111', files: ['src/a.ts'] }] });
+  const model = buildCanvas([a, b], now);
+  const conflictEdges = model.edges.filter(edge => edge.kind === 'conflict');
+  assert.equal(conflictEdges.length, 1, 'one edge per pair, not one per direction');
+  assert.deepEqual([conflictEdges[0]!.from, conflictEdges[0]!.to].sort(), ['111111111111', '222222222222']);
+});
+
+test('buildCanvas draws no conflict edge for a head that isn\'t on the canvas any more (finished long ago, or merged)', () => {
+  const a = head('111111111111', 'running', { conflicts: [{ jobId: '222222222222', files: ['src/a.ts'] }] });
+  const goneMerged = head('222222222222', 'done', { finishedAt: at(1000), merged: true, conflicts: [{ jobId: '111111111111', files: ['src/a.ts'] }] });
+  const model = buildCanvas([a, goneMerged], now);
+  assert.deepEqual(model.edges.filter(edge => edge.kind === 'conflict'), []);
+});
+
 test('buildCanvas parks an exited lane with no running heads after 10 minutes; a fresh exit or a running head keeps it a full node', () => {
   const quiet = lane('111111111111', 'Lane 1', { state: 'exited', exitedAt: at(9 * 60_000) });
   const parkedYet = buildCanvas([], now, { lanes: [quiet] });

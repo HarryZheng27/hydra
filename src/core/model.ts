@@ -34,6 +34,8 @@ export interface HelperJobView {
   role?: { ref: string; title: string; packTitle: string };
   /** Step A: the truthful evidence status at `commit`, when one was recorded. */
   status?: EvidenceStatus;
+  /** O2: other running heads this one would conflict with if both merged now (docs/Heads.md, "Coordination"), from the last conflict-prediction pass. */
+  conflicts?: { jobId: string; files: string[] }[];
 }
 /**
  * Packs (docs/Packs_Plan.md, "Picking a role"): one active role, for the New

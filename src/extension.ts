@@ -52,7 +52,7 @@ import { planBrief } from './core/planner';
 import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Their own block. ----
-import { findPlanByIdempotencyKey, planFromLeadInput, planOutcomeReasonMax, validatePlanJobs, type PlanJobOutcome } from './core/plans';
+import { findPlanByIdempotencyKey, planFromLeadInput, planOutcomeReasonMax, refuseScopeOverlap, validatePlanJobs, type PlanJobOutcome } from './core/plans';
 import type { PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
@@ -1021,6 +1021,7 @@ class Manager {
       lead: job.lead, merged: service.isMerged(job.id), startedAt: job.startedAt, writeScope: job.writeScope,
       ...(job.role ? { role: { ref: job.role.ref, title: job.role.title, packTitle: job.role.packTitle } } : {}),
       ...(job.result?.status ? { status: job.result.status } : {}),
+      ...(service.headConflicts(job.id).length ? { conflicts: service.headConflicts(job.id) } : {}),
     })).reverse();
   }
   /** Head changes go to the webview at once (the Agents canvas animates them); the full snapshot follows, debounced. */
@@ -1179,6 +1180,7 @@ class Manager {
         validatePlanJobs(jobs);
         const cycle = findCycle(jobs);
         if (cycle) throw new Error(cycleMessage(jobs, cycle));
+        refuseScopeOverlap(jobs);
         return { ...plan, jobs };
       });
       if (!updated) throw new Error(`No plan ${id} in this window.`);

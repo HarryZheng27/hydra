@@ -345,6 +345,21 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
     top += Math.max(groupHeight, layout.rowGap) + layout.groupGap;
   }
 
+  // O2: conflict prediction between running heads (docs/Heads.md, "Coordination"), the same red dashed
+  // line lanes already draw between each other. Heads from different chats or plans can conflict too,
+  // so this runs over every head drawn on the canvas, not just one chat's or one plan's own.
+  const drawnHeadIds = new Set(heads.map(head => head.id));
+  const headConflictPairs = new Set<string>();
+  for (const head of heads) {
+    for (const conflict of head.head.conflicts || []) {
+      if (!drawnHeadIds.has(conflict.jobId)) continue;
+      const pair = [head.id, conflict.jobId].sort().join('|');
+      if (headConflictPairs.has(pair)) continue;
+      headConflictPairs.add(pair);
+      edges.push({ id: `conflict:${pair}`, kind: 'conflict', from: head.id, to: conflict.jobId, waiting: false, active: false });
+    }
+  }
+
   return { leads, heads, edges, tray, plans, parkedLanes, width: widest + 60, height: Math.max(top - layout.groupGap + layout.top, 240) };
 }
 
