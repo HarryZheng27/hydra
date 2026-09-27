@@ -12,7 +12,7 @@ import { evidenceLabel, evidenceStatus, gatesConfigured, type JobCheckResult } f
 import { detectTestScript, noGatesFile, starterTestGatesFile } from '../src/core/starterGates';
 
 /**
- * Step A (docs/Hydra_Improvements_Pt_2.md): truthful gate status for every job. Covers the pure
+ * Step A: truthful gate status for every job. Covers the pure
  * status logic, the lane staleness check against a real git repository (like tests/laneGit.test.ts),
  * the PR compare URL's "Checks" section, and the starter-gates writers.
  */

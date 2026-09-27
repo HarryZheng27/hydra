@@ -14,7 +14,7 @@ import { terminalText } from '../src/core/lanePty';
 import type { GatesLoader } from '../src/core/gates';
 
 /**
- * Step 1 hardening tests (docs/Hydra_Improvements.md): the gate floor (1.1), fenced review input
+ * Step 1 hardening tests: the gate floor (1.1), fenced review input
  * (1.2), clean terminal input (1.3), git hardening (1.4), the constant-time token check (1.5) and
  * the tamper note (1.6). Real temp git repos, like tests/packs.test.ts and tests/helperService.test.ts.
  */

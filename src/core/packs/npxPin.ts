@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * Integrity checks for npx (and bunx/pnpx) pack servers (docs/Hydra_Improvements.md, 5.4).
+ * Integrity checks for npx (and bunx/pnpx) pack servers (5.4).
  *
  * A pack server run this way can fetch whatever the registry hands it at launch
  * time, so a pack must name an exact version, never a range or a dist-tag, and

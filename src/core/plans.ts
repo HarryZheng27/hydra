@@ -47,7 +47,7 @@ export type PlanJobRunAs = 'head' | 'lane';
 /** What a lane job handed on: the lane's HEAD when it merged or was marked done. It never moves afterwards. */
 export interface PlanJobResult {
   commit: string; via: 'merged' | 'marked'; at: string; note?: string; changedFiles: string[];
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): the lane's evidence status at this commit, when one was recorded. */
+  /** Step A: the lane's evidence status at this commit, when one was recorded. */
   status?: EvidenceStatus;
 }
 /** A job that won't finish. */
@@ -74,11 +74,11 @@ export interface PlanJob {
    * A head job passes it to its head, a lane job to its lane; the job's provider comes first, then the role's.
    */
   role?: string;
-  /** Step C (docs/Hydra_Improvements_Pt_2.md): gate failures Hydra sent back to this try's auto-dispatched lane. Retry failed jobs clears it. */
+  /** Step C: gate failures Hydra sent back to this try's auto-dispatched lane. Retry failed jobs clears it. */
   gateFailures?: number;
 }
 /**
- * Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes. Present means on: at most `lanes` of the
+ * Step C: Auto-dispatch to lanes. Present means on: at most `lanes` of the
  * plan's lane jobs run at once, each ready one starts by itself with `provider` (unless the job names its own),
  * and hydra_job_ready runs the gates, with `attempts` tries before the job fails.
  */

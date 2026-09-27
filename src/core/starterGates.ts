@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * Starter gates (docs/Hydra_Improvements_Pt_2.md, Step A): a project with no `.hydra/gates.json`
+ * Starter gates (Step A): a project with no `.hydra/gates.json`
  * gets offered a deliberate choice once — "Add a test gate", "No gates for this project", or "Not
  * now" — from the first head acceptance or lane merge in it, and again any time from Settings →
  * Gates. Pure file logic lives here so it's unit tested without vscode; the prompt itself (asking,

@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { Provider } from './model';
 
 /**
- * Confining heads, and light limits for lanes (docs/Hydra_Improvements.md, Step 2). Pure: every
+ * Confining heads, and light limits for lanes (Step 2). Pure: every
  * function here builds a value from typed inputs, so the tests can check each one exactly.
  *
  * - Claude heads get a settings file (`--settings`) that blocks reads outside their working
@@ -437,7 +437,7 @@ export interface WrapperScriptInput {
 export function wrapperScript(input: WrapperScriptInput): string {
   return [
     '#!/bin/bash',
-    '# Hydra\'s shell for Claude heads (docs/Hydra_Improvements.md, Step 2). Hydra writes this file; edits are replaced.',
+    '# Hydra\'s shell for Claude heads (Step 2). Hydra writes this file; edits are replaced.',
     '# Claude Code runs each Bash command, hook and stdio MCP server of a head as: <this file> \'<command line>\'.',
     'if [ "${HYDRA_SHELL_DIRECT:-}" = 1 ]; then',
     '  # One of Hydra\'s own MCP servers: only Hydra sets this variable, in those servers\' own environment.',

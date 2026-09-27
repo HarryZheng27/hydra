@@ -65,7 +65,7 @@ export interface HelperServiceOptions {
   gates?: GatesLoader;
   /** The active packs' roles (PackService). Without it, no head has a role and a head that names one is refused. */
   roles?: RoleSource;
-  // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
+  // ---- Step 2: confining heads ----
   /**
    * Codex's sandbox for Claude heads' shells and for gate commands (HeadSandbox). Without it, a
    * Claude head has no shell and gate commands run as before.
@@ -75,10 +75,10 @@ export interface HelperServiceOptions {
   hydraStorage?: string;
   /** Where each head's own TEMP folder goes. Defaults to `temp` beside the log directory. */
   tempDirectory?: string;
-  // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
+  // ---- 5.3: Stop All Agents ----
   /** Without it, heads never refuse to start and dispatch always runs (as before 5.3). */
   stop?: StopSwitch;
-  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  // ---- 5.2: the audit log ----
   /** Without it, a head cancelled and a hydra_done refused for changed git settings aren't recorded. */
   audit?: (event: AuditEvent) => void;
 }
@@ -239,7 +239,7 @@ export class HelperService {
     // base is known now: hydra_get_head shows it at once, and results that conflict refuse the start.
     const inputBase = inputs.length && !input.dependsOn?.length && !repeat ? await dependencyBase(this.options.leadFolder, input.title, inputs) : undefined;
     const withInputs = inputs.length ? { ...input, inputs: [...inputs] } : input;
-    // Step 1 hardening (docs/Hydra_Improvements.md): a snapshot of the gates, the git metadata and
+    // Step 1 hardening: a snapshot of the gates, the git metadata and
     // the .hydra files a repeated idempotency key would reuse an existing job for anyway, so it's
     // skipped there — `store.create` returns that job untouched before looking at these fields.
     const snapshot = repeat ? {} : await this.headStartSnapshot();
@@ -261,7 +261,7 @@ export class HelperService {
     };
   }
 
-  // ---- Step 1 hardening (docs/Hydra_Improvements.md) ----
+  // ---- Step 1 hardening ----
 
   /**
    * What a fresh head's job record carries from the moment it's created, so its later `hydra_done`
@@ -417,7 +417,7 @@ export class HelperService {
     }
     if (checks.some(gateBlocks)) return this.checkFailed(jobId, attempts, maxAttempts, gateFailureMessage(checks), checks, note);
     await this.options.store.update(jobId, { attempts, maxAttempts });
-    // Step A (docs/Hydra_Improvements_Pt_2.md): a head has no override, so this is passed/partial/none/none-chosen or, for
+    // Step A: a head has no override, so this is passed/partial/none/none-chosen or, for
     // an empty checks list that isn't from "no gates configured" (there shouldn't be one here — floor.gates.length was checked), undefined.
     const status = evidenceStatus({ checks, configured: gatesConfigured(gates.source, floor.gates.length + floor.notRun.length) });
     await this.options.store.transition(jobId, 'done', undefined, { result: { summary, commit, changedFiles, checks, ...(note ? { note } : {}), ...(status ? { status } : {}) } });
@@ -701,7 +701,7 @@ export class HelperService {
   /** A Claude head's `--mcp-config` file for its role's servers (docs/Packs_Plan.md, section 4). */
   private mcpConfigFile(id: string): string { return path.join(this.options.logDirectory, `${id}.mcp.json`); }
 
-  // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
+  // ---- Step 2: confining heads ----
 
   /** Where each head's own TEMP folder goes: under Hydra's storage, never the shared TEMP, which Codex's sandbox makes writable (R4). */
   private get tempRoot(): string { return this.options.tempDirectory ?? path.join(path.dirname(this.options.logDirectory), 'temp'); }
@@ -785,7 +785,7 @@ async function hashOptionalFile(file: string): Promise<string | null> {
   try { return createHash('sha256').update(await readFile(file)).digest('hex'); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
-/** 1.6 (docs/Hydra_Improvements.md): hashes of the lead's own .hydra/gates.json, checks.json and packs.json, so a head's result can say when one changed while it ran. */
+/** 1.6: hashes of the lead's own .hydra/gates.json, checks.json and packs.json, so a head's result can say when one changed while it ran. */
 async function hydraFileHashes(folder: string): Promise<TamperSnapshot> {
   const dir = path.join(folder, '.hydra');
   const [gatesJson, checksJson, packsJson] = await Promise.all([
@@ -798,7 +798,7 @@ async function hydraFileHashes(folder: string): Promise<TamperSnapshot> {
 const cmdUnsafe = /["%^&|<>!\u0000-\u001f\u007f]/;
 
 /**
- * Git's hooks off (Step 2, docs/Hydra_Improvements.md): `core.hooksPath` pointed at an empty folder
+ * Git's hooks off (Step 2): `core.hooksPath` pointed at an empty folder
  * only Hydra writes, so no hook the repository or a head set up runs when Hydra runs git in a
  * head's worktree. `-c` beats every config file, a head's included.
  */

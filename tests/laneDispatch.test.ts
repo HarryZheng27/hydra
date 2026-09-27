@@ -15,7 +15,7 @@ import type { GateRuntime } from '../src/core/gates';
 import { fakePtyModule } from './lanePtyFake';
 
 /**
- * Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes. First the runner alone, with lanes as
+ * Step C: Auto-dispatch to lanes. First the runner alone, with lanes as
  * entries in a fake world; then hydra_job_ready's check end to end, over real git, a LaneService with a
  * fake terminal and fake gate commands.
  */

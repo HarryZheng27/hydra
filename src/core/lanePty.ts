@@ -42,7 +42,7 @@ export function loadNodePty(appRoot: string | undefined, load: (id: string) => u
 }
 
 /**
- * 1.3 (docs/Hydra_Improvements.md): strip terminal control sequences from text Hydra itself is
+ * 1.3: strip terminal control sequences from text Hydra itself is
  * about to type into a lane (never applied to `LaneService.input`, which carries the user's own
  * keystrokes — arrow keys and the like are escape sequences on purpose). Removes CSI sequences
  * (`ESC [ … final byte`, which covers bracketed-paste markers `ESC[200~`/`ESC[201~`), OSC

@@ -178,7 +178,7 @@ function PlanChip({ planJob }: { planJob: LanePlanJobView }) {
   return <>
     <Chip tone="neutral" title="Jobs after it start when you mark it done or merge it">Plan · {planJob.planTitle} › {planJob.jobTitle}</Chip>
     {planJob.state === 'done' && <Chip tone="good">Job done{planJob.commit ? ` · ${planJob.commit.slice(0, 7)}` : ''}</Chip>}
-    {/* Step C (docs/Hydra_Improvements_Pt_2.md): Hydra checks this job when its agent calls hydra_job_ready. */}
+    {/* Step C: Hydra checks this job when its agent calls hydra_job_ready. */}
     {planJob.dispatch && planJob.state === 'active' && <Chip tone="info" title="Hydra runs the gates when the agent says the job is ready, and types any failures here. You can still type, mark the job done or cancel it.">Auto-dispatched · attempt {planJob.dispatch.attempt} of {planJob.dispatch.attempts}</Chip>}
   </>;
 }
@@ -294,7 +294,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
   </section>;
 }
 
-/** Step A (docs/Hydra_Improvements_Pt_2.md): the same evidence label on the tile and the exited-lane row. */
+/** Step A: the same evidence label on the tile and the exited-lane row. */
 function EvidenceChip({ lane }: { lane: LaneView }) {
   const status = lane.lastGates?.status;
   if (!status) return null;

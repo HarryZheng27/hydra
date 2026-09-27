@@ -8,7 +8,7 @@ const headsGuideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md
  * (hydra.heads.defaultMinutes/defaultMaxTurns/defaultBudgetUsd, applied to a
  * head started without its own limits — src/core/jobs.ts resolveHeadDefaults),
  * Stop all heads (the existing hydra.stopAllHelpers command), Stop all agents
- * (5.3, docs/Hydra_Improvements.md: hydra.stopAllAgents, which also ends every
+ * (5.3: hydra.stopAllAgents, which also ends every
  * lane's process and holds off new heads, launches and plan advances until
  * Hydra: Resume Agents), whether heads' shells run in Codex's Windows sandbox
  * (hydra.headShellStatus, Step 2), and a link to the Heads guide.

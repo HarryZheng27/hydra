@@ -14,7 +14,7 @@ import { JobStore, evidenceLabel, finalJobStates, resolveHeadDefaults, type Evid
 import { HelperEndpoint } from './core/helperEndpoint';
 import { HelperService } from './core/helperService';
 import { alive as isWindowAlive, discoveryDirectory, removeWindowRecord, writeWindowRecord } from './core/helperDiscovery';
-// ---- Step D (docs/Hydra_Improvements_Pt_2.md): a read-only view across projects ----
+// ---- Step D: a read-only view across projects ----
 import { buildProjectSummary, readProjectSummaries, startProjectSummaryPublisher, type ProjectSummaryPublisher } from './core/projectSummary';
 import { startHelperRun } from './core/helperRunner';
 import { HeadSandbox } from './core/headSandbox';
@@ -58,9 +58,9 @@ import { toHeadCheckView } from './core/jobs';
 import { buildEvidenceMarkdown } from './core/evidence';
 import { loadGates } from './core/gates';
 import { detectTestScript, noGatesFile, starterTestGatesFile } from './core/starterGates';
-// ---- Stop all (5.3, docs/Hydra_Improvements.md). Its own line. ----
+// ---- Stop all (5.3). Its own line. ----
 import { StopSwitch } from './core/stopSwitch';
-// ---- Audit log (5.2, docs/Hydra_Improvements.md). Its own line. ----
+// ---- Audit log (5.2). Its own line. ----
 import { AuditLog, type AuditEvent } from './core/audit';
 
 let manager: Manager | undefined;
@@ -80,7 +80,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export async function deactivate(): Promise<void> { await manager?.shutdown(); }
 
 /**
- * 5.1 (docs/Hydra_Improvements.md): every line the Hydra output channel shows goes through the
+ * 5.1: every line the Hydra output channel shows goes through the
  * one redactor first. Hydra's own endpoint tokens are kept only as a SHA-256 digest
  * (helperEndpoint.ts), never in the clear, and Hydra never logs one to this channel either
  * (grep for "never a token" in extension.ts); what this catches is a secret a head's tool
@@ -109,10 +109,10 @@ class Manager {
   private disabled = false;
   private closing = false;
   private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  // ---- Stop all (5.3, docs/Hydra_Improvements.md): the workspace-wide switch, and its status bar item ----
+  // ---- Stop all (5.3): the workspace-wide switch, and its status bar item ----
   private readonly stop: StopSwitch;
   private readonly stopStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
-  // ---- Audit log (5.2, docs/Hydra_Improvements.md): one per window, denials/approvals/stops ----
+  // ---- Audit log (5.2): one per window, denials/approvals/stops ----
   private readonly audit: AuditLog;
   private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
   private readonly locks: OwnershipLock[] = [];
@@ -160,7 +160,7 @@ class Manager {
   private dismissedTrayIds = new Set<string>();
   // ---- Packs (docs/Packs_Plan.md): gates.json plus the active packs' gates, for heads and lanes ----
   private readonly packs: PackService;
-  /** Step 2 (docs/Hydra_Improvements.md): Codex's sandbox for heads' shells and gate commands, checked once per window when first needed. */
+  /** Step 2: Codex's sandbox for heads' shells and gate commands, checked once per window when first needed. */
   private readonly headSandbox: HeadSandbox;
   /** The active packs' roles (Snapshot.roles), refreshed whenever packs change. */
   private roles: SnapshotRole[] = [];
@@ -204,16 +204,16 @@ class Manager {
       planJob: laneId => this.planJobOfLane(laneId),
       markJobDone: (laneId, result) => this.markPlanJobDone(laneId, result),
       cancelPlanJob: laneId => this.cancelPlanJobOfLane(laneId),
-      // Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch checks a job through the runner.
+      // Step C: Auto-dispatch checks a job through the runner.
       planRunner: () => this.planRunner,
       gates: this.packs.gates, roles: this.packs,
-      // ---- Step 2 (docs/Hydra_Improvements.md): light limits for Claude lanes ----
+      // ---- Step 2: light limits for Claude lanes ----
       hydraStorage: context.globalStorageUri.fsPath,
       // ---- Stop all (5.3) ----
       stop: this.stop,
       // ---- Audit log (5.2) ----
       audit: event => this.audit.record(event),
-      // ---- Step A (docs/Hydra_Improvements_Pt_2.md) ----
+      // ---- Step A ----
       offerStarterGates: folder => void this.offerStarterGatesIfNeeded(folder),
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
@@ -252,7 +252,7 @@ class Manager {
       return stopped;
     });
     command('hydra.listHelpers', () => structuredClone(this.helpers?.service.list() ?? []));
-    // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
+    // ---- Stop all (5.3) ----
     command('hydra.stopAllAgents', async (options?: { confirm?: boolean }) => {
       if (options?.confirm !== false) {
         const pick = await vscode.window.showWarningMessage('Stop every head and lane in this window?', { modal: true }, 'Stop all');
@@ -276,7 +276,7 @@ class Manager {
       void vscode.window.showInformationMessage('Hydra resumed: heads, lanes and plans may start again.');
       return true;
     });
-    // ---- Audit log (5.2, docs/Hydra_Improvements.md) ----
+    // ---- Audit log (5.2) ----
     command('hydra.openAuditLog', () => this.openAuditLog());
     // Not contributed: Settings → Heads asks it, to show whether Hydra is stopped now.
     command('hydra.getStopState', () => ({ stopped: this.stop.isStopped(), since: this.stop.since(), reason: this.stop.reason() }));
@@ -349,7 +349,7 @@ class Manager {
     });
     // ---- The Hydra panel (docs/Lanes_And_Planner_Plan.md, section 3) ----
     this.context.subscriptions.push(vscode.window.createTreeView('hydra.overview', { treeDataProvider: this.tree }));
-    // ---- Step D (docs/Hydra_Improvements_Pt_2.md): a read-only view across projects ----
+    // ---- Step D: a read-only view across projects ----
     command('hydra.showAllProjects', () => this.showAllProjects());
     command('hydra.overview.mergeLane', (row: { item?: { id?: string } } = {}) => row.item?.id && this.lanes.action(row.item.id, 'merge', true));
     command('hydra.overview.closeLane', (row: { item?: { id?: string } } = {}) => row.item?.id && this.lanes.action(row.item.id, 'close', true));
@@ -523,7 +523,7 @@ class Manager {
       providerLimited: provider => otherStillLimited(this.latestLimits.get(provider), new Date()),
       // ---- Packs (docs/Packs_Plan.md) ----
       gates: this.packs.gates, roles: this.packs,
-      // ---- Step 2 (docs/Hydra_Improvements.md): confining heads ----
+      // ---- Step 2: confining heads ----
       sandbox: this.headSandbox, hydraStorage: this.context.globalStorageUri.fsPath,
       // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
       tempDirectory: path.join(this.context.globalStorageUri.fsPath, 't'),
@@ -634,7 +634,7 @@ class Manager {
     } catch { /* packs aren't available in this window; say nothing */ }
   }
   /**
-   * Starter gates (docs/Hydra_Improvements_Pt_2.md, Step A): once per project per window, when it
+   * Starter gates (Step A): once per project per window, when it
    * has no .hydra/gates.json at all, from the first lane merge or head acceptance in it. Never
    * blocks: heads are unattended, and a lane merge has already happened by the time this runs.
    */
@@ -661,7 +661,7 @@ class Manager {
   }
   // ---- Lanes (docs/Lanes_And_Planner_Plan.md). The editor side is LanesController (src/extensionLanes.ts). ----
   /** Unfinished heads started from a lane. */
-  // ---- Step D (docs/Hydra_Improvements_Pt_2.md): a read-only view across projects ----
+  // ---- Step D: a read-only view across projects ----
   /**
    * (Re)starts this window's summary publisher, keyed by the discovery record's own file name
    * (so both files sit beside each other under the same id). Called once at startup and again
@@ -885,7 +885,7 @@ class Manager {
     await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
   }
   /**
-   * Hydra: Open Audit Log (5.2, docs/Hydra_Improvements.md). Opens a snapshot of the file's
+   * Hydra: Open Audit Log (5.2). Opens a snapshot of the file's
    * current content as an untitled document, never the file itself, so it can't be edited in
    * place. `flush()` first, so a just-recorded event (this window's own) is included.
    */
@@ -959,7 +959,7 @@ class Manager {
   }
   private async refresh(): Promise<void> { this.error = undefined; await this.refreshRepositories(); await this.publish(); }
   private describe(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-  /** 5.3 (docs/Hydra_Improvements.md): the status bar item, shown only while Hydra is stopped. */
+  /** 5.3: the status bar item, shown only while Hydra is stopped. */
   private updateStopStatus(): void {
     if (!this.stop.isStopped()) { this.stopStatus.hide(); return; }
     const since = this.stop.since();
@@ -1009,7 +1009,7 @@ class Manager {
     this.planRunner?.advanceSoon();
     this.projectSummary?.changed();
     this.publishSoon();
-    // Step A (docs/Hydra_Improvements_Pt_2.md): a head just finished — the one-time starter-gates offer, non-blocking.
+    // Step A: a head just finished — the one-time starter-gates offer, non-blocking.
     if (this.helpers && heads.some(head => head.state === 'done')) void this.offerStarterGatesIfNeeded(this.helpers.service.leadFolder);
   }
   private publishSoon(): void {

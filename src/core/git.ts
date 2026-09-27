@@ -5,7 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 const execute = promisify(execFile);
 /**
- * Every call also passes `-c core.fsmonitor=false` (1.4, docs/Hydra_Improvements.md): worktrees
+ * Every call also passes `-c core.fsmonitor=false` (1.4): worktrees
  * of one repository share a single `.git`, so a head or a lane could set `core.fsmonitor` in it to
  * a command of its choosing. Without this override that command would run the next time Hydra (or
  * the user) runs git anywhere in the repository, including the main checkout. `core.quotepath=false`
@@ -40,7 +40,7 @@ export function gitRun(cwd: string, args: string[], environment?: NodeJS.Process
 
 /**
  * A fingerprint of the git metadata a worktree shares with every other worktree of the same
- * repository (1.4, docs/Hydra_Improvements.md): the settings in `config` and `config.worktree`
+ * repository (1.4): the settings in `config` and `config.worktree`
  * that run a program, load more config or redirect git (riskyConfigKey), `info/attributes` (if
  * present) and every file under `hooks/` except `*.sample`, each hashed by name so a change can
  * be named. A head that edits `.git/config` or `.git/hooks/*` runs code the

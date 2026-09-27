@@ -20,13 +20,13 @@ import { laneNameFromTitle, type LanePlanLink } from './core/lanes';
 import type { LanePlanJobView } from './core/model';
 import type { Plan, PlanJob } from './core/plans';
 import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from './core/planRunner';
-// ---- Auto-dispatch (Step C, docs/Hydra_Improvements_Pt_2.md) ----
+// ---- Auto-dispatch (Step C) ----
 import { LaneDispatch, type DispatchCheck, type DispatchRunner } from './core/laneDispatch';
 // ---- Packs (docs/Packs_Plan.md) ----
 import type { RoleSource } from './core/packs/launch';
-// ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
+// ---- Stop all (5.3) ----
 import type { StopSwitch } from './core/stopSwitch';
-// ---- Audit log (5.2, docs/Hydra_Improvements.md) ----
+// ---- Audit log (5.2) ----
 import { laneOverrideEvent, type AuditEvent } from './core/audit';
 
 /**
@@ -60,18 +60,18 @@ export interface LanesHost {
   gates?: GatesLoader;
   /** The active packs' roles, resolved at each lane launch. Undefined: a lane's role is never available. */
   roles?: RoleSource;
-  // ---- Step 2 (docs/Hydra_Improvements.md) ----
+  // ---- Step 2 ----
   /** Hydra's global storage folder: a Claude lane's settings deny it (design 6). */
   hydraStorage?: string;
-  // ---- Stop all (5.3, docs/Hydra_Improvements.md) ----
+  // ---- Stop all (5.3) ----
   /** Without it, a lane always may launch or relaunch. */
   stop?: StopSwitch;
-  // ---- 5.2 (docs/Hydra_Improvements.md): the audit log ----
+  // ---- 5.2: the audit log ----
   /** Without it, a "Merge with these changes"/"Merge anyway" override and similar aren't recorded. */
   audit?: (event: AuditEvent) => void;
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): offer the one-time "Starter gates" choice for a project with no gates.json yet, after a lane merges into it. Never blocks the merge; fire-and-forget. */
+  /** Step A: offer the one-time "Starter gates" choice for a project with no gates.json yet, after a lane merges into it. Never blocks the merge; fire-and-forget. */
   offerStarterGates?: (repository: string) => void;
-  /** Step C (docs/Hydra_Improvements_Pt_2.md): the plan runner, for checking an auto-dispatched job when its lane calls hydra_job_ready. */
+  /** Step C: the plan runner, for checking an auto-dispatched job when its lane calls hydra_job_ready. */
   planRunner?: () => DispatchRunner | undefined;
 }
 /** Options for `hydra.lanes.action` (automation): no dialogs, so choices are passed in. */
@@ -209,7 +209,7 @@ export class LanesController implements vscode.Disposable {
   laneWorktreeEntries(): { id: string; worktree: string }[] { return this.service?.lanes().map(lane => ({ id: lane.id, worktree: lane.worktree })) ?? []; }
   /** For the Codex account-limit fan-out (src/extension.ts): this window's running lanes of one provider. */
   runningLanes(provider: Provider): { id: string; worktree: string }[] { return (this.service?.views() ?? []).filter(lane => lane.running && lane.provider === provider).map(lane => ({ id: lane.id, worktree: lane.worktree })); }
-  /** 5.3 (docs/Hydra_Improvements.md): Hydra: Stop All Agents. Ends every open lane's process, keeping the lane and its worktree. */
+  /** 5.3: Hydra: Stop All Agents. Ends every open lane's process, keeping the lane and its worktree. */
   async stopProcesses(): Promise<number> { return this.service?.stopProcesses() ?? 0; }
 
   // ---- The Agents webview ----
@@ -644,7 +644,7 @@ export class LanesController implements vscode.Disposable {
         await vscode.commands.executeCommand('hydra.openEvidence', 'lane', lane.id);
         return undefined;
       }
-      // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+      // ---- Step E: a preview for each lane ----
       case 'preview': return this.previewLane(service, lane, interactive);
       case 'stopPreview': await service.stopPreview(lane.id); this.postState(true); return { stopped: true };
       // ---- Plan lanes (docs/Plan_Lanes_Plan.md, "What done means for a lane job" and "Failures") ----
@@ -714,7 +714,7 @@ export class LanesController implements vscode.Disposable {
   }
 
   /**
-   * 1.4 (docs/Hydra_Improvements.md): the git metadata check before Merge or Mark job done. `true`
+   * 1.4: the git metadata check before Merge or Mark job done. `true`
    * means carry on (no snapshot to compare against, the fingerprint couldn't be taken again, or
    * nothing changed, or the user chose to go ahead anyway); `false` means stop. Non-interactive
    * (`hydra.lanes.action`) refuses outright, naming the files, rather than asking.
@@ -754,7 +754,7 @@ export class LanesController implements vscode.Disposable {
     // 5.2: an approval — "Merge anyway" / "Mark done anyway" after a failed gate.
     if (choice === anyway) {
       this.host.audit?.(laneOverrideEvent(anyway, lane.id, summarizeGateFailures(outcome.results)));
-      // Step A (docs/Hydra_Improvements_Pt_2.md): record the override so the tile, the plan view and
+      // Step A: record the override so the tile, the plan view and
       // the PR body all say "Human override" for this commit, instead of the plain failed run.
       const commit = await git(lane.worktree, ['rev-parse', 'HEAD']).then(text => text.trim()).catch(() => undefined);
       if (commit) await service.recordGatesOverride(lane.id, commit).catch(() => undefined);
@@ -782,7 +782,7 @@ export class LanesController implements vscode.Disposable {
   /** "Send to lane" (docs/Gates_Plan.md, "Merge"): the failures as one line in the lane's terminal input, never pressing Enter. */
   private sendGatesToLane(service: LaneService, lane: Lane, results: readonly JobCheckResult[]): void {
     const text = flattenGateFailureMessage(results);
-    // 1.3 (docs/Hydra_Improvements.md): this text includes gate output, which the checked agent
+    // 1.3: this text includes gate output, which the checked agent
     // (or a command it ran) produced, so it goes through typeText rather than input.
     if (service.typeText(lane.id, text)) {
       void this.show('lanes', lane.id);
@@ -809,7 +809,7 @@ export class LanesController implements vscode.Disposable {
   }
 
   /**
-   * Preview app (Step E, docs/Hydra_Improvements_Pt_2.md): the project's screenshots gate wins;
+   * Preview app (Step E): the project's screenshots gate wins;
    * else `.hydra/preview.json`; else ask once and save it. Then start the server in the lane's
    * worktree and open the page in Simple Browser. Reusing an already-running preview just reopens it.
    */
@@ -852,7 +852,7 @@ export class LanesController implements vscode.Disposable {
     return config;
   }
 
-  /** VS Code's built-in Simple Browser (decision 4, docs/Hydra_Improvements_Pt_2.md): untrusted content, no Hydra access. */
+  /** VS Code's built-in Simple Browser (decision 4): untrusted content, no Hydra access. */
   private async openPreview(url: string): Promise<void> {
     // simpleBrowser.api.open is Simple Browser's own API command and its activation event, so it works
     // before the extension has loaded (getCommands() doesn't list an unactivated extension's commands).

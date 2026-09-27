@@ -115,7 +115,7 @@ No agent grades its own work. When a head calls `hydra_done`, its changes pass t
 
 **Compatibility:** an older `.hydra/checks.json` still works, read as command gates. With neither file, a head is accepted after the scope check.
 
-**Evidence status (docs/Hydra_Improvements_Pt_2.md, Step A):** a plain "done" can be read as "independently proven" even when it isn't, so every finished head, lane and plan job also carries one truthful label, worked out from its checks and how it was accepted:
+**Evidence status:** a plain "done" can be read as "independently proven" even when it isn't, so every finished head, lane and plan job also carries one truthful label, worked out from its checks and how it was accepted:
 
 | Status | Shown as | When |
 | --- | --- | --- |
@@ -186,7 +186,7 @@ Apart from plans (below), the view never starts work itself; everything else on 
   - A head that hit its limit holds the jobs after it until it goes on.
   - After Hydra restarts, a plan's lanes show Exited under the plan and nothing starts by itself. A lane job that was ready shows **Start lane**.
 
-**Auto-dispatch to lanes** ([Hydra_Improvements_Pt_2.md](Hydra_Improvements_Pt_2.md), Step C) is a switch in the plan's header on the canvas, for a plan with lane jobs:
+**Auto-dispatch to lanes** is a switch in the plan's header on the canvas, for a plan with lane jobs:
 - **Settings:** **Lanes** at once (1–4, 2 by default), the **Agent** for its new lanes (a job's own provider or role still comes first), and **Tries** (1–5, 3 by default).
 - **Starting:** each ready lane job starts as a lane when one of the plan's slots is free, as a lane job always starts (its base commit, brief and scope). It also starts after Hydra restarts: lanes that already exist are adopted first, so nothing starts twice. Nothing starts while agents are stopped.
 - **Finishing:** when the lane's agent calls `hydra_job_ready`, Hydra runs the gates itself, as **Mark job done** does, with no dialogs.
@@ -223,7 +223,7 @@ Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `
   - If they pass, the confirmation says so.
   - If they fail, you choose between **Send to lane** (the default), **Merge anyway** or **Cancel**. **Send to lane** types the failures into the lane's input without pressing Enter.
   - **⋯ → Run gates** runs them at any time, and **⋯ → View evidence** shows the results.
-- **Preview app** ([Hydra_Improvements_Pt_2.md](Hydra_Improvements_Pt_2.md), Step E): **⋯ → Preview app** starts the project's dev server in that lane's worktree, on a free port, with the lane's own environment (a lane is your terminal), then opens the page in VS Code's Simple Browser. The command comes from the project's screenshots gate, or `.hydra/preview.json`, or is asked for once and saved there. The tile shows "Preview on :&lt;port&gt;" with **Stop**. It stops with the lane: on **Stop**, on **Close lane**, on **Stop All Agents**, and when the window closes. Two lanes preview on different ports from their own worktrees, and closing one leaves the other running.
+- **Preview app**: **⋯ → Preview app** starts the project's dev server in that lane's worktree, on a free port, with the lane's own environment (a lane is your terminal), then opens the page in VS Code's Simple Browser. The command comes from the project's screenshots gate, or `.hydra/preview.json`, or is asked for once and saved there. The tile shows "Preview on :&lt;port&gt;" with **Stop**. It stops with the lane: on **Stop**, on **Close lane**, on **Stop All Agents**, and when the window closes. Two lanes preview on different ports from their own worktrees, and closing one leaves the other running.
 - **Usage limits:** when the agent in a lane hits its limit, the tile shows it, with **Continue in Codex** (or Claude), **View handoff** and **Wait**, and a notification names the lane.
   - **Continue** restarts the same lane with the other agent, in the same worktree, with a handoff. Uncommitted work is untouched.
   - **⋯ → Switch to…** does the same whenever you like.
@@ -284,7 +284,7 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its b
   - The token then lives only in that bridge's memory.
   - Verified live: a head's check process asking for a lead token was refused with "it runs inside a Hydra head".
   - On other platforms this check isn't implemented yet, and lead connections are accepted.
-- **Confined heads** (`src/core/confine.ts`; details in `docs/Hydra_Improvements.md`, "As built → Step 2"):
+- **Confined heads** (`src/core/confine.ts`):
   - A Claude head gets its own settings file: reads outside its worktree are blocked, whatever the spelling, and Read and Edit are denied on Hydra's data, the other worktrees, the lead's `.hydra` and `.git`, and `~/.ssh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.codex`, `~/.claude` and the like. Its role's pack copy stays readable.
   - Its Bash runs through Hydra's wrapper in Codex's Windows sandbox: only its worktree and its own TEMP are writable. Hydra checks the sandbox once per window; if the check fails, heads have no shell, say why, and Settings → Heads shows the reason. PowerShell is never given.
   - Heads and gate commands get a trimmed environment: system, locale, proxy and toolchain variables, the provider's own sign-in, and a role's variables. Other keys and tokens stay out.

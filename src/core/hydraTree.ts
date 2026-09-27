@@ -53,7 +53,7 @@ export function buildHydraTree(lanes: readonly LaneView[], heads: readonly Helpe
     const conflicts = !!lane.sync?.conflicts.length;
     // Packs (docs/Packs_Plan.md, "How roles show"): "Codex · Reviewer · lane/x".
     const roleTitle = lane.role ? roles.find(role => role.pack === lane.role!.pack && role.id === lane.role!.role)?.title : undefined;
-    // Step A (docs/Hydra_Improvements_Pt_2.md): the same evidence label everywhere, "Checks are for an older commit" when the lane's HEAD has moved past it.
+    // Step A: the same evidence label everywhere, "Checks are for an older commit" when the lane's HEAD has moved past it.
     const gatesLabel = lane.lastGates?.status ? `${evidenceLabel(lane.lastGates.status)}${lane.gatesStale ? ' (older commit)' : ''}` : undefined;
     const description = [providerName(lane.provider), roleTitle, lane.branch, lane.planJob ? `Plan: ${lane.planJob.planTitle}` : undefined, conflicts ? 'conflicts' : undefined, gatesLabel].filter(Boolean).join(' · ');
     return { id: lane.id, label: lane.name, description, state: lane.state, conflicts, dirty: !!lane.sync?.dirty };

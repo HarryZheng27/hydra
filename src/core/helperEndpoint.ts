@@ -35,7 +35,7 @@ export interface HelperRefusal { status: number; reason: string; role?: HelperCa
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 /**
- * 1.5 (docs/Hydra_Improvements.md): besides the map lookup by digest, the presented token's own
+ * 1.5: besides the map lookup by digest, the presented token's own
  * digest is compared against the digest kept on the caller record with `timingSafeEqual`, so a
  * match never turns on how quickly `Map.get` (whose own timing behaviour Hydra doesn't control)
  * happened to find the entry. Both sides are always 64 hex characters (sha256), so the length

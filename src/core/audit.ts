@@ -3,7 +3,7 @@ import path from 'node:path';
 import { redactText } from './redact';
 
 /**
- * 5.2 (docs/Hydra_Improvements.md): one audit log per window, appended to
+ * 5.2: one audit log per window, appended to
  * `<globalStorage>/audit/audit.jsonl`. It records the things that let you
  * later answer "what did a head try, and what did I approve": every
  * endpoint refusal, a refused lead connection, a head's hydra_done refused

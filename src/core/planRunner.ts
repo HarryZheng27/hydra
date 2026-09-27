@@ -28,7 +28,7 @@ export interface PlanLaneLook {
   /** The lane HEAD that Merge merged. */
   mergedHead?: string;
   closedAs?: LaneCloseMode;
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): the lane's last recorded evidence status, carried onto a merged job's result. */
+  /** Step A: the lane's last recorded evidence status, carried onto a merged job's result. */
   gatesStatus?: EvidenceStatus;
 }
 /** The runner's view of this window's heads and lanes. */
@@ -50,11 +50,11 @@ export interface PlanJobView {
   jobId?: string; laneId?: string;
   /** The work it handed on (a head's result, a lane's recorded result or merge). */
   commit?: string;
-  /** Step A (docs/Hydra_Improvements_Pt_2.md): the evidence status for `commit`, when one was recorded. Named apart from `status` (the job's run status) above. */
+  /** Step A: the evidence status for `commit`, when one was recorded. Named apart from `status` (the job's run status) above. */
   evidenceStatus?: EvidenceStatus;
   /** A lane job that was ready while the window started: Start lane starts it. */
   startable?: boolean;
-  /** Step C (docs/Hydra_Improvements_Pt_2.md): a lane job of a plan that auto-dispatches: its try against the gates ("attempt 2 of 3"). */
+  /** Step C: a lane job of a plan that auto-dispatches: its try against the gates ("attempt 2 of 3"). */
   dispatch?: { attempt: number; attempts: number };
 }
 export type PlanRecord =
@@ -257,7 +257,7 @@ export interface PlanRunnerOptions {
   log?(line: string): void;
   now?(): Date;
   debounceMs?: number;
-  // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
+  // ---- 5.3: Stop All Agents ----
   /** Without it, a plan always advances (as before 5.3). */
   stop?: StopSwitch;
 }
@@ -432,7 +432,7 @@ export class PlanRunner {
     });
   }
 
-  // ---- Step C (docs/Hydra_Improvements_Pt_2.md): Auto-dispatch to lanes ----
+  // ---- Step C: Auto-dispatch to lanes ----
 
   /**
    * Turn Auto-dispatch on (with its settings) or off. Turning it on starts the lane jobs that are ready, as

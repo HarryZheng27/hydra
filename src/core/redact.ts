@@ -1,5 +1,5 @@
 /**
- * 5.1 (docs/Hydra_Improvements.md): one redactor, used everywhere Hydra shows text that
+ * 5.1: one redactor, used everywhere Hydra shows text that
  * might contain a secret (the output channel, head transcripts, gate evidence). It masks
  * exact secret values it's told about, environment variables whose name looks secret, and
  * known token shapes, without touching ordinary text: paths, hashes, commit SHAs, UUIDs,

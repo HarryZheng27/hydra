@@ -49,7 +49,7 @@ export interface Lane {
   // ---- Packs (docs/Packs_Plan.md, "Lanes") ----
   /** The role it was started with. Resolved again at every launch; when it is gone, the lane runs without it and its tile says why. */
   role?: LaneRole;
-  /** 1.4 (docs/Hydra_Improvements.md): the git metadata fingerprint (gitMetaFingerprint) of the shared .git when this lane started. Compared again at Merge and at Mark job done; a change is a warning (interactive) or a refusal (hydra.lanes.action). */
+  /** 1.4: the git metadata fingerprint (gitMetaFingerprint) of the shared .git when this lane started. Compared again at Merge and at Mark job done; a change is a warning (interactive) or a refusal (hydra.lanes.action). */
   gitMeta?: GitMetaFingerprint;
 }
 /** A lane's role: a pack's id and one of its roles' ids ("coding" and "reviewer"). */
@@ -80,7 +80,7 @@ export interface LaneGatesRecord {
   /** A fingerprint of the gates that ran: a passing run is reused only while the gates file says the same. */
   config?: string;
   /**
-   * Step A (docs/Hydra_Improvements_Pt_2.md): the truthful evidence status this run (or, for
+   * Step A: the truthful evidence status this run (or, for
    * `override`, a later Merge anyway / Mark done anyway) gives the lane's work at `commit`. Missing
    * on a plain gates run that failed and wasn't overridden — that isn't an accepted result yet.
    */
@@ -97,7 +97,7 @@ export interface LanePlanLink {
   attempt?: number;
   startsFrom?: { title: string; commit: string }[];
   writeScope?: string[];
-  /** Step C (docs/Hydra_Improvements_Pt_2.md): started by Auto-dispatch, so its first prompt says Hydra runs the gates when it calls hydra_job_ready. */
+  /** Step C: started by Auto-dispatch, so its first prompt says Hydra runs the gates when it calls hydra_job_ready. */
   dispatched?: true;
 }
 /** Where a plan lane's full brief is written, inside its worktree and ignored by git (decision 2): readable by either CLI, never committed. */

@@ -4,8 +4,8 @@ import { git } from './git';
 import type { StorageListing } from './confine';
 
 /**
- * What the confinement builders in confine.ts read from disk and git (docs/Hydra_Improvements.md,
- * Step 2): kept apart so confine.ts stays pure.
+ * What the confinement builders in confine.ts read from disk and git
+ * (Step 2): kept apart so confine.ts stays pure.
  */
 
 /**

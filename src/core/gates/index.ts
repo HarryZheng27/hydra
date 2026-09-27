@@ -63,7 +63,7 @@ export async function runGateList(gates: readonly Gate[], worktree: string, base
     } catch (error) {
       result = notRun(gate, `Hydra couldn't run it: ${error instanceof Error ? error.message : String(error)}`);
     }
-    // 5.1 (docs/Hydra_Improvements.md): every gate's result goes through the one redactor here,
+    // 5.1: every gate's result goes through the one redactor here,
     // so a command's or a reviewer's output never reaches a job's checks, the UI or the log line
     // below unmasked, even for a gate kind that doesn't redact its own result.
     result = redactGateResult(fromPack(gate, result), context.redact);
@@ -162,7 +162,7 @@ export function summarizeGateFailures(results: readonly JobCheckResult[]): strin
 }
 /**
  * "Send to lane" (docs/Gates_Plan.md, "Merge"): gateFailureMessage flattened to one line, capped at ~1500 characters, so it fits a terminal's input line.
- * A lane has no hydra_done. Auto-dispatch (Step C, docs/Hydra_Improvements_Pt_2.md) sends the same text with its own last line.
+ * A lane has no hydra_done. Auto-dispatch (Step C) sends the same text with its own last line.
  */
 export function flattenGateFailureMessage(results: readonly JobCheckResult[], max = 1500, ending = 'Fix them and commit; the gates run again when the lane is merged.'): string {
   const flat = gateFailureMessage(results, ending).replace(/\s+/g, ' ').trim();

@@ -208,7 +208,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # Release trust (docs/Hydra_Improvements.md, Step 4): only a manual run with a release tag publishes,
+  # Release trust (Step 4): only a manual run with a release tag publishes,
   # and only after the desktop job's build, smoke, installer, upgrade and MSIX checks have all passed.
   # This job alone may write: the release, and the installer's build-provenance attestation.
   release:

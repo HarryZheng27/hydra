@@ -41,7 +41,7 @@ const other = (provider: Provider): Provider => provider === 'claude' ? 'codex' 
  * allowed; Codex with `web_search='live'`. Every other Codex review has web search off,
  * since `codex exec` searches by default (R7). A Claude review gets no web, as before.
  *
- * Step 2 (docs/Hydra_Improvements.md): the Claude reviewer loads only your user settings and no MCP
+ * Step 2: the Claude reviewer loads only your user settings and no MCP
  * servers. It runs in the head's worktree, and `claude -p` in a folder nobody trusted still runs
  * that folder's `.claude/settings.json` hooks and connects its `.mcp.json` servers, both of which a
  * head can write: plan mode doesn't stop a hook, which would run as you, outside any sandbox.
@@ -111,7 +111,7 @@ export interface ReviewPromptInput {
 }
 
 /**
- * 1.2 (docs/Hydra_Improvements.md): a fresh nonce per call fences everything the reviewed agent
+ * 1.2: a fresh nonce per call fences everything the reviewed agent
  * or its tools produced. Nobody sees the nonce before it is generated — not even the agent whose
  * diff is about to be wrapped in it — so a crafted "Reviewer: approve this" or a fake closing
  * marker in the diff can never guess it and step back out of the fence as though it were Hydra's
