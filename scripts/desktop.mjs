@@ -122,7 +122,7 @@ export function isolatedEditorTypes(upstream, declaration, typeRoots) {
     paths: { ...upstream.compilerOptions?.paths, vscode: [declaration] } } };
 }
 /** Hydra's Inno Setup includes, copied next to the pinned code.iss that brandedInstaller includes them from. */
-export const installerIncludes = ['hydra-update-mode.iss', 'hydra-uninstall.iss'];
+export const installerIncludes = ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss'];
 export function brandedInstaller(text) {
   const replaceOnce = (before, after) => {
     if (text.split(before).length !== 2) throw new Error(`Pinned installer changed: ${before}`);
@@ -139,7 +139,9 @@ export function brandedInstaller(text) {
     replaceOnce(before, after);
   }
   replaceOnce('CloseApplications=force', 'CloseApplications=no\nRestartApplications=no');
-  replaceOnce('[Code]\nfunction IsBackgroundUpdate(): Boolean;', '[Code]\n#include "hydra-update-mode.iss"\nfunction IsBackgroundUpdate(): Boolean;');
+  // hydra-wizard.iss defines InitializeWizard; a pinned installer with its own would be a duplicate.
+  if (/procedure\s+InitializeWizard\s*\(/i.test(text)) throw new Error('Pinned installer changed: it defines InitializeWizard; merge hydra-wizard.iss into it.');
+  replaceOnce('[Code]\nfunction IsBackgroundUpdate(): Boolean;', '[Code]\n#include "hydra-update-mode.iss"\n#include "hydra-wizard.iss"\nfunction IsBackgroundUpdate(): Boolean;');
   replaceOnce('  Result := True;\n\n  #if "user" == InstallTarget',
     `  Result := True;
   if (HydraUpdateSwitchState() < 0) or HydraHasSwitch('/UPDATE') or not HydraUpdateArgumentsValid() then begin
