@@ -6,7 +6,7 @@
 export const preferenceOnlySettings: ReadonlySet<string> = new Set([
   'hydra.maxConcurrentHelpers', 'hydra.chatLocation',
   'hydra.heads.defaultMinutes', 'hydra.heads.defaultMaxTurns', 'hydra.heads.defaultBudgetUsd',
-  'hydra.startupLayout', 'hydra.limits.offerHandoff',
+  'hydra.startupLayout', 'hydra.limits.offerHandoff', 'hydra.updates.check',
   // Read at each use by the packs service (docs/Packs_Plan.md).
   'hydra.packs.folder',
 ]);

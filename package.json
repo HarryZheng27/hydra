@@ -79,6 +79,10 @@
         "title": "Hydra: Check Default Provider Capabilities"
       },
       {
+        "command": "hydra.checkForUpdates",
+        "title": "Hydra: Check for Updates"
+      },
+      {
         "command": "hydra.openOfficialExtension",
         "title": "Hydra: Open Official Extension in Handoff Workspace"
       },
@@ -414,6 +418,11 @@
           "type": "boolean",
           "default": true,
           "description": "When Claude Code or Codex hits its usage limit, offer to continue in the other provider with a handoff."
+        },
+        "hydra.updates.check": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check GitHub for a newer Hydra once a day and offer to install it. Nothing is downloaded or installed until you choose Update."
         },
         "hydra.lanes.onLimit": {
           "type": "string",
