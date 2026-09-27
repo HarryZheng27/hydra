@@ -182,11 +182,17 @@ export type LaneView = Lane & {
   resumeNote?: string;
   /** Step A (docs/Hydra_Improvements_Pt_2.md): lastGates.commit no longer matches the lane's HEAD — "Checks are for an older commit". The status itself is kept, just marked stale. */
   gatesStale?: boolean;
+  /** Step E (docs/Hydra_Improvements_Pt_2.md): this lane's dev server, for the tile's "Preview on :port" chip. */
+  preview?: { port: number; url: string };
+  /** Step E: the preview server exited on its own since it was last started, and why. Cleared at its next start. */
+  previewNote?: string;
 };
 export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resume' | 'restart' | 'diff' | 'openWindow' | 'refresh' | 'switchProvider' | 'runGates' | 'evidence'
   // ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 5) ----
-  | 'markJobDone' | 'cancelJob' | 'showPlan';
-export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan'];
+  | 'markJobDone' | 'cancelJob' | 'showPlan'
+  // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+  | 'preview' | 'stopPreview';
+export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan', 'preview', 'stopPreview'];
 export type AgentsView = 'canvas' | 'lanes';
 
 /** The lane tile's usage-limit banner (docs/Gates_Plan.md, section 2). Buttons match src/core/limitOffer.ts's LaneOfferButtonId. */

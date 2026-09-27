@@ -13,7 +13,8 @@ import { checkMerge, closeLaneWorktree, commitLane, laneDirty, laneFullyMerged, 
 import { isLaneId, isSafeBranchName, laneBranch, laneContinuePrompt, laneFolder, laneJobFolder, lanePreamble, laneRolePrompt, laneRoleRef, newLaneId, parseLaneInput, type Lane, type LaneGatesRecord, type LanePlanLink, type LanePreambleOther, type LanePromptRole, type LaneStore, type LaneSwitchReason } from './lanes';
 import { otherProvider } from './limitEvents';
 import { buildHandoff, defaultHandoffDeps, type HandoffDeps } from './limitHandoff';
-import { freshDirectory, loadGates, runGates as runGatesCore, type GateContext, type GatesConfig, type GatesLoader, type GatesOutcome } from './gates';
+import { freshDirectory, loadGates, runGates as runGatesCore, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type GatesOutcome } from './gates';
+import { LanePreviews, loadPreviewConfig, previewConfigFromGates, type PreviewConfig, type PreviewEntry } from './lanePreview';
 import { evidenceStatus, gateBlocks, gatesConfigured, type JobCheckResult } from './jobs';
 import type { HelperServerSpec } from './helperRegistration';
 import type { LimitEvent } from './limitEvents';
@@ -209,6 +210,11 @@ export interface LaneServiceOptions {
   // ---- 5.3 (docs/Hydra_Improvements.md): Stop All Agents ----
   /** Without it, a lane always may launch or relaunch (as before 5.3). */
   stop?: StopSwitch;
+  // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+  /** Where lane previews keep their capped server log, one file per lane. Defaults beside the gate logs. */
+  previewLogDirectory?: string;
+  /** Test seam: replaces the preview's free port, fetch, clock or terminate. */
+  previewRuntime?: Partial<GateRuntime>;
 }
 
 /** How a plan lane starts (docs/Plan_Lanes_Plan.md, "Starting a lane job"). */
@@ -273,7 +279,17 @@ export class LaneService {
   private readonly roleNotes = new Map<string, string>();
   /** Item 1 (docs/Heads.md, "Restarting Hydra"): set when a Resume found no earlier conversation and started fresh instead. Cleared at the lane's next launch. */
   private readonly resumeNotes = new Map<string, string>();
-  constructor(private readonly options: LaneServiceOptions) { this.syncer = new LaneSync(options.now); }
+  /** Step E: why a lane's preview server stopped on its own. Cleared at its next successful start. */
+  private readonly previewNotes = new Map<string, string>();
+  private readonly previews: LanePreviews;
+  constructor(private readonly options: LaneServiceOptions) {
+    this.syncer = new LaneSync(options.now);
+    this.previews = new LanePreviews({
+      ...(options.previewRuntime ? { runtime: options.previewRuntime } : {}),
+      logDirectory: options.previewLogDirectory ?? path.join(options.configDirectory, '..', 'preview'),
+      onExit: (laneId, reason) => { this.previewNotes.set(laneId, reason); this.changed(); },
+    });
+  }
 
   get terminalsAvailable(): boolean { return !!this.options.pty; }
 
@@ -292,9 +308,42 @@ export class LaneService {
       const sync = this.results.get(lane.id), roleNote = this.roleNotes.get(lane.id), resumeNote = this.resumeNotes.get(lane.id);
       // Step A: the lane's HEAD moved past the commit its last gates describe.
       const gatesStale = !!(lane.lastGates?.commit && sync?.head && sync.head !== lane.lastGates.commit);
-      return { ...lane, ...(sync ? { sync: structuredClone(sync) } : {}), running: !!this.terminals.get(lane.id)?.running, ...(roleNote ? { roleNote } : {}), ...(resumeNote ? { resumeNote } : {}), ...(gatesStale ? { gatesStale } : {}) };
+      const preview = this.previews.get(lane.id), previewNote = preview ? undefined : this.previewNotes.get(lane.id);
+      return {
+        ...lane, ...(sync ? { sync: structuredClone(sync) } : {}), running: !!this.terminals.get(lane.id)?.running,
+        ...(roleNote ? { roleNote } : {}), ...(resumeNote ? { resumeNote } : {}), ...(gatesStale ? { gatesStale } : {}),
+        ...(preview ? { preview: { port: preview.port, url: preview.url } } : {}), ...(previewNote ? { previewNote } : {}),
+      };
     });
   }
+
+  // ---- Step E (docs/Hydra_Improvements_Pt_2.md): a preview for each lane ----
+
+  /** The project's screenshots gate wins; else `.hydra/preview.json`; else undefined (extensionLanes.ts then asks once). */
+  async previewConfig(id: unknown): Promise<PreviewConfig | undefined> {
+    const lane = this.openLane(id);
+    const gatesConfig = await (this.options.gates ?? loadGates)(lane.repository).catch(() => undefined);
+    const fromGates = gatesConfig && previewConfigFromGates(gatesConfig);
+    return fromGates ?? loadPreviewConfig(lane.repository);
+  }
+  previewOf(id: string): PreviewEntry | undefined { return this.previews.get(id); }
+  /** Start (or reopen) this lane's preview: the app runs in its worktree, with its normal environment (a lane is your terminal). */
+  async startPreview(id: unknown, config: PreviewConfig): Promise<PreviewEntry> {
+    // Stop all (5.3) ends previews, so none starts again until Resume Agents.
+    this.options.stop?.assertRunning('Starting a preview');
+    const lane = this.openLane(id);
+    const entry = await this.previews.start(lane, config);
+    this.previewNotes.delete(lane.id);
+    this.changed();
+    return entry;
+  }
+  async stopPreview(id: unknown): Promise<void> {
+    const lane = this.openLane(id);
+    await this.previews.stop(lane.id);
+    this.changed();
+  }
+  /** The lane's preview log, redacted (5.1), for a "View preview log" action. */
+  previewLog(id: string): Promise<string> { return this.previews.readLog(id); }
 
   /** Start a lane: a worktree and branch from the main checkout's HEAD (or a plan job's base commit), and its CLI in a terminal. */
   async create(value: unknown, options: LaneCreateOptions = {}): Promise<Lane> {
@@ -627,12 +676,13 @@ export class LaneService {
     return this.exclusive(id, async lane => {
       if (mode === 'merged' && lane.state !== 'merged' && !await laneFullyMerged(lane)) throw new Error(`Lane ${lane.name} isn't merged. Choose Keep branch or Delete everything.`);
       this.cancelGates(lane.id);
+      await this.previews.stop(lane.id); // before the worktree it serves from is removed
       await this.terminals.get(lane.id)?.kill();
       const result = await closeLaneWorktree(lane, mode, this.roots(lane), this.lanes().map(open => open.worktree));
       await rm(this.mcpConfigFile(lane.id), { force: true }).catch(() => undefined);
       await rm(this.settingsFile(lane.id), { force: true }).catch(() => undefined);
       await this.options.store.update(lane.id, { state: 'closed', closedAs: mode });
-      this.terminals.delete(lane.id); this.sizes.delete(lane.id); this.results.delete(lane.id); this.roleNotes.delete(lane.id); this.resumeNotes.delete(lane.id);
+      this.terminals.delete(lane.id); this.sizes.delete(lane.id); this.results.delete(lane.id); this.roleNotes.delete(lane.id); this.resumeNotes.delete(lane.id); this.previewNotes.delete(lane.id);
       this.options.log?.(`[lanes] ${lane.id} closed (${mode})${result.unlinked.length ? `; unlinked ${result.unlinked.length} link(s) first` : ''}`);
       this.changed(); this.schedule(); void this.sync().catch(() => undefined);
       return result;
@@ -683,16 +733,20 @@ export class LaneService {
   async stopProcesses(): Promise<number> {
     const running = this.lanes().filter(lane => this.terminals.get(lane.id)?.running);
     await Promise.all(running.map(lane => this.terminals.get(lane.id)!.kill().catch(() => undefined)));
+    await this.previews.stopAll(); // Step E: a lane's preview is one more process Stop all agents ends
+    // A lane whose terminal had already exited sends no exit event, so its tile needs this to drop the preview chip.
+    this.changed();
     return running.length;
   }
 
-  /** Window closing: stop every lane's terminal. Their records stay running, so the next start marks them "Hydra restarted". */
+  /** Window closing: stop every lane's terminal and preview. Lane records stay running, so the next start marks them "Hydra restarted". */
   async dispose(): Promise<void> {
     this.disposed = true;
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
     for (const controller of this.gateRuns.values()) controller.abort();
     this.gateRuns.clear();
     await Promise.all([...this.terminals.values()].map(terminal => terminal.kill().catch(() => undefined)));
+    await this.previews.stopAll();
   }
 
   // ---- internals ----

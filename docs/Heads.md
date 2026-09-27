@@ -223,6 +223,7 @@ Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `
   - If they pass, the confirmation says so.
   - If they fail, you choose between **Send to lane** (the default), **Merge anyway** or **Cancel**. **Send to lane** types the failures into the lane's input without pressing Enter.
   - **⋯ → Run gates** runs them at any time, and **⋯ → View evidence** shows the results.
+- **Preview app** ([Hydra_Improvements_Pt_2.md](Hydra_Improvements_Pt_2.md), Step E): **⋯ → Preview app** starts the project's dev server in that lane's worktree, on a free port, with the lane's own environment (a lane is your terminal), then opens the page in VS Code's Simple Browser. The command comes from the project's screenshots gate, or `.hydra/preview.json`, or is asked for once and saved there. The tile shows "Preview on :&lt;port&gt;" with **Stop**. It stops with the lane: on **Stop**, on **Close lane**, on **Stop All Agents**, and when the window closes. Two lanes preview on different ports from their own worktrees, and closing one leaves the other running.
 - **Usage limits:** when the agent in a lane hits its limit, the tile shows it, with **Continue in Codex** (or Claude), **View handoff** and **Wait**, and a notification names the lane.
   - **Continue** restarts the same lane with the other agent, in the same worktree, with a handoff. Uncommitted work is untouched.
   - **⋯ → Switch to…** does the same whenever you like.
