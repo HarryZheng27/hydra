@@ -7,7 +7,7 @@ How a Hydra release is built, published and checked, and what's still needed bef
 1. Set `package.json`'s `version` to the new version and merge that to `main`.
 2. Run the **Windows desktop** workflow by hand (**Actions → Windows desktop → Run workflow**) on `main`, with:
    - **release_tag:** `v<that version>`, for example `v0.25.0`;
-   - **prerelease:** on, until installers are code-signed.
+   - **prerelease:** off for a release installed copies should be offered (see [The update prompt](#the-update-prompt)); on for one they shouldn't.
 3. The `desktop` job builds and tests everything, as on a pull request: the build, smoke, the installer's install, reinstall and uninstall, the upgrade from the pinned previous release, and the MSIX checks. The uninstall test checks that uninstalling removes only this install's Claude Code and Codex entries, keeps Hydra's data by default, and removes it with `/HYDRAREMOVEDATA` (see [Uninstall](../README.md#uninstall)).
 4. Only if all of that passes, the `release` job:
    - checks that the tag matches `package.json` and isn't already a release;
@@ -26,9 +26,20 @@ The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published r
 
 Installers aren't code-signed yet, so Windows SmartScreen may warn before one runs.
 
+## The update prompt
+
+An installed Hydra (one with `unins000.exe` beside `Hydra.exe`) on Windows checks for updates from its built-in extension; see [Updating](../README.md#updating). It:
+- reads `https://api.github.com/repos/ndunl075/hydra/releases/latest`, which lists only the newest published full release: prereleases and drafts are never offered;
+- accepts it only if the tag is `v<x.y.z>`, newer than the running version, and has exactly one `HydraSetup.exe` and one `SHA256SUMS`, both under `https://github.com/ndunl075/hydra/releases/download/<tag>/`;
+- downloads over HTTPS only, following at most 5 redirects, and only to `github.com`, `objects.githubusercontent.com` or `release-assets.githubusercontent.com`;
+- refuses an installer over 300 MB, or a `SHA256SUMS` without exactly one `HydraSetup.exe` line;
+- keeps the installer only if its SHA-256 matches `SHA256SUMS`, then asks before installing. A small PowerShell helper waits for Hydra to close, runs `HydraSetup.exe /SILENT /SP- /SUPPRESSMSGBOXES /NORESTART /NORESTARTAPPLICATIONS /MERGETASKS=!runcode`, and reopens Hydra. It logs to `%TEMP%\hydra-update.log`.
+
+The limit: `SHA256SUMS` comes from the same release as the installer, so the hash catches a corrupted or truncated download, not a release that was replaced by someone with write access to the repository. Installers aren't code-signed, so nothing on the machine proves who built one. `gh attestation verify` (above) does, and code signing (below) is still what would let Hydra check it before installing.
+
 ## Turning on in-app updates
 
-Hydra's update service runs in the desktop app's main process and stays off until the release owner provides the inputs below, none of which can come from the repository alone. Once on, it:
+This section is about a separate, stricter mechanism. Hydra's update service runs in the desktop app's main process and stays off until the release owner provides the inputs below, none of which can come from the repository alone. Once on, it:
 - fetches the signed record over HTTPS without following redirects;
 - verifies the record against the key built into the app;
 - asks you before downloading;

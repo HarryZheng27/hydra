@@ -23,6 +23,15 @@ npm.cmd run desktop:smoke
 
 The build lives in `.desktop/VSCode-win32-x64/`. The Windows CI job builds the same standalone app and runs the existing acceptance suite against its built-in Hydra module, using a separate empty test harness. A source `.vsix` does not satisfy the standalone release gate. Releases are published from that same CI run, with a `SHA256SUMS` file and a build-provenance attestation; see [Releasing Hydra](docs/Releases.md).
 
+## Updating
+
+Hydra installed with `HydraSetup.exe` checks GitHub for a newer release 30 seconds after it starts and then once a day. When there is one, it shows **Update**, **Release notes** and **Skip this version**. You can also run **Hydra: Check for Updates** from the Command Palette at any time.
+
+- **Update** downloads the new `HydraSetup.exe`, checks it against the release's `SHA256SUMS`, and asks once more. Hydra then closes, installs the update into the same folder, and reopens. Unsaved changes are kept by the editor's hot exit, and running heads and lanes are stopped.
+- Nothing is downloaded or installed until you choose **Update** and then **Install and restart**.
+- Turn off the daily check with the `hydra.updates.check` setting. Development builds and copies not installed with `HydraSetup.exe` never offer updates.
+- The update is logged to `%TEMP%\hydra-update.log`. You can always update by hand by downloading `HydraSetup.exe` from the [releases page](https://github.com/ndunl075/hydra/releases) and running it with Hydra closed.
+
 ## Uninstall
 
 Uninstall Hydra from **Windows Settings → Apps → Installed apps**, or run `unins000.exe` in Hydra's install folder.
