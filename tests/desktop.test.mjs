@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
-import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root } from '../scripts/desktop.mjs';
+import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, installerIncludes, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root } from '../scripts/desktop.mjs';
 
 test('pinned Electron app uses only Hydra update service on Windows and refuses source drift', () => {
   const source = "import { Win32UpdateService } from '../../platform/update/electron-main/updateService.win32.js';\nservices.set(IUpdateService, new SyncDescriptor(Win32UpdateService));";
@@ -148,7 +148,9 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
     'Result := not (IsBackgroundUpdate() and FileExists(Path));',
     'function ShouldRunAfterUpdate(): Boolean;', 'begin', '  if IsBackgroundUpdate() then',
     '    end else begin', '      if IsVersionedUpdate() then begin',
-    '    if ShouldRestartTunnelService then'
+    '    if ShouldRestartTunnelService then',
+    'procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);', 'var', '  Path: string;', '  VSCodePath: string;',
+    '  Parts: TArrayOfString;', '  NewPath: string;', '  i: Integer;', 'begin', '  if not CurUninstallStep = usUninstall then begin'
   ].join('\n');
   const result = brandedInstaller(original);
   assert.match(result, /AppPublisher=Nico Dunlap/);
@@ -162,6 +164,24 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
   assert.match(result, /if IsHydraUpdate\(\) then\n    Result := False/);
   assert.throws(() => brandedInstaller(original.replace('Flags: unchecked', 'Flags: checkedonce')), /checkbox contract/);
   assert.throws(() => brandedInstaller(original.replace('VSCodeSetup', 'ChangedSetup')), /Pinned installer changed/);
+  // Uninstall cleanup: included before, and called first in, the pinned uninstall step.
+  assert.match(result, /#include "hydra-uninstall\.iss"\nprocedure CurUninstallStepChanged\(CurUninstallStep: TUninstallStep\);\nvar\n[^]*?\nbegin\n  HydraUninstallCleanup\(CurUninstallStep\);\n  if not CurUninstallStep = usUninstall then begin/);
+  assert.ok(result.indexOf('#include "hydra-update-mode.iss"') < result.indexOf('#include "hydra-uninstall.iss"'), 'the switch helpers it uses come first');
+  assert.throws(() => brandedInstaller(original.replace('  i: Integer;', '  j: Integer;')), /Pinned installer changed: procedure CurUninstallStepChanged/);
+});
+test('the uninstall include ships with the installer and keeps to its two data folders', async () => {
+  assert.deepEqual(installerIncludes, ['hydra-update-mode.iss', 'hydra-uninstall.iss']);
+  const iss = await fs.readFile(path.join(root, 'desktop', 'hydra-uninstall.iss'), 'utf8');
+  assert.match(iss, /procedure HydraUninstallCleanup\(CurUninstallStep: TUninstallStep\);/);
+  assert.match(iss, /if IsBackgroundUpdate\(\) or IsHydraUpdate\(\) then Exit;/);
+  assert.match(iss, /HydraHasExactSwitch\('\/HYDRAREMOVEDATA'\)/);
+  assert.match(iss, /MB_YESNO or MB_DEFBUTTON2\) = IDYES/);
+  assert.match(iss, /\(FindRec\.Attributes and \$400\) = 0/, 'junctions and links are refused');
+  assert.ok(iss.includes("'resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-uninstall.cjs'"), 'the cleanup runs from the bundled extension');
+  assert.match(iss, /set "ELECTRON_RUN_AS_NODE=1" && "' \+ Exe \+ '" "' \+ Script \+ '" --app "' \+ App \+ '"'/);
+  const removed = [...iss.matchAll(/^ +HydraRemoveDataFolder\(([^;]*)\);/gm)].map(match => match[1]);
+  assert.deepEqual(removed, ["ExpandConstant('{userappdata}'), 'Hydra'", "GetEnv('USERPROFILE'), '.hydra'"]);
+  assert.equal((iss.match(/DelTree\(/g) ?? []).length, 1);
 });
 test('installer versions follow Hydra while preserving the editor API version and refusing source drift', () => {
   const original = "Version: pkg.version,\nRawVersion: pkg.version.replace(/-\\w+$/, ''),\nEditorVersion: pkg.version";
