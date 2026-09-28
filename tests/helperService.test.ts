@@ -663,9 +663,12 @@ test('O6: continueWith records priorProviders as soon as it hands off, before th
 test('O6: continueWith never lists the same provider twice in priorProviders (a job that bounces back and forth)', async () => {
   const store = new JobStore(await mkdtemp(path.join(tmpdir(), 'hydra-jobs-')));
   await store.load();
+  const folder = path.dirname(store.file);
+  // continueWith queues the job again, and the dispatcher would launch it: a launch that fails at the executable
+  // stops before any worktree is made, and the lead folder is a temporary one, never the repository running the tests.
   const service = new HelperService({
-    store, endpoint: { issue: () => '', revokeJob: () => {}, port: 0 }, leadFolder: '.', leadKey: 'window',
-    startRun: () => { throw new Error('not exercised'); }, executable: async () => 'fake', bridge: { command: 'x', args: [] }, logDirectory: '.',
+    store, endpoint: { issue: () => '', revokeJob: () => {}, port: 0 }, leadFolder: folder, leadKey: 'window',
+    startRun: () => { throw new Error('not exercised'); }, executable: async () => { throw new Error('no CLI in this test'); }, bridge: { command: 'x', args: [] }, logDirectory: path.join(folder, 'logs'),
     maxConcurrent: () => 1,
   });
   try {
