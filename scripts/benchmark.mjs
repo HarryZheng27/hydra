@@ -4,10 +4,11 @@
 //
 //   node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>]
 //   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--fixture <name>] [--task <plan>] [--minutes 120] [--usd 60] [--hydra "<command>"] [--plan-store <plans.json>]
-//   node scripts/benchmark.mjs single --repo <dir>/single [--fixture <name>] [--task <plan>] [--agent claude|codex] [--minutes 120] [--command "<agent command>"]
+//   node scripts/benchmark.mjs single --repo <dir>/single [--fixture <name>] [--task <plan>] [--agent claude|codex] [--minutes 120] [--command "<agent command>"] [--prompt <file>] [--gate "<command>"|none]
 //   node scripts/benchmark.mjs review --results <dir> [--codex <path>] [--claude <path>] [--base <commit>] [--reviewer-command "<command>"]
 //   node scripts/benchmark.mjs summarize --runs <folders or globs, comma-separated> [--out <file>] [--plan-store <plans.json>]
 //   node scripts/benchmark.mjs publish --results <dir> [--label <text>] [--notes <text>]
+//   node scripts/benchmark.mjs swebench select|prepare|predictions|submit … (scripts/benchmark-swebench.mjs)
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -17,6 +18,7 @@ import {
   defaultFixture, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, renderSummary, runRows,
   summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReview,
 } from './benchmark-lib.mjs';
+import { swebench } from './benchmark-swebench.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -60,6 +62,8 @@ const exists = file => fs.access(file).then(() => true, () => false);
  * else the default (bench/fixture). Its tasks are its plan files.
  */
 async function fixtureOf(flags, runFolder) {
+  // --fixture none: a repository that isn't a fixture (a SWE-bench instance), whose plan --task names; no hidden check.
+  if (flags.fixture === 'none') { if (!flags.task) throw new Error('--fixture none needs --task.'); return { name: undefined, dir: undefined, plans: [flags.task], task: flags.task }; }
   let info = {};
   if (runFolder) { try { info = await readJson(path.join(runFolder, 'benchmark.json')); } catch { /* prepared before benchmark.json */ } }
   const name = flags.fixture ?? info.fixture ?? defaultFixture;
@@ -73,6 +77,7 @@ async function fixtureOf(flags, runFolder) {
 async function prepare(flags) {
   const out = path.resolve(flags.out ?? path.join(root, '.bench', `run-${new Date().toISOString().replace(/[:.]/g, '-')}`));
   const fixture = await fixtureOf(flags);
+  if (!fixture.dir) throw new Error('prepare needs a fixture (SWE-bench instances are prepared with swebench prepare).');
   for (const name of ['hydra', 'single']) {
     const repo = path.join(out, name);
     await fs.mkdir(repo, { recursive: true });
@@ -88,6 +93,7 @@ async function prepare(flags) {
 
 /** A fixture's hidden check (check.mjs, never copied into the repositories) run on `repo`; undefined when the fixture has none. */
 async function runCheck(fixture, repo) {
+  if (!fixture.dir) return undefined;
   const script = path.join(fixture.dir, 'check.mjs');
   if (!await exists(script)) return undefined;
   const started = now();
@@ -153,7 +159,7 @@ async function hydra(flags) {
   });
   // The hidden check runs on every job's work together: the integration branch's tip, in a clone beside the repository.
   const tip = finalView?.integration?.tip;
-  if (tip && await exists(path.join(fixture.dir, 'check.mjs'))) {
+  if (tip && fixture.dir && await exists(path.join(fixture.dir, 'check.mjs'))) {
     const tree = await freshPath(out, 'hydra-final');
     try {
       await git(['clone', '-q', '--no-checkout', repo, tree], out);
@@ -184,8 +190,10 @@ async function single(flags) {
   const agent = flags.agent ?? 'claude';
   if (!agents[agent]) throw new Error('--agent is claude or codex.');
   const minutes = Number(flags.minutes ?? 120);
-  const fixture = await fixtureOf(flags, out);
-  const brief = await briefFor(fixture);
+  // --prompt: a brief from elsewhere (a SWE-bench instance's prompt.md) and no fixture, so no check, and no gate unless --gate names one.
+  const fixture = flags.prompt ? undefined : await fixtureOf(flags, out);
+  const brief = flags.prompt ? await fs.readFile(path.resolve(flags.prompt), 'utf8') : await briefFor(fixture);
+  const gateCommand = flags.gate ? (flags.gate === 'none' ? undefined : commandLine(flags.gate)) : fixture ? ['npm', 'test'] : undefined;
   console.log(`Running ${agent} alone on ${repo} (up to ${minutes} minutes)…`);
   const started = now();
   // --command replaces the agent's command line (a CLI installed elsewhere, or a stand-in in tests); the task still goes to stdin.
@@ -204,9 +212,9 @@ async function single(flags) {
       if (message.type === 'turn.completed' && message.usage) codexUsage = { inputTokens: (codexUsage?.inputTokens ?? 0) + (message.usage.input_tokens ?? 0), outputTokens: (codexUsage?.outputTokens ?? 0) + (message.usage.output_tokens ?? 0) };
     } catch { /* not a JSON line */ }
   }
-  const gate = await run('npm', ['test'], { cwd: repo, timeoutMs: 10 * 60_000 });
-  const results = summarizeSingle({ agent, wallClockSeconds: result.timedOut ? minutes * 60 : wallClockSeconds, exitCode: result.code, gatePassed: gate.code === 0, gateOutput: gate.stdout + gate.stderr, agentOutput, codexUsage, task: fixture.task, fixture: fixture.name, startedAt: new Date(started).toISOString() });
-  const check = await runCheck(fixture, repo);
+  const gate = gateCommand ? await run(gateCommand[0], gateCommand.slice(1), { cwd: repo, timeoutMs: 10 * 60_000 }) : { code: null, stdout: 'No gate ran.', stderr: '' };
+  const results = summarizeSingle({ agent, wallClockSeconds: result.timedOut ? minutes * 60 : wallClockSeconds, exitCode: result.code, gatePassed: gate.code === 0, gateOutput: gate.stdout + gate.stderr, agentOutput, codexUsage, task: fixture?.task, fixture: fixture?.name, startedAt: new Date(started).toISOString() });
+  const check = fixture ? await runCheck(fixture, repo) : undefined;
   if (check) results.check = check;
   await fs.writeFile(path.join(out, 'single-results.json'), JSON.stringify(results, null, 2) + '\n');
   console.log(`${JSON.stringify(results, null, 2)}\n\nWrote ${path.join(out, 'single-results.json')}.`);
@@ -230,7 +238,8 @@ async function review(flags) {
   const single = await readJson(resultsFile);
   const repo = path.resolve(flags.repo ?? path.join(out, 'single'));
   const fixture = await fixtureOf({ ...flags, fixture: flags.fixture ?? single.fixture, task: flags.task ?? single.task }, out);
-  const plan = await readJson(path.join(fixture.dir, '.hydra', 'plans', `${fixture.task}.json`));
+  // The plan gives the reviewer its task: the fixture's, or with --fixture none the repository's own.
+  const plan = await readJson(path.join(fixture.dir ?? repo, '.hydra', 'plans', `${fixture.task}.json`));
   // The review sees base..HEAD, as a plan's does; work the agent left uncommitted is committed first, and that's recorded.
   let committedLeftovers = false;
   if ((await git(['status', '--porcelain'], repo)).trim()) {
@@ -307,6 +316,6 @@ async function publish(flags) {
 }
 
 const { command, flags, rest } = args(process.argv.slice(2));
-const commands = { prepare, hydra, single, review, summarize, publish };
-if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
+const commands = { prepare, hydra, single, review, summarize, publish, swebench: (options, extra) => swebench(options, extra, { root, run, git }) };
+if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish|swebench [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
 else commands[command](flags, rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
