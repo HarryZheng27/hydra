@@ -197,7 +197,7 @@ test('one Connect button installs and connects; claude-mem is opt-in, not a defa
   assert.doesNotMatch(view, /remembers across sessions with claude-mem/, 'Connect no longer claims to always set up claude-mem');
   const extension = await readFile('src/extension.ts', 'utf8');
   assert.match(extension, /await this\.installProviderExtension\(provider\);/);
-  assert.match(extension, /downloadOpenVsx\(id\)/);
+  assert.match(extension, /installWithFallback\(id,/, 'the install falls back to Open VSX (installWithFallback) whenever the gallery fails');
   assert.match(extension, /shouldSetUpClaudeMem\(/, 'Connect checks the opt-in setting before touching claude-mem');
   assert.match(extension, /setupClaudeMem\(claude\)/);
   const manifest = JSON.parse(await readFile('package.json', 'utf8'));
