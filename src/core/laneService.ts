@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { laneHasConversation, type LaneConversationOptions } from './laneResume';
-import { git, gitMetaFingerprint, gitRun, type GitMetaFingerprint } from './git';
+import { git, gitMetaFingerprint, gitRun, readOnlyGitTimeoutMs, type GitMetaFingerprint } from './git';
 import { isWindowsShim, processLaunch, shimSafe } from './process';
 import { RoleUnavailable, codexDeveloperInstructions, roleFirstPrompt, roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
@@ -489,7 +489,7 @@ export class LaneService {
     return this.exclusive(id, async lane => {
       const commit = await mergeLane(lane);
       // The lane HEAD it merged (the merge commit's second parent): a plan job done by merging hands this on.
-      const mergedHead = (await gitRun(lane.repository, ['rev-parse', '--verify', '--quiet', `${commit}^2`])).stdout.trim();
+      const mergedHead = (await gitRun(lane.repository, ['rev-parse', '--verify', '--quiet', `${commit}^2`], undefined, readOnlyGitTimeoutMs)).stdout.trim();
       await this.options.store.update(lane.id, { state: 'merged', mergedAt: this.now().toISOString(), ...(/^[a-f0-9]{40,64}$/.test(mergedHead) ? { mergedHead } : {}) });
       this.options.log?.(`[lanes] ${lane.id} merged into ${lane.target} (${commit.slice(0, 12)})`);
       this.afterGit();
@@ -517,7 +517,7 @@ export class LaneService {
     const controller = new AbortController();
     this.gateRuns.set(lane.id, controller);
     try {
-      const head = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'])).stdout.trim();
+      const head = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).stdout.trim();
       // Plan lanes: measured from laneDiffBase, and the commit is recorded when the lane was clean, so Merge can reuse the run.
       const cleanBefore = !await laneDirty(lane).catch(() => true);
       const base = await laneDiffBase(lane, head);
@@ -531,7 +531,7 @@ export class LaneService {
         ...(this.options.gatesRuntime ? { runtime: this.options.gatesRuntime } : {}),
       }, this.options.gates);
       if (controller.signal.aborted) throw new Error('The gates run was cancelled.');
-      const headAfter = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'])).stdout.trim();
+      const headAfter = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).stdout.trim();
       const commit = cleanBefore && headAfter === head && /^[a-f0-9]{40,64}$/.test(head) && !await laneDirty(lane).catch(() => true) ? head : undefined;
       // Step A: a plain gates run has no override, so a failed required gate leaves status undefined
       // (this run alone never accepts the work) until Merge anyway / Mark done anyway records one.
@@ -552,7 +552,7 @@ export class LaneService {
     const lane = this.openLane(id);
     const record = lane.lastGates;
     if (!record?.commit || !record.config || record.results.some(gateBlocks)) return undefined;
-    const head = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'])).stdout.trim();
+    const head = (await gitRun(lane.worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).stdout.trim();
     if (head !== record.commit || await laneDirty(lane).catch(() => true)) return undefined;
     const config = await (this.options.gates ?? loadGates)(lane.repository).catch(() => undefined);
     return config && gatesFingerprint(config) === record.config ? record : undefined;
@@ -594,7 +594,7 @@ export class LaneService {
       // Gates that couldn't even be loaded get no label: that's not a project choice.
       if (config) {
         const status = config.source === 'none' && !config.gates.length ? 'none' : 'none-chosen';
-        const commit = await git(lane.worktree, ['rev-parse', 'HEAD']).then(text => text.trim()).catch(() => undefined);
+        const commit = await git(lane.worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs).then(text => text.trim()).catch(() => undefined);
         if (commit && /^[a-f0-9]{40,64}$/.test(commit)) await this.recordNoGates(lane.id, commit, status).catch(() => undefined);
       }
       return { kind: 'none' };
@@ -612,10 +612,10 @@ export class LaneService {
    */
   async handOn(id: unknown): Promise<LaneHandOn> {
     return this.exclusive(id, async lane => {
-      const head = (await git(lane.worktree, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+      const head = (await git(lane.worktree, ['rev-parse', '--verify', 'HEAD^{commit}'], undefined, readOnlyGitTimeoutMs)).trim();
       if (await laneDirty(lane)) return { ok: false, reason: 'dirty', message: `Lane ${lane.name} has uncommitted changes. Commit them first.` };
       const base = await laneDiffBase(lane, head);
-      const changedFiles = head === lane.baseCommit ? [] : (await git(lane.repository, ['diff', '--name-only', '-z', '--no-renames', base, head, '--'])).split('\0').filter(Boolean);
+      const changedFiles = head === lane.baseCommit ? [] : (await git(lane.repository, ['diff', '--name-only', '-z', '--no-renames', base, head, '--'], undefined, readOnlyGitTimeoutMs)).split('\0').filter(Boolean);
       if (!changedFiles.length) return { ok: false, reason: 'nothing', message: 'Nothing to hand on yet.' };
       const subjects = (await git(lane.repository, ['log', '--format=%s', '-n', '10', `${base}..${head}`])).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
       return { ok: true, commit: head, base, changedFiles: changedFiles.slice(0, 300), subjects };

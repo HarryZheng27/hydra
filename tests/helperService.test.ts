@@ -18,7 +18,7 @@ import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
 type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
-async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
+async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -39,6 +39,7 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
     executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => options.maxConcurrent ?? 2, now: options.now, watchdogMs: 20,
     gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo), plans: options.plans, planBoard: options.planBoard,
+    gates: options.gatesLoader,
     log: line => logs.push(line),
     startRun: spec => {
       runs.push(spec);
@@ -1226,6 +1227,39 @@ test('hydra_done\'s timing line includes "commit" only when Hydra itself had to 
     const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
     assert.ok(line, `expected a timing line among: ${JSON.stringify(f.logs)}`);
     assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, commit \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s$`));
+  } finally { await f.close(); }
+});
+
+test('hydra_done still logs a timing line when a step throws, marking that step with "!"', async () => {
+  const f = await fixture({ gatesLoader: async () => { throw new Error('gates.json is broken'); }, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    assert.equal(reported.result.accepted, false);
+    assert.match(reported.result.message, /gates\.json is broken/);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('timed-failure');
+    await until(() => f.logs.some(entry => entry.includes('hydra_done → checking')), 'timing line logged');
+    const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
+    // The gates step threw, so it's marked, and nothing after it (tamper/diff/gitmeta) ran.
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates! \\d+\\.\\d+s$`));
+  } finally { await f.close(); }
+});
+
+test('hydra_done logs a partial timing line when refused because nothing changed yet', async () => {
+  const f = await fixture({ script: async helper => {
+    const reported = await helper.call('hydra_done', { summary: 'Nothing yet.' });
+    assert.equal(reported.result.accepted, false);
+    assert.match(reported.result.message, /have not changed anything/);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('timed-refusal');
+    await until(() => f.logs.some(entry => entry.includes('hydra_done → checking')), 'timing line logged');
+    const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
+    // Refused before gates ever load: only status and rev-parse ran.
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s$`));
   } finally { await f.close(); }
 });
 

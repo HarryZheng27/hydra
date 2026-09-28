@@ -14,28 +14,35 @@ const execute = promisify(execFile);
 const gitFlags = ['-c', 'core.quotepath=false', '-c', 'core.fsmonitor=false'];
 
 /**
- * How long an ordinary git call may run before Hydra kills it and throws, instead of hanging
- * forever: a stuck git process (a lock held by another process, a credential prompt with
- * `GIT_TERMINAL_PROMPT` unset, …) used to block whatever awaited it with no way to notice. Set
- * above the slowest step timing has actually measured on a real repository (`hydra_done`'s
- * `commitAll` ran 179s once — see docs/Heads.md's timing line), so this catches a truly stuck
- * process without tripping on the case it exists to diagnose.
+ * `git()`/`gitBytes()`/`gitRun()` default to no timeout (`timeoutMs = 0`, which disables Node's
+ * `execFile` timeout entirely), on purpose: killing git mid-command can leave `index.lock` behind
+ * (a sandboxed head can't remove it from its own worktree's gitdir, so every later `hydra_done`
+ * would fail), abort a merge without its `MERGE_HEAD`/conflict markers cleaned up, or cut off a
+ * `pre-commit`/`post-checkout` hook the user or the project relies on running to completion. A hang
+ * is a known, visible problem (Heads.md's step timing names the slow step); a kill mid-write is a
+ * worse, hidden one.
+ *
+ * Pass `readOnlyGitTimeoutMs` explicitly only for a call that is genuinely read-only and takes no
+ * lock: `status --porcelain`, `rev-parse`, `diff --name-only` (and other read-only `diff`/`status`
+ * flavors), `ls-tree`, `merge-tree` (it writes loose objects but never touches the index or HEAD),
+ * and a read-only `config --list`. Never add a timeout to anything that commits, merges, checks
+ * out, adds or removes a worktree, or can run a hook.
  */
-export const defaultGitTimeoutMs = 180_000;
-/**
- * For git calls whose cost scales with the size of a repository's working tree or history —
- * `merge-tree` (walks every path two commits touch) and `worktree add` (checks out a whole
- * copy) — rather than with how much changed: a large repository can need more than
- * `defaultGitTimeoutMs` for these even when nothing is actually stuck.
- */
-export const bigRepoGitTimeoutMs = 300_000;
+export const readOnlyGitTimeoutMs = 300_000;
 const killOptions = { killSignal: 'SIGKILL' as const };
 
-function timeoutError(args: readonly string[], timeoutMs: number): Error {
-  return new Error(`git ${args[0] ?? ''} took longer than ${Math.round(timeoutMs / 1000)}s and was stopped.`);
+/** The git subcommand `args` starts with, for naming it in an error — skips `noHooks`'s leading `-c core.hooksPath=…` pairs so the error names the real subcommand, not `-c`. */
+function commandName(args: readonly string[]): string {
+  let index = 0;
+  while (args[index] === '-c' && index + 1 < args.length) index += 2;
+  return args[index] ?? '';
 }
 
-export async function gitBytes(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = defaultGitTimeoutMs): Promise<Buffer> {
+function timeoutError(args: readonly string[], timeoutMs: number): Error {
+  return new Error(`git ${commandName(args)} took longer than ${Math.round(timeoutMs / 1000)}s and was stopped.`);
+}
+
+export async function gitBytes(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = 0): Promise<Buffer> {
   try {
     const { stdout } = await execute('git', [...gitFlags, ...args], { cwd, env: { ...process.env, ...environment }, windowsHide: true, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, ...killOptions });
     return stdout;
@@ -45,14 +52,14 @@ export async function gitBytes(cwd: string, args: string[], environment?: NodeJS
     throw new Error(failure.stderr?.toString('utf8').trim() || failure.message);
   }
 }
-export async function git(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = defaultGitTimeoutMs): Promise<string> { return (await gitBytes(cwd, args, environment, timeoutMs)).toString('utf8'); }
+export async function git(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = 0): Promise<string> { return (await gitBytes(cwd, args, environment, timeoutMs)).toString('utf8'); }
 export interface GitResult { code: number; stdout: string; stderr: string }
 /**
  * Run git and hand back its exit code and output instead of throwing on a
  * non-zero exit: `merge-tree` and `merge` report conflicts that way. Throws only
  * when git can't run or runs past `timeoutMs`.
  */
-export function gitRun(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = defaultGitTimeoutMs): Promise<GitResult> {
+export function gitRun(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = 0): Promise<GitResult> {
   return new Promise((resolve, reject) => {
     execFile('git', [...gitFlags, ...args], { cwd, env: { ...process.env, ...environment }, windowsHide: true, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, ...killOptions }, (error, stdout, stderr) => {
       const code = (error as (Error & { code?: unknown }) | null)?.code;
@@ -75,7 +82,7 @@ export function gitRun(cwd: string, args: string[], environment?: NodeJS.Process
 export type GitMetaFingerprint = Readonly<Record<string, string>>;
 
 async function commonGitDir(repository: string): Promise<string> {
-  const raw = (await git(repository, ['rev-parse', '--git-common-dir'])).trim();
+  const raw = (await git(repository, ['rev-parse', '--git-common-dir'], undefined, readOnlyGitTimeoutMs)).trim();
   return path.isAbsolute(raw) ? raw : path.resolve(repository, raw);
 }
 
@@ -102,7 +109,7 @@ const riskyConfigKey = new RegExp([
 /** The risky settings in one config file, as `config:<key>` → hash of its values (a key may repeat). */
 async function riskyConfig(file: string, into: Record<string, string>, label: string): Promise<void> {
   // `git config --file` reads only that file (no includes), and never runs a hook or fsmonitor.
-  const listed = await gitRun(path.dirname(file), ['config', '--file', file, '--list', '--null']).catch(() => undefined);
+  const listed = await gitRun(path.dirname(file), ['config', '--file', file, '--list', '--null'], undefined, readOnlyGitTimeoutMs).catch(() => undefined);
   if (!listed || listed.code !== 0) return;
   const values = new Map<string, string[]>();
   for (const entry of listed.stdout.split('\0').filter(Boolean)) {

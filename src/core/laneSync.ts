@@ -2,7 +2,7 @@ import { copyFile, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { bigRepoGitTimeoutMs, git, gitRun } from './git';
+import { git, gitRun, readOnlyGitTimeoutMs } from './git';
 import type { Lane } from './lanes';
 import type { LaneSyncView } from './model';
 
@@ -34,14 +34,14 @@ const oid = (text: string, what: string): string => {
  * (so git's file-stat cache spares re-reading unchanged files), else from HEAD.
  */
 export async function snapshotLane(worktree: string): Promise<{ head: string; snapshot: string; dirty: boolean }> {
-  const head = oid(await git(worktree, ['rev-parse', '--verify', 'HEAD^{commit}']), 'HEAD');
+  const head = oid(await git(worktree, ['rev-parse', '--verify', 'HEAD^{commit}'], undefined, readOnlyGitTimeoutMs), 'HEAD');
   const index = path.join(tmpdir(), `hydra-lane-${process.pid}-${randomBytes(6).toString('hex')}.index`);
   const env = { GIT_INDEX_FILE: index };
   try {
     const stage = async () => { await git(worktree, ['add', '-A'], env); return oid(await git(worktree, ['write-tree'], env), 'tree'); };
     let tree: string | undefined;
     try {
-      const real = (await git(worktree, ['rev-parse', '--path-format=absolute', '--git-path', 'index'])).trim();
+      const real = (await git(worktree, ['rev-parse', '--path-format=absolute', '--git-path', 'index'], undefined, readOnlyGitTimeoutMs)).trim();
       await copyFile(real, index);
       tree = await stage();
     } catch { /* no index yet, one being replaced, or one git can't use as a copy: start from HEAD */ }
@@ -52,7 +52,7 @@ export async function snapshotLane(worktree: string): Promise<{ head: string; sn
     }
     const snapshot = oid(await git(worktree, ['commit-tree', tree, '-p', head, '-m', 'Hydra lane snapshot'], { ...env, ...snapshotIdentity }), 'snapshot');
     // Uncommitted work (untracked files included) makes the snapshot's tree differ from HEAD's.
-    const dirty = tree !== oid(await git(worktree, ['rev-parse', `${head}^{tree}`]), 'tree');
+    const dirty = tree !== oid(await git(worktree, ['rev-parse', `${head}^{tree}`], undefined, readOnlyGitTimeoutMs), 'tree');
     return { head, snapshot, dirty };
   } finally {
     await rm(index, { force: true }).catch(() => undefined);
@@ -62,7 +62,7 @@ export async function snapshotLane(worktree: string): Promise<{ head: string; sn
 
 /** Paths that differ between two commits. */
 export async function changedFiles(repository: string, from: string, to: string): Promise<string[]> {
-  return (await git(repository, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'])).split('\0').filter(Boolean);
+  return (await git(repository, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'], undefined, readOnlyGitTimeoutMs)).split('\0').filter(Boolean);
 }
 
 /**
@@ -71,7 +71,8 @@ export async function changedFiles(repository: string, from: string, to: string)
  * after the tree id; anything else is an error ("couldn't check").
  */
 export async function mergeTreeConflicts(repository: string, a: string, b: string): Promise<string[]> {
-  const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b], undefined, bigRepoGitTimeoutMs);
+  // merge-tree writes loose objects but never touches the index or HEAD, so a timeout is safe here.
+  const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b], undefined, readOnlyGitTimeoutMs);
   if (result.code === 0) return [];
   if (result.code !== 1) throw new Error(result.stderr.trim() || `git merge-tree exited with ${result.code}.`);
   const [tree, ...files] = result.stdout.split('\0');
@@ -87,7 +88,7 @@ export async function behindCount(repository: string, laneHead: string, targetTi
 
 /** The tip of a local branch, or undefined when it doesn't exist. `branch` must already be a validated name. */
 export async function branchTip(repository: string, branch: string): Promise<string | undefined> {
-  const result = await gitRun(repository, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]);
+  const result = await gitRun(repository, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], undefined, readOnlyGitTimeoutMs);
   return result.code === 0 && sha.test(result.stdout.trim()) ? result.stdout.trim() : undefined;
 }
 

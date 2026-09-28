@@ -1,13 +1,13 @@
 import { realpath, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { bigRepoGitTimeoutMs, git } from './git';
+import { git, readOnlyGitTimeoutMs } from './git';
 export { git } from './git';
 export function isInside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 export async function repositoryRoot(folder: string): Promise<string> {
-  return realpath((await git(folder, ['rev-parse', '--show-toplevel'])).trim());
+  return realpath((await git(folder, ['rev-parse', '--show-toplevel'], undefined, readOnlyGitTimeoutMs)).trim());
 }
 /** Where Hydra puts worktrees when hydra.worktreeRoot is empty: a sibling `<repository>.worktrees` folder. */
 export const defaultWorktreeRoot = (repository: string): string => path.join(path.dirname(repository), `${path.basename(repository)}.worktrees`);
@@ -20,7 +20,7 @@ export async function createWorktree(repository: string, title: string, id: stri
   if (layout && (!/^[a-z0-9-]{1,64}$/.test(layout.folder) || !/^[a-z0-9]+(?:[/-][a-z0-9]+)*$/.test(layout.branch) || layout.branch.length > 120)) throw new Error('Invalid worktree layout.');
   repository = await repositoryRoot(repository);
   if (startingCommit && !/^[a-f0-9]{40,64}$/.test(startingCommit)) throw new Error('Starting commit must be a full commit SHA.');
-  const baseCommit = (await git(repository, ['rev-parse', '--verify', `${startingCommit || 'HEAD'}^{commit}`])).trim();
+  const baseCommit = (await git(repository, ['rev-parse', '--verify', `${startingCommit || 'HEAD'}^{commit}`], undefined, readOnlyGitTimeoutMs)).trim();
   const integrationTarget = (await git(repository, ['symbolic-ref', '--short', 'HEAD'])).trim();
   const root = configuredRoot || defaultWorktreeRoot(repository);
   if (!path.isAbsolute(root)) throw new Error('Worktree root must be an absolute path.');
@@ -44,8 +44,8 @@ export async function createWorktree(repository: string, title: string, id: stri
   const worktree = path.join(canonicalRoot, layout?.folder ?? id);
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'task';
   const branch = layout?.branch ?? `agent/${slug}-${id}`;
-  // A checkout, not just index/history bookkeeping: on a large repository's working tree
-  // this can outrun defaultGitTimeoutMs even when nothing is stuck.
-  await git(repository, ['worktree', 'add', '-b', branch, worktree, baseCommit], undefined, bigRepoGitTimeoutMs);
+  // No timeout: a checkout, so a kill mid-command could leave the new worktree half-populated or
+  // its lock files behind.
+  await git(repository, ['worktree', 'add', '-b', branch, worktree, baseCommit]);
   return { worktree, branch, baseCommit, integrationTarget };
 }
