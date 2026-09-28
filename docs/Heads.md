@@ -315,7 +315,7 @@ New to all this? **Hydra: Learn Heads, Lanes, Plans and Gates** opens a short wa
 
 ## Hydra's notifications
 
-In the Hydra app, Hydra's own messages (a lane is ready, a job failed its gates, an update is available, a download's progress) show as Hydra-styled cards in the bottom-right corner, over whatever is open, instead of the editor's standard notifications. Information fades after 8 seconds and warnings after 14; hovering over a card holds it. Errors, cards with buttons and cards showing progress stay until you answer or close them (the × or Escape). At most five show at once. Confirmations that need an answer before anything happens (merging, closing a lane, installing an update) are still the editor's own dialogs. Outside the Hydra app, the same messages use the editor's notifications. Security notes are in [THREAT_MODEL.md](THREAT_MODEL.md) (HSEC-68, HR-20).
+In the Hydra app, Hydra's own messages (a lane is ready, a job failed its gates, an update is available, a download's progress) show as Hydra-styled cards in the bottom-right corner, over whatever is open, instead of the editor's standard notifications. Information fades after 8 seconds and warnings after 14; hovering over a card holds it. Errors, cards with buttons and cards showing progress stay until you answer or close them (the × or Escape). At most five show at once. Confirmations that need an answer before anything happens (merging, closing a lane) are still the editor's own dialogs. Installing an update asks on a Hydra card of its own, which waits for **Install and restart** or **Not now**. Outside the Hydra app, the same messages use the editor's notifications. Security notes are in [THREAT_MODEL.md](THREAT_MODEL.md) (HSEC-68, HR-20).
 
 ## Folders you haven't trusted
 

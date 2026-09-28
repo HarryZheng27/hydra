@@ -15,5 +15,6 @@ export const notices = createNotices({
   hasDesktopNotices: async () => (await vscode.commands.getCommands(true)).includes('hydra.desktop.notice.show'),
   execute: (command, ...args) => vscode.commands.executeCommand(command, ...args),
   native: (kind, message, actions) => native[kind](message, ...actions),
+  nativeConfirm: (message, detail, action) => vscode.window.showWarningMessage(message, { modal: true, detail }, action),
   nativeProgress: (options, task) => vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: options.title, cancellable: options.cancellable }, task),
 });
