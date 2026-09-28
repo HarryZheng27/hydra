@@ -67,6 +67,7 @@ Today's check, unchanged: run in the head's worktree, with its timeout, the outp
 - **Output:** `{ "verdict": "pass" | "fail", "summary": "…", "findings": [{ "file": "…", "line": 12, "severity": "blocker" | "major" | "minor", "note": "…" }] }`.
   - The parser takes the first JSON object and tolerates code fences, as the planner's does.
   - The gate fails only for `fail` with at least one blocker or major finding. Minor findings are reported but don't fail the gate.
+  - The reviewer is told what each severity means. A major finding is a real bug that people using the change would plausibly hit, or a clear gap in what the task asked for. Behaviour only at extreme or contrived inputs the task doesn't call for (values near numeric limits, absurd sizes) is minor, unless it loses data or opens a security hole. Without this, a review can always find one more edge case, and an integration gate with automatic fixes never passes (seen in the 2026-09-28 benchmark: round 1 fixed real missing validation; rounds 2 and 3 chased one-cent errors at Number.MAX_SAFE_INTEGER).
 - **Couldn't run** (the tool is missing, it's limited, it timed out, or it returned unparseable output): the gate is reported as **not run** with the reason. It doesn't fail the head, since a tooling problem isn't the head's fault. The lead and the tile both show it.
 
 ### Screenshots gate

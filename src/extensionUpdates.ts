@@ -104,7 +104,7 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
 
     const counts = deps.running();
     const detail = [`Hydra will close, install ${release.version}, and reopen. Unsaved changes are kept by the editor's hot exit.`, runningNotice(counts.heads, counts.lanes, counts.stopped)].filter(Boolean).join('\n\n');
-    const confirm = await vscode.window.showWarningMessage(`Install Hydra ${release.version}?`, { modal: true, detail }, 'Install and restart');
+    const confirm = await notices.confirm(`Install Hydra ${release.version}?`, detail, 'Install and restart');
     if (confirm !== 'Install and restart') { log('[updates] install not confirmed; the verified installer stays for next time'); return; }
 
     try {

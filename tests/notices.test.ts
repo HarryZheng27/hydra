@@ -18,6 +18,7 @@ function host(options: { desktop: boolean; choice?: string; failShow?: boolean }
       return options.choice as T | undefined;
     },
     native: async (kind, message, actions) => { natives.push({ kind, message, actions }); return actions[0]; },
+    nativeConfirm: async (message, detail, action) => { natives.push({ kind: 'warning', message: `${message} | ${detail}`, actions: [action] }); return options.choice ?? action; },
     nativeProgress: async (_options, task) => await task({ report: () => undefined }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose: () => undefined }) }),
   };
   return { fake, executed, natives, press: (choice: string | undefined) => pendingShow?.(choice) };
@@ -111,4 +112,22 @@ test('progress closes its toast even when the task fails', async () => {
   await assert.rejects(createNotices(fake).withProgress({ title: 'Starting lane a…' }, async () => { throw new Error('no'); }), /no/);
   assert.equal(executed.at(-1)!.command, 'hydra.desktop.notice.close');
   assert.deepEqual((executed[0]!.args[0] as { actions: string[] }).actions, []);
+});
+
+test('confirm: in the desktop app a warning card that waits for an answer, with the detail; elsewhere the editor\'s modal', async () => {
+  const yes = host({ desktop: true, choice: 'Install and restart' });
+  assert.equal(await createNotices(yes.fake).confirm('Install Hydra 1.0?', 'Hydra will close and reopen.', 'Install and restart'), 'Install and restart');
+  const request = yes.executed[0]!.args[0] as { kind: string; message: string; detail: string; actions: string[]; sticky: boolean };
+  assert.deepEqual([request.kind, request.message, request.detail, request.actions, request.sticky], ['warning', 'Install Hydra 1.0?', 'Hydra will close and reopen.', ['Install and restart', 'Not now'], true]);
+  assert.equal(yes.natives.length, 0);
+  const notNow = host({ desktop: true, choice: 'Not now' });
+  assert.equal(await createNotices(notNow.fake).confirm('Install Hydra 1.0?', 'x', 'Install and restart'), undefined);
+  const dismissed = host({ desktop: true });
+  assert.equal(await createNotices(dismissed.fake).confirm('Install Hydra 1.0?', 'x', 'Install and restart'), undefined, 'closing the card is not a yes');
+  const plain = host({ desktop: false });
+  assert.equal(await createNotices(plain.fake).confirm('Install Hydra 1.0?', 'Hydra will close and reopen.', 'Install and restart'), 'Install and restart');
+  assert.deepEqual(plain.natives, [{ kind: 'warning', message: 'Install Hydra 1.0? | Hydra will close and reopen.', actions: ['Install and restart'] }]);
+  const refused = host({ desktop: true, failShow: true });
+  await createNotices(refused.fake).confirm('Install Hydra 1.0?', 'x', 'Install and restart');
+  assert.equal(refused.natives.length, 1, 'a refused card falls back to the dialog');
 });

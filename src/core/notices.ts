@@ -17,6 +17,8 @@ export interface NoticeHost {
   hasDesktopNotices(): Promise<boolean>;
   execute<T>(command: string, ...args: unknown[]): Thenable<T | undefined>;
   native(kind: NoticeKind, message: string, actions: string[]): Thenable<string | undefined>;
+  /** The editor's own modal warning, with a detail line: confirm()'s fallback outside the Hydra app. */
+  nativeConfirm(message: string, detail: string, action: string): Thenable<string | undefined>;
   nativeProgress<T>(options: ProgressOptions, task: (progress: NoticeProgress, token: NoticeCancellation) => Thenable<T>): Thenable<T>;
   log?(message: string): void;
 }
@@ -87,6 +89,22 @@ export function createNotices(host: NoticeHost) {
   }
 
   return {
+    /**
+     * A question that needs an answer before anything happens (installing an update): in the Hydra app a warning
+     * card that stays until answered, with the detail under it; elsewhere the editor's modal dialog. Resolves with
+     * `action`, or undefined for anything else (Not now, dismissed).
+     */
+    confirm: async (message: string, detail: string, action: string): Promise<string | undefined> => {
+      if (await useDesktop()) {
+        try {
+          const choice = await host.execute<string>('hydra.desktop.notice.show', { id: nextId('confirm'), kind: 'warning', message: toastText(message), detail, actions: [action, 'Not now'], sticky: true });
+          return choice === action ? action : undefined;
+        } catch (error) {
+          host.log?.(`[notices] falling back to the editor's dialog: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return (await host.nativeConfirm(message, detail, action)) === action ? action : undefined;
+    },
     info: <T extends string>(message: string, ...actions: T[]) => show('info', message, actions),
     warning: <T extends string>(message: string, ...actions: T[]) => show('warning', message, actions),
     error: <T extends string>(message: string, ...actions: T[]) => show('error', message, actions),
