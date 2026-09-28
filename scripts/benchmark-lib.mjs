@@ -129,7 +129,7 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
     timeToWorkingCodeSeconds: workDoneSeconds(jobs.map(job => job.key), landedAtSeconds),
     landedAtSeconds, landingTimesFrom: landing ? 'plan store' : 'watching',
     integrationGate: integration ? { label: integration.gate?.label, passed: !!passed, checks: (integration.gate?.checks ?? []).map(check => ({ id: check.id, ...(check.kind ? { kind: check.kind } : {}), state: check.state })) } : null,
-    review: review ? { id: review.id, state: review.state, passed: review.state === 'passed', ...(review.summary ? { summary: String(review.summary).slice(0, 1000) } : {}) } : null,
+    review: review ? { id: review.id, state: review.state, ...(reviewOutcome(review.state) !== undefined ? { passed: reviewOutcome(review.state) } : { ran: false, ...(usageLimited(review.summary) ? { usageLimit: true } : {}) }), ...(review.summary ? { summary: String(review.summary).slice(0, 1000) } : {}) } : null,
     fixRounds: jobs.filter(job => isFixJob(job.key)).length,
     landed: integration?.landed ?? [],
     jobs,
@@ -143,15 +143,35 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
   };
 }
 
-/** The single agent's run (pure). `agentOutput` is Claude Code's --output-format json result, when that's the agent. */
+/**
+ * The single agent's run (pure). `agentOutput` is Claude Code's --output-format json result, when that's the agent:
+ * its `subtype` and `is_error` are kept, since an agent can stop with an error and still exit 0.
+ */
 export function summarizeSingle({ agent, wallClockSeconds, exitCode, gatePassed, gateOutput, agentOutput, codexUsage, task, fixture, startedAt }) {
   const usd = typeof agentOutput?.total_cost_usd === 'number' ? agentOutput.total_cost_usd : undefined;
+  const agentResult = agentOutput && (agentOutput.subtype !== undefined || agentOutput.is_error !== undefined) ? { ...(agentOutput.subtype !== undefined ? { subtype: String(agentOutput.subtype) } : {}), isError: agentOutput.is_error === true } : undefined;
   return {
     version: resultsVersion, kind: 'single', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), agent, ...(startedAt ? { startedAt } : {}), wallClockSeconds, agentExitCode: exitCode,
+    ...(agentResult ? { agentResult } : {}),
     gate: { passed: !!gatePassed, outputTail: String(gateOutput ?? '').slice(-2000) },
     cost: { ...(usd !== undefined ? { usd } : {}), ...(codexUsage ? { inputTokens: codexUsage.inputTokens, outputTokens: codexUsage.outputTokens } : {}) },
     ...(typeof agentOutput?.num_turns === 'number' ? { turns: agentOutput.num_turns } : {}),
   };
+}
+
+/** The single agent's own settings when it's Claude Code (pure): every user plugin turned off, as a head's are (#260). */
+export function singleSettings(pluginIds) {
+  const ids = [...new Set(pluginIds ?? [])].filter(id => /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)).sort();
+  return ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false])) } : {};
+}
+/** What the single Claude Code agent may run without asking: the project's tools and reading, not anything. */
+export const singleAllowedTools = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(wc:*)', 'Bash(mkdir:*)']);
+/**
+ * The single Claude Code agent's command line (pure), isolated like a head: its settings file (no user plugins),
+ * no MCP servers but the empty config's (--strict-mcp-config), and the allowed tools above. The brief goes to stdin.
+ */
+export function singleClaudeArgs({ settingsFile, mcpConfigFile }) {
+  return ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--settings', settingsFile, '--strict-mcp-config', '--mcp-config', mcpConfigFile, '--allowedTools', singleAllowedTools.join(',')];
 }
 
 /**
@@ -171,30 +191,40 @@ export function parseCheckOutput(stdout, exitCode, seconds) {
   return { passed: exitCode === 0 && !failed.length && summary.passed === summary.checks, checks: summary.checks, passedChecks: summary.passed, failed, ...timing, outputTail: text.slice(-2000) };
 }
 
+/** A review check's outcome (pure): true when it passed, false when it failed, undefined when it didn't run. */
+export const reviewOutcome = state => state === 'passed' ? true : state === 'failed' ? false : undefined;
+/** Whether a review that didn't run was stopped by a usage limit, from its reason (the review gate says "hit its usage limit"). */
+export const usageLimited = text => /usage limit|rate limit|\b429\b/i.test(String(text ?? ''));
+
 /**
  * The review of a single agent's result (benchmark.mjs review) from the checks run on it (pure): the project's
- * command gates, then one review by the other agent, as a plan's integration gate runs them.
+ * command gates, then one review by the other agent, as a plan's integration gate runs them. A review that didn't
+ * run (no reviewer, a usage limit, a timeout, or a command gate failed first) is "not run", never a failure.
  */
 export function summarizeReview({ checks, durationMs, startedAt, base, head, committedLeftovers, fixture, task }) {
   const review = checks.find(check => check.kind === 'review');
   const verdict = !review ? 'not run' : review.state === 'passed' ? 'pass' : review.state === 'failed' ? 'fail' : 'not run';
+  const reason = verdict !== 'not run' ? undefined : review?.summary ?? 'The project has no review gate.';
   return {
     version: resultsVersion, kind: 'single-review', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), startedAt, durationSeconds: Math.round(durationMs / 1000),
     base, head, committedLeftovers: !!committedLeftovers,
-    verdict, gatesPassed: checks.every(check => !(check.required && check.state === 'failed')),
+    verdict, ran: verdict !== 'not run', ...(reason ? { notRunReason: String(reason).slice(0, 1000), usageLimit: usageLimited(reason) } : {}),
+    gatesPassed: checks.every(check => !(check.required && check.state === 'failed')),
     ...(review?.reviewer ? { reviewer: review.reviewer } : {}),
     ...(review?.summary ? { summary: review.summary } : {}),
     findings: review?.findings ?? [],
     checks: checks.map(check => ({ id: check.id, kind: check.kind, state: check.state, required: check.required, durationSeconds: Math.round((check.durationMs ?? 0) / 1000), ...(check.summary ? { summary: String(check.summary).slice(0, 1000) } : {}) })),
   };
 }
-/** The single results with their review's verdict and timing added (pure). */
+/** The single results with their review's verdict and timing added (pure). `passed` is left out when the review didn't run. */
 export function withReview(single, review) {
   const count = severity => review.findings.filter(finding => finding.severity === severity).length;
+  const passed = review.verdict === 'pass' ? true : review.verdict === 'fail' ? false : undefined;
   return {
     ...single,
     review: {
-      verdict: review.verdict, passed: review.verdict === 'pass', gatesPassed: review.gatesPassed, durationSeconds: review.durationSeconds,
+      verdict: review.verdict, ...(passed !== undefined ? { passed } : {}), ran: review.verdict !== 'not run', ...(review.usageLimit ? { usageLimit: true } : {}),
+      gatesPassed: review.gatesPassed, durationSeconds: review.durationSeconds,
       ...(review.reviewer ? { reviewer: review.reviewer } : {}), findings: { blocker: count('blocker'), major: count('major'), minor: count('minor') },
     },
   };
@@ -208,26 +238,36 @@ export const setups = Object.freeze(['single', 'single+review', 'hydra']);
  * One row per setup a results file stands for (pure): a single run is "single", and also "single+review" once
  * reviewed; a Hydra run is "hydra". `fallback` fills Hydra's time to working code for results from before it was
  * recorded (landingFromStore on the plan in Hydra's store).
+ * Working code needs the gate to have passed, and when the fixture has a hidden check, the check too: every
+ * fixture passes `npm test` untouched, so a run that stopped halfway would otherwise get a time. A single agent that
+ * reported an error has none either. A review that didn't run has `reviewPassed` undefined and `reviewNotRun` set.
  */
 export function runRows(result, folder, fallback) {
+  const checkPassed = result.check ? !!result.check.passed : undefined;
   if (result.kind === 'single') {
+    const working = !!result.gate?.passed && checkPassed !== false && !result.agentResult?.isError;
     const base = {
-      folder, task: taskLabel(result), workSeconds: result.gate?.passed ? result.wallClockSeconds : null, totalSeconds: result.wallClockSeconds,
-      usd: result.cost?.usd, gatePassed: !!result.gate?.passed, checkPassed: result.check ? !!result.check.passed : undefined,
+      folder, task: taskLabel(result), workSeconds: working ? result.wallClockSeconds : null, totalSeconds: result.wallClockSeconds,
+      usd: result.cost?.usd, gatePassed: !!result.gate?.passed, checkPassed,
     };
     const rows = [{ ...base, setup: 'single' }];
-    if (result.review) rows.push({ ...base, setup: 'single+review', totalSeconds: result.wallClockSeconds + (result.review.durationSeconds ?? 0), reviewPassed: !!result.review.passed, reviewSeconds: result.review.durationSeconds });
+    if (result.review) {
+      const ran = result.review.ran ?? result.review.verdict !== 'not run';
+      rows.push({ ...base, setup: 'single+review', totalSeconds: result.wallClockSeconds + (result.review.durationSeconds ?? 0), reviewPassed: ran && typeof result.review.passed === 'boolean' ? result.review.passed : undefined, reviewNotRun: !ran, reviewSeconds: result.review.durationSeconds });
+    }
     return rows;
   }
   if (result.kind === 'hydra') {
     let work = result.timeToWorkingCodeSeconds;
     if (work === undefined && fallback) work = workDoneSeconds(fallback.jobKeys?.length ? fallback.jobKeys : (result.jobs ?? []).map(job => job.key), fallback.landedAtSeconds);
-    const review = result.review ?? (() => { const check = reviewCheckOf(result.integrationGate?.checks); return check ? { passed: check.state === 'passed' } : undefined; })();
+    if (result.check && !(checkPassed && result.integrationGate?.passed)) work = null;
+    const review = result.review ?? (() => { const check = reviewCheckOf(result.integrationGate?.checks); return check ? { state: check.state } : undefined; })();
+    const reviewPassed = !review ? undefined : review.state !== undefined ? reviewOutcome(review.state) : review.passed;
     return [{
       folder, task: taskLabel(result), setup: 'hydra', workSeconds: work ?? null, totalSeconds: result.wallClockSeconds,
       usd: result.cost?.usdJobs ? result.cost.usd : undefined, gatePassed: !!result.integrationGate?.passed,
-      reviewPassed: review ? !!review.passed : undefined, fixRounds: result.fixRounds ?? (result.jobs ?? []).filter(job => isFixJob(job.key)).length,
-      checkPassed: result.check ? !!result.check.passed : undefined,
+      reviewPassed, reviewNotRun: !!review && reviewPassed === undefined, fixRounds: result.fixRounds ?? (result.jobs ?? []).filter(job => isFixJob(job.key)).length,
+      checkPassed,
     }];
   }
   return [];
@@ -246,6 +286,12 @@ export function spread(values, format) {
   const [low, high] = [Math.min(...numbers), Math.max(...numbers)];
   const text = numbers.length === 1 ? format(numbers[0]) : `${format(median(numbers))} (${format(low)}–${format(high)})`;
   return numbers.length < values.length ? `${text}; ${numbers.length} of ${values.length} runs` : text;
+}
+/** The review pass rate of a group (pure): passed of those that ran, then how many didn't run. */
+export function reviewRate(rows) {
+  const text = rate(rows.map(row => row.reviewPassed));
+  const notRun = rows.filter(row => row.reviewNotRun).length;
+  return notRun ? `${text}; ${notRun} not run` : text;
 }
 /** "k/n" of the booleans among `values` (pure); "–" when none apply. */
 export function rate(values) {
@@ -273,13 +319,14 @@ export function renderSummary(rows) {
   const lines = ['| Task | Setup | Runs | Time to working code | Total time | Cost reported | Gate passed | Review passed | Fix rounds | Check passed |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |'];
   for (const group of groups.values()) {
     const { task, setup } = group[0];
-    lines.push(`| ${task} | ${setup} | ${group.length} | ${spread(group.map(row => row.workSeconds), duration)} | ${spread(group.map(row => row.totalSeconds), duration)} | ${spread(group.map(row => row.usd), dollars)} | ${rate(group.map(row => row.gatePassed))} | ${rate(group.map(row => row.reviewPassed))} | ${spread(group.map(row => row.fixRounds), count)} | ${rate(group.map(row => row.checkPassed))} |`);
+    lines.push(`| ${task} | ${setup} | ${group.length} | ${spread(group.map(row => row.workSeconds), duration)} | ${spread(group.map(row => row.totalSeconds), duration)} | ${spread(group.map(row => row.usd), dollars)} | ${rate(group.map(row => row.gatePassed))} | ${reviewRate(group)} | ${spread(group.map(row => row.fixRounds), count)} | ${rate(group.map(row => row.checkPassed))} |`);
   }
-  lines.push('', 'Time to working code: for one agent, its run when `npm test` passed after it; for Hydra, when the last of the plan\'s own jobs landed. Total time adds the review for single+review, and for Hydra runs until the integration gate settled. A median over an even count is the mean of the middle two.', '');
+  lines.push('', 'Time to working code: for one agent, its run, when `npm test` and the hidden check passed after it and it reported no error; for Hydra, when the last of the plan\'s own jobs landed, when the integration gate and the hidden check passed. A review that didn\'t run (no reviewer, a usage limit, a timeout, or a gate failed first) isn\'t in the pass rate; how many didn\'t run follows it. Total time adds the review for single+review, and for Hydra runs until the integration gate settled. A median over an even count is the mean of the middle two.', '');
   lines.push('| Run | Task | Setup | Working code | Total | Cost | Gate | Review | Fix rounds | Check |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');
   const yes = value => value === undefined ? '–' : value ? 'passed' : 'failed';
+  const reviewed = row => row.reviewNotRun ? 'not run' : yes(row.reviewPassed);
   for (const group of groups.values()) for (const row of group) {
-    lines.push(`| ${row.folder} | ${row.task} | ${row.setup} | ${typeof row.workSeconds === 'number' ? duration(row.workSeconds) : '–'} | ${duration(row.totalSeconds ?? 0)} | ${row.usd !== undefined ? dollars(row.usd) : '–'} | ${yes(row.gatePassed)} | ${yes(row.reviewPassed)} | ${row.fixRounds ?? '–'} | ${yes(row.checkPassed)} |`);
+    lines.push(`| ${row.folder} | ${row.task} | ${row.setup} | ${typeof row.workSeconds === 'number' ? duration(row.workSeconds) : '–'} | ${duration(row.totalSeconds ?? 0)} | ${row.usd !== undefined ? dollars(row.usd) : '–'} | ${yes(row.gatePassed)} | ${reviewed(row)} | ${row.fixRounds ?? '–'} | ${yes(row.checkPassed)} |`);
   }
   return lines.join('\n') + '\n';
 }

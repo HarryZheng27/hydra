@@ -3,22 +3,23 @@
 // needs a Hydra window open on its repository (the recording is made there). Nothing here opens a window itself.
 //
 //   node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>]
-//   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--fixture <name>] [--task <plan>] [--minutes 120] [--usd 60] [--hydra "<command>"] [--plan-store <plans.json>]
-//   node scripts/benchmark.mjs single --repo <dir>/single [--fixture <name>] [--task <plan>] [--agent claude|codex] [--minutes 120] [--command "<agent command>"] [--prompt <file>] [--gate "<command>"|none]
+//   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--fixture <name>] [--task <plan>] [--minutes 120] [--usd 80] [--hydra "<command>"] [--plan-store <plans.json>]
+//   node scripts/benchmark.mjs single --repo <dir>/single [--fixture <name>] [--task <plan>] [--agent claude|codex] [--minutes 120] [--claude <path>] [--command "<agent command>"] [--prompt <file>] [--gate "<command>"|none]
 //   node scripts/benchmark.mjs review --results <dir> [--codex <path>] [--claude <path>] [--base <commit>] [--reviewer-command "<command>"]
+//     (exits 1 when the review didn't run, and 3 when a usage limit stopped it)
 //   node scripts/benchmark.mjs summarize --runs <folders or globs, comma-separated> [--out <file>] [--plan-store <plans.json>]
 //   node scripts/benchmark.mjs publish --results <dir> [--label <text>] [--notes <text>]
 //   node scripts/benchmark.mjs swebench select|prepare|predictions|submit … (scripts/benchmark-swebench.mjs)
-import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   defaultFixture, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, renderSummary, runRows,
-  summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReview,
+  singleAllowedTools, singleClaudeArgs, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReview,
 } from './benchmark-lib.mjs';
 import { swebench } from './benchmark-swebench.mjs';
+import { run } from './benchmark-run.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -30,23 +31,8 @@ function args(argv) {
   }
   return { command: rest[0], flags, rest: rest.slice(1) };
 }
-const quote = value => /[\s()"&|<>^]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 const commandLine = text => text.match(/"[^"]*"|\S+/g).map(part => part.replace(/^"|"$/g, ''));
 
-/** Runs a command without a window, optionally feeding stdin; resolves with its exit code and output. */
-function run(command, argv, { cwd, input, timeoutMs, shell = process.platform === 'win32' } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(shell ? [command, ...argv].map(quote).join(' ') : command, shell ? [] : argv, { cwd, shell, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '', timedOut = false;
-    child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
-    const timer = timeoutMs ? setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs) : undefined;
-    child.on('error', reject);
-    child.on('close', code => { if (timer) clearTimeout(timer); resolve({ code, stdout, stderr, timedOut }); });
-    // A command that exits without reading its input (git, say) closes the pipe first: that's not an error here.
-    child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
-    child.stdin.end(input ?? '');
-  });
-}
 async function git(argv, cwd) {
   const result = await run('git', argv, { cwd, shell: false });
   if (result.code !== 0) throw new Error(`git ${argv[0]} failed in ${cwd}: ${result.stderr.trim()}`);
@@ -127,7 +113,7 @@ async function hydra(flags) {
   const cli = (...argv) => run(command, [...prefix, ...argv], { cwd: repo });
   const status = await cli('status', '--json');
   if (status.code !== 0) throw new Error(`hydra status answered ${status.code}: ${status.stderr.trim() || status.stdout.trim()}\nOpen ${repo} in Hydra (and trust it) first.`);
-  const minutes = Number(flags.minutes ?? 120), usd = Number(flags.usd ?? 60), poll = Number(flags.poll ?? 10) * 1000;
+  const minutes = Number(flags.minutes ?? 120), usd = Number(flags.usd ?? 80), poll = Number(flags.poll ?? 10) * 1000;
   const started = now();
   const created = await cli('plan', 'run', fixture.task, '--unattended', '--minutes', String(minutes), '--usd', String(usd), '--json');
   if (created.code !== 0) throw new Error(`hydra plan run failed (${created.code}): ${created.stderr.trim()}`);
@@ -173,7 +159,7 @@ async function hydra(flags) {
 }
 
 const agents = {
-  claude: { command: 'claude', args: ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash(npm test)', 'Bash(node --test)'] },
+  claude: { command: 'claude' },
   codex: { command: 'codex', args: ['exec', '--json', '-s', 'workspace-write', '-c', "approval_policy='never'", '-'] },
 };
 
@@ -182,6 +168,20 @@ async function briefFor(fixture) {
   const prompt = path.join(fixture.dir, 'prompt.md');
   if (fixture.plans.length === 1 && await exists(prompt)) return fs.readFile(prompt, 'utf8');
   return taskFromPlan(await readJson(path.join(fixture.dir, '.hydra', 'plans', `${fixture.task}.json`)));
+}
+
+/**
+ * The single Claude Code agent's isolation, like a head's: a settings file turning off every user plugin (the list
+ * heads turn off, #260, from Hydra's own code), an empty MCP config with --strict-mcp-config, and the allowed tools.
+ * Both files go in the run folder, beside the repository, so the agent never commits them.
+ */
+async function claudeIsolation(out) {
+  const { userClaudePlugins } = await hydraModule();
+  const settings = singleSettings(await userClaudePlugins(process.env));
+  const settingsFile = path.join(out, 'single-settings.json'), mcpConfigFile = path.join(out, 'single-mcp.json');
+  await fs.writeFile(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+  await fs.writeFile(mcpConfigFile, JSON.stringify({ mcpServers: {} }) + '\n');
+  return { args: singleClaudeArgs({ settingsFile, mcpConfigFile }), pluginsOff: Object.keys(settings.enabledPlugins ?? {}).length };
 }
 
 async function single(flags) {
@@ -194,11 +194,21 @@ async function single(flags) {
   const fixture = flags.prompt ? undefined : await fixtureOf(flags, out);
   const brief = flags.prompt ? await fs.readFile(path.resolve(flags.prompt), 'utf8') : await briefFor(fixture);
   const gateCommand = flags.gate ? (flags.gate === 'none' ? undefined : commandLine(flags.gate)) : fixture ? ['npm', 'test'] : undefined;
+  // --command replaces the agent's whole command line, isolation included (a CLI installed elsewhere, or a stand-in in
+  // tests); the task still goes to stdin.
+  const custom = flags.command ? commandLine(flags.command) : undefined;
+  let spec, isolation;
+  if (custom) spec = { command: custom[0], args: custom.slice(1) };
+  else if (agent === 'claude') {
+    // --claude: where Claude Code is (a path, or a command line), when it isn't `claude` on PATH; the isolation still applies.
+    const [command, ...prefix] = flags.claude ? commandLine(flags.claude) : [agents.claude.command];
+    const isolated = await claudeIsolation(out);
+    spec = { command, args: [...prefix, ...isolated.args] };
+    isolation = { pluginsOff: isolated.pluginsOff, strictMcp: true, allowedTools: [...singleAllowedTools] };
+  }
+  else spec = agents[agent];
   console.log(`Running ${agent} alone on ${repo} (up to ${minutes} minutes)…`);
   const started = now();
-  // --command replaces the agent's command line (a CLI installed elsewhere, or a stand-in in tests); the task still goes to stdin.
-  const custom = flags.command ? commandLine(flags.command) : undefined;
-  const spec = custom ? { command: custom[0], args: custom.slice(1) } : agents[agent];
   const result = await run(spec.command, spec.args, { cwd: repo, input: brief, timeoutMs: minutes * 60_000 });
   const wallClockSeconds = Math.round((now() - started) / 1000);
   // An agent that never ran (not found, not signed in) leaves the fixture untouched, which still passes its own gate:
@@ -214,21 +224,26 @@ async function single(flags) {
   }
   const gate = gateCommand ? await run(gateCommand[0], gateCommand.slice(1), { cwd: repo, timeoutMs: 10 * 60_000 }) : { code: null, stdout: 'No gate ran.', stderr: '' };
   const results = summarizeSingle({ agent, wallClockSeconds: result.timedOut ? minutes * 60 : wallClockSeconds, exitCode: result.code, gatePassed: gate.code === 0, gateOutput: gate.stdout + gate.stderr, agentOutput, codexUsage, task: fixture?.task, fixture: fixture?.name, startedAt: new Date(started).toISOString() });
+  if (result.timedOut) results.timedOut = true;
+  if (isolation) results.isolation = isolation;
   const check = fixture ? await runCheck(fixture, repo) : undefined;
   if (check) results.check = check;
   await fs.writeFile(path.join(out, 'single-results.json'), JSON.stringify(results, null, 2) + '\n');
   console.log(`${JSON.stringify(results, null, 2)}\n\nWrote ${path.join(out, 'single-results.json')}.`);
+  if (results.agentResult?.isError) console.error(`The agent reported an error (${results.agentResult.subtype ?? 'no subtype'}): the run is recorded, with no time to working code.`);
 }
 
 /**
- * Hydra's review code, bundled from its source (scripts/benchmark-review.ts) with esbuild, a devDependency, into
- * .bench/.build, then loaded: the single agent's result gets exactly the review a plan's integration gate runs.
+ * Hydra's own code the harness uses (scripts/benchmark-review.ts: the integration gate's review, and the user plugin
+ * list heads turn off), bundled from its source with esbuild, a devDependency, into .bench/.build, then loaded.
  */
-async function reviewModule() {
+let hydraBundle;
+async function hydraModule() {
+  if (hydraBundle) return hydraBundle;
   const { build } = await import('esbuild');
   const outfile = path.join(root, '.bench', '.build', 'benchmark-review.cjs');
   await build({ entryPoints: [path.join(root, 'scripts', 'benchmark-review.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile, external: ['vscode'], logLevel: 'error' });
-  return createRequire(import.meta.url)(outfile);
+  return (hydraBundle = createRequire(import.meta.url)(outfile));
 }
 
 async function review(flags) {
@@ -238,7 +253,8 @@ async function review(flags) {
   const single = await readJson(resultsFile);
   const repo = path.resolve(flags.repo ?? path.join(out, 'single'));
   const fixture = await fixtureOf({ ...flags, fixture: flags.fixture ?? single.fixture, task: flags.task ?? single.task }, out);
-  // The plan gives the reviewer its task: the fixture's, or with --fixture none the repository's own.
+  // The plan gives the reviewer its task, and the gates come from the fixture, as Hydra reads them from the lead
+  // folder: never from the repository under review. With --fixture none, both come from the repository.
   const plan = await readJson(path.join(fixture.dir ?? repo, '.hydra', 'plans', `${fixture.task}.json`));
   // The review sees base..HEAD, as a plan's does; work the agent left uncommitted is committed first, and that's recorded.
   let committedLeftovers = false;
@@ -249,11 +265,11 @@ async function review(flags) {
   }
   const base = flags.base ?? (await git(['rev-list', '--max-parents=0', 'HEAD'], repo)).trim().split('\n').pop();
   const head = (await git(['rev-parse', 'HEAD'], repo)).trim();
-  const { reviewRepository } = await reviewModule();
+  const { reviewRepository } = await hydraModule();
   const logDirectory = await freshPath(out, 'single-review');
   console.log(`Reviewing ${repo} (${base.slice(0, 12)}..${head.slice(0, 12)}) with the gates a plan's integration gate runs…`);
   const reviewed = await reviewRepository({
-    repo, base, planTitle: plan.title, planBrief: plan.brief, logDirectory,
+    repo, gatesFolder: fixture.dir ?? repo, base, planTitle: plan.title, planBrief: plan.brief, logDirectory,
     paths: { ...(flags.codex ? { codex: path.resolve(flags.codex) } : {}), ...(flags.claude ? { claude: path.resolve(flags.claude) } : {}) },
     ...(flags['reviewer-command'] ? { reviewerCommand: commandLine(flags['reviewer-command']) } : {}),
     log: line => console.log(line),
@@ -262,6 +278,13 @@ async function review(flags) {
   await fs.writeFile(path.join(out, 'single-review.json'), JSON.stringify({ ...summary, logs: path.basename(logDirectory) }, null, 2) + '\n');
   await fs.writeFile(resultsFile, JSON.stringify(withReview(single, summary), null, 2) + '\n');
   console.log(`\n${JSON.stringify(summary, null, 2)}\n\nWrote ${path.join(out, 'single-review.json')} and added the review to single-results.json.`);
+  // A review that didn't run is recorded as not run, and the command fails so a run of many notices; a usage limit
+  // gets its own exit code (3), since it means stopping, not retrying.
+  if (!summary.ran) {
+    const error = new Error(`${summary.usageLimit ? 'USAGE LIMIT: ' : ''}The review didn't run: ${summary.notRunReason}`);
+    error.exitCode = summary.usageLimit ? 3 : 1;
+    throw error;
+  }
 }
 
 /** Folders matching a path with `*` or `?` in any segment (directories only). */
@@ -318,4 +341,4 @@ async function publish(flags) {
 const { command, flags, rest } = args(process.argv.slice(2));
 const commands = { prepare, hydra, single, review, summarize, publish, swebench: (options, extra) => swebench(options, extra, { root, run, git }) };
 if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish|swebench [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
-else commands[command](flags, rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; });
+else commands[command](flags, rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = error?.exitCode ?? 1; });

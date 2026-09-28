@@ -7,10 +7,17 @@ import { integrationGates } from '../src/core/integration';
 import { findProvider } from '../src/core/providers';
 import type { JobCheckResult } from '../src/core/jobs';
 import type { Provider } from '../src/core/model';
+// The single agent runs with the plugins a head turns off (#260) turned off too: the same list, from the same code.
+export { userClaudePlugins } from '../src/core/confineFiles';
 
 export interface BenchmarkReviewOptions {
   /** The single agent's repository; the gates run here and the reviewer reads it. */
   repo: string;
+  /**
+   * Where .hydra/gates.json is read from: the fixture, as Hydra reads a plan's gates from the lead folder, never the
+   * repository under review, whose agent could have changed them. Defaults to `repo`.
+   */
+  gatesFolder?: string;
   /** Where the work started: the review sees base..HEAD. */
   base: string;
   /** The plan the single agent was given, for the reviewer's task, as a plan's integration review has it. */
@@ -45,7 +52,7 @@ export async function providerExecutable(provider: Provider, configured?: string
 export async function reviewRepository(options: BenchmarkReviewOptions): Promise<BenchmarkReview> {
   const now = options.now ?? Date.now;
   const started = now();
-  const config = await loadGates(options.repo);
+  const config = await loadGates(options.gatesFolder ?? options.repo);
   const { gates, notRun } = integrationGates(config, true);
   const stand = options.reviewerCommand;
   const runtime: Partial<GateRuntime> = {

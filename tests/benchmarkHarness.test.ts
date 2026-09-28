@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { reviewRepository } from '../scripts/benchmark-review';
 // @ts-expect-error: a plain .mjs module with no type declarations.
-import { fixturePath, pickTask, taskLabel, observePlan, summarizeHydra, workDoneSeconds, landingFromStore, parseCheckOutput, summarizeReview, withReview, runRows, renderSummary, spread, rate, median, globSegment, isFixJob } from '../scripts/benchmark-lib.mjs';
+import { fixturePath, pickTask, taskLabel, observePlan, summarizeHydra, summarizeSingle, workDoneSeconds, landingFromStore, parseCheckOutput, summarizeReview, withReview, runRows, renderSummary, spread, rate, reviewRate, median, globSegment, isFixJob, singleSettings, singleClaudeArgs, singleAllowedTools, usageLimited } from '../scripts/benchmark-lib.mjs';
 
 /**
  * O9 (docs/Benchmark.md): the harness's review of a single agent's result and its summary of many runs, without
@@ -33,6 +33,7 @@ async function singleRepo(out: string, { commitWork }: { commitWork: boolean }):
   await mkdir(path.join(repo, '.hydra'), { recursive: true });
   await writeFile(path.join(repo, '.hydra', 'gates.json'), JSON.stringify({ gates: [{ id: 'test', type: 'command', required: true, command: [process.execPath, '-e', 'process.exit(0)'] }] }));
   await writeFile(path.join(repo, 'total.js'), 'module.exports = cents => cents;\n');
+  await writeFile(path.join(repo, 'package.json'), JSON.stringify({ scripts: { test: 'node --version' } }));
   git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.name', 'Test'); git(repo, 'config', 'user.email', 'test@hydra.invalid');
   git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'fixture');
   const base = git(repo, 'rev-parse', 'HEAD');
@@ -62,7 +63,9 @@ test('the review module runs the integration gate\'s checks on a repository: the
 test('benchmark.mjs review commits what the agent left, reviews base..HEAD, and adds the verdict and timing to the single results', async () => {
   const out = await mkdtemp(path.join(tmpdir(), 'hydra-bench-'));
   try {
-    await singleRepo(out, { commitWork: false });
+    const { repo } = await singleRepo(out, { commitWork: false });
+    // The agent changed its repository's gates to one that fails: the review must use the fixture's (npm test) instead.
+    await writeFile(path.join(repo, '.hydra', 'gates.json'), JSON.stringify({ gates: [{ id: 'test', type: 'command', required: true, command: [process.execPath, '-e', 'process.exit(1)'] }] }));
     const single = { version: 1, kind: 'single', fixture: 'shop', task: 'shop-features', agent: 'claude', wallClockSeconds: 300, agentExitCode: 0, gate: { passed: true, outputTail: '' }, cost: { usd: 2 } };
     await writeFile(path.join(out, 'single-results.json'), JSON.stringify(single));
     const ran = await node([script, 'review', '--results', out, '--reviewer-command', `"${process.execPath}" "${fakeReviewer}"`]);
@@ -77,13 +80,33 @@ test('benchmark.mjs review commits what the agent left, reviews base..HEAD, and 
     assert.deepEqual(review.checks.map((check: { id: string; state: string }) => [check.id, check.state]), [['test', 'passed'], ['rigor-review', 'passed']]);
     assert.ok((await readdir(out)).includes(review.logs), 'the reviewer\'s prompt and reply are kept');
     const updated = JSON.parse(await readFile(path.join(out, 'single-results.json'), 'utf8'));
-    assert.deepEqual(updated.review, { verdict: 'pass', passed: true, gatesPassed: true, durationSeconds: review.durationSeconds, reviewer: 'codex', findings: { blocker: 0, major: 0, minor: 0 } });
+    assert.deepEqual(updated.review, { verdict: 'pass', passed: true, ran: true, gatesPassed: true, durationSeconds: review.durationSeconds, reviewer: 'codex', findings: { blocker: 0, major: 0, minor: 0 } });
     assert.equal(updated.cost.usd, 2, 'the rest of the results are kept');
     assert.match(await readFile(path.join(out, 'fake-reviewer-prompt.md'), 'utf8'), /Plan "Shop features": every job's work together/, 'the plan comes from the fixture the results name');
+    assert.equal(review.ran, true);
     const missing = await node([script, 'review', '--results', path.join(out, 'nowhere')]);
     assert.equal(missing.code, 1);
     assert.match(missing.stderr, /no single-results\.json/);
   } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('benchmark.mjs review: a review that didn\'t run is recorded as not run, never failed, and the command fails; a usage limit exits 3', async () => {
+  for (const [mode, exitCode, limited] of [['limit', 3, true], ['crash', 1, false]] as const) {
+    const out = await mkdtemp(path.join(tmpdir(), 'hydra-bench-'));
+    try {
+      await singleRepo(out, { commitWork: true });
+      await writeFile(path.join(out, 'single-results.json'), JSON.stringify({ version: 1, kind: 'single', fixture: 'shop', task: 'shop-features', agent: 'claude', wallClockSeconds: 300, gate: { passed: true }, cost: {} }));
+      const ran = await node([script, 'review', '--results', out, '--reviewer-command', `"${process.execPath}" "${fakeReviewer}" ${mode}`]);
+      assert.equal(ran.code, exitCode, mode + ': ' + ran.stderr);
+      assert.match(ran.stderr, limited ? /^USAGE LIMIT: The review didn't run/ : /^The review didn't run/);
+      const review = JSON.parse(await readFile(path.join(out, 'single-review.json'), 'utf8'));
+      assert.deepEqual([review.verdict, review.ran, review.usageLimit], ['not run', false, limited]);
+      const updated = JSON.parse(await readFile(path.join(out, 'single-results.json'), 'utf8'));
+      assert.equal(updated.review.passed, undefined, 'not a failure');
+      assert.equal(updated.review.ran, false);
+      assert.equal(runRows(updated, 'r')[1].reviewNotRun, true);
+    } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  }
 });
 
 test('a review summary: the verdict comes from the review check, gates pass unless a required one failed, and findings are counted by severity', () => {
@@ -100,6 +123,10 @@ test('a review summary: the verdict comes from the review check, gates pass unle
   const notRun = summarizeReview({ checks: [{ ...checks[0], state: 'failed' }, { ...checks[1], state: 'notRun', summary: 'Skipped: test failed first.', findings: undefined }], durationMs: 0, startedAt: 'x', base: 'b', head: 'h' });
   assert.equal(notRun.verdict, 'not run');
   assert.equal(notRun.gatesPassed, false);
+  assert.deepEqual([notRun.ran, notRun.notRunReason, notRun.usageLimit], [false, 'Skipped: test failed first.', false]);
+  assert.equal('passed' in withReview({ kind: 'single' }, notRun).review, false, 'no verdict is not a failed one');
+  assert.equal(usageLimited('Codex hit its usage limit (resets 5pm).'), true);
+  assert.equal(usageLimited('Codex didn\'t finish its review in 5 minutes.'), false);
 });
 
 test('fixtures: the default is bench/fixture with discounts; another fixture\'s task defaults to its only plan; labels name the fixture', () => {
@@ -210,4 +237,44 @@ test('benchmark.mjs summarize reads every run folder a glob matches, fills old H
     const none = await node([script, 'summarize', '--runs', path.join(out, 'nothing-*')]);
     assert.equal(none.code, 1);
   } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('working code needs the hidden check too, when there is one, and a single agent that reported an error has none', () => {
+  const single = { kind: 'single', task: 't', wallClockSeconds: 600, gate: { passed: true }, cost: {} };
+  assert.equal(runRows({ ...single, check: { passed: false } }, 'r')[0].workSeconds, null, 'the untouched fixture passes npm test');
+  assert.equal(runRows({ ...single, check: { passed: true } }, 'r')[0].workSeconds, 600);
+  assert.equal(runRows(single, 'r')[0].workSeconds, 600, 'results from before the check');
+  assert.equal(runRows({ ...single, check: { passed: true }, agentResult: { subtype: 'error_max_turns', isError: true } }, 'r')[0].workSeconds, null);
+  const hydra = { kind: 'hydra', task: 't', wallClockSeconds: 900, timeToWorkingCodeSeconds: 400, integrationGate: { passed: true, checks: [] }, jobs: [], cost: {} };
+  assert.equal(runRows({ ...hydra, check: { passed: false } }, 'r')[0].workSeconds, null);
+  assert.equal(runRows({ ...hydra, check: { passed: true }, integrationGate: { passed: false, checks: [] } }, 'r')[0].workSeconds, null);
+  assert.equal(runRows({ ...hydra, check: { passed: true } }, 'r')[0].workSeconds, 400);
+  const agent = summarizeSingle({ agent: 'claude', wallClockSeconds: 5, exitCode: 0, gatePassed: true, gateOutput: '', agentOutput: { subtype: 'error_during_execution', is_error: true, total_cost_usd: 1 } });
+  assert.deepEqual(agent.agentResult, { subtype: 'error_during_execution', isError: true });
+  assert.deepEqual(summarizeSingle({ agent: 'claude', wallClockSeconds: 5, exitCode: 0, gatePassed: true, gateOutput: '', agentOutput: { subtype: 'success', is_error: false } }).agentResult, { subtype: 'success', isError: false });
+});
+
+test('a review that didn\'t run is left out of the pass rate, and counted beside it, for single agents and Hydra', () => {
+  const hydra = (state: string) => runRows({ kind: 'hydra', task: 't', wallClockSeconds: 1, integrationGate: { passed: false, checks: [] }, review: { id: 'rigor-review', state }, jobs: [], cost: {} }, 'r')[0];
+  assert.deepEqual([hydra('passed').reviewPassed, hydra('failed').reviewPassed, hydra('notRun').reviewPassed, hydra('notRun').reviewNotRun], [true, false, undefined, true]);
+  const view = { plan_id: 'p', state: 'done', jobs: [], integration: { landed: [], gate: { label: 'x', checks: [{ id: 'rigor-review', kind: 'review', state: 'notRun', summary: 'Codex hit its usage limit.' }] } } };
+  assert.deepEqual(summarizeHydra({ view, wallClockSeconds: 1, passed: false }).review, { id: 'rigor-review', state: 'notRun', ran: false, usageLimit: true, summary: 'Codex hit its usage limit.' });
+  assert.equal(reviewRate([hydra('passed'), hydra('failed'), hydra('notRun')]), '1/2; 1 not run');
+  assert.equal(reviewRate([hydra('notRun')]), '–; 1 not run');
+  const markdown = renderSummary([hydra('passed'), hydra('notRun')]);
+  assert.ok(markdown.includes('| 1/1; 1 not run |'), markdown);
+  assert.ok(markdown.includes('| not run |'));
+});
+
+test('the single Claude Code agent runs isolated like a head: no user plugins, no MCP servers, and the project\'s tools allowed', () => {
+  assert.deepEqual(singleSettings(['b@market', 'a@market', 'bad id', 'a@market']), { enabledPlugins: { 'a@market': false, 'b@market': false } });
+  assert.deepEqual(singleSettings([]), {});
+  const args = singleClaudeArgs({ settingsFile: 's.json', mcpConfigFile: 'm.json' });
+  assert.deepEqual(args.slice(0, 5), ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits']);
+  assert.equal(args[args.indexOf('--settings') + 1], 's.json');
+  assert.ok(args.includes('--strict-mcp-config'));
+  assert.equal(args[args.indexOf('--mcp-config') + 1], 'm.json');
+  const allowed = args[args.indexOf('--allowedTools') + 1]!.split(',');
+  for (const tool of ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(tail:*)']) assert.ok(allowed.includes(tool), tool);
+  assert.deepEqual(allowed, [...singleAllowedTools]);
 });

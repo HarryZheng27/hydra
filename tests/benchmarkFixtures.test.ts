@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, access, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { planFromLeadInput, findCycle, writeScopeOverlap, maxPlanJobs } from '../src/core/plans';
@@ -21,9 +21,9 @@ const fixturesDir = path.join(root, 'bench', 'fixtures');
 const script = path.join(root, 'scripts', 'benchmark.mjs');
 const expected = ['cli-toolkit', 'kanban-app', 'module-refactor'];
 
-function node(args: string[], cwd = root): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function node(args: string[], cwd = root, env: NodeJS.ProcessEnv = process.env): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd, windowsHide: true });
+    const child = spawn(process.execPath, args, { cwd, windowsHide: true, env });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', reject); child.on('close', code => resolve({ code, stdout, stderr }));
@@ -132,6 +132,28 @@ test('benchmark.mjs prepare --fixture copies the fixture without its prompt and 
     const unknown = await node([script, 'prepare', '--fixture', 'nope', '--out', path.join(out, 'x')]);
     assert.equal(unknown.code, 1);
     assert.match(unknown.stderr, /no fixture nope/);
+  } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('benchmark.mjs single runs Claude Code isolated like a head: user plugins off, no MCP servers, the project\'s tools allowed', async () => {
+  const out = await mkdtemp(path.join(tmpdir(), 'hydra-bench-'));
+  try {
+    assert.equal((await node([script, 'prepare', '--fixture', 'cli-toolkit', '--out', out])).code, 0);
+    const config = path.join(out, 'claude-config');
+    await mkdir(path.join(config, 'plugins'), { recursive: true });
+    await writeFile(path.join(config, 'settings.json'), JSON.stringify({ enabledPlugins: { 'helper@market': true } }));
+    await writeFile(path.join(config, 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'other@market': [] } }));
+    const fake = path.join(root, 'tests', 'fixtures', 'bench', 'fake-agent.cjs');
+    const ran = await node([script, 'single', '--repo', path.join(out, 'single'), '--claude', `"${process.execPath}" "${fake}"`], root, { ...process.env, CLAUDE_CONFIG_DIR: config });
+    assert.equal(ran.code, 0, ran.stderr);
+    const args = JSON.parse(await readFile(path.join(out, 'fake-agent-args.json'), 'utf8')) as string[];
+    const settings = JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'));
+    assert.deepEqual(settings, { enabledPlugins: { 'helper@market': false, 'other@market': false } });
+    assert.ok(args.includes('--strict-mcp-config'));
+    assert.deepEqual(JSON.parse(await readFile(args[args.indexOf('--mcp-config') + 1]!, 'utf8')), { mcpServers: {} });
+    assert.match(args[args.indexOf('--allowedTools') + 1]!, /Bash\(npm:\*\),Bash\(node:\*\),Bash\(git:\*\)/);
+    const results = JSON.parse(await readFile(path.join(out, 'single-results.json'), 'utf8'));
+    assert.equal(results.isolation.pluginsOff, 2);
   } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 

@@ -47,7 +47,7 @@ Three tasks of about an hour for one strong agent, each splitting into a wide st
 | `cli-toolkit` | A command-line toolkit's subcommands: `csv-stats`, `json-query`, `wrap`, `date-diff`, `checksum`, `table`, `case` | 7 at once (one per subcommand), then `cli` (argument parsing, dispatch, help, exit codes) |
 | `module-refactor` | Six billing modules that each carry private copies of money, date, CSV and validation helpers, which differ in small, tested ways: extract a shared core and move every module onto it, behaviour unchanged | 3 core jobs at once, then 6 module moves at once, then `finish` (a core index, a structure test and the README) |
 
-Each plan leaves room for Hydra's two rounds of integration fixes within its 12-job limit and the default $60 budget ($5 a job).
+Each plan leaves room for Hydra's two rounds of integration fixes within its 12-job limit and the default $80 budget (Hydra refuses to add a job when the job count times $5 would pass the budget).
 
 **The hidden check.** `bench/fixtures/<name>/check.mjs` is never copied into the repositories the agents work in. After each setup, the harness runs `node check.mjs <result>`: for the single agent on its repository, and for Hydra on a clone of the plan's integration branch at its tip (`hydra-final`, beside the repository). It exercises what `SPEC.md` specifies (importing the modules, calling the API, running the command line) and ends with a JSON line of how many checks passed; the result goes into the results file as `check`. For `module-refactor` it also runs the modules' original tests, taken from the fixture, on the result's code, so an edited test can't pass for them.
 
@@ -56,11 +56,11 @@ Each plan leaves room for Hydra's two rounds of integration fixes within its 12-
 ## What is measured
 
 - **Wall-clock time:** from starting the plan until its integration gate has a result, against the single agent's own run.
-- **Time to working code:** for Hydra, when the last of the plan's own jobs landed on the integration branch (fix jobs don't count), from Hydra's plan store when it can be read (`landingTimesFrom: "plan store"`), else as watching the plan saw it; for the single agent, its run, when `npm test` passed after it.
+- **Time to working code:** for Hydra, when the last of the plan's own jobs landed on the integration branch (fix jobs don't count), from Hydra's plan store when it can be read (`landingTimesFrom: "plan store"`), else as watching the plan saw it; for the single agent, its run, when `npm test` passed after it and it reported no error (Claude Code's `is_error` and `subtype` are kept as `agentResult`). With a hidden check, working code also needs the check to pass, for both setups: every fixture passes `npm test` untouched, so a run that stopped halfway would otherwise get a time.
 - **Gates at the end:**
   - for Hydra, the integration gate's result on every job's work merged together;
   - for the single agent, `npm test` on its result.
-- **The review:** Hydra's integration gate includes one review of the whole change by the other agent. `benchmark.mjs review` runs the same review on the single agent's result, so both have a verdict (below).
+- **The review:** Hydra's integration gate includes one review of the whole change by the other agent. `benchmark.mjs review` runs the same review on the single agent's result, so both have a verdict (below). A review that didn't run (no reviewer, a usage limit, a timeout, or a gate failed before it) is "not run", never a failure: `summarize` leaves it out of the pass rate and counts it beside it.
 - **Fix rounds:** the jobs a failed integration gate added to fix what it found (`integration-fix-<n>`).
 - **The hidden check:** how many of the fixture's acceptance checks passed.
 - **Conflicts:**
@@ -79,14 +79,28 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
 1. `node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>]`: makes two fresh repositories of the fixture under `.bench/run-<time>/` (`hydra` and `single`), each with one commit, leaving out `prompt.md` and `check.mjs`. It records the fixture and task in `benchmark.json` in the run folder, so the next commands needn't be told again.
 2. Open the `hydra` folder in Hydra, trust it, and start recording. From a shell that runs inside a Hydra window, open it with `scripts/bench-open.ps1` (below).
 3. `node scripts/benchmark.mjs hydra --repo .bench/run-<time>/hydra`:
-   - runs `hydra plan run <task> --unattended` (`--task discounts` by default for `shop`, or the fixture's only plan; with a 120-minute and $60 budget by default: `--minutes`, `--usd`);
+   - runs `hydra plan run <task> --unattended` (`--task discounts` by default for `shop`, or the fixture's only plan; with a 120-minute and $80 budget by default: `--minutes`, `--usd`);
    - watches the plan until its integration gate has a result;
    - reads when each job landed from Hydra's plan store (`%APPDATA%\Hydra\User\globalStorage\…\plans\plans.json`, or `--plan-store <file>`);
    - runs the fixture's hidden check on the integration branch's tip;
    - writes `hydra-results.json` and the plan's report.
-4. `node scripts/benchmark.mjs single --repo .bench/run-<time>/single`: runs one agent (`--agent claude` by default, or `codex`) on the same task's brief, then `npm test` and the hidden check, and writes `single-results.json`.
+4. `node scripts/benchmark.mjs single --repo .bench/run-<time>/single`: runs one agent (`--agent claude` by default, or `codex`) on the same task's brief, then `npm test` and the hidden check, and writes `single-results.json`. The agent, `npm test` and the check each have a time limit (`--minutes`, 10 minutes, 5 minutes); past it the whole process tree is killed, and something a finished command left running can't hold the run open.
 5. `node scripts/benchmark.mjs review --results .bench/run-<time>`: the single agent's review (below).
 6. `node scripts/benchmark.mjs publish --results .bench/run-<time> --label "<what changed>"`: adds the run to `bench/results.json` and to the results below. Review the diff and commit it, with a link to the recording in `--notes` if there is one.
+
+### The single agent
+
+The single Claude Code agent runs as isolated as a head, so the two setups work under the same conditions:
+
+```
+claude -p --output-format json --permission-mode acceptEdits --settings <run>/single-settings.json --strict-mcp-config --mcp-config <run>/single-mcp.json --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm:*),Bash(node:*),Bash(git:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(mkdir:*)
+```
+
+- `single-settings.json` turns off every one of your Claude Code plugins, the same list a head turns off (`userClaudePlugins`, from Hydra's own code); `single-mcp.json` has no MCP servers, and `--strict-mcp-config` keeps out your own.
+- The brief goes to stdin. The two files are written beside the repository, so the agent never commits them; `single-results.json` records the isolation.
+- Unlike a head, the single agent runs **unsandboxed** in the run folder: its allowed commands run as you. Run it only on benchmark folders.
+- `--claude <path>` points at Claude Code when it isn't `claude` on `PATH` (for example `%USERPROFILE%\.local\bin\claude.exe`); the isolation still applies.
+- `--command "<command line>"` replaces all of this (a CLI installed elsewhere, other flags); the brief still goes to stdin. A Codex agent (`--agent codex`) runs as `codex exec --json -s workspace-write`.
 
 ### Opening a benchmark folder: `scripts/bench-open.ps1`
 
@@ -96,7 +110,7 @@ A window opened from a shell inside a Hydra window inherits that shell's `ELECTR
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bench-open.ps1 -Folder .bench/run-<time>/hydra -WaitSeconds 120
 ```
 
-With `-WaitSeconds`, it then runs `hydra status` in the folder (from the same clean environment) until a Hydra window owns it, and fails if none does in time. `-Hydra <path>` points at another `hydra.cmd`.
+With `-WaitSeconds`, it then runs `hydra status` in the folder (from the same clean environment) until a Hydra window owns it, and fails if none does in time. A `hydra status` that hangs is killed after 30 seconds, and the next try starts. `-Hydra <path>` points at another `hydra.cmd`.
 
 ### The single agent's review: `benchmark.mjs review`
 
@@ -104,7 +118,8 @@ With `-WaitSeconds`, it then runs `hydra status` in the folder (from the same cl
 
 - The review sees `base..HEAD`, where the base is the repository's first commit (`--base` to change it). Work the agent left uncommitted is committed first, and `committedLeftovers` says so.
 - It writes `single-review.json` (the verdict, every check with its duration, the findings, and where the reviewer's prompt and reply are kept) and adds `review` to `single-results.json`: the verdict, whether it passed, its duration and the findings by severity.
-- Like any review gate, it runs for at most 5 minutes; a reviewer that can't run leaves the verdict "not run" with the reason.
+- The gates are read from the fixture, as Hydra reads a plan's gates from the lead folder, never from the repository under review, whose agent could have changed them.
+- Like any review gate, it runs for at most 5 minutes. A review that doesn't run is recorded with `verdict: "not run"`, `ran: false` and the reason, and the command then exits 1, or 3 when a usage limit stopped it (`usageLimit: true`), so a night of runs notices and stops.
 
 ### Repeat runs and summaries: `benchmark.mjs summarize`
 

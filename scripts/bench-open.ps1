@@ -52,8 +52,17 @@ $deadline = (Get-Date).AddSeconds($WaitSeconds)
 while ((Get-Date) -lt $deadline) {
   Start-Sleep -Seconds 3
   $status = Start-Clean 'status' $true
-  $text = $status.StandardOutput.ReadToEnd() + $status.StandardError.ReadToEnd()
-  [void]$status.WaitForExit(30000)
+  # Read both streams without blocking, so a `hydra status` that hangs can't hang this: it gets 30 seconds, then
+  # it and anything it started are killed and the next try comes.
+  $stdoutTask = $status.StandardOutput.ReadToEndAsync()
+  $stderrTask = $status.StandardError.ReadToEndAsync()
+  if (-not $status.WaitForExit(30000)) {
+    & "$env:SystemRoot\System32\taskkill.exe" /PID $status.Id /T /F 2>&1 | Out-Null
+    continue
+  }
+  $text = ''
+  if ($stdoutTask.Wait(5000)) { $text += $stdoutTask.Result }
+  if ($stderrTask.Wait(5000)) { $text += $stderrTask.Result }
   if ($status.ExitCode -eq 0 -and $text -match 'Hydra window \d+ owns') { Write-Output $text.Trim(); exit 0 }
 }
 Write-Error "No Hydra window owns $Folder after $WaitSeconds seconds. Is the folder trusted?"
