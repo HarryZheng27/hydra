@@ -645,7 +645,7 @@ test('integrationFixJob (O3): a failed gate becomes one fix job with its finding
 test('O3 acceptance: a failed integration gate adds a fix job from the branch tip with the findings, and the gate passes once the fix lands', async () => {
   const f = await repoFixture(renameFixture);
   const gated: Plan[] = [];
-  const p = await planFixture(f, [headJob('rename'), headJob('caller')], { runGate: commandGate(f, [process.execPath, 'check.js']), fixRounds: 2, hooks: { onGateDone: plan => gated.push(plan) } });
+  const p = await planFixture(f, [headJob('rename', { writeScope: ['src/math.js'] }), headJob('caller', { writeScope: ['src/use.js'] })], { runGate: commandGate(f, [process.execPath, 'check.js']), fixRounds: 2, hooks: { onGateDone: plan => gated.push(plan) } });
   try {
     await p.runner.run(p.plan.id);
     await p.finish('rename', await f.commitFrom(f.base, renamed, 'rename add to sum'));
@@ -670,20 +670,25 @@ test('O3 acceptance: a failed integration gate adds a fix job from the branch ti
   } finally { p.dispose(); await f.close(); }
 });
 
-test('O3: automatic fixes stop after their rounds, leaving the failed gate for you', async () => {
+test('O3: automatic fixes run round after round alongside scoped jobs, then stop, leaving the failed gate for you', async () => {
   const f = await repoFixture({ 'README.md': 'hi\n' });
   const gated: Plan[] = [];
   const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [failedCheck()], configured: 'file' });
-  const p = await planFixture(f, [headJob('a')], { runGate: failing, fixRounds: 1, hooks: { onGateDone: plan => gated.push(plan) } });
+  // Scoped jobs, as a lead's always are: a fix may change any file, yet never collides with them (or with the fix before it).
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a.txt'] }), headJob('b', { writeScope: ['src/b.txt'] })], { runGate: failing, fixRounds: 2, hooks: { onGateDone: plan => gated.push(plan) } });
   try {
     await p.runner.run(p.plan.id);
     await p.finish('a', await f.commitFrom(f.base, { 'src/a.txt': 'a\n' }, 'a'));
+    await p.finish('b', await f.commitFrom(f.base, { 'src/b.txt': 'b\n' }, 'b'));
     await p.runner.integrate(p.plan.id);
-    assert.equal(p.startedFor('integration-fix-1').length, 1);
+    assert.equal(p.startedFor('integration-fix-1').length, 1, 'round 1, next to scoped jobs');
     await p.finish('integration-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a.txt': 'fixed?\n' }, 'try a fix'));
+    await p.runner.integrate(p.plan.id);
+    assert.equal(p.startedFor('integration-fix-2').length, 1, 'round 2, after round 1');
+    await p.finish('integration-fix-2', await f.commitFrom(p.get().integration!.tip, { 'src/b.txt': 'fixed?\n' }, 'try again'));
     const last = await p.runner.integrate(p.plan.id);
     assert.equal(last.failed, true);
-    assert.equal(p.startedFor('integration-fix-2').length, 0, 'one round only');
+    assert.equal(p.startedFor('integration-fix-3').length, 0, 'two rounds only');
     assert.equal(p.get().state, 'done');
     assert.equal(integrationSettled(p.get()), true);
     assert.equal(gated.length, 1);

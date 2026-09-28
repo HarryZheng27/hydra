@@ -337,6 +337,8 @@ export interface PlanIntegrationOptions {
    * the branch's tip with the gate's findings, and the gate runs again once it lands. Default 2; 0 turns it off.
    */
   fixRounds?(): number;
+  /** The per-head budget an unattended plan's fix job is estimated at (hydra.heads.defaultBudgetUsd). Default 5. */
+  headBudgetUsd?(): number;
 }
 /** What hydra_plan_merge (or the canvas) asked for. */
 export type PlanMergeVia = 'merge' | 'pr';
@@ -709,7 +711,7 @@ export class PlanRunner {
       const fix = current.state === 'done' ? integrationFixJob(current, record, gate.fixRounds?.()) : undefined;
       if (!fix) return updated;
       try {
-        const amended = applyPlanAmendment(current, { add: [fix] }, undefined, () => this.now());
+        const amended = applyPlanAmendment(current, { add: [fix] }, undefined, () => this.now(), gate.headBudgetUsd?.());
         fixing = fix.key;
         return { ...updated, jobs: amended.jobs, amendments: amended.amendments, state: 'running' };
       } catch (error) {

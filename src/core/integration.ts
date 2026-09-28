@@ -269,6 +269,8 @@ export const defaultIntegrationFixRounds = 2;
 /** The job key of a plan's nth automatic fix. */
 export const integrationFixKey = (round: number): string => `integration-fix-${round}`;
 const integrationFixPattern = /^integration-fix-\d+$/;
+/** A plan's automatic fix job: added only once every other job has landed, and the next only once it has, so it never runs alongside another. */
+export const isIntegrationFixKey = (key: string): boolean => integrationFixPattern.test(key);
 
 /**
  * The job that fixes what a failed integration gate found (pure; docs/Heads.md, "Landing a plan together"), or
