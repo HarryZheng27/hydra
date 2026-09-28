@@ -74,16 +74,32 @@ test('headWorkingGuidance: a Claude head with a shell hears to batch shell comma
   assert.ok(lines.some(line => /timeout/i.test(line)));
 });
 
+test('headWorkingGuidance: a Claude head with a shell hears the command shapes its read block makes Claude Code deny, and to retry simpler', () => {
+  // Measured: with blockReadsOutsideWorkingDirectories on, `cd <worktree> && … 2>&1 | tail`, `for` loops and
+  // redirects to /tmp or "$TMPDIR/…" are denied under dontAsk; the same commands without `cd`, piped to tail, run.
+  for (const hasCommandGate of [true, false]) {
+    const text = headWorkingGuidance({ provider: 'claude', shellOff: false, hasCommandGate }).join('\n');
+    assert.match(text, /already starts in your worktree: never `cd` into it/);
+    assert.match(text, /`cd` with any redirect \(even `2>&1`\)/);
+    assert.match(text, /`for`\/`while` loops/);
+    assert.match(text, /`\/tmp` or `\$VAR` paths/);
+    assert.match(text, /pipe output to `tail`/);
+    assert.match(text, /If a shell command is denied, run it again in a simpler shape.*don't give up on the shell/);
+  }
+});
+
 test('headWorkingGuidance: a Codex head has no Read/Grep/Glob tools, so only the batching advice applies to it', () => {
   const lines = headWorkingGuidance({ provider: 'codex', shellOff: false, hasCommandGate: true });
   assert.ok(lines.some(line => /batch them/.test(line)));
   assert.ok(!lines.some(line => /Read, Grep or Glob/.test(line)), 'Codex has no such tools');
+  assert.ok(!lines.some(line => /`cd`|denied/.test(line)), 'Claude Code\'s shell checks don\'t apply to Codex');
 });
 
 test('headWorkingGuidance: a Claude head with no shell hears to use Read/Grep/Glob instead, not to batch a shell it doesn\'t have', () => {
   const lines = headWorkingGuidance({ provider: 'claude', shellOff: true, hasCommandGate: true });
   assert.ok(lines.some(line => /Read, Grep or Glob/.test(line)));
   assert.ok(!lines.some(line => /batch them/.test(line)), 'nothing to batch with no shell');
+  assert.ok(!lines.some(line => /`cd`|simpler shape/.test(line)), 'no shell command shapes with no shell');
 });
 
 test('headWorkingGuidance: "run only the tests your change touches" only when a command gate actually runs the rest', () => {

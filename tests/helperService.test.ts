@@ -354,6 +354,9 @@ test('scope matching, head prompts, runner arguments and the supported CLI range
   const withContext = helperPrompt(job, undefined, 'heads', undefined, undefined, { repository: '2 tracked files:\nREADME.md\nsrc/a.ts', tests: 'Hydra runs these gates after you call hydra_done:\n- test: npm test', hasCommandGate: true });
   assert.match(withContext, /Add the thing\.\n\nRepository:\n2 tracked files:\nREADME\.md\nsrc\/a\.ts\n\nHydra runs these gates after you call hydra_done:\n- test: npm test\n\nHow to work:/);
   assert.match(withContext, /- Shell commands start slowly here.*Read, Grep or Glob/);
+  // Claude Code denies a `cd` with a redirect under the head's read block: the head hears its shell already starts in the worktree.
+  assert.match(withContext, /- Your shell already starts in your worktree: never `cd` into it\./);
+  assert.match(withContext, /- So pipe output to `tail`.*If a shell command is denied, run it again in a simpler shape/);
   assert.match(withContext, /- Run only the tests your change touches\. Hydra runs the project's full gates after hydra_done\./);
   assert.match(withContext, /- Give a slow test command a generous timeout rather than retrying it after it times out\./);
   // Only the tests section, no repository listing (a job with no baseCommit-resolved listing yet):
