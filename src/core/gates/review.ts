@@ -174,8 +174,9 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     'Reply with JSON only: no prose and no code fences, nothing before or after the object.',
     '{"verdict": "pass" | "fail", "summary": "one or two sentences", "findings": [{"file": "path/in/repo", "line": 12, "severity": "blocker" | "major" | "minor", "note": "what is wrong and why"}]}',
     '- blocker: the change is broken or unsafe: it doesn\'t do the task, breaks something that worked, loses data, or opens a security hole.',
-    '- major: a real bug, or a clear gap in what the task asked for.',
-    '- minor: style, naming, or a small improvement. Minor findings never fail a review.',
+    '- major: a real bug that people using this change would plausibly hit, or a clear gap in what the task asked for.',
+    '- minor: style, naming, a small improvement, or behaviour only at extreme or contrived inputs the task doesn\'t call for (values near numeric limits, absurd sizes or counts, malformed input nothing in the task produces), unless it loses data or opens a security hole. Minor findings never fail a review.',
+    'Judge the change against its task, not against every input imaginable: a review that can always find one more edge case never lets good work through.',
     'Say "fail" only when there is at least one blocker or major finding. Leave "findings" empty when there is nothing to report.');
   return lines.join('\n');
 }

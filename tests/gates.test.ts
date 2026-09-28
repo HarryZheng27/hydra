@@ -265,6 +265,10 @@ test('review: the exact read-only arguments, and the prompt with the diff cap, t
   assert.match(prompt, /Open each of these images to see how the app renders:\n- C:\/logs\/ui-390\.png/);
   assert.match(prompt, /## What to focus on\nSecurity first\./);
   assert.match(prompt, /Reply with JSON only/);
+  // Calibrated: a major finding is one people would plausibly hit; contrived extremes are minor, so a review can pass.
+  assert.match(prompt, /- major: a real bug that people using this change would plausibly hit/);
+  assert.match(prompt, /- minor: .*extreme or contrived inputs the task doesn't call for .*unless it loses data or opens a security hole\. Minor findings never fail a review\./);
+  assert.match(prompt, /Judge the change against its task, not against every input imaginable/);
   assert.doesNotMatch(reviewPrompt({ provider: 'codex', baseCommit: 'b'.repeat(40), diff: capDiff('+x\n'), earlier: [], screenshots: [], focus: '' }), /diff was cut|Earlier gates|Screenshots|focus on/);
   // A diff that itself contains a fence can't close the prompt's fence early.
   assert.match(reviewPrompt({ provider: 'codex', baseCommit: 'b'.repeat(40), diff: capDiff('+```js\n'), earlier: [], screenshots: [], focus: '' }), /````diff\n\+```js\n````/);
