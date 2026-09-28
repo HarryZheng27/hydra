@@ -1,0 +1,55 @@
+{
+  "title": "Shop features",
+  "brief": "Seven independent features for the shop, each in its own module with its own tests, then one job that exposes them through the API and documents them. Plain Node, CommonJS, no dependencies; prices are whole cents; every module validates its input and throws an Error with a clear message on bad input. Each feature job touches only its own two files; run `npm test` before finishing.",
+  "jobs": [
+    {
+      "key": "search",
+      "title": "Catalog search",
+      "brief": "Create src/search.js exporting `searchProducts(products, { text, minCents, maxCents, sort })`: `text` matches product names case-insensitively as a substring; `minCents`/`maxCents` are inclusive price bounds; `sort` is 'price-asc', 'price-desc' or 'name' (default: the input order). Returns a new array, never the input. Refuse a non-integer or negative bound, min above max, or an unknown sort. Add test/search.test.js covering each filter, their combination, every sort, and the refusals, using the catalog from src/catalog.js.",
+      "write_scope": ["src/search.js", "test/search.test.js"]
+    },
+    {
+      "key": "inventory",
+      "title": "Stock levels",
+      "brief": "Create src/inventory.js exporting `createInventory(levels)` (levels: { sku: count }) returning an object with `available(sku)`, `reserve(sku, quantity)` (throws when not enough stock, reserving nothing), `release(sku, quantity)` (can't release more than is reserved), and `snapshot()` returning { sku: { onHand, reserved } }. Unknown SKUs and non-positive or non-integer quantities are refused. Add test/inventory.test.js covering reserving down to zero, refusing past it, releasing, and every refusal.",
+      "write_scope": ["src/inventory.js", "test/inventory.test.js"]
+    },
+    {
+      "key": "tax",
+      "title": "Sales tax",
+      "brief": "Create src/tax.js exporting `taxFor(subtotalCents, region)` with rates: 'CA' 7.25%, 'NY' 4%, 'TX' 6.25%, 'OR' 0%. Round half up to a whole cent. Also export `regions` (the list of region codes). An unknown region or a negative or non-integer subtotal is refused. Add test/tax.test.js covering each region, rounding at the half-cent boundary, zero, and the refusals.",
+      "write_scope": ["src/tax.js", "test/tax.test.js"]
+    },
+    {
+      "key": "shipping",
+      "title": "Shipping quotes",
+      "brief": "Create src/shipping.js exporting `quoteShipping(subtotalCents, method)` for methods 'standard' ($5.99, free when the subtotal is at least $50.00), 'express' ($14.99, never free) and 'pickup' ($0). Return `{ method, cents, freeReason? }` where freeReason is 'over-50' when standard shipping was waived. Also export `methods`. Refuse an unknown method or a bad subtotal. Add test/shipping.test.js covering each method, the $50.00 boundary on both sides, and the refusals.",
+      "write_scope": ["src/shipping.js", "test/shipping.test.js"]
+    },
+    {
+      "key": "reviews",
+      "title": "Product reviews",
+      "brief": "Create src/reviews.js exporting `createReviews()` returning an object with `add(sku, { rating, text, author })` (rating a whole number 1-5; text 1-500 characters after trimming; author required), `list(sku, { page, pageSize })` (newest first, pageSize default 10, max 50), and `summary(sku)` returning { count, average } with average rounded to one decimal (null when there are none). Add test/reviews.test.js covering adding, validation, paging, ordering and the summary.",
+      "write_scope": ["src/reviews.js", "test/reviews.test.js"]
+    },
+    {
+      "key": "export",
+      "title": "Orders as CSV",
+      "brief": "Create src/export.js exporting `ordersToCsv(orders)` producing CSV with the header `id,sku,name,quantity,unit_cents,line_cents` and one row per order line, escaping per RFC 4180 (quote fields containing commas, quotes or newlines; double embedded quotes), CRLF line endings, and a trailing CRLF. An empty list gives just the header. Add test/export.test.js covering several orders and lines, every escaping case, and the empty list, using orders shaped like src/orders.js makes them.",
+      "write_scope": ["src/export.js", "test/export.test.js"]
+    },
+    {
+      "key": "receipt",
+      "title": "Plain-text receipts",
+      "brief": "Create src/receipt.js exporting `renderReceipt(order, { taxCents, shippingCents })`: a fixed-width, 40-column plain-text receipt with one line per order line (name left, quantity and line total right-aligned), then Subtotal, Tax, Shipping and Total lines, amounts as $X.XX right-aligned. Names longer than fit are cut with an ellipsis. Add test/receipt.test.js checking the exact output for a small order, the width of every line, truncation, and totals adding up.",
+      "write_scope": ["src/receipt.js", "test/receipt.test.js"]
+    },
+    {
+      "key": "wire",
+      "title": "API routes and docs",
+      "brief": "Expose the new modules through src/api.js's `handle({ method, path, body })`: `GET /products?text=&min=&max=&sort=` (search over the catalog), `GET /stock/:sku` (from an inventory created from a fixed starting stock of 10 per catalog SKU), `POST /quote` with `{ subtotalCents, region, method }` answering { taxCents, shipping, totalCents }, `POST /products/:sku/reviews` and `GET /products/:sku/reviews`, `GET /orders.csv` (all orders, content type text/csv), and `GET /orders/:id/receipt` (text/plain, with tax for region 'CA' and standard shipping). Bad input answers 400 with the module's error message. Keep the existing routes working. Add tests for every new route to test/api.test.js, and document every route in README.md.",
+      "write_scope": ["src/api.js", "test/api.test.js", "README.md"],
+      "depends_on": ["search", "inventory", "tax", "shipping", "reviews", "export", "receipt"]
+    }
+  ]
+}

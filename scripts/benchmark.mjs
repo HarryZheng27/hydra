@@ -3,18 +3,19 @@
 // needs a Hydra window open on its repository (the recording is made there). Nothing here opens a window itself.
 //
 //   node scripts/benchmark.mjs prepare [--out <dir>]
-//   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--minutes 120] [--usd 60] [--hydra "<command>"]
-//   node scripts/benchmark.mjs single --repo <dir>/single [--agent claude|codex] [--minutes 120] [--command "<agent command>"]
+//   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--task discounts|shop-features] [--minutes 120] [--usd 60] [--hydra "<command>"]
+//   node scripts/benchmark.mjs single --repo <dir>/single [--task discounts|shop-features] [--agent claude|codex] [--minutes 120] [--command "<agent command>"]
 //   node scripts/benchmark.mjs publish --results <dir> [--label <text>] [--notes <text>]
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { observePlan, summarizeHydra, summarizeSingle, withResults } from './benchmark-lib.mjs';
+import { observePlan, summarizeHydra, summarizeSingle, taskFromPlan, tasks, withResults } from './benchmark-lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = path.join(root, 'bench', 'fixture');
-const planName = 'discounts';
+/** --task: which plan file (bench/fixture/.hydra/plans/<task>.json); discounts, the first published, by default. */
+const taskOf = flags => { const task = flags.task ?? 'discounts'; if (!tasks.includes(task)) throw new Error(`--task is one of ${tasks.join(', ')}.`); return task; };
 
 function args(argv) {
   const flags = {}, rest = [];
@@ -66,7 +67,8 @@ async function hydra(flags) {
   if (status.code !== 0) throw new Error(`hydra status answered ${status.code}: ${status.stderr.trim() || status.stdout.trim()}\nOpen ${repo} in Hydra (and trust it) first.`);
   const minutes = Number(flags.minutes ?? 120), usd = Number(flags.usd ?? 60), poll = Number(flags.poll ?? 10) * 1000;
   const started = now();
-  const created = await cli('plan', 'run', planName, '--unattended', '--minutes', String(minutes), '--usd', String(usd), '--json');
+  const task = taskOf(flags);
+  const created = await cli('plan', 'run', task, '--unattended', '--minutes', String(minutes), '--usd', String(usd), '--json');
   if (created.code !== 0) throw new Error(`hydra plan run failed (${created.code}): ${created.stderr.trim()}`);
   const planId = JSON.parse(created.stdout).plan_id;
   console.log(`Plan ${planId} started; watching it every ${poll / 1000}s.`);
@@ -87,7 +89,7 @@ async function hydra(flags) {
   const waited = await cli('plan', 'wait', planId, '--timeout', '60', '--json');
   const final = JSON.parse(waited.stdout || '{}');
   const report = await cli('report', planId);
-  const results = summarizeHydra({ view: final.plan_id ? final : view, observed, wallClockSeconds, passed: waited.code === 0, timedOut: final.timed_out });
+  const results = summarizeHydra({ view: final.plan_id ? final : view, observed, wallClockSeconds, passed: waited.code === 0, timedOut: final.timed_out, task });
   const out = path.dirname(repo);
   await fs.writeFile(path.join(out, 'hydra-results.json'), JSON.stringify(results, null, 2) + '\n');
   await fs.writeFile(path.join(out, 'hydra-report.md'), report.stdout);
@@ -104,13 +106,14 @@ async function single(flags) {
   const agent = flags.agent ?? 'claude';
   if (!agents[agent]) throw new Error('--agent is claude or codex.');
   const minutes = Number(flags.minutes ?? 120);
-  const task = await fs.readFile(path.join(root, 'bench', 'task.md'), 'utf8');
+  const task = taskOf(flags);
+  const brief = taskFromPlan(JSON.parse(await fs.readFile(path.join(fixture, '.hydra', 'plans', `${task}.json`), 'utf8')));
   console.log(`Running ${agent} alone on ${repo} (up to ${minutes} minutes)…`);
   const started = now();
   // --command replaces the agent's command line (a CLI installed elsewhere, or a stand-in in tests); the task still goes to stdin.
   const custom = flags.command?.match(/"[^"]*"|\S+/g).map(part => part.replace(/^"|"$/g, ''));
   const spec = custom ? { command: custom[0], args: custom.slice(1) } : agents[agent];
-  const result = await run(spec.command, spec.args, { cwd: repo, input: task, timeoutMs: minutes * 60_000 });
+  const result = await run(spec.command, spec.args, { cwd: repo, input: brief, timeoutMs: minutes * 60_000 });
   const wallClockSeconds = Math.round((now() - started) / 1000);
   // An agent that never ran (not found, not signed in) leaves the fixture untouched, which still passes its own gate:
   // that must never be recorded as a result.
@@ -124,7 +127,7 @@ async function single(flags) {
     } catch { /* not a JSON line */ }
   }
   const gate = await run('npm', ['test'], { cwd: repo, timeoutMs: 10 * 60_000 });
-  const results = summarizeSingle({ agent, wallClockSeconds: result.timedOut ? minutes * 60 : wallClockSeconds, exitCode: result.code, gatePassed: gate.code === 0, gateOutput: gate.stdout + gate.stderr, agentOutput, codexUsage });
+  const results = summarizeSingle({ agent, wallClockSeconds: result.timedOut ? minutes * 60 : wallClockSeconds, exitCode: result.code, gatePassed: gate.code === 0, gateOutput: gate.stdout + gate.stderr, agentOutput, codexUsage, task });
   const out = path.dirname(repo);
   await fs.writeFile(path.join(out, 'single-results.json'), JSON.stringify(results, null, 2) + '\n');
   console.log(`${JSON.stringify(results, null, 2)}\n\nWrote ${path.join(out, 'single-results.json')}.`);
