@@ -7,7 +7,7 @@ import path from 'node:path';
 import { planFromLeadInput, findCycle } from '../src/core/plans';
 import { planFileArguments } from '../src/core/hydraCli';
 // @ts-expect-error: a plain .mjs module with no type declarations.
-import { observePlan, renderResults, summarizeHydra, summarizeSingle, withResults, resultsStart, resultsEnd } from '../scripts/benchmark-lib.mjs';
+import { observePlan, renderResults, summarizeHydra, summarizeSingle, taskFromPlan, tasks, withResults, resultsStart, resultsEnd } from '../scripts/benchmark-lib.mjs';
 
 /**
  * O9 (docs/Benchmark.md): the benchmark's harness, without spending anything: the fixture and its plan file are
@@ -39,6 +39,39 @@ test('the benchmark plan is six jobs in a diamond, and passes the same checks hy
   assert.deepEqual(deps.ui, ['discounts']);
   assert.deepEqual([...deps.docs!].sort(), ['api', 'ui'], 'the diamond: two branches off one job, joined again');
   assert.ok(plan.jobs.every(job => job.writeScope?.length && job.brief.length > 40));
+});
+
+test('the shop-features plan is seven independent jobs, then one that depends on all of them, and passes the same checks', async () => {
+  const text = await readFile(path.join(fixture, '.hydra', 'plans', 'shop-features.json'), 'utf8');
+  const args = planFileArguments(text, 'shop-features.json', { unattended: true, minutes: 120, usd: 60 }, () => 'k');
+  const plan = planFromLeadInput(args as never, { leadSessionId: 'user', idempotencyKey: 'k' }, 5);
+  const independent = plan.jobs.filter(job => !job.dependsOn.length).map(job => job.key);
+  assert.deepEqual(independent, ['search', 'inventory', 'tax', 'shipping', 'reviews', 'export', 'receipt'], 'all seven features can run at once');
+  const wire = plan.jobs.find(job => job.key === 'wire')!;
+  assert.deepEqual([...wire.dependsOn].sort(), [...independent].sort(), 'the last job waits for every feature');
+  for (const key of independent) assert.deepEqual(plan.jobs.find(job => job.key === key)!.writeScope, [`src/${key}.js`, `test/${key}.test.js`], `${key} touches only its own two files`);
+  assert.deepEqual([...tasks], ['discounts', 'shop-features']);
+});
+
+test('the single agent\'s brief is generated from the plan file: its brief, then every job\'s title, brief and files, in order', async () => {
+  for (const task of tasks as string[]) {
+    const plan = JSON.parse(await readFile(path.join(fixture, '.hydra', 'plans', `${task}.json`), 'utf8'));
+    const brief = taskFromPlan(plan);
+    assert.ok(brief.startsWith(`# ${plan.title}\n\n${plan.brief}\n`), task);
+    let at = 0;
+    for (const [index, job] of (plan.jobs as { title: string; brief: string; write_scope: string[] }[]).entries()) {
+      const heading = brief.indexOf(`## ${index + 1}. ${job.title}`, at);
+      assert.ok(heading > at, `${task}: ${job.title} comes in order`);
+      assert.ok(brief.includes(job.brief) && brief.includes(`Files: ${job.write_scope.join(', ')}`), `${task}: ${job.title}'s brief and files`);
+      at = heading;
+    }
+  }
+  const out = await mkdtemp(path.join(tmpdir(), 'hydra-bench-'));
+  try {
+    const ran = await node([script, 'single', '--repo', path.join(out, 'single'), '--task', 'nope']);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /--task is one of discounts, shop-features/);
+  } finally { await rm(out, { recursive: true, force: true }); }
 });
 
 test('the fixture passes its own gate before any agent touches it', async () => {

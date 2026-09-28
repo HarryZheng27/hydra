@@ -1,16 +1,16 @@
 # Hydra's benchmark
 
 A public, reproducible check of Hydra's orchestration claims. The same multi-part change is made twice, from the same starting commit:
-- by a Hydra plan of six jobs, run unattended;
+- by a Hydra plan, run unattended;
 - by one agent working alone.
 
 Every run is published here, failures included.
 
-## The task
+## The tasks
 
-The fixture (`bench/fixture`) is a small shop in plain Node with no dependencies: a catalog, orders, an HTTP API as one function, an HTML order page, tests, a README, and one gate (`npm test`, in `.hydra/gates.json`). The task adds discount codes across all of it.
+The fixture (`bench/fixture`) is a small shop in plain Node with no dependencies: a catalog, orders, an HTTP API as one function, an HTML order page, tests, a README, and one gate (`npm test`, in `.hydra/gates.json`). Each task is a plan file in `bench/fixture/.hydra/plans`, chosen with `--task`.
 
-The Hydra run uses the plan file `bench/fixture/.hydra/plans/discounts.json`, which has six jobs in a diamond:
+**`discounts` (the default):** discount codes across the shop, as six jobs in a diamond. Most jobs wait on another, so it mostly measures coordination, not parallel speed:
 
 | Job | Changes | Depends on |
 | --- | --- | --- |
@@ -21,7 +21,14 @@ The Hydra run uses the plan file `bench/fixture/.hydra/plans/discounts.json`, wh
 | `ui-tests` | `test/ui.test.js` | `ui`, `api` |
 | `docs` | `README.md` | `api`, `ui` |
 
-The single agent gets the same work as one brief, `bench/task.md`.
+**`shop-features`:** seven independent features, each its own module with its own tests, then one job that wires them into the API and the README. The seven can all run at once, so this is where parallel work can pay off:
+
+| Job | Changes | Depends on |
+| --- | --- | --- |
+| `search`, `inventory`, `tax`, `shipping`, `reviews`, `export`, `receipt` | `src/<feature>.js` and `test/<feature>.test.js` each | — |
+| `wire` | `src/api.js`, `test/api.test.js`, `README.md` | all seven |
+
+**The single agent** gets the same work as one brief, generated from the plan file: the plan's brief, then every job's title, brief and files, in order (`taskFromPlan` in `scripts/benchmark-lib.mjs`). So both sides always get exactly the same work. The first published run predates this: its single agent got a hand-written brief of the same work.
 
 ## What is measured
 
@@ -45,16 +52,16 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
 1. `node scripts/benchmark.mjs prepare`: makes two fresh repositories of the fixture under `.bench/run-<time>/` (`hydra` and `single`), each with one commit.
 2. Open the `hydra` folder in Hydra, trust it, and start recording.
 3. `node scripts/benchmark.mjs hydra --repo .bench/run-<time>/hydra`:
-   - runs `hydra plan run discounts --unattended` (by default with a 120-minute and $60 budget: `--minutes`, `--usd`);
+   - runs `hydra plan run <task> --unattended` (`--task discounts` by default, or `shop-features`; with a 120-minute and $60 budget by default: `--minutes`, `--usd`);
    - watches the plan until its integration gate has a result;
    - writes `hydra-results.json` and the plan's report.
-4. `node scripts/benchmark.mjs single --repo .bench/run-<time>/single`: runs one agent (`--agent claude` by default, or `codex`) on `bench/task.md`, then `npm test`, and writes `single-results.json`.
+4. `node scripts/benchmark.mjs single --repo .bench/run-<time>/single`: runs one agent (`--agent claude` by default, or `codex`) on the same `--task`'s brief, then `npm test`, and writes `single-results.json`.
 5. `node scripts/benchmark.mjs publish --results .bench/run-<time> --label "<what changed>"`: adds the run to `bench/results.json` and to the results below. Review the diff and commit it, with a link to the recording in `--notes` if there is one.
 
 ## What it doesn't show
 
 - **One task, one run:** a single run of one task is an anecdote, not a distribution. Runs are kept, not replaced, so a pattern (or its absence) can show over time.
-- **Wall-clock depends on the moment:** it depends on the providers' load then, and on how many heads Hydra may run at once (`hydra.maxConcurrentHelpers`, 3 by default).
+- **Wall-clock depends on the moment:** it depends on the providers' load then, and on how many heads Hydra may run at once (`hydra.maxConcurrentHelpers`, 3 by default, up to 8). With 3, `shop-features`' seven independent jobs run three at a time; say which you used in the run's `--notes`.
 - **Cost is what the providers report:** there's no independent meter.
 
 ## Results
@@ -62,7 +69,9 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
 <!-- benchmark-results:start -->
 ### 2026-09-28: first run
 
-| | Hydra (6-job plan, unattended) | One agent alone |
+Task: `discounts` (6 jobs).
+
+| | Hydra (plan, unattended) | One agent alone |
 | --- | --- | --- |
 | Wall-clock | 8m 13s | 1m 36s (claude) |
 | Gates at the end | Passed required gates | `npm test` passed |

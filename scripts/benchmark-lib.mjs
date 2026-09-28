@@ -1,6 +1,19 @@
 // O9 (docs/Benchmark.md): the benchmark's pure parts, so tests can check them without an agent. scripts/benchmark.mjs
 // is the effectful shell that prepares the repositories, runs Hydra and the single agent, and writes the results.
 
+/** The benchmark's tasks: plan files in bench/fixture/.hydra/plans. */
+export const tasks = Object.freeze(['discounts', 'shop-features']);
+
+/**
+ * The single agent's brief (pure): the plan file's own brief and every job's, in order, so both sides of the
+ * benchmark are given exactly the same work.
+ */
+export function taskFromPlan(plan) {
+  const lines = [`# ${plan.title}`, '', plan.brief ?? '', '', 'Do all of the following yourself, then make sure `npm test` passes.', ''];
+  plan.jobs.forEach((job, index) => lines.push(`## ${index + 1}. ${job.title}`, '', job.brief, '', `Files: ${job.write_scope.join(', ')}`, ''));
+  return lines.join('\n').trimEnd() + '\n';
+}
+
 /** Results files carry this, so a later format change can't be misread as the old one. */
 export const resultsVersion = 1;
 export const resultsStart = '<!-- benchmark-results:start -->';
@@ -36,7 +49,7 @@ export function observePlan(previous, view) {
 }
 
 /** Hydra's run, summed up from the final plan view and what watching it saw (pure). */
-export function summarizeHydra({ view, observed, wallClockSeconds, passed, timedOut }) {
+export function summarizeHydra({ view, observed, wallClockSeconds, passed, timedOut, task }) {
   const jobs = (view.jobs ?? []).map(job => ({
     key: job.key, status: job.status,
     ...(job.head ? { provider: job.head.provider, attempts: job.head.attempts } : {}),
@@ -50,7 +63,7 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
   }
   const integration = view.integration;
   return {
-    version: resultsVersion, kind: 'hydra', planId: view.plan_id, planState: view.state, wallClockSeconds, timedOut: !!timedOut,
+    version: resultsVersion, kind: 'hydra', ...(task ? { task } : {}), planId: view.plan_id, planState: view.state, wallClockSeconds, timedOut: !!timedOut,
     integrationGate: integration ? { label: integration.gate?.label, passed: !!passed, checks: (integration.gate?.checks ?? []).map(check => ({ id: check.id, state: check.state })) } : null,
     landed: integration?.landed ?? [],
     jobs,
@@ -65,10 +78,10 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
 }
 
 /** The single agent's run (pure). `agentOutput` is Claude Code's --output-format json result, when that's the agent. */
-export function summarizeSingle({ agent, wallClockSeconds, exitCode, gatePassed, gateOutput, agentOutput, codexUsage }) {
+export function summarizeSingle({ agent, wallClockSeconds, exitCode, gatePassed, gateOutput, agentOutput, codexUsage, task }) {
   const usd = typeof agentOutput?.total_cost_usd === 'number' ? agentOutput.total_cost_usd : undefined;
   return {
-    version: resultsVersion, kind: 'single', agent, wallClockSeconds, agentExitCode: exitCode,
+    version: resultsVersion, kind: 'single', ...(task ? { task } : {}), agent, wallClockSeconds, agentExitCode: exitCode,
     gate: { passed: !!gatePassed, outputTail: String(gateOutput ?? '').slice(-2000) },
     cost: { ...(usd !== undefined ? { usd } : {}), ...(codexUsage ? { inputTokens: codexUsage.inputTokens, outputTokens: codexUsage.outputTokens } : {}) },
     ...(typeof agentOutput?.num_turns === 'number' ? { turns: agentOutput.num_turns } : {}),
@@ -90,8 +103,9 @@ export function renderResults(runs) {
   const lines = [];
   for (const run of sorted) {
     const { hydra, single } = run;
-    lines.push(`### ${run.at.slice(0, 10)}${run.label ? `: ${run.label}` : ''}`, '');
-    lines.push('| | Hydra (6-job plan, unattended) | One agent alone |', '| --- | --- | --- |');
+    const task = hydra?.task ?? single?.task ?? 'discounts';
+    lines.push(`### ${run.at.slice(0, 10)}${run.label ? `: ${run.label}` : ''}`, '', 'Task: `' + task + '`' + (hydra ? ` (${hydra.jobs.length} jobs)` : '') + '.', '');
+    lines.push('| | Hydra (plan, unattended) | One agent alone |', '| --- | --- | --- |');
     lines.push(`| Wall-clock | ${hydra ? minutes(hydra.wallClockSeconds) + (hydra.timedOut ? ' (timed out)' : '') : '–'} | ${single ? `${minutes(single.wallClockSeconds)} (${single.agent})` : '–'} |`);
     lines.push(`| Gates at the end | ${hydra ? (hydra.integrationGate ? `${hydra.integrationGate.label}${hydra.integrationGate.passed ? '' : ' (did not pass)'}` : 'no integration gate') : '–'} | ${single ? (single.gate.passed ? '`npm test` passed' : '`npm test` failed') : '–'} |`);
     lines.push(`| Conflicts predicted / caught at landing | ${hydra ? `${hydra.conflicts.predicted} / ${hydra.conflicts.landingConflicts}` : '–'} | n/a |`);
