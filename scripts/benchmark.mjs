@@ -35,6 +35,8 @@ function run(command, argv, { cwd, input, timeoutMs, shell = process.platform ==
     const timer = timeoutMs ? setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs) : undefined;
     child.on('error', reject);
     child.on('close', code => { if (timer) clearTimeout(timer); resolve({ code, stdout, stderr, timedOut }); });
+    // A command that exits without reading its input (git, say) closes the pipe first: that's not an error here.
+    child.stdin.on('error', error => { if (error.code !== 'EPIPE') reject(error); });
     child.stdin.end(input ?? '');
   });
 }
