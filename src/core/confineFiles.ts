@@ -1,7 +1,8 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { git } from './git';
-import type { StorageListing } from './confine';
+import { envValue, userPluginIds, type StorageListing } from './confine';
 
 /**
  * What the confinement builders in confine.ts read from disk and git
@@ -41,4 +42,15 @@ export async function otherWorktrees(repository: string, own: string): Promise<s
   const key = (value: string) => { const resolved = path.resolve(value); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
   const skip = new Set([key(own), key(repository), ...(listed[0] ? [key(listed[0])] : [])]);
   return listed.filter(item => !skip.has(key(item)));
+}
+
+/**
+ * Your Claude plugins, for headSettings to turn off: `enabledPlugins` in your user settings and
+ * everything in `plugins/installed_plugins.json`, under CLAUDE_CONFIG_DIR or `~/.claude`, where the
+ * head's Claude Code finds them. A file that can't be read adds none.
+ */
+export async function userClaudePlugins(env: Readonly<Record<string, string | undefined>>): Promise<string[]> {
+  const folder = envValue(env, 'CLAUDE_CONFIG_DIR') || path.join(homedir(), '.claude');
+  const read = (file: string) => readFile(file, 'utf8').catch(() => undefined);
+  return userPluginIds(await read(path.join(folder, 'settings.json')), await read(path.join(folder, 'plugins', 'installed_plugins.json')));
 }

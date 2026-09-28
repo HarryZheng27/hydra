@@ -4,7 +4,7 @@ import path from 'node:path';
 import { git, gitMetaChanges, gitMetaFingerprint, type GitMetaFingerprint } from './git';
 import { isWindowsShim } from './process';
 import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
-import { otherWorktrees, storageListing } from './confineFiles';
+import { otherWorktrees, storageListing, userClaudePlugins } from './confineFiles';
 import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
@@ -962,6 +962,7 @@ export class HelperService {
     const settings = headSettings({
       platform, env: process.env, storage, storageRead: storageReadDeny(storage, keep, await storageListing(storage, keep), platform),
       worktree, addDirs, otherWorktrees: await otherWorktrees(this.options.leadFolder, worktree), leadFolder: this.options.leadFolder,
+      userPlugins: await userClaudePlugins(env),
     });
     await mkdir(this.options.logDirectory, { recursive: true });
     await writeFile(settingsFile, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 });

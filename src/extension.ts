@@ -59,7 +59,7 @@ import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPl
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together"). Their own block. ----
-import { integrationLeadView, integrationSettled, laneMergeRefusal, mergeRefusal } from './core/integration';
+import { defaultIntegrationFixRounds, integrationLeadView, isIntegrationFixKey, integrationSettled, laneMergeRefusal, mergeRefusal } from './core/integration';
 import type { PlanMergeVia } from './core/planRunner';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
@@ -1277,7 +1277,8 @@ class Manager {
     if (owned.state !== 'draft' && owned.state !== 'running' && owned.state !== 'incomplete') throw new Error(`Plan "${owned.title}" is ${owned.state}, so it can't be amended.`);
     const requested = (input.add?.length ?? 0) + (input.edit?.length ?? 0) + (input.skip?.length ?? 0) + (input.retry?.length ?? 0);
     const max = Math.max(0, vscode.workspace.getConfiguration('hydra').get<number>('plans.maxAmendments', 10));
-    const already = owned.amendments?.length ?? 0;
+    // Hydra's own integration fixes don't use up the lead's amendments.
+    const already = (owned.amendments ?? []).filter(amendment => !amendment.key || !isIntegrationFixKey(amendment.key)).length;
     if (max > 0 && already + requested > max) throw new Error(`Plan "${owned.title}" has ${already} of ${max} amendments already; this would add ${requested}. Cancel the plan, or start a new one for the rest.`);
     const runner = this.requirePlanRunner();
     const changed = await runner.withPlan(id, async () => {
@@ -1579,6 +1580,8 @@ class Manager {
           review: plan.jobs.some(job => job.rigor === 'standard' || job.rigor === 'strict'),
           providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
         }),
+        fixRounds: () => vscode.workspace.getConfiguration('hydra').get<number>('plans.integrationFixRounds', defaultIntegrationFixRounds),
+        headBudgetUsd: () => vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5),
       },
     });
   }
