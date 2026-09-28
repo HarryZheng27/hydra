@@ -1222,14 +1222,14 @@ export class HelperService {
   // ---- O3: the integration gate (docs/Heads.md, "Landing a plan together") ----
 
   /**
-   * Runs a plan's integration gate: its gates (integrationGates: the project's command gates, and for a strict
-   * plan a review of the whole diff by an agent that wrote none of it, when there is one) in a detached worktree
+   * Runs a plan's integration gate: its gates (integrationGates: the project's command gates, and for a plan
+   * with a standard or strict job one review of the whole diff by an agent that wrote none of it, when there is one) in a detached worktree
    * at the integration branch's tip, read from the lead folder exactly as a head's are. The review sees
    * base..tip, every job's work together.
    */
-  async runIntegrationGate(input: { planId: string; title: string; brief?: string; base: string; tip: string; strict: boolean; providers: Provider[]; signal?: AbortSignal }): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }> {
+  async runIntegrationGate(input: { planId: string; title: string; brief?: string; base: string; tip: string; review: boolean; providers: Provider[]; signal?: AbortSignal }): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }> {
     const config = await (this.options.gates ?? loadGates)(this.options.leadFolder);
-    const { gates, notRun } = integrationGates(config, input.strict);
+    const { gates, notRun } = integrationGates(config, input.review);
     const configured = gatesConfigured(config.source, gates.length + notRun.length);
     if (!gates.length) return { checks: notRun, configured };
     const root = this.options.worktreeRoot?.() ?? defaultWorktreeRoot(this.options.leadFolder);

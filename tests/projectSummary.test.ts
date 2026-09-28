@@ -121,6 +121,19 @@ function fakeClock(): ProjectSummaryClock & { advance(ms: number): void; interva
   return clock;
 }
 
+/** Waits (up to 5s of real time) for a publisher's file to say it was written at `ms` on the fake clock. */
+async function summaryAt(dir: string, id: string, ms: number): Promise<void> {
+  const expected = new Date(ms).toISOString();
+  const deadline = Date.now() + 5000;
+  let seen: string | undefined;
+  while (Date.now() < deadline) {
+    seen = await readFile(path.join(dir, `${id}.summary.json`), 'utf8').then(text => JSON.parse(text).updatedAt as string, () => undefined);
+    if (seen === expected) return;
+    await delay(10);
+  }
+  assert.equal(seen, expected);
+}
+
 test('the publisher writes once at start, debounces rapid changes to at most once a second, and heartbeats every 60s', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hydra-summary-'));
   const clock = fakeClock();
@@ -133,9 +146,7 @@ test('the publisher writes once at start, debounces rapid changes to at most onc
     build: () => ({ folder: '/repo', name: 'repo', heads: { running: 0, blocked: 0, done: 0 }, lanes: { running: 0, exited: 0 }, plans: { live: 0, lines: [] }, blocked: [], evidence: { passed: 0, partial: 0, none: 0, 'none-chosen': 0, override: 0 }, providers: [] }),
   });
   void original; void writes;
-  await delay(20);
-  const first = JSON.parse(await readFile(path.join(dir, 'pub1.summary.json'), 'utf8'));
-  assert.equal(first.updatedAt, new Date(0).toISOString());
+  await summaryAt(dir, 'pub1', 0);
 
   // Rapid changes within the same second: only the trailing write at the 1s mark should land.
   publisher.changed();
@@ -144,26 +155,20 @@ test('the publisher writes once at start, debounces rapid changes to at most onc
   clock.advance(100);
   publisher.changed();
   await delay(20);
-  let current = JSON.parse(await readFile(path.join(dir, 'pub1.summary.json'), 'utf8'));
+  const current = JSON.parse(await readFile(path.join(dir, 'pub1.summary.json'), 'utf8'));
   assert.equal(current.updatedAt, new Date(0).toISOString(), 'no write yet: less than a second has passed');
 
   clock.advance(800); // now at 1000ms since the first write: the trailing timer fires
-  await delay(20);
-  current = JSON.parse(await readFile(path.join(dir, 'pub1.summary.json'), 'utf8'));
-  assert.equal(current.updatedAt, new Date(1000).toISOString());
+  await summaryAt(dir, 'pub1', 1000);
 
   // A change well after the debounce window writes immediately.
   clock.advance(2000);
   publisher.changed();
-  await delay(20);
-  current = JSON.parse(await readFile(path.join(dir, 'pub1.summary.json'), 'utf8'));
-  assert.equal(current.updatedAt, new Date(3000).toISOString());
+  await summaryAt(dir, 'pub1', 3000);
 
   // The heartbeat fires on its own, without changed() being called.
   clock.advance(60_000);
-  await delay(20);
-  current = JSON.parse(await readFile(path.join(dir, 'pub1.summary.json'), 'utf8'));
-  assert.equal(current.updatedAt, new Date(63_000).toISOString());
+  await summaryAt(dir, 'pub1', 63_000);
 
   await publisher.dispose();
   assert.deepEqual(await readProjectSummaries(dir, new Date(), () => true), []);

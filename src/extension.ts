@@ -1572,7 +1572,8 @@ class Manager {
       integration: {
         runGate: (plan, tip) => service.runIntegrationGate({
           planId: plan.id, title: plan.title, ...(plan.brief ? { brief: plan.brief } : {}), base: plan.integration!.base, tip,
-          strict: plan.jobs.some(job => job.rigor === 'strict'),
+          // One review of the combined work, not one per job (O6): any standard or strict job asks for it.
+          review: plan.jobs.some(job => job.rigor === 'standard' || job.rigor === 'strict'),
           providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
         }),
       },
