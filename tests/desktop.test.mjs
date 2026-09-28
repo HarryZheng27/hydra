@@ -514,7 +514,15 @@ test("Hydra's notifications and the Agent Manager / Editor switch are built into
   const pinned = '.editor-group-watermark {\n\tmax-width: 272px;\n}\n.letterpress {\n\tmax-width: 256px;\n}';
   const css = brandedWatermarkLayout(pinned);
   assert.ok(css.endsWith(hydraChromeCss));
-  for (const selector of ['.hydra-notices', '.hydra-notice-warning', '.hydra-notice-error', '.hydra-notice-progress.indeterminate', '.hydra-notice-action.primary', '.hydra-mode-switch-option.checked', '.hydra-mode-switch[hidden]']) assert.ok(css.includes(selector), selector);
+  for (const selector of ['.hydra-notices', '.hydra-notice-warning', '.hydra-notice-error', '.hydra-notice-progress.indeterminate', '.hydra-notice-action.primary', '.hydra-mode-switch-option.checked', '.hydra-mode-switch-bar[hidden]', '.hydra-agents-panel-toggle.checked']) assert.ok(css.includes(selector), selector);
   assert.match(hydraChromeCss, /position: relative;\s*z-index: 2500;\s*-webkit-app-region: no-drag/, 'the switch sits above the title bar drag region, so it can be clicked');
   assert.match(hydraChromeCss, /prefers-reduced-motion: reduce/);
+});
+
+test('in the Editor, a title bar button shows and hides the agent side bar; a fresh window starts its window controls undimmed', async () => {
+  const modeSwitch = await fs.readFile('desktop/workbench/hydraModeSwitch.ts', 'utf8');
+  assert.ok(modeSwitch.includes("'workbench.action.toggleAuxiliaryBar'"), 'the button toggles the agent side bar');
+  assert.ok(modeSwitch.includes("this.agentsPanel.hidden = mode !== 'editor';"), 'it shows only in the Editor');
+  assert.ok(modeSwitch.includes('onDidChangePartVisibility'), 'it follows the side bar however it was toggled');
+  assert.ok(modeSwitch.includes('setWindowDimmed(mainWindow, false)') && modeSwitch.includes('WorkbenchPhase.BlockStartup'), 'window controls left darkened by a dialog across a reload are reset');
 });

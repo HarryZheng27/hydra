@@ -862,11 +862,54 @@ export const hydraChromeCss = `
 	to { transform: translateX(340%); }
 }
 
+.monaco-workbench .part.titlebar .hydra-mode-switch-bar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0 8px;
+	position: relative;
+	z-index: 2500;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench .part.titlebar .hydra-mode-switch-bar[hidden],
+.monaco-workbench .part.titlebar .hydra-agents-panel-toggle[hidden] {
+	display: none;
+}
+
+.monaco-workbench .part.titlebar .hydra-agents-panel-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	cursor: pointer;
+	opacity: 0.7;
+}
+
+.monaco-workbench .part.titlebar .hydra-agents-panel-toggle:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+	opacity: 1;
+}
+
+.monaco-workbench .part.titlebar .hydra-agents-panel-toggle.checked {
+	opacity: 1;
+}
+
+.monaco-workbench .part.titlebar .hydra-agents-panel-toggle:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
 .monaco-workbench .part.titlebar .hydra-mode-switch {
 	display: flex;
 	align-items: center;
 	height: 24px;
-	margin: 0 8px;
 	padding: 2px;
 	gap: 2px;
 	border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
