@@ -2,7 +2,7 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bench-open.ps1 -Folder <repo> [-WaitSeconds 120]
 #
-# A window opened from a shell that runs inside Hydra or VS Code inherits that shell's ELECTRON_RUN_AS_NODE, its
+# A window opened from a shell that runs inside a Hydra window inherits that shell's ELECTRON_RUN_AS_NODE, its
 # VSCODE_* IPC variables and its PATH: the new window can then attach to the wrong instance, or fail to find
 # claude.exe, so every head fails with "Claude Code CLI not found". This starts hydra.cmd with PATH rebuilt from the
 # Machine and User values in the registry, those variables removed, and no console window.
@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $Folder -PathType Container)) { Write-Error "No
 if (-not (Test-Path -LiteralPath $Hydra)) { Write-Error "Hydra isn't installed at $Hydra."; exit 2 }
 $Folder = (Resolve-Path -LiteralPath $Folder).Path
 
-# Variables a shell inside VS Code or Hydra sets, which a new window must not inherit.
+# Variables a shell inside a Hydra window sets, which a new window must not inherit.
 $inherited = @('ELECTRON_RUN_AS_NODE', 'VSCODE_IPC_HOOK', 'VSCODE_IPC_HOOK_CLI', 'VSCODE_PID', 'VSCODE_CWD', 'VSCODE_NLS_CONFIG',
   'VSCODE_HANDLES_UNCAUGHT_ERRORS', 'VSCODE_CRASH_REPORTER_PROCESS_TYPE', 'VSCODE_ESM_ENTRYPOINT', 'VSCODE_CODE_CACHE_PATH',
   'VSCODE_AMD_ENTRYPOINT', 'VSCODE_INJECTION', 'VSCODE_GIT_IPC_HANDLE', 'VSCODE_GIT_ASKPASS_NODE', 'VSCODE_GIT_ASKPASS_MAIN',
