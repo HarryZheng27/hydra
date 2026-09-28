@@ -153,6 +153,20 @@ async function devToolsEndpoint(profile: string, exited: () => boolean, timeoutM
   throw new Error('The browser didn\'t open its DevTools port.');
 }
 
+/**
+ * Connect to the DevTools endpoint, trying again for a few seconds: the browser can write DevToolsActivePort a
+ * moment before its socket accepts connections, and a connection refused in that moment is not a real failure.
+ */
+export async function connectWithRetry<T>(connect: () => Promise<T>, exited: () => boolean, timeoutMs = 10_000, delayMs = 200): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { return await connect(); } catch (error) {
+      if (exited() || Date.now() + delayMs >= deadline) throw error;
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 /** Start a headless browser with a fresh temporary profile. On any failure it is already cleaned up. */
 export async function launchBrowser(executable: string, spawned?: (pid: number) => void): Promise<BrowserSession> {
   const profile = await mkdtemp(path.join(tmpdir(), 'hydra-browser-'));
@@ -175,7 +189,8 @@ export async function launchBrowser(executable: string, spawned?: (pid: number) 
     await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 }).catch(() => undefined);
   })();
   try {
-    cdp = await CdpConnection.connect(await devToolsEndpoint(profile, () => exited));
+    const endpoint = await devToolsEndpoint(profile, () => exited);
+    cdp = await connectWithRetry(() => CdpConnection.connect(endpoint), () => exited);
   } catch (error) { await close(); throw error; }
   const connection = cdp;
   return { capture: (url, width) => capturePage(connection, url, width), close };
