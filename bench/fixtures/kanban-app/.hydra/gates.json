@@ -1,0 +1,5 @@
+{
+  "gates": [
+    { "id": "test", "type": "command", "required": true, "command": ["npm", "test"], "timeoutSeconds": 600 }
+  ]
+}

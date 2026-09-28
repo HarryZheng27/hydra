@@ -1,0 +1,9 @@
+{
+  "name": "hydra-bench-kanban-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A fixture for Hydra's benchmark (docs/Benchmark.md): a kanban board with an HTTP API and a client, in plain Node with no dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

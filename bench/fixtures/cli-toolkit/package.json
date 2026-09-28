@@ -1,0 +1,10 @@
+{
+  "name": "hydra-bench-cli-toolkit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A fixture for Hydra's benchmark (docs/Benchmark.md): a command-line toolkit, in plain Node with no dependencies.",
+  "bin": { "toolkit": "bin/toolkit.js" },
+  "scripts": {
+    "test": "node --test"
+  }
+}

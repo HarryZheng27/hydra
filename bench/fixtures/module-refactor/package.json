@@ -1,0 +1,9 @@
+{
+  "name": "hydra-bench-module-refactor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A fixture for Hydra's benchmark (docs/Benchmark.md): billing modules with duplicated helpers, in plain Node with no dependencies.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
