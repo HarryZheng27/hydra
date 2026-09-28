@@ -326,21 +326,21 @@ test('review: the other agent reviews; the same one stands in when the other is 
   } finally { await f.close(); }
 });
 
-test('applyRigor (O6): quick adds nothing; standard and strict add a review only when one is missing', () => {
+test('applyRigor (O6): quick and standard add nothing to a job (standard reviews the plan once instead); strict adds a review only when one is missing', () => {
   const command: Gate = { id: 'unit', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 };
   assert.deepEqual(applyRigor([command], undefined), [command], 'no rigor: unchanged, like every plan before rigor existed');
   assert.deepEqual(applyRigor([command], 'quick'), [command]);
-  const withStandard = applyRigor([command], 'standard');
-  assert.deepEqual(withStandard, [command, { id: rigorReviewGateId, type: 'review', required: true, reviewer: 'other', focus: 'Review this change for correctness, safety and fit with the task.' }]);
-  assert.deepEqual(applyRigor([command], 'strict'), withStandard, 'strict adds the same review; screenshots and the integration gate need a project that already has them');
+  assert.deepEqual(applyRigor([command], 'standard'), [command], 'standard reviews the plan once, in its integration gate, not each job');
+  const withStrict = applyRigor([command], 'strict');
+  assert.deepEqual(withStrict, [command, { id: rigorReviewGateId, type: 'review', required: true, reviewer: 'other', focus: 'Review this change for correctness, safety and fit with the task.' }]);
   // The project's own review, of any kind, is never replaced or duplicated.
   const ownReview: Gate = { id: 'my-review', type: 'review', required: false, reviewer: 'claude', focus: 'x' };
   assert.deepEqual(applyRigor([command, ownReview], 'strict'), [command, ownReview]);
 });
 
 test('applyRigor (O6): the same gate id both times, so a snapshot taken at head start and the floor computed at hydra_done agree it\'s already known, not newly added', () => {
-  const before = applyRigor([], 'standard');
-  const after = applyRigor([], 'standard');
+  const before = applyRigor([], 'strict');
+  const after = applyRigor([], 'strict');
   assert.deepEqual(before, after);
   assert.equal(before[0]!.id, after[0]!.id);
 });

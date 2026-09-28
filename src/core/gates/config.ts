@@ -187,9 +187,10 @@ export async function loadGates(folder: string): Promise<GatesConfig> {
 // ---- O6: rigor per plan job (docs/Heads.md, "Rigor") ----
 
 /**
- * `quick`: the project's own gates only. `standard` (a plan job's default) and
- * `strict` add a review by the other provider when the project's own gates
- * don't already have one — rigor only ever adds to the floor, never replaces
+ * `quick`: the project's own gates only, for the job and for its plan's integration gate. `standard` (a plan
+ * job's default): the job runs the project's own gates, and its plan's integration gate adds one review of the
+ * whole combined diff (integrationGates), instead of a review on every job. `strict` also adds a review by the
+ * other provider to the job itself, when the project's own gates don't already have one — rigor only ever adds to the floor, never replaces
  * it, so a project's own required gates always still run regardless. `strict`
  * also covers screenshots and an integration gate once a project has them
  * (O3); there is nothing here to fabricate a screenshots gate from nothing.
@@ -199,7 +200,7 @@ export const rigorReviewGateId = 'rigor-review';
 
 /** Adds rigor's own gates to `gates`, unless one of that kind is already there. Pure, and the same result every call, so a snapshot taken at head start and a floor computed later always agree on what rigor added. */
 export function applyRigor(gates: readonly Gate[], rigor: PlanRigor | undefined): Gate[] {
-  if (!rigor || rigor === 'quick') return [...gates];
+  if (rigor !== 'strict') return [...gates];
   if (gates.some(gate => gate.type === 'review')) return [...gates];
   const reviewGate: ReviewGate = { id: rigorReviewGateId, type: 'review', required: true, reviewer: 'other', focus: 'Review this change for correctness, safety and fit with the task.' };
   return [...gates, reviewGate];
