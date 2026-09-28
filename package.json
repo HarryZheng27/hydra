@@ -463,6 +463,13 @@
           "default": false,
           "description": "A plan the lead creates from the chat (hydra_plan_create) opens as a draft for you to run yourself, instead of starting right away."
         },
+        "hydra.plans.integrationFixRounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 2,
+          "description": "When a plan's integration gate fails, how many times Hydra adds a job that fixes what it found and runs the gate again, before leaving it to you. 0 turns this off."
+        },
         "hydra.plans.maxAmendments": {
           "type": "integer",
           "minimum": 0,
