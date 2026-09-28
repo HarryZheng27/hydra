@@ -94,7 +94,8 @@ for (const name of expected) {
 
   test(`${name}: prompt.md is the plan's brief (taskFromPlan), so both setups get the same work`, async () => {
     const { dir, plan } = await fixture(name);
-    assert.equal(await readFile(path.join(dir, 'prompt.md'), 'utf8'), taskFromPlan(plan), 'regenerate prompt.md from the plan');
+    // A Windows checkout may have turned the line endings into CRLF; the words are what must match.
+    assert.equal((await readFile(path.join(dir, 'prompt.md'), 'utf8')).replace(/\r\n/g, '\n'), taskFromPlan(plan), 'regenerate prompt.md from the plan');
     for (const file of ['README.md', 'SPEC.md', 'package.json', 'check.mjs']) await access(path.join(dir, file));
     const gates = JSON.parse(await readFile(path.join(dir, '.hydra', 'gates.json'), 'utf8'));
     assert.deepEqual(gates.gates.map((gate: { id: string; command: string[] }) => [gate.id, gate.command.join(' ')]), [['test', 'npm test']]);
