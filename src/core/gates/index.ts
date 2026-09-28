@@ -168,3 +168,23 @@ export function flattenGateFailureMessage(results: readonly JobCheckResult[], ma
   const flat = gateFailureMessage(results, ending).replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
+
+/**
+ * The project's gates, one line each, for a head's first prompt (helperService.ts, helperPrompt):
+ * a command gate shows its exact command, so a head can see what it would run itself; screenshots
+ * and review gates are only named, since a head can't run either. `packageTestScript` (package.json's
+ * own `scripts.test`, headBrief.ts) is added as a fallback line only when no command gate already
+ * covers testing, so a project with no gates yet still tells a head how to run its tests. Undefined
+ * with nothing to say, so the prompt adds no empty section.
+ */
+export function gateCommandsBrief(gates: readonly Gate[], packageTestScript?: string): string | undefined {
+  const lines = gateOrder(gates).map(gate => {
+    const optional = gate.required ? '' : ' (optional)';
+    if (gate.type === 'command') return `- ${gate.id}${optional}: ${gate.command.join(' ')}`;
+    if (gate.type === 'screenshots') return `- ${gate.id}${optional}: a screenshots gate (${gate.url})`;
+    return `- ${gate.id}${optional}: a review gate${gate.role ? ` (role: ${gate.role})` : ''}`;
+  });
+  if (packageTestScript && !gates.some(gate => gate.type === 'command')) lines.push(`- package.json's "test" script (no command gate covers it): ${packageTestScript}`);
+  if (!lines.length) return undefined;
+  return ['Hydra runs these gates after you call hydra_done:', ...lines].join('\n');
+}

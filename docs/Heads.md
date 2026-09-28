@@ -61,6 +61,8 @@ Connecting adds Hydra as a user-level tool server named `hydra`. That's per user
 | `hydra_stuck` | Ask the lead one question. The call waits, and the lead's answer comes back as its result. |
 | `hydra_progress` | A short note for the dashboard. |
 
+**A head's first message** is the brief plus, so it doesn't spend its first turns rediscovering the project: its worktree, branch and base commit, the paths it may change, and what the heads or jobs it depends on did. It also gets a **Repository** section — the base commit's tracked files, one per line, or, past ~200 paths or ~6000 characters, collapsed to top-level directories with a file count each — and the project's gate commands (from `.hydra/gates.json`, or `package.json`'s own `test` script where there's no command gate), stated as "Hydra runs these gates after you call hydra_done." A few lines of working guidance come with it: shell commands here start slowly, so batch them and prefer Read, Grep or Glob to `cat`/`ls`/`find`; run only the tests the change touches, since Hydra runs the full gates after `hydra_done` anyway; and give a slow test command a generous timeout rather than retrying it after it times out. None of it is file contents, and the whole addition is capped, so it can't grow the brief open-ended.
+
 ## Lifecycle
 
 ```

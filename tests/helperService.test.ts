@@ -100,6 +100,36 @@ test('a head that commits in scope and reports done is checked and handed back t
   } finally { await f.close(); }
 });
 
+test('the first prompt lists the repository\'s tracked files and the project\'s gate commands (headStartContext), so a head needn\'t spend a turn on git ls-files or cat package.json', async () => {
+  const f = await fixture({ gates: { gates: [{ id: 'test', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 }] }, script: async helper => {
+    await helper.call('hydra_done', { summary: 'Looked around' });
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('context');
+    await f.wait([job_id]);
+    assert.equal(f.runs.length, 1);
+    // .hydra/gates.json sorts before src/a.ts.
+    assert.match(f.runs[0]!.prompt, /Repository:\n2 tracked files:\n\.hydra\/gates\.json\nsrc\/a\.ts\n\n/);
+    assert.match(f.runs[0]!.prompt, /Hydra runs these gates after you call hydra_done:\n- test: npm test\n\nHow to work:/);
+  } finally { await f.close(); }
+});
+
+test('with no command gate, the first prompt falls back to package.json\'s own "test" script', async () => {
+  const f = await fixture({ script: async helper => {
+    await helper.call('hydra_done', { summary: 'Looked around' });
+    helper.endTurn();
+  } });
+  try {
+    await writeFile(path.join(f.repo, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
+    await git(f.repo, ['add', '.']); await git(f.repo, ['commit', '-qm', 'add package.json']);
+    const { job_id } = await f.start('fallback');
+    await f.wait([job_id]);
+    assert.match(f.runs[0]!.prompt, /Repository:\n2 tracked files:\npackage\.json\nsrc\/a\.ts\n\n/);
+    assert.match(f.runs[0]!.prompt, /Hydra runs these gates after you call hydra_done:\n- package\.json's "test" script \(no command gate covers it\): node --test/);
+  } finally { await f.close(); }
+});
+
 test('failed checks re-prompt the head, which fixes and passes; the third failure fails the job', async () => {
   const f = await fixture({ checks: passCheck, script: async helper => {
     await helper.commit('src/wip.ts', 'wip\n');
@@ -311,6 +341,16 @@ test('scope matching, head prompts, runner arguments and the supported CLI range
   assert.equal(inScope('src/a.ts', ['src/']), true); assert.equal(inScope('src', ['src']), true);
   assert.equal(inScope('srcx/a.ts', ['src']), false); assert.equal(inScope('README.md', ['']), true);
   assert.match(helperPrompt({ id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: [''], worktree: 'W', branch: 'b', baseCommit: 'c' }), /\(whole repository\)/);
+  // The "Repository" section and the gate/test commands (headStartContext) are added only when given, right after the brief and any dependencies; nothing without them, so a loose head's prompt is unchanged.
+  const job = { id: 'a'.repeat(12), title: 'T', brief: 'Add the thing.', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c' };
+  assert.doesNotMatch(helperPrompt(job), /Repository:/);
+  const withContext = helperPrompt(job, undefined, 'heads', undefined, undefined, { repository: '2 tracked files:\nREADME.md\nsrc/a.ts', tests: 'Hydra runs these gates after you call hydra_done:\n- test: npm test' });
+  assert.match(withContext, /Add the thing\.\n\nRepository:\n2 tracked files:\nREADME\.md\nsrc\/a\.ts\n\nHydra runs these gates after you call hydra_done:\n- test: npm test\n\nHow to work:/);
+  assert.match(withContext, /- Shell commands start slowly here.*Read, Grep or Glob/);
+  assert.match(withContext, /- Run only the tests your change touches\. Hydra runs the project's full gates after hydra_done\./);
+  assert.match(withContext, /- Give a slow test command a generous timeout rather than retrying it after it times out\./);
+  // Only the tests section, no repository listing (a job with no baseCommit-resolved listing yet):
+  assert.doesNotMatch(helperPrompt(job, undefined, 'heads', undefined, undefined, { tests: 'Hydra runs these gates after you call hydra_done:\n- test: npm test' }), /Repository:/);
   const spec: HelperRunSpec = { provider: 'claude', executable: 'claude', worktree: 'W', prompt: 'P', maxTurns: 7, maxBudgetUsd: 2, bridge: { command: 'Hydra.exe', args: ['b.cjs'], env: { HYDRA_HELPER_TOKEN: 'secret', HYDRA_HELPER_PORT: '1' } }, logFile: 'l', confine: { settingsFile: 'S.settings.json', addDirs: [], shell: false, env: {} } };
   const claude = claudeHelperArguments(spec);
   for (const expected of ['dontAsk', '--strict-mcp-config', '--max-turns', '7', '--max-budget-usd', '2']) assert.ok(claude.includes(expected), expected);
