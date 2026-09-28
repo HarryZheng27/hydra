@@ -88,7 +88,8 @@ export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
  * A Claude head's command line. Step 2 (design 1):
  * - `--setting-sources user`: a head can write `.claude/settings.local.json` in its worktree, and
  *   with project or local settings loaded, a hook it planted there ran unsandboxed (R5);
- * - `--settings <file>`: its read block and deny rules (headSettings);
+ * - `--settings <file>`: its read block and deny rules, and your plugins turned off (headSettings):
+ *   user settings would load them, and their hooks all run through the shell wrapper;
  * - `--tools` and a scoped `--allowedTools` (claudeHeadTools): no PowerShell, Bash only with a shell;
  * - `--add-dir` for its role's pack copy, which the read block would otherwise hide.
  * A role's servers come in a second file, beside Hydra's token-bearing entry, which stays inline;

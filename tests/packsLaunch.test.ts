@@ -242,7 +242,7 @@ test('helperPrompt: "Your role", its instructions and skill index come first; an
   const world = await packWorld();
   try {
     const builder = roleLaunch(await world.packs.resolve(world.repo, 'kit/builder'), { provider: 'claude', target: 'head', env: secrets });
-    const job = { id: 'a'.repeat(12), title: 'Build the cart API', brief: 'Add the cart endpoints.', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c' };
+    const job = { id: 'a'.repeat(12), title: 'Build the cart API', brief: 'Add the cart endpoints.', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c', provider: 'claude' as const };
     const prompt = helperPrompt(job, undefined, 'heads', builder);
     assert.ok(prompt.startsWith(`You are a Hydra head (job ${job.id}): Build the cart API\n\nYour role: Builder (Kit pack)\nRead the code first.\nWrite tests before you change anything.\n\nSkills you can use:\n- test-first: Write a failing test first, make it pass, then tidy. (`), prompt);
     assert.match(prompt, /SKILL\.md\)\nRead the file before you use the skill\.\n\nAdd the cart endpoints\.\n\nHow to work:/);

@@ -1,7 +1,7 @@
 import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { git, gitRun } from './git';
+import { git, gitRun, readOnlyGitTimeoutMs } from './git';
 import { hydraIdentity, mergeTrees } from './headStart';
 import { branchTip } from './laneSync';
 import { githubCompareUrl, unlinkLinks } from './laneFinish';
@@ -437,7 +437,7 @@ const assertBranch = (branch: string) => { if (!branch.startsWith(integrationBra
 
 /** The commit and branch the main checkout is on now: where a plan's integration branch starts. */
 export async function integrationStart(repository: string): Promise<{ base: string; target?: string }> {
-  const base = (await git(repository, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+  const base = (await git(repository, ['rev-parse', '--verify', 'HEAD^{commit}'], undefined, readOnlyGitTimeoutMs)).trim();
   const symbolic = await gitRun(repository, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const target = symbolic.code === 0 ? symbolic.stdout.trim() : undefined;
   return { base, ...(target && isSafeBranchName(target) ? { target } : {}) };
@@ -474,7 +474,7 @@ async function isExactLanding(repository: string, flight: Pick<IntegrationInFlig
   if (parents.length !== 2 || parents[0] !== flight.from || parents[1] !== flight.commit) return false;
   const merged = await mergeTrees(repository, flight.from, flight.commit);
   if ('conflicts' in merged) return false;
-  return (await git(repository, ['rev-parse', `${actual}^{tree}`])).trim() === merged.tree;
+  return (await git(repository, ['rev-parse', `${actual}^{tree}`], undefined, readOnlyGitTimeoutMs)).trim() === merged.tree;
 }
 
 /** Puts a deleted integration branch back where Hydra left it; throws when that commit is gone too. */
@@ -531,6 +531,8 @@ export async function withGateWorktree<T>(repository: string, root: string, plan
   const worktree = path.join(root, `ig-${planId}-${randomBytes(3).toString('hex')}`);
   const hooksOff = await mkdtemp(path.join(root, 'nh-'));
   try {
+    // No timeout: a checkout, so a kill mid-command could leave the new worktree half-populated
+    // or its lock files behind.
     await git(repository, ['-c', `core.hooksPath=${hooksOff}`, 'worktree', 'add', '--detach', worktree, tip]);
     try { return await work(worktree); }
     finally { await removeGateWorktree(repository, worktree); }
@@ -564,10 +566,10 @@ export async function mergeIntegration(repository: string, integration: Pick<Pla
   const message = `Merge Hydra plan "${title.replace(/[\r\n]+/g, ' ').slice(0, 150)}" (${integration.branch})`;
   const result = await gitRun(repository, ['merge', '--no-edit', '-m', message, `refs/heads/${integration.branch}`]);
   if (result.code !== 0) {
-    if ((await gitRun(repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).code === 0) await gitRun(repository, ['merge', '--abort']);
+    if ((await gitRun(repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], undefined, readOnlyGitTimeoutMs)).code === 0) await gitRun(repository, ['merge', '--abort']);
     throw new Error(`git refused the merge: ${(result.stderr.trim() || result.stdout.trim()).split('\n').slice(0, 6).join(' ')}`);
   }
-  return { commit: (await git(repository, ['rev-parse', 'HEAD'])).trim(), into: target };
+  return { commit: (await git(repository, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).trim(), into: target };
 }
 
 /** Open PR: push the integration branch to origin (the lanes' own push, never prompting) and give GitHub's compare page, with the gate's result as the body. */
@@ -592,9 +594,9 @@ export async function carryOver(worktree: string, commit: string, hooksOff: stri
   if (!isSha(commit)) return 'skipped';
   const result = await gitRun(worktree, ['-c', `core.hooksPath=${hooksOff}`, '-c', 'user.name=Hydra', '-c', 'user.email=heads@hydra.invalid', 'merge', '--no-ff', '--no-commit', commit]);
   if (result.code === 0) return 'merged';
-  const conflicted = (await gitRun(worktree, ['diff', '--name-only', '--diff-filter=U'])).stdout.trim();
+  const conflicted = (await gitRun(worktree, ['diff', '--name-only', '--diff-filter=U'], undefined, readOnlyGitTimeoutMs)).stdout.trim();
   if (conflicted) return 'conflicts';
-  if ((await gitRun(worktree, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).code === 0) await gitRun(worktree, ['merge', '--abort']);
+  if ((await gitRun(worktree, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], undefined, readOnlyGitTimeoutMs)).code === 0) await gitRun(worktree, ['merge', '--abort']);
   return 'skipped';
 }
 
