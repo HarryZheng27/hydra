@@ -110,6 +110,9 @@ async function single(flags) {
   const spec = custom ? { command: custom[0], args: custom.slice(1) } : agents[agent];
   const result = await run(spec.command, spec.args, { cwd: repo, input: task, timeoutMs: minutes * 60_000 });
   const wallClockSeconds = Math.round((now() - started) / 1000);
+  // An agent that never ran (not found, not signed in) leaves the fixture untouched, which still passes its own gate:
+  // that must never be recorded as a result.
+  if (result.code !== 0 && !result.timedOut) throw new Error(`${spec.command} exited with ${result.code} after ${wallClockSeconds}s, so there's no result to record.\n${(result.stderr || result.stdout).trim().slice(-2000)}\nIf the agent isn't on cmd.exe's PATH, pass its full path with --command.`);
   let agentOutput, codexUsage;
   if (agent === 'claude') { try { agentOutput = JSON.parse(result.stdout); } catch { /* not JSON: an error before it started */ } }
   else for (const line of result.stdout.split('\n')) {
