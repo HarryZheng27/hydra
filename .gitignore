@@ -5,3 +5,4 @@ dist/
 .preview/
 .vscode-test/
 .desktop/
+.bench/

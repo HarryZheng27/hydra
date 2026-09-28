@@ -185,8 +185,30 @@ export interface PlanReportJobDetail {
   checks?: { id: string; required: boolean; passed: boolean; state?: string; summary?: string }[];
   reason?: string;
   question?: string;
+  /** O9: what its runs cost, as the provider reported it (JobUsage). */
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
+const money = (usd: number) => '$' + (usd < 0.01 && usd > 0 ? usd.toFixed(4) : usd.toFixed(2));
+/** A job's cost as its provider reported it, or undefined when it reported nothing. */
+function reportCost(job: Pick<PlanReportJobDetail, 'costUsd' | 'inputTokens' | 'outputTokens'>): string | undefined {
+  const parts: string[] = [];
+  if (job.costUsd !== undefined) parts.push(`${money(job.costUsd)} (as Claude Code reported it)`);
+  if (job.inputTokens !== undefined || job.outputTokens !== undefined) parts.push(`${job.inputTokens ?? 0} input and ${job.outputTokens ?? 0} output tokens (Codex reports tokens, not dollars)`);
+  return parts.length ? parts.join('; ') : undefined;
+}
+/** The plan's reported cost over its jobs, or undefined when none reported any. */
+function reportTotals(jobs: readonly PlanReportJobDetail[]): string | undefined {
+  const withCost = jobs.filter(job => job.costUsd !== undefined), withTokens = jobs.filter(job => job.inputTokens !== undefined || job.outputTokens !== undefined);
+  const parts: string[] = [];
+  if (withCost.length) parts.push(`${money(withCost.reduce((sum, job) => sum + job.costUsd!, 0))} over ${withCost.length} Claude Code ${withCost.length === 1 ? 'job' : 'jobs'}`);
+  if (withTokens.length) parts.push(`${withTokens.reduce((sum, job) => sum + (job.inputTokens ?? 0), 0)} input and ${withTokens.reduce((sum, job) => sum + (job.outputTokens ?? 0), 0)} output tokens over ${withTokens.length} Codex ${withTokens.length === 1 ? 'job' : 'jobs'}`);
+  const silent = jobs.length - new Set([...withCost, ...withTokens]).size;
+  if (!parts.length) return undefined;
+  return parts.join(', ') + (silent ? ` (${silent} more reported nothing)` : '');
+}
 const reportDuration = (startedAt?: string, finishedAt?: string): string | undefined => {
   if (!startedAt) return undefined;
   const ms = (finishedAt ? new Date(finishedAt).getTime() : Date.now()) - new Date(startedAt).getTime();
@@ -212,6 +234,8 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
     if (parts.length) lines.push(`Budget: ${parts.join(', ')}.`);
   }
   const overall = reportDuration(plan.startedAt, undefined);
+  const reported = reportTotals(jobs);
+  if (reported) lines.push(`Reported cost: ${reported}.`);
   if (overall) lines.push(`Ran for ${overall}.`);
   lines.push('');
   for (const job of jobs) {
@@ -224,8 +248,8 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
     if (job.attempts !== undefined) lines.push(`Attempts: ${job.attempts}.`);
     const duration = reportDuration(job.startedAt, job.finishedAt);
     if (duration) lines.push(`Time: ${duration}.`);
-    // No live spend tracking exists (only wall-clock is enforced), so cost is the same worst-case estimate the budget check uses, not an actual charge.
-    lines.push(`Cost: not tracked live; budgeted up to $${defaultHeadBudgetUsd}.`);
+    // O9: what the provider reported (Claude Code: dollars; Codex: tokens only). Nothing reported: the budget's estimate, said as such.
+    lines.push(`Cost: ${reportCost(job) ?? `not reported; budgeted up to ${money(defaultHeadBudgetUsd).replace(/\.00$/, '')}`}.`);
     if (job.summary) lines.push('', job.summary);
     if (job.changedFiles?.length) lines.push('', 'Changed files:', ...job.changedFiles.map(file => `- ${file}`));
     if (job.checks?.length) {

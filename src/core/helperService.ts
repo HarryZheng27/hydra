@@ -777,7 +777,11 @@ export class HelperService {
       const active: Active = { run, token, startedAt, blockedTotal: 0, ...(role ? { role } : {}), ...(mcpConfigFile ? { mcpConfigFile } : {}), ...(settingsFile ? { settingsFile } : {}), temp, ...(shellNote ? { shellNote } : {}) };
       this.active.set(job.id, active);
       run.onTurnEnd(() => { void this.turnEnded(job.id); });
-      void run.exited.then(({ code }) => this.exited(job.id, code));
+      // O9: what the run cost, as its CLI reported it, is kept before anything else is settled.
+      void run.exited.then(async ({ code }) => {
+        await this.options.store.recordUsage(job.id, run.usage?.()).catch(error => this.options.log?.(`[heads] ${job.id}: couldn't record its usage: ${error instanceof Error ? error.message : String(error)}`));
+        return this.exited(job.id, code);
+      });
       // A cancel (or Stop all) can land while the launch is still writing its state: the job
       // then reads as running but had no process to stop. Honour it now.
       if (finalJobStates.has(this.options.store.get(job.id)?.state ?? 'failed')) { void this.stopRun(job.id); return; }
@@ -1202,6 +1206,8 @@ export class HelperService {
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
+      // O9: what its runs cost so far, as the provider reported it (Claude Code in dollars, Codex in tokens).
+      ...(detail && job.usage ? { usage: { runs: job.usage.runs, ...(job.usage.costUsd !== undefined ? { cost_usd: job.usage.costUsd } : {}), ...(job.usage.inputTokens !== undefined ? { input_tokens: job.usage.inputTokens } : {}), ...(job.usage.outputTokens !== undefined ? { output_tokens: job.usage.outputTokens } : {}) } } : {}),
       // O2/O3: predicted merge conflicts, as of the last pass: with other running heads, and with the plan's integration branch.
       ...(detail && this.headConflicts(job.id).length ? { predicted_conflicts: this.headConflicts(job.id).map(conflict => ({ head: conflict.jobId, files: conflict.files })) } : {}),
       ...(detail && this.headIntegrationConflict(job.id) ? { integration_conflict: { branch: this.headIntegrationConflict(job.id)!.branch, files: this.headIntegrationConflict(job.id)!.files } } : {}),

@@ -6,6 +6,7 @@ import type { Provider } from './model';
 import { claudeHeadLimit, codexHeadLimit, type HeadLimit } from './limitDetection';
 import { claudeHeadTools } from './confine';
 import { redactText } from './redact';
+import type { RunUsage } from './jobs';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -78,6 +79,8 @@ export interface HelperRun {
   stop(): Promise<void>;
   /** The usage limit the CLI reported for its latest turn, if that turn hit one. */
   limitHit?(): HeadLimit | undefined;
+  /** O9: what this run cost, as the CLI reported it: Claude Code's session cost in dollars, Codex's tokens over its turns. */
+  usage?(): RunUsage | undefined;
 }
 export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
 
@@ -167,10 +170,12 @@ function stopper(child: () => ChildProcess | undefined) {
 function startClaude(spec: HelperRunSpec): HelperRun {
   const log = logger(spec.logFile, spec.bridge.env.HYDRA_HELPER_TOKEN), listeners: (() => void)[] = [];
   log('start', { provider: 'claude', worktree: spec.worktree, args: claudeHelperArguments(spec) });
-  let limit: HeadLimit | undefined;
+  let limit: HeadLimit | undefined, costUsd: number | undefined;
   const child = spawnLogged(spec, claudeHelperArguments(spec), log, message => {
     // A limit counts for the turn it ends; a later good turn clears it.
     if (message.type === 'assistant' || message.type === 'result') limit = claudeHeadLimit(message) ?? (message.type === 'result' && message.is_error !== true ? undefined : limit);
+    // O9: each turn's result reports the session's cost so far; the run's cost is the largest seen.
+    if (message.type === 'result') costUsd = claudeRunCost(message, costUsd);
     if (message.type === 'result') for (const listener of listeners) listener();
   });
   const exited = new Promise<{ code: number | null }>(resolve => child.on('close', code => { log('exit', { code }); resolve({ code }); }));
@@ -181,12 +186,25 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   });
   const say = (text: string) => write({ type: 'user', message: { role: 'user', content: text } });
   void write({ type: 'control_request', request_id: 'hydra-helper-init', request: { subtype: 'initialize' } }).then(() => say(spec.prompt));
-  return { onTurnEnd: listener => { listeners.push(listener); }, exited, send: async text => { limit = undefined; return say(text); }, stop: stopper(() => child), limitHit: () => limit };
+  return { onTurnEnd: listener => { listeners.push(listener); }, exited, send: async text => { limit = undefined; return say(text); }, stop: stopper(() => child), limitHit: () => limit, usage: () => costUsd === undefined ? undefined : { costUsd } };
+}
+/** O9: a Claude Code result line's session cost (`total_cost_usd`), kept as the largest seen for the run. */
+export function claudeRunCost(message: Record<string, unknown>, current: number | undefined): number | undefined {
+  const cost = message.total_cost_usd;
+  if (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0) return current;
+  return current === undefined ? cost : Math.max(current, cost);
+}
+/** O9: a Codex turn.completed line's token counts, added to the run's. */
+export function codexRunUsage(message: Record<string, unknown>, current: RunUsage | undefined): RunUsage | undefined {
+  const usage = message.usage as { input_tokens?: unknown; output_tokens?: unknown } | undefined;
+  if (message.type !== 'turn.completed' || !usage || typeof usage !== 'object') return current;
+  const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+  return { inputTokens: (current?.inputTokens ?? 0) + count(usage.input_tokens), outputTokens: (current?.outputTokens ?? 0) + count(usage.output_tokens) };
 }
 
 function startCodex(spec: HelperRunSpec): HelperRun {
   const log = logger(spec.logFile, spec.bridge.env.HYDRA_HELPER_TOKEN), listeners: (() => void)[] = [];
-  let thread: string | undefined, current: ChildProcess | undefined, finished = false, limit: HeadLimit | undefined;
+  let thread: string | undefined, current: ChildProcess | undefined, finished = false, limit: HeadLimit | undefined, usage: RunUsage | undefined;
   let resolveExit!: (value: { code: number | null }) => void;
   const exited = new Promise<{ code: number | null }>(resolve => { resolveExit = resolve; });
   const run = (prompt: string, resumeThread?: string) => {
@@ -195,6 +213,7 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     limit = undefined;
     const child = spawnLogged(spec, args, log, message => {
       if (message.type === 'thread.started' && typeof message.thread_id === 'string') thread = message.thread_id;
+      usage = codexRunUsage(message, usage);
       // An error line can be a retry notice; a completed turn clears it.
       if (message.type === 'turn.completed') limit = undefined;
       else limit = codexHeadLimit(message) ?? limit;
@@ -216,6 +235,7 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     exited,
     send: async text => { if (finished || !thread || (current && current.exitCode === null)) return false; run(text, thread); return true; },
     limitHit: () => limit,
+    usage: () => usage,
     stop: async () => { const wasFinished = finished; finished = true; await stopper(() => current)(); if (!wasFinished) resolveExit({ code: current?.exitCode ?? null }); },
   };
 }

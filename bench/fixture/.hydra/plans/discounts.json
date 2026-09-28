@@ -1,0 +1,47 @@
+{
+  "title": "Discount codes",
+  "brief": "Customers can enter a discount code on an order. Codes: SAVE10 takes 10% off the subtotal (rounded down to a whole cent); FIVEOFF takes $5.00 (500 cents) off an order whose subtotal is at least $25.00 (2500 cents). Codes are case-insensitive. Shared contract for every job: an order object gains `discountCode` (the code in upper case, only when one was applied) and `discountCents` (always present; 0 when there's no code); `totalFor(order)` returns `subtotalCents - discountCents`, never below 0. An unknown code, or FIVEOFF under its minimum, is refused with an Error whose message names the code.",
+  "jobs": [
+    {
+      "key": "discounts",
+      "title": "Discount rules",
+      "brief": "Create src/discounts.js exporting `applyDiscount(subtotalCents, code)`, returning `{ code, discountCents }` for a valid code (code in upper case) and throwing for an unknown code or FIVEOFF under its $25.00 minimum, as the plan's brief says. With no code (undefined or empty), return `{ discountCents: 0 }`. Add test/discounts.test.js covering both codes, case-insensitivity, rounding, the minimum, and the refusals. Plain Node, CommonJS, no dependencies; run `npm test`.",
+      "write_scope": ["src/discounts.js", "test/discounts.test.js"]
+    },
+    {
+      "key": "api",
+      "title": "Codes on orders and in the API",
+      "brief": "Use applyDiscount from src/discounts.js: `createOrder(items, code)` in src/orders.js applies an optional code and stores `discountCode` and `discountCents` on the order as the plan's contract says; `totalFor(order)` subtracts `discountCents`. In src/api.js, POST /orders accepts an optional `code` in the body and answers 400 with the error's message for a refused code; responses keep `totalCents` from totalFor. Don't edit the tests; another job writes them.",
+      "write_scope": ["src/orders.js", "src/api.js"],
+      "depends_on": ["discounts"]
+    },
+    {
+      "key": "ui",
+      "title": "Discount on the order page",
+      "brief": "In src/ui.js, renderOrder shows a discount row above the total when `order.discountCents > 0`: `<tr class=\"discount\"><td colspan=\"2\">Discount (CODE)</td><td>-$X.XX</td></tr>`, with the code from `order.discountCode`, escaped. The total row keeps using totalFor(order). Work from the plan's contract for the order's fields; another job changes src/orders.js. Don't edit the tests.",
+      "write_scope": ["src/ui.js"],
+      "depends_on": ["discounts"]
+    },
+    {
+      "key": "api-tests",
+      "title": "Tests for codes on orders and the API",
+      "brief": "Add tests to test/orders.test.js and test/api.test.js: an order with SAVE10 and one with FIVEOFF (right discountCents, discountCode and total), no code (discountCents 0), a lower-case code, FIVEOFF under the minimum and an unknown code refused (400 from POST /orders with the code in the error). Keep the existing tests passing.",
+      "write_scope": ["test/orders.test.js", "test/api.test.js"],
+      "depends_on": ["api"]
+    },
+    {
+      "key": "ui-tests",
+      "title": "Tests for the order page's discount",
+      "brief": "Add tests to test/ui.test.js: an order with a code renders the discount row (code and amount) and the discounted total; an order without one renders no discount row. Build orders with createOrder(items, code). Keep the existing test passing.",
+      "write_scope": ["test/ui.test.js"],
+      "depends_on": ["ui", "api"]
+    },
+    {
+      "key": "docs",
+      "title": "Document discount codes",
+      "brief": "In README.md, document discount codes: the two codes and their rules, the optional `code` in POST /orders and its 400 for a refused code, the order's `discountCode`/`discountCents` fields, and the discount row on the order page.",
+      "write_scope": ["README.md"],
+      "depends_on": ["api", "ui"]
+    }
+  ]
+}

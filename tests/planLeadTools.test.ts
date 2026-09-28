@@ -337,7 +337,7 @@ test('buildPlanReport (O7): a snapshot of the morning report\'s shape for a mixe
   assert.match(report, /Budget: \$20, 120 minute\(s\), 3 job\(s\) at once\./);
   assert.match(report, /## Build the API/);
   assert.match(report, /Provider: claude\./);
-  assert.match(report, /Cost: not tracked live; budgeted up to \$5\./);
+  assert.match(report, /Cost: not reported; budgeted up to \$5\./);
   assert.match(report, /Gates:\n- ✓ unit\n- ✓ review: Looks good\./);
   assert.match(report, /## Fix lint/);
   assert.match(report, /Provider: codex \(handed off from claude\)\./);
@@ -376,4 +376,17 @@ test('buildPlanReport (O3): the integration gate\'s real result, what landed, an
   const stale = buildPlanReport(plan({ tip: sha('b'), at, status: 'passed', checks: [check('unit', true)] }), []);
   assert.ok(stale.includes('Integration gate out of date'));
   assert.ok(!stale.includes('- ✓ unit'), 'a result for an older tip is not shown as this one\'s');
+});
+
+test('buildPlanReport (O9): each job\'s cost as its provider reported it, and the plan\'s total', () => {
+  const plan = { title: 'Checkout', state: 'done', amendments: [] } as unknown as Plan;
+  const report = buildPlanReport(plan, [
+    { key: 'api', title: 'API', status: 'done', provider: 'claude', costUsd: 1.25 },
+    { key: 'ui', title: 'UI', status: 'done', provider: 'codex', inputTokens: 1200, outputTokens: 300 },
+    { key: 'docs', title: 'Docs', status: 'done', provider: 'claude' },
+  ], 5);
+  assert.ok(report.includes('Reported cost: $1.25 over 1 Claude Code job, 1200 input and 300 output tokens over 1 Codex job (1 more reported nothing).'), report);
+  assert.ok(report.includes('Cost: $1.25 (as Claude Code reported it).'));
+  assert.ok(report.includes('Cost: 1200 input and 300 output tokens (Codex reports tokens, not dollars).'));
+  assert.ok(report.includes('Cost: not reported; budgeted up to $5.'));
 });
