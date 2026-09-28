@@ -172,11 +172,15 @@ export function startProjectSummaryPublisher(options: ProjectSummaryPublisherOpt
   let lastWriteAt = -Infinity;
   let trailing: unknown;
   let disposed = false;
+  // One write at a time, in order: two overlapping writes could otherwise land out of order and leave an older
+  // summary on disk until the next heartbeat.
+  let writing: Promise<void> = Promise.resolve();
 
-  const write = async (): Promise<void> => {
+  const write = (): Promise<void> => {
     lastWriteAt = clock.now().getTime();
     const summary: ProjectSummary = { version: 1, pid, updatedAt: new Date(lastWriteAt).toISOString(), ...build() };
-    try { await writeProjectSummary(dir, id, summary); } catch (error) { onError(error); }
+    writing = writing.then(() => writeProjectSummary(dir, id, summary)).catch(error => onError(error));
+    return writing;
   };
 
   const changed = (): void => {
@@ -197,6 +201,7 @@ export function startProjectSummaryPublisher(options: ProjectSummaryPublisherOpt
       disposed = true;
       if (trailing !== undefined) clock.clearTimeout(trailing);
       clock.clearInterval(heartbeat);
+      await writing;
       if (mode === 'remove') { await removeProjectSummary(dir, id).catch(() => undefined); return; }
       const at = clock.now().toISOString();
       await writeProjectSummary(dir, id, { version: 1, pid, updatedAt: at, closedAt: at, ...build() }).catch(error => onError(error));
