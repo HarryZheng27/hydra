@@ -206,7 +206,7 @@ class Manager {
     this.lanes = new LanesController({
       context, log: line => this.output.appendLine(line),
       post: message => { void this.panel?.webview.postMessage(message); },
-      openAgents: () => this.openAgents(), webviewReady: () => !!this.panel && this.readyPanel === this.panel,
+      openAgents: () => this.openAgents(), toEditor: () => this.toEditor(), webviewReady: () => !!this.panel && this.readyPanel === this.panel,
       helperServerSpec: provider => this.helperServerSpec(provider), runningHeads: id => this.laneHeads(id),
       changed: () => this.laneFoldersChanged(),
       gatesExecutable: provider => this.helperExecutable(provider),
@@ -933,12 +933,14 @@ class Manager {
     }
     if (action === 'helperLog') {
       const log = path.join(this.storageDirectory, 'helpers', 'logs', `${jobId}.jsonl`);
+      await this.toEditor();
       await vscode.window.showTextDocument(vscode.Uri.file(log), { preview: true, viewColumn: vscode.ViewColumn.Beside });
       return;
     }
     if (!job.worktree || !job.baseCommit) throw new Error('This head has no changes yet.');
     const head = job.result?.commit || (await git(job.worktree, ['rev-parse', 'HEAD'])).trim();
     const diff = await git(job.worktree, ['diff', '--stat', '--patch', '--no-color', job.baseCommit, head, '--']);
+    await this.toEditor();
     const document = await vscode.workspace.openTextDocument({ language: 'diff', content: `# ${job.title} (Hydra head ${job.id})\n# ${job.branch} ${job.baseCommit.slice(0, 12)}..${head.slice(0, 12)}\n# Merge it yourself with git when you're happy: git merge ${job.branch}\n\n${diff || '(no changes)'}` });
     await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
   }
@@ -983,6 +985,7 @@ class Manager {
     }
     const key = String(Date.now());
     this.auditSnapshots.clear(); this.auditSnapshots.set(key, content);
+    await this.toEditor();
     const document = await vscode.workspace.openTextDocument(vscode.Uri.from({ scheme: 'hydra-audit', path: '/audit.jsonl', query: key }));
     await vscode.window.showTextDocument(document, { preview: true });
   }
@@ -1607,9 +1610,13 @@ class Manager {
     const ending = `${plan.state}:${plan.integration?.tip ?? ''}`;
     if (this.reportedPlans.get(plan.id) === ending) return;
     this.reportedPlans.set(plan.id, ending);
-    try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ }
+    const openReport = async () => { try { await this.toEditor(); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ } };
     const verdict = plan.integration && plan.state === 'done' ? ` Integration gate: ${integrationLeadView(plan)?.gate.label ?? 'not run'}.` : '';
-    void notices.info(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'}.${verdict} Its report is open.`);
+    const ended = `Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'}.${verdict}`;
+    // In the Agent Manager, the report waits to be asked for rather than pulling you out to the Editor.
+    if (this.mode === 'agents') { void notices.info(`${ended} Its report is ready.`, 'Open report').then(pick => { if (pick) void openReport(); }); return; }
+    await openReport();
+    void notices.info(`${ended} Its report is open.`);
   }
   /** A plan's report as Markdown: the morning report (O7) and hydra_plan_report (O8b) are the same text. */
   private planReportMarkdown(plan: Plan): string {
@@ -1729,6 +1736,10 @@ class Manager {
     } else this.panel.reveal();
     await modeChanged;
     await this.publish();
+  }
+  /** The Agent Manager is the whole window, so opening a file, diff or log from it switches to the Editor first. */
+  private async toEditor(): Promise<void> {
+    if (this.mode === 'agents') await this.openEditor();
   }
   private async openEditor(): Promise<void> {
     this.mode = 'editor';
