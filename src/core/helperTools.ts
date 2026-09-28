@@ -27,7 +27,7 @@ const planJobSchema = {
     depends_on: { type: 'array', items: jobKey, maxItems: 11, description: 'Keys of jobs in this same plan that must finish first. This job then starts from their results and is told what they did.' },
     provider: string('Which agent runs this job. Defaults to the plan\'s, else yours.', { enum: ['claude', 'codex'] }),
     role: string('A role from an active pack, as "pack/role", if one fits this job.'),
-    rigor: string('How much checking this job gets, on top of the project\'s own gates (never fewer than those). "quick": nothing extra. "standard" (the default): also a review by the other agent, if the project doesn\'t already review. "strict": the same, plus screenshots and an integration check when the project has them.', { enum: ['quick', 'standard', 'strict'] }),
+    rigor: string('How much checking this job gets, on top of the project\'s own gates (never fewer than those). "quick": nothing extra. "standard" (the default): the job runs the project\'s own gates, and the plan gets one review of all its jobs\' work together, by the other agent, before it merges. "strict": also a review of this job on its own, plus screenshots when the project has them.', { enum: ['quick', 'standard', 'strict'] }),
   },
 };
 

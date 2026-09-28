@@ -328,7 +328,7 @@ export interface PlanRunnerOptions {
 }
 
 export interface PlanIntegrationOptions {
-  /** Run the integration gate on the integrated tree at `tip`: the project's command gates, and for a strict plan a review. */
+  /** Run the integration gate on the integrated tree at `tip`: the project's command gates, and one review of the combined diff for a plan with a standard or strict job. */
   runGate(plan: Plan, tip: string): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }>;
   /** Tries a job gets to land before it is held for the lead. Default 3. */
   attempts?: number;
@@ -660,7 +660,7 @@ export class PlanRunner {
   }
   /**
    * The integration gate (hydra_plan_integrate, or by itself after the last job lands): the project's command
-   * gates, and for a strict plan a review, on the integrated tree at the branch's tip. Refused while jobs are
+   * gates, and one review of the combined diff for a plan with a standard or strict job, on the integrated tree at the branch's tip. Refused while jobs are
    * still landing; a run already going is joined rather than started twice. Returns the gate's record.
    */
   integrate(planId: string): Promise<IntegrationGateRecord> {

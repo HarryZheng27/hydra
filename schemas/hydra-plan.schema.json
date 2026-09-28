@@ -79,7 +79,7 @@
           },
           "rigor": {
             "type": "string",
-            "description": "How much checking this job gets, on top of the project's own gates (never fewer than those). \"quick\": nothing extra. \"standard\" (the default): also a review by the other agent, if the project doesn't already review. \"strict\": the same, plus screenshots and an integration check when the project has them.",
+            "description": "How much checking this job gets, on top of the project's own gates (never fewer than those). \"quick\": nothing extra. \"standard\" (the default): the job runs the project's own gates, and the plan gets one review of all its jobs' work together, by the other agent, before it merges. \"strict\": also a review of this job on its own, plus screenshots when the project has them.",
             "enum": [
               "quick",
               "standard",

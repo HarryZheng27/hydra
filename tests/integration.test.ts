@@ -185,7 +185,7 @@ test('integrationSettled (O3): a done plan waits for its integration gate on the
   assert.equal(integrationSettled({ state: 'done', integration: { ...landed, error: 'stopped' } }), true);
 });
 
-test('integrationGates (O3): the project\'s command gates always; a review of the whole diff only for a strict plan', () => {
+test('integrationGates (O3): the project\'s command gates always; one review of the whole diff for a plan that asks for it (any standard or strict job)', () => {
   const config = parseGatesConfig({ gates: [{ id: 'unit', type: 'command', command: ['npm', 'test'] }, { id: 'ui', type: 'screenshots', start: ['npm', 'start'], url: 'http://localhost:{port}/' }] });
   assert.deepEqual(integrationGates(config, false).gates.map(gate => gate.id), ['unit']);
   assert.deepEqual(integrationGates(config, true).gates.map(gate => [gate.id, gate.type]), [['unit', 'command'], ['rigor-review', 'review']]);
