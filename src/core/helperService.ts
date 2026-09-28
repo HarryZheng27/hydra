@@ -10,7 +10,7 @@ import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
 import { defaultMaxAttempts, evidenceStatus, finalJobStates, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
 import { carryOver, integrationAuthors, integrationGates, withGateWorktree, type IntegrationLeadView } from './integration';
-import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
+import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
 import { headWorkingGuidance, parsePackageTestScript, repositoryListing } from './headBrief';
 import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
@@ -469,12 +469,13 @@ export class HelperService {
    * headBrief.ts. Best-effort like headStartSnapshot — a piece that fails (an unreadable
    * package.json, a repository too unusual for `git ls-tree`) is simply left off the prompt.
    */
-  private async headStartContext(job: Job, baseCommit: string): Promise<{ repository?: string; tests?: string }> {
+  private async headStartContext(job: Job, baseCommit: string): Promise<{ repository?: string; tests?: string; hasCommandGate: boolean }> {
     const repository = await this.repositoryListingFor(baseCommit);
+    const gates = job.gatesAtStart?.gates ?? [];
     let tests: string | undefined;
-    try { tests = gateCommandsBrief(job.gatesAtStart?.gates ?? [], await packageTestScript(this.options.leadFolder)); }
+    try { tests = gateCommandsBrief(gates, await packageTestScript(this.options.leadFolder)); }
     catch { /* best effort: no test summary for this head */ }
-    return { ...(repository ? { repository } : {}), ...(tests ? { tests } : {}) };
+    return { ...(repository ? { repository } : {}), ...(tests ? { tests } : {}), hasCommandGate: hasCommandGate(gates) };
   }
 
   /** git ls-tree at `baseCommit`, formatted once (repositoryListing, headBrief.ts) and cached: a plan dispatching several heads at once reads the same commit for every one of them. */
@@ -1399,8 +1400,12 @@ function describeGate(check: JobCheckResult) {
  * `context` is headBrief.ts's repository listing and gate/test commands (headStartContext):
  * measured need — without them, a head spent its first several turns on `git ls-files`, `cat
  * package.json` and reading the same handful of files, a cost paid by every head running at once.
+ * The working-guidance bullets it adds (headWorkingGuidance) are worded for this head specifically:
+ * `job.provider` (Codex has no Read/Grep/Glob tools) and `shellOff` (a Claude head can have no
+ * shell at all) change which of them make sense, and `context.hasCommandGate` decides whether
+ * "run only the tests your change touches" is true for this project.
  */
-export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeScope' | 'worktree' | 'branch' | 'baseCommit'>, dependencies?: string, noun: 'heads' | 'jobs' = 'heads', role?: Pick<RoleLaunch, 'label' | 'text' | 'changes'>, shellOff?: string, context?: { repository?: string; tests?: string }): string {
+export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeScope' | 'worktree' | 'branch' | 'baseCommit' | 'provider'>, dependencies?: string, noun: 'heads' | 'jobs' = 'heads', role?: Pick<RoleLaunch, 'label' | 'text' | 'changes'>, shellOff?: string, context?: { repository?: string; tests?: string; hasCommandGate?: boolean }): string {
   return [
     `You are a Hydra head (job ${job.id}): ${job.title}`,
     '',
@@ -1414,7 +1419,7 @@ export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeSco
     `- Work only in this git worktree: ${job.worktree}, on branch ${job.branch}. It starts from commit ${job.baseCommit}${dependencies ? `, which already has the work of the ${noun} it depends on` : ''}.`,
     `- You may change only these paths: ${job.writeScope.length ? job.writeScope.map(entry => entry || '(whole repository)').join(', ') : '(whole repository)'}. Changes elsewhere are refused.`,
     '- Nobody will approve anything for you. Tools you are not allowed to use are denied; work around them.',
-    ...headWorkingGuidance.map(line => `- ${line}`),
+    ...headWorkingGuidance({ provider: job.provider, shellOff: !!shellOff, hasCommandGate: !!context?.hasCommandGate }).map(line => `- ${line}`),
     ...(shellOff ? [`- Your shell is off: Codex's Windows sandbox isn't available (${shellOff}). Hydra's gates run the tests.`] : []),
     '- When you are finished, call the hydra_done tool with a summary. Hydra commits your changes for you, so don\'t commit yourself: git commands that write (commit, checkout, config) may fail in your sandbox. Hydra then runs the project\'s gates on the changes (its checks, and possibly a review by another agent), and tells you if anything must be fixed.',
     ...(role?.changes === 'optional' ? ['- Your role may finish without changing any file: then your summary is the result, so put everything the lead needs in it.'] : []),

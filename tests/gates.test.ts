@@ -7,7 +7,7 @@ import { git } from '../src/core/git';
 import { gateBlocks, gateKind, gateState, processAlive, type JobCheckResult } from '../src/core/jobs';
 import type { ProbeOutput } from '../src/core/process';
 import { terminateProcessTree } from '../src/core/process';
-import { applyRigor, findBrowser, gateCommandsBrief, gateFailureMessage, gateOrder, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
+import { applyRigor, findBrowser, gateCommandsBrief, gateFailureMessage, gateOrder, hasCommandGate, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
 import { browserCandidates } from '../src/core/gates/browser';
 import { resolveCommand } from '../src/core/gates/command';
 import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewFails, reviewPrompt } from '../src/core/gates/review';
@@ -353,9 +353,12 @@ test('gateCommandsBrief: a head\'s first prompt hears each gate\'s command (or t
   const reviewWithRole: Gate = { id: 'review2', type: 'review', required: true, reviewer: 'other', focus: '', role: 'builder' };
 
   assert.equal(gateCommandsBrief([], undefined), undefined, 'nothing configured, nothing to say');
-  assert.equal(gateCommandsBrief([], 'node --test'), 'Hydra runs these gates after you call hydra_done:\n- package.json\'s "test" script (no command gate covers it): node --test');
+  // No command gate runs package.json's script, so it gets its own honest sentence, not a line under "Hydra runs these gates" (which would misleadingly say Hydra runs it).
+  assert.equal(gateCommandsBrief([], 'node --test'), 'This project has no command gate, so Hydra won\'t run its tests; its test command is `node --test`: run it yourself before hydra_done.');
+  assert.equal(hasCommandGate([]), false);
 
-  assert.equal(gateCommandsBrief([command], 'node --test'), 'Hydra runs these gates after you call hydra_done:\n- unit: npm test', 'a command gate already covers testing; package.json\'s script is left out');
+  assert.equal(gateCommandsBrief([command], 'node --test'), 'Hydra runs these gates after you call hydra_done:\n- unit: npm test', 'a command gate already covers testing; package.json\'s script is left out entirely');
+  assert.equal(hasCommandGate([command]), true);
 
   assert.equal(
     gateCommandsBrief([command, optional, shots, review, reviewWithRole]),
@@ -369,6 +372,13 @@ test('gateCommandsBrief: a head\'s first prompt hears each gate\'s command (or t
     ].join('\n'),
     'command gates first, then screenshots, then review (gateOrder); "(optional)" only for required: false',
   );
+
+  // A review-only project (no command gate) still hears both: what Hydra runs, and that its own test script is on it.
+  assert.equal(
+    gateCommandsBrief([review], 'node --test'),
+    'Hydra runs these gates after you call hydra_done:\n- review: a review gate\n\nThis project has no command gate, so Hydra won\'t run its tests; its test command is `node --test`: run it yourself before hydra_done.',
+  );
+  assert.equal(hasCommandGate([review]), false);
 });
 
 test('review: "not run" with the reason when it can\'t run, and that never fails the work', async () => {

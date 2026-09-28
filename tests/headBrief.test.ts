@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { headWorkingGuidance, parsePackageTestScript, repoListingMaxChars, repoListingMaxFiles, repositoryListing } from '../src/core/headBrief';
+import { headWorkingGuidance, parsePackageTestScript, repoListingMaxChars, repoListingMaxDirLines, repoListingMaxFiles, repositoryListing } from '../src/core/headBrief';
 
 test('repositoryListing: every path when there are few enough, sorted regardless of input order', () => {
   assert.equal(repositoryListing([]), 'No tracked files yet.');
@@ -32,6 +32,28 @@ test('repositoryListing: directories are grouped and sorted, root files under "(
   assert.ok(lines.some(line => line.startsWith('(repository root) (1 file)')));
 });
 
+test('repositoryListing: past repoListingMaxDirLines, the rest of the directories share one "…and N more" line', () => {
+  // 70 top-level directories, 3 files each: 210 files, past repoListingMaxFiles, so this collapses; 70 directory lines is past repoListingMaxDirLines.
+  const files = Array.from({ length: 70 }, (_, dir) => Array.from({ length: 3 }, (_, file) => `dir${String(dir).padStart(2, '0')}/f${file}.ts`)).flat();
+  const listing = repositoryListing(files);
+  const lines = listing.split('\n');
+  assert.equal(lines.length, 1 + repoListingMaxDirLines + 1, 'the header line, the capped directory lines, and one "more" line');
+  for (const line of lines.slice(1, 1 + repoListingMaxDirLines)) assert.match(line, /^dir\d\d\/ \(3 files\)$/);
+  assert.equal(lines.at(-1), '…and 10 more directories');
+});
+
+test('repositoryListing: a file name with a control character, a backslash or a double quote is quoted rather than printed raw, so it can\'t forge a prompt line', () => {
+  assert.equal(repositoryListing(['normal.ts', 'weird\nname.ts']), '2 tracked files:\nnormal.ts\n"weird\\nname.ts"', 'sorted on the raw name ("n" < "w"), rendered with the newline escaped');
+  assert.equal(repositoryListing(['a\\b.ts']), '1 tracked file:\n"a\\\\b.ts"');
+  assert.equal(repositoryListing(['a"b.ts']), '1 tracked file:\n"a\\"b.ts"');
+  assert.equal(repositoryListing(['tab\ttab.ts']), '1 tracked file:\n"tab\\ttab.ts"');
+  // A directory name with an unsafe character is quoted too, in the collapsed listing.
+  const files = Array.from({ length: repoListingMaxFiles + 1 }, (_, index) => `weird\nDir/f${index}.ts`);
+  const listing = repositoryListing(files);
+  assert.match(listing, /^"weird\\nDir"\/ \(\d+ files\)$/m);
+  assert.doesNotMatch(listing, /\nweird\n/, 'the raw newline never reaches the rendered text outside its own escaped line');
+});
+
 test('parsePackageTestScript: package.json\'s scripts.test, or undefined when there is none', () => {
   assert.equal(parsePackageTestScript(JSON.stringify({ scripts: { test: 'node --test' } })), 'node --test');
   assert.equal(parsePackageTestScript(JSON.stringify({ scripts: { test: '  npm run jest  ' } })), 'npm run jest');
@@ -43,10 +65,30 @@ test('parsePackageTestScript: package.json\'s scripts.test, or undefined when th
   assert.equal(parsePackageTestScript('[]'), undefined, 'not an object');
 });
 
-test('headWorkingGuidance: a few short, plain lines about shells, running fewer tests, and timeouts', () => {
-  assert.ok(headWorkingGuidance.length >= 2 && headWorkingGuidance.length <= 5);
-  for (const line of headWorkingGuidance) assert.ok(line.length < 260, line);
-  assert.ok(headWorkingGuidance.some(line => /Read|Grep|Glob/.test(line)));
-  assert.ok(headWorkingGuidance.some(line => /hydra_done/.test(line)));
-  assert.ok(headWorkingGuidance.some(line => /timeout/i.test(line)));
+test('headWorkingGuidance: a Claude head with a shell hears to batch shell commands and prefer Read/Grep/Glob', () => {
+  const lines = headWorkingGuidance({ provider: 'claude', shellOff: false, hasCommandGate: true });
+  assert.ok(lines.length >= 2 && lines.length <= 5);
+  for (const line of lines) assert.ok(line.length < 260, line);
+  assert.ok(lines.some(line => /batch them/.test(line) && /Read, Grep or Glob/.test(line)));
+  assert.ok(lines.some(line => /hydra_done/.test(line)));
+  assert.ok(lines.some(line => /timeout/i.test(line)));
+});
+
+test('headWorkingGuidance: a Codex head has no Read/Grep/Glob tools, so only the batching advice applies to it', () => {
+  const lines = headWorkingGuidance({ provider: 'codex', shellOff: false, hasCommandGate: true });
+  assert.ok(lines.some(line => /batch them/.test(line)));
+  assert.ok(!lines.some(line => /Read, Grep or Glob/.test(line)), 'Codex has no such tools');
+});
+
+test('headWorkingGuidance: a Claude head with no shell hears to use Read/Grep/Glob instead, not to batch a shell it doesn\'t have', () => {
+  const lines = headWorkingGuidance({ provider: 'claude', shellOff: true, hasCommandGate: true });
+  assert.ok(lines.some(line => /Read, Grep or Glob/.test(line)));
+  assert.ok(!lines.some(line => /batch them/.test(line)), 'nothing to batch with no shell');
+});
+
+test('headWorkingGuidance: "run only the tests your change touches" only when a command gate actually runs the rest', () => {
+  assert.ok(headWorkingGuidance({ provider: 'claude', shellOff: false, hasCommandGate: true }).some(line => /Run only the tests your change touches/.test(line)));
+  assert.ok(!headWorkingGuidance({ provider: 'claude', shellOff: false, hasCommandGate: false }).some(line => /Run only the tests your change touches/.test(line)), 'nothing else would test the rest');
+  // The timeout advice always applies, regardless of whether there's a command gate.
+  assert.ok(headWorkingGuidance({ provider: 'claude', shellOff: false, hasCommandGate: false }).some(line => /timeout/i.test(line)));
 });

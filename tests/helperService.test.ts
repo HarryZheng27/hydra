@@ -112,10 +112,12 @@ test('the first prompt lists the repository\'s tracked files and the project\'s 
     // .hydra/gates.json sorts before src/a.ts.
     assert.match(f.runs[0]!.prompt, /Repository:\n2 tracked files:\n\.hydra\/gates\.json\nsrc\/a\.ts\n\n/);
     assert.match(f.runs[0]!.prompt, /Hydra runs these gates after you call hydra_done:\n- test: npm test\n\nHow to work:/);
+    // A command gate exists, so "run only the tests your change touches" is actually true here.
+    assert.match(f.runs[0]!.prompt, /- Run only the tests your change touches\. Hydra runs the project's full gates after hydra_done\./);
   } finally { await f.close(); }
 });
 
-test('with no command gate, the first prompt falls back to package.json\'s own "test" script', async () => {
+test('with no command gate, the first prompt falls back to package.json\'s own "test" script, worded so a head knows Hydra won\'t run it', async () => {
   const f = await fixture({ script: async helper => {
     await helper.call('hydra_done', { summary: 'Looked around' });
     helper.endTurn();
@@ -126,7 +128,9 @@ test('with no command gate, the first prompt falls back to package.json\'s own "
     const { job_id } = await f.start('fallback');
     await f.wait([job_id]);
     assert.match(f.runs[0]!.prompt, /Repository:\n2 tracked files:\npackage\.json\nsrc\/a\.ts\n\n/);
-    assert.match(f.runs[0]!.prompt, /Hydra runs these gates after you call hydra_done:\n- package\.json's "test" script \(no command gate covers it\): node --test/);
+    assert.match(f.runs[0]!.prompt, /This project has no command gate, so Hydra won't run its tests; its test command is `node --test`: run it yourself before hydra_done\./);
+    // With nothing else testing the rest, a head is never told to run only the tests its change touches.
+    assert.doesNotMatch(f.runs[0]!.prompt, /Run only the tests your change touches/);
   } finally { await f.close(); }
 });
 
@@ -340,17 +344,30 @@ test('the lead is warned when the head cannot see uncommitted changes; checks co
 test('scope matching, head prompts, runner arguments and the supported CLI range', () => {
   assert.equal(inScope('src/a.ts', ['src/']), true); assert.equal(inScope('src', ['src']), true);
   assert.equal(inScope('srcx/a.ts', ['src']), false); assert.equal(inScope('README.md', ['']), true);
-  assert.match(helperPrompt({ id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: [''], worktree: 'W', branch: 'b', baseCommit: 'c' }), /\(whole repository\)/);
+  assert.match(helperPrompt({ id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: [''], worktree: 'W', branch: 'b', baseCommit: 'c', provider: 'claude' }), /\(whole repository\)/);
   // The "Repository" section and the gate/test commands (headStartContext) are added only when given, right after the brief and any dependencies; nothing without them, so a loose head's prompt is unchanged.
-  const job = { id: 'a'.repeat(12), title: 'T', brief: 'Add the thing.', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c' };
+  const job = { id: 'a'.repeat(12), title: 'T', brief: 'Add the thing.', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c', provider: 'claude' as const };
   assert.doesNotMatch(helperPrompt(job), /Repository:/);
-  const withContext = helperPrompt(job, undefined, 'heads', undefined, undefined, { repository: '2 tracked files:\nREADME.md\nsrc/a.ts', tests: 'Hydra runs these gates after you call hydra_done:\n- test: npm test' });
+  const withContext = helperPrompt(job, undefined, 'heads', undefined, undefined, { repository: '2 tracked files:\nREADME.md\nsrc/a.ts', tests: 'Hydra runs these gates after you call hydra_done:\n- test: npm test', hasCommandGate: true });
   assert.match(withContext, /Add the thing\.\n\nRepository:\n2 tracked files:\nREADME\.md\nsrc\/a\.ts\n\nHydra runs these gates after you call hydra_done:\n- test: npm test\n\nHow to work:/);
   assert.match(withContext, /- Shell commands start slowly here.*Read, Grep or Glob/);
   assert.match(withContext, /- Run only the tests your change touches\. Hydra runs the project's full gates after hydra_done\./);
   assert.match(withContext, /- Give a slow test command a generous timeout rather than retrying it after it times out\./);
   // Only the tests section, no repository listing (a job with no baseCommit-resolved listing yet):
   assert.doesNotMatch(helperPrompt(job, undefined, 'heads', undefined, undefined, { tests: 'Hydra runs these gates after you call hydra_done:\n- test: npm test' }), /Repository:/);
+  // With no command gate configured, "run only the tests your change touches" would be false (nothing else tests the rest), so it's left out.
+  const noCommandGate = helperPrompt(job, undefined, 'heads', undefined, undefined, { hasCommandGate: false });
+  assert.doesNotMatch(noCommandGate, /Run only the tests your change touches/);
+  assert.match(noCommandGate, /Give a slow test command a generous timeout/, 'the timeout bullet still applies either way');
+  // A Codex head has no Read/Grep/Glob tools, so the batching bullet doesn't recommend them.
+  const codexJob = { ...job, provider: 'codex' as const };
+  const codexPrompt = helperPrompt(codexJob, undefined, 'heads', undefined, undefined, { hasCommandGate: true });
+  assert.match(codexPrompt, /- Shell commands start slowly here \(each one is its own sandboxed process\): batch them instead of running many small ones\.\n/);
+  assert.doesNotMatch(codexPrompt, /Read, Grep or Glob/);
+  // A Claude head with no shell at all can't batch shell commands; it hears to use Read/Grep/Glob instead.
+  const noShell = helperPrompt(job, undefined, 'heads', undefined, 'Codex isn\'t installed', { hasCommandGate: true });
+  assert.match(noShell, /- Your shell is off: read files with Read, Grep or Glob instead of a shell command\./);
+  assert.doesNotMatch(noShell, /batch them instead of running many small ones/);
   const spec: HelperRunSpec = { provider: 'claude', executable: 'claude', worktree: 'W', prompt: 'P', maxTurns: 7, maxBudgetUsd: 2, bridge: { command: 'Hydra.exe', args: ['b.cjs'], env: { HYDRA_HELPER_TOKEN: 'secret', HYDRA_HELPER_PORT: '1' } }, logFile: 'l', confine: { settingsFile: 'S.settings.json', addDirs: [], shell: false, env: {} } };
   const claude = claudeHelperArguments(spec);
   for (const expected of ['dontAsk', '--strict-mcp-config', '--max-turns', '7', '--max-budget-usd', '2']) assert.ok(claude.includes(expected), expected);
