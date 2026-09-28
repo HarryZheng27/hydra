@@ -430,6 +430,15 @@ export function brandedSidebarCss(text) {
   if (!text.includes('.monaco-workbench .part.sidebar')) throw new Error('Pinned sidebar stylesheet changed.');
   return `${text}\n${hydraSidebarCss}${hydraSidebarIconCss}`;
 }
+// The custom title bar is a little taller than upstream's 35px, so its buttons have room above them rather than
+// sitting close to the window's top edge. It's one constant, which the main process also uses for the Windows
+// minimise/maximise/close overlay, so those buttons stay centred alongside Hydra's own.
+export const hydraTitlebarHeight = 41;
+export function brandedTitlebarHeight(text) {
+  const before = 'export const DEFAULT_CUSTOM_TITLEBAR_HEIGHT = 35; // includes space for command center';
+  if (text.split(before).length !== 2) throw new Error('Pinned title bar height changed.');
+  return text.replace(before, `export const DEFAULT_CUSTOM_TITLEBAR_HEIGHT = ${hydraTitlebarHeight}; // Hydra: includes space for command center, with room above the buttons`);
+}
 // The app icon at the top left of the title bar is Hydra's logo, not Code - OSS's.
 export function brandedTitlebarIcon(text) {
   const before = '.window-appicon:not(.codicon) {\n\tbackground-image: url(\'../../../media/code-icon.svg\');\n\tbackground-repeat: no-repeat;\n\tbackground-position: center center;\n\tbackground-size: 16px;\n}';
@@ -516,6 +525,14 @@ export function brandedStartupPage(text) {
     '\t}';
   replaceOnce(originalMethod, newMethod);
   return text;
+}
+// An extension's walkthrough never opens the Welcome page by itself when the extension is installed (upstream's
+// workbench.welcomePage.walkthroughs.openOnInstall): Hydra installs Claude Code and Codex on its first run, and
+// each would otherwise open it over the project. Walkthroughs stay one click away under Help.
+export function brandedWalkthroughAutoOpen(text) {
+  const before = "if (hadLastFoucs && sectionToOpen && this.configurationService.getValue<string>('workbench.welcomePage.walkthroughs.openOnInstall') && startupEditor !== 'agentSessionsWelcomePage') {";
+  if (text.split(before).length !== 2) throw new Error('Pinned walkthrough auto-open changed.');
+  return text.replace(before, "if (false /* Hydra: an installed extension's walkthrough never opens by itself */ && hadLastFoucs && sectionToOpen && startupEditor !== 'agentSessionsWelcomePage') {");
 }
 const hydraStartSurfaceCss = `
 .monaco-workbench .part.editor > .content .editor-group-container > .editor-group-watermark .shortcuts:has(.hydra-start-surface) {
@@ -659,6 +676,240 @@ const hydraStartSurfaceCss = `
 	--editor-group-tab-height: 19px !important;
 }
 `;
+// Hydra's own notifications (desktop/workbench/hydraNotices.ts) and the title bar's Agent Manager | Editor switch
+// (desktop/workbench/hydraModeSwitch.ts). They ride along with the watermark styles, which sit next to hydra-logo.png.
+export const hydraChromeCss = `
+.monaco-workbench .hydra-notices {
+	position: absolute;
+	right: 12px;
+	bottom: calc(var(--status-bar-height, 22px) + 12px);
+	z-index: 2545;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 8px;
+	pointer-events: none;
+}
+
+.monaco-workbench .hydra-notices:empty {
+	display: none;
+}
+
+.monaco-workbench .hydra-notice {
+	pointer-events: auto;
+	box-sizing: border-box;
+	width: 360px;
+	max-width: calc(100vw - 24px);
+	padding: 12px 14px;
+	border: 1px solid var(--vscode-widget-border, var(--vscode-contrastBorder, rgba(128, 128, 128, 0.35)));
+	border-left: 3px solid var(--vscode-textLink-foreground, #3FA266);
+	border-radius: 10px;
+	background-color: var(--vscode-editorWidget-background);
+	color: var(--vscode-foreground);
+	box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+	font-size: 13px;
+	line-height: 1.45;
+	animation: hydra-notice-in 160ms ease-out;
+}
+
+.monaco-workbench .hydra-notice:focus {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.monaco-workbench .hydra-notice.hydra-notice-warning {
+	border-left-color: var(--vscode-editorWarning-foreground, #D2943E);
+}
+
+.monaco-workbench .hydra-notice.hydra-notice-error {
+	border-left-color: var(--vscode-editorError-foreground, #E34671);
+}
+
+.monaco-workbench .hydra-notice.leaving {
+	opacity: 0;
+	transform: translateY(6px);
+	transition: opacity 160ms ease-in, transform 160ms ease-in;
+}
+
+.monaco-workbench .hydra-notice-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.monaco-workbench .hydra-notice-mark {
+	width: 14px;
+	height: 14px;
+	background-image: url('./hydra-logo.png');
+	background-repeat: no-repeat;
+	background-position: center;
+	background-size: contain;
+}
+
+.monaco-workbench .hydra-notice-brand {
+	flex: 1;
+}
+
+.monaco-workbench .hydra-notice-close {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--vscode-icon-foreground);
+	cursor: pointer;
+}
+
+.monaco-workbench .hydra-notice-close:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.monaco-workbench .hydra-notice-message {
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+
+.monaco-workbench .hydra-notice-detail {
+	margin-top: 4px;
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+}
+
+.monaco-workbench .hydra-notice-progress {
+	position: relative;
+	height: 3px;
+	margin-top: 10px;
+	overflow: hidden;
+	border-radius: 2px;
+	background-color: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.25));
+}
+
+.monaco-workbench .hydra-notice-progress-bar {
+	height: 100%;
+	border-radius: 2px;
+	background-color: var(--vscode-textLink-foreground, #3FA266);
+	transition: width 200ms ease-out;
+}
+
+.monaco-workbench .hydra-notice-progress.indeterminate .hydra-notice-progress-bar {
+	width: 30%;
+	animation: hydra-notice-progress 1.2s ease-in-out infinite;
+}
+
+.monaco-workbench .hydra-notice-actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.monaco-workbench .hydra-notice-action,
+.monaco-workbench .hydra-mode-switch-option {
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.monaco-workbench .hydra-notice-action {
+	padding: 4px 12px;
+	border: 1px solid var(--vscode-button-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+	border-radius: 6px;
+	background-color: var(--vscode-button-secondaryBackground, transparent);
+	color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+	font-size: 12px;
+}
+
+.monaco-workbench .hydra-notice-action.primary {
+	border-color: transparent;
+	background-color: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+}
+
+.monaco-workbench .hydra-notice-action:hover {
+	background-color: var(--vscode-button-secondaryHoverBackground, var(--vscode-toolbar-hoverBackground));
+}
+
+.monaco-workbench .hydra-notice-action.primary:hover {
+	background-color: var(--vscode-button-hoverBackground);
+}
+
+.monaco-workbench .hydra-notice-action:focus-visible,
+.monaco-workbench .hydra-notice-close:focus-visible,
+.monaco-workbench .hydra-mode-switch-option:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+@keyframes hydra-notice-in {
+	from { opacity: 0; transform: translateY(8px); }
+	to { opacity: 1; transform: none; }
+}
+
+@keyframes hydra-notice-progress {
+	from { transform: translateX(-100%); }
+	to { transform: translateX(340%); }
+}
+
+.monaco-workbench .part.titlebar .hydra-mode-switch {
+	display: flex;
+	align-items: center;
+	height: 24px;
+	margin: 0 8px;
+	padding: 2px;
+	gap: 2px;
+	border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+	border-radius: 7px;
+	-webkit-app-region: no-drag;
+}
+
+.monaco-workbench .part.titlebar .hydra-mode-switch[hidden] {
+	display: none;
+}
+
+.monaco-workbench .part.titlebar .hydra-mode-switch-option {
+	height: 100%;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 5px;
+	background: transparent;
+	color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+	font-size: 12px;
+	opacity: 0.7;
+}
+
+.monaco-workbench .part.titlebar .hydra-mode-switch-option:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+	opacity: 1;
+}
+
+.monaco-workbench .part.titlebar .hydra-mode-switch-option.checked {
+	background-color: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.monaco-workbench .hydra-notice,
+	.monaco-workbench .hydra-notice.leaving,
+	.monaco-workbench .hydra-notice-progress-bar,
+	.monaco-workbench .hydra-notice-progress.indeterminate .hydra-notice-progress-bar {
+		animation: none;
+		transition: none;
+	}
+}
+`;
 export function brandedWatermarkLayout(text) {
   const container = '\tmax-width: 272px;';
   const logo = '\tmax-width: 256px;';
@@ -666,7 +917,7 @@ export function brandedWatermarkLayout(text) {
   if (text.includes('.hydra-start-surface')) throw new Error('Pinned watermark layout already has Hydra start surface styles.');
   // Native group sizing still constrains narrow/split editors; only the full empty editor grows.
   const sized = text.replace(container, '\twidth: 100%;\n\tmax-width: 380px;').replace(logo, '\tmax-width: 360px;');
-  return `${sized}\n${hydraStartSurfaceCss}`;
+  return `${sized}\n${hydraStartSurfaceCss}${hydraChromeCss}`;
 }
 export function brandedNativeThemeStartup(text) {
   const method = /(isAutoDetectColorScheme\(\)(?:: boolean)? \{)\s*if \(Setting\.DETECT_COLOR_SCHEME\.getValue\(this\.configurationService\)\) \{[\s\S]*?return false;\s*\}/g;
@@ -731,7 +982,7 @@ export async function prepare() {
   const desktopMain = await git(['show', `${pin.commit}:src/vs/workbench/workbench.desktop.main.ts`]);
   const desktopExport = "export { main } from './electron-browser/desktop.main.js';";
   if (desktopMain.split(desktopExport).length !== 2) throw new Error('Pinned desktop entrypoint changed.');
-  await fs.copyFile(path.join(root, 'desktop', 'workbench', 'hydraProfile.ts'), path.join(source, 'src', 'vs', 'workbench', 'hydraProfile.ts'));
+  for (const file of ['hydraProfile.ts', 'hydraNotices.ts', 'hydraModeSwitch.ts']) await fs.copyFile(path.join(root, 'desktop', 'workbench', file), path.join(source, 'src', 'vs', 'workbench', file));
     await fs.writeFile(path.join(source, 'src', 'vs', 'workbench', 'workbench.desktop.main.ts'), desktopMain.replace(desktopExport, `import './hydraProfile.js';\n\n${desktopExport}`));
     const electronMainPath = 'src/vs/code/electron-main/main.ts';
     await fs.copyFile(path.join(root, 'desktop', 'main', 'hydraUpdateTrust.ts'), path.join(source, 'src', 'vs', 'code', 'electron-main', 'hydraUpdateTrust.ts'));
@@ -787,10 +1038,14 @@ export async function prepare() {
   ]) await fs.writeFile(path.join(source, file), lock(await git(['show', `${pin.commit}:${file}`])));
   const titlebarMedia = path.join(source, 'src', 'vs', 'workbench', 'browser', 'parts', 'titlebar', 'media');
   await fs.copyFile(path.join(root, 'hydra-logo.png'), path.join(titlebarMedia, 'hydra-logo.png'));
+  const windowConstantsPath = 'src/vs/platform/window/common/window.ts';
+  await fs.writeFile(path.join(source, windowConstantsPath), brandedTitlebarHeight(await git(['show', `${pin.commit}:${windowConstantsPath}`])));
   const titlebarCssPath = 'src/vs/workbench/browser/parts/titlebar/media/titlebarpart.css';
   await fs.writeFile(path.join(source, titlebarCssPath), brandedTitlebarIcon(await git(['show', `${pin.commit}:${titlebarCssPath}`])));
   const startupPagePath = 'src/vs/workbench/contrib/welcomeGettingStarted/browser/startupPage.ts';
   await fs.writeFile(path.join(source, startupPagePath), brandedStartupPage(await git(['show', `${pin.commit}:${startupPagePath}`])));
+  const gettingStartedServicePath = 'src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStartedService.ts';
+  await fs.writeFile(path.join(source, gettingStartedServicePath), brandedWalkthroughAutoOpen(await git(['show', `${pin.commit}:${gettingStartedServicePath}`])));
   const gettingStartedContentPath = 'src/vs/workbench/contrib/welcomeGettingStarted/common/gettingStartedContent.ts';
   await fs.writeFile(path.join(source, gettingStartedContentPath), brandedGettingStartedContent(await git(['show', `${pin.commit}:${gettingStartedContentPath}`])));
   console.log(`Prepared Hydra ${manifest.version}: Code - OSS ${pin.tag} at ${pin.commit}.`);
@@ -842,9 +1097,9 @@ export async function stageVscodeIcons(destination) {
   await fs.rename(path.join(unpacked, 'extension'), destination);
   await fs.rm(unpacked, { recursive: true, force: true });
 }
-export async function stageHydra(destination) {
-  const manifest = await readJson(path.join(root, 'package.json'));
-  manifest.contributes.configurationDefaults = { ...manifest.contributes.configurationDefaults,
+/** The app's defaults: the repository manifest's own, plus the ones only the desktop app sets. */
+function hydraAppDefaults(manifest) {
+  return { ...manifest.contributes.configurationDefaults,
     'workbench.colorTheme': 'Hydra Dark', 'workbench.preferredDarkColorTheme': 'Hydra Dark',
     'window.autoDetectColorScheme': false,
     'workbench.secondarySideBar.defaultVisibility': 'visible',
@@ -854,11 +1109,36 @@ export async function stageHydra(destination) {
     // Settings and Keyboard Shortcuts open as tabs, not a centred overlay (Code - OSS
     // defaults this experimental setting to 'some' outside stable builds).
     'workbench.editor.useModal': 'off' };
+}
+export async function stageHydra(destination) {
+  const manifest = await readJson(path.join(root, 'package.json'));
+  // Hydra's look (its themes and the app's defaults) ships in hydra-look instead (stageHydraLook): this extension
+  // runs code, so it's switched off in a folder you haven't trusted yet, and its look would go with it.
+  delete manifest.contributes.themes;
+  delete manifest.contributes.configurationDefaults;
   await fs.mkdir(destination, { recursive: true });
   for (const name of ['dist', 'themes', 'media', 'packs', 'schemas', 'README.md', 'hydra-logo.png']) await fs.cp(path.join(root, name), path.join(destination, name), { recursive: true });
   // Smoke-test code is a development artifact, not a bundled extension entrypoint.
   await fs.rm(path.join(destination, 'dist', 'smoke.cjs'), { force: true });
   await fs.writeFile(path.join(destination, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
+}
+/**
+ * hydra-look: Hydra's themes and the app's default settings, in a built-in extension with no code. Having no code,
+ * it stays on in Restricted Mode, so a folder you haven't trusted yet (and the trust prompt in front of it) already
+ * looks like Hydra instead of the stock editor.
+ */
+export async function stageHydraLook(destination) {
+  const manifest = await readJson(path.join(root, 'package.json'));
+  const look = {
+    name: 'hydra-look', displayName: 'Hydra Look', description: "Hydra's themes and default settings.",
+    publisher: manifest.publisher, version: manifest.version, license: manifest.license, repository: manifest.repository,
+    engines: manifest.engines, categories: ['Themes'],
+    capabilities: { untrustedWorkspaces: { supported: true }, virtualWorkspaces: true },
+    contributes: { themes: manifest.contributes.themes, configurationDefaults: hydraAppDefaults(manifest) },
+  };
+  await fs.mkdir(destination, { recursive: true });
+  await fs.cp(path.join(root, 'themes'), path.join(destination, 'themes'), { recursive: true });
+  await fs.writeFile(path.join(destination, 'package.json'), JSON.stringify(look, null, 2) + '\n');
 }
 export async function verify() {
   await contained(output);
@@ -893,10 +1173,15 @@ export async function verify() {
     if (helperVersion.ProductName !== 'Hydra' || helperVersion.ProductVersion !== release.version || helperVersion.CompanyName !== 'Nico Dunlap') throw new Error('Native update helper PE release identity differs.');
   }
   await fs.access(path.join(bundled, 'dist', 'extension.cjs'));
-  await fs.access(path.join(bundled, 'themes', 'hydra-light.json'));
+  // hydra-look carries the themes and defaults, and must stay on in folders that aren't trusted yet.
+  const lookPath = path.join(output, 'resources', 'app', 'extensions', 'hydra-look');
+  const look = await readJson(path.join(lookPath, 'package.json'));
+  if (look.main || look.browser || look.capabilities?.untrustedWorkspaces?.supported !== true || look.version !== release.version || look.contributes?.configurationDefaults?.['workbench.colorTheme'] !== 'Hydra Dark') throw new Error('Built-in Hydra look is missing, runs code, or would switch off in Restricted Mode.');
+  await fs.access(path.join(lookPath, 'themes', 'hydra-light.json'));
+  if (manifest.contributes.themes || manifest.contributes.configurationDefaults) throw new Error('The built-in Hydra extension still carries the look that hydra-look owns.');
   if (sha256(await fs.readFile(path.join(output, 'resources', 'app', 'out', 'media', 'codicon.ttf'))) !== classicCodicons.classic) throw new Error('The built editor does not use the classic codicon font.');
   const icons = await readJson(path.join(output, 'resources', 'app', 'extensions', vscodeIcons.id, 'package.json'));
-  if (icons.version !== vscodeIcons.version || !icons.contributes?.iconThemes?.some(theme => theme.id === 'vscode-icons') || manifest.contributes.configurationDefaults?.['workbench.iconTheme'] !== 'vscode-icons') throw new Error('Bundled vscode-icons theme is missing or not the default.');
+  if (icons.version !== vscodeIcons.version || !icons.contributes?.iconThemes?.some(theme => theme.id === 'vscode-icons') || look.contributes.configurationDefaults['workbench.iconTheme'] !== 'vscode-icons') throw new Error('Bundled vscode-icons theme is missing or not the default.');
   await verifyWatermarks(path.join(output, 'resources', 'app', 'out', 'media'), await fs.readFile(path.join(root, 'hydra-logo.png')));
   const stagedLogo = await fs.readFile(path.join(output, 'resources', 'app', 'out', 'media', 'hydra-logo.png'));
   if (!stagedLogo.equals(await fs.readFile(path.join(root, 'hydra-logo.png')))) throw new Error('Staged start-surface logo differs from the source hydra-logo.png.');
@@ -923,6 +1208,7 @@ export async function build() {
   helperVersion['version-string'].OriginalFilename = 'HydraUpdateVerify.exe';
   await rcedit(path.join(output, 'tools', 'HydraUpdateVerify.exe'), helperVersion);
   await stageHydra(path.join(output, 'resources', 'app', 'extensions', 'hydra-agent-manager'));
+  await stageHydraLook(path.join(output, 'resources', 'app', 'extensions', 'hydra-look'));
   await stageVscodeIcons(path.join(output, 'resources', 'app', 'extensions', vscodeIcons.id));
   await verify();
 }

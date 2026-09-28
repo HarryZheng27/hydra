@@ -12,6 +12,8 @@ import { registerWorkbenchContribution2, WorkbenchPhase, IWorkbenchContribution 
 import { IWorkbenchLayoutService, Parts } from './services/layout/browser/layoutService.js';
 import { IWorkspaceContextService, WorkbenchState } from '../platform/workspace/common/workspace.js';
 import { IContextKeyService } from '../platform/contextkey/common/contextkey.js';
+import './hydraNotices.js';
+import './hydraModeSwitch.js';
 
 CommandsRegistry.registerCommand('hydra.desktop.startupContext', accessor => {
 	if (accessor.get(IProductService).nameShort !== 'Hydra') { throw new Error('Hydra desktop is required.'); }

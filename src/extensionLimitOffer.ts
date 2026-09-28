@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { notices } from './notices';
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Job } from './core/jobs';
@@ -75,7 +76,7 @@ export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
     // through to the ordinary offer below, same as any other head.
     if (!deps.offerEnabled()) return;
     const offer = buildOffer(event, now(), considered.otherAlsoLimited, otherReady);
-    const choice = await vscode.window.showInformationMessage(offer.message, ...offer.buttons.map(button => button.label));
+    const choice = await notices.info(offer.message, ...offer.buttons.map(button => button.label));
     const button = offer.buttons.find(candidate => candidate.label === choice);
     if (!button) return; // dismissed, or "Wait"
     try {
@@ -86,7 +87,7 @@ export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
         case 'wait': break;
       }
     } catch (error) {
-      void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      void notices.error(error instanceof Error ? error.message : String(error));
     }
   }
   return { dispose: () => subscription.dispose() };
@@ -101,7 +102,7 @@ async function continueInOther(event: LimitEvent, other: Provider, markdown: str
   // opens the other chat (following Docked/Tabs), for the user to paste themselves.
   await vscode.env.clipboard.writeText(markdown);
   await openOfficialExtension(other);
-  void vscode.window.showInformationMessage(`Handoff copied. Paste it into the new ${providerLabel[other]} chat to continue.`);
+  void notices.info(`Handoff copied. Paste it into the new ${providerLabel[other]} chat to continue.`);
 }
 
 export async function openHandoffPreview(file: string): Promise<void> {

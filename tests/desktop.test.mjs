@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createRequire } from 'node:module';
 import ts from 'typescript';
-import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, installerIncludes, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root, brandedLauncherCmd, brandedLauncherSh, verifyLaunchers, hydraCliCommands } from '../scripts/desktop.mjs';
+import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, installerIncludes, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraLook, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root, brandedLauncherCmd, brandedLauncherSh, verifyLaunchers, hydraCliCommands, brandedTitlebarHeight, hydraTitlebarHeight, brandedWalkthroughAutoOpen, brandedWatermarkLayout, hydraChromeCss } from '../scripts/desktop.mjs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
@@ -257,9 +257,25 @@ test('standalone staging embeds the real Hydra runtime and themes with an app-on
   try {
     const original = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
     await stageHydra(fixture);
-    const staged = JSON.parse(await fs.readFile(path.join(fixture, 'package.json'), 'utf8'));
-    assert.equal(staged.name, original.name);
+    const main = JSON.parse(await fs.readFile(path.join(fixture, 'package.json'), 'utf8'));
+    assert.equal(main.name, original.name);
+    assert.equal(main.version, original.version);
+    // The look lives in hydra-look, a code-free extension that stays on in Restricted Mode (no stock-editor flash
+    // behind the trust prompt); the runtime extension, which a folder you haven't trusted switches off, has none.
+    assert.equal(main.contributes.themes, undefined);
+    assert.equal(main.contributes.configurationDefaults, undefined);
+    assert.deepEqual(main.capabilities.untrustedWorkspaces, { supported: false });
+    const lookDir = path.join(fixture, 'look');
+    await stageHydraLook(lookDir);
+    const staged = JSON.parse(await fs.readFile(path.join(lookDir, 'package.json'), 'utf8'));
+    assert.equal(staged.name, 'hydra-look');
+    assert.equal(staged.publisher, original.publisher);
     assert.equal(staged.version, original.version);
+    assert.equal(staged.main, undefined, 'hydra-look runs no code');
+    assert.deepEqual(staged.capabilities, { untrustedWorkspaces: { supported: true }, virtualWorkspaces: true });
+    assert.deepEqual(staged.contributes.themes, original.contributes.themes);
+    for (const theme of staged.contributes.themes) await fs.access(path.join(lookDir, theme.path));
+    for (const [key, value] of Object.entries(original.contributes.configurationDefaults)) assert.deepEqual(staged.contributes.configurationDefaults[key], value, key);
     assert.equal(staged.contributes.configurationDefaults['workbench.colorTheme'], 'Hydra Dark');
     assert.equal(staged.contributes.configurationDefaults['workbench.preferredDarkColorTheme'], 'Hydra Dark');
     assert.equal(staged.contributes.configurationDefaults['window.autoDetectColorScheme'], false);
@@ -456,4 +472,44 @@ test('bin/hydra (sh) runs the hydra command for its own commands, with its exit 
     assert.equal(ran(editor).ran, 'editor');
     assert.deepEqual(ran(editor).args, ['README.md']);
   } finally { await install.close(); }
+});
+
+test("the title bar is a little taller than upstream's, through the one constant the Windows buttons overlay follows too", () => {
+  const pinned = ['export const DEFAULT_CUSTOM_TITLEBAR_HEIGHT = 35; // includes space for command center', 'export const OTHER = 1;'].join('\n');
+  const branded = brandedTitlebarHeight(pinned);
+  assert.equal(hydraTitlebarHeight, 41);
+  assert.match(branded, /^export const DEFAULT_CUSTOM_TITLEBAR_HEIGHT = 41; \/\/ Hydra: /m);
+  assert.match(branded, /export const OTHER = 1;/, 'nothing else changes');
+  assert.throws(() => brandedTitlebarHeight(pinned.replace('35', '36')), /Pinned title bar height changed/);
+  assert.throws(() => brandedTitlebarHeight([pinned, pinned].join('\n')), /Pinned title bar height changed/);
+});
+
+test("an installed extension's walkthrough never opens the Welcome page by itself", () => {
+  const pinned = ["\t\tconst hadLastFoucs = await this.hostService.hadLastFocus();", "\t\tif (hadLastFoucs && sectionToOpen && this.configurationService.getValue<string>('workbench.welcomePage.walkthroughs.openOnInstall') && startupEditor !== 'agentSessionsWelcomePage') {", "\t\t\topen();", "\t\t}"].join('\n');
+  const branded = brandedWalkthroughAutoOpen(pinned);
+  assert.match(branded, /if \(false \/\* Hydra: an installed extension's walkthrough never opens by itself \*\/ && /);
+  assert.doesNotMatch(branded, /walkthroughs\.openOnInstall/);
+  assert.throws(() => brandedWalkthroughAutoOpen(pinned.replace('sectionToOpen &&', 'section &&')), /Pinned walkthrough auto-open changed/);
+});
+
+test("Hydra's notifications and the Agent Manager / Editor switch are built into the workbench and styled", async () => {
+  const profile = await fs.readFile('desktop/workbench/hydraProfile.ts', 'utf8');
+  assert.match(profile, /import '\.\/hydraNotices\.js';/);
+  assert.match(profile, /import '\.\/hydraModeSwitch\.js';/);
+  const script = await fs.readFile('scripts/desktop.mjs', 'utf8');
+  assert.match(script, /\['hydraProfile\.ts', 'hydraNotices\.ts', 'hydraModeSwitch\.ts'\]/, 'prepare() copies all three workbench files');
+  const notices = await fs.readFile('desktop/workbench/hydraNotices.ts', 'utf8');
+  for (const command of ['show', 'update', 'close', 'list', 'choose']) assert.ok(notices.includes(`registerCommand('hydra.desktop.notice.${command}'`), command);
+  assert.doesNotMatch(notices, /innerHTML|insertAdjacentHTML/, 'notice text is only ever set as text');
+  const modeSwitch = await fs.readFile('desktop/workbench/hydraModeSwitch.ts', 'utf8');
+  for (const command of ['hydra.openAgents', 'hydra.openEditor']) assert.ok(modeSwitch.includes(`'${command}'`));
+  const manifest = JSON.parse(await fs.readFile('package.json', 'utf8'));
+  const commands = new Set(manifest.contributes.commands.map(item => item.command));
+  assert.ok(commands.has('hydra.openAgents') && commands.has('hydra.openEditor'));
+  const pinned = '.editor-group-watermark {\n\tmax-width: 272px;\n}\n.letterpress {\n\tmax-width: 256px;\n}';
+  const css = brandedWatermarkLayout(pinned);
+  assert.ok(css.endsWith(hydraChromeCss));
+  for (const selector of ['.hydra-notices', '.hydra-notice-warning', '.hydra-notice-error', '.hydra-notice-progress.indeterminate', '.hydra-notice-action.primary', '.hydra-mode-switch-option.checked', '.hydra-mode-switch[hidden]']) assert.ok(css.includes(selector), selector);
+  assert.match(hydraChromeCss, /-webkit-app-region: no-drag/, 'the switch is clickable inside the draggable title bar');
+  assert.match(hydraChromeCss, /prefers-reduced-motion: reduce/);
 });

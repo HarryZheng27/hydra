@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { notices } from './notices';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -43,28 +44,28 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
     const eligible = eligibility();
     if (!eligible.eligible) {
       log(`[updates] not checking: ${eligible.reason}`);
-      if (manual) void vscode.window.showInformationMessage(eligible.reason);
+      if (manual) void notices.info(eligible.reason);
       return;
     }
-    if (busy) { if (manual) void vscode.window.showInformationMessage('Hydra is already checking for updates.'); return; }
+    if (busy) { if (manual) void notices.info('Hydra is already checking for updates.'); return; }
     busy = true;
     try {
       await context.globalState.update(lastCheckKey, Date.now());
       const result = await latestRelease(fetch, { userAgent: `Hydra/${current}` });
       if (!result.release) {
         log(`[updates] check failed: ${result.reason}`);
-        if (manual) void vscode.window.showErrorMessage(`Hydra couldn't check for updates: ${result.reason}.`);
+        if (manual) void notices.error(`Hydra couldn't check for updates: ${result.reason}.`);
         return;
       }
       const offer = updateOffer(result.release.version, current, context.globalState.get<string>(skippedKey), manual);
       log(`[updates] latest ${result.release.tag}, this is ${current}: ${offer.kind}`);
       if (offer.kind === 'offer') void prompt(result.release, offer.message);
-      else if (manual && offer.kind !== 'skipped') void vscode.window.showInformationMessage(offer.message);
+      else if (manual && offer.kind !== 'skipped') void notices.info(offer.message);
     } finally { busy = false; }
   }
 
   async function prompt(release: LatestRelease, message: string): Promise<void> {
-    const pick = await vscode.window.showInformationMessage(message, 'Update', 'Release notes', 'Skip this version');
+    const pick = await notices.info(message, 'Update', 'Release notes', 'Skip this version');
     if (pick === 'Release notes') { await vscode.env.openExternal(vscode.Uri.parse(release.notesUrl)); return; }
     if (pick === 'Skip this version') { await context.globalState.update(skippedKey, release.version); log(`[updates] skipped ${release.version}`); return; }
     if (pick === 'Update') await update(release);
@@ -72,12 +73,12 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
 
   async function update(release: LatestRelease): Promise<void> {
     const eligible = eligibility();
-    if (!eligible.eligible) { void vscode.window.showInformationMessage(eligible.reason); return; }
+    if (!eligible.eligible) { void notices.info(eligible.reason); return; }
     const dir = path.join(os.tmpdir(), 'hydra-update');
     let file: string;
     let cancelled = false;
     try {
-      file = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Downloading Hydra ${release.version}…`, cancellable: true }, async (progress, token) => {
+      file = await notices.withProgress({ title: `Downloading Hydra ${release.version}…`, cancellable: true }, async (progress, token) => {
         const controller = new AbortController();
         const cancel = token.onCancellationRequested(() => { cancelled = true; controller.abort(new Error('cancelled')); });
         let reported = 0;
@@ -97,7 +98,7 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
     } catch (error) {
       log(`[updates] ${describe(error)}`);
       if (cancelled) return;
-      void vscode.window.showErrorMessage(describe(error));
+      void notices.error(describe(error));
       return;
     }
 
@@ -125,7 +126,7 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
       log(`[updates] started the update helper (${helper}); quitting so it can install ${release.version}`);
     } catch (error) {
       log(`[updates] helper didn't start: ${describe(error)}`);
-      void vscode.window.showErrorMessage(`Hydra couldn't start the update: ${describe(error)}`);
+      void notices.error(`Hydra couldn't start the update: ${describe(error)}`);
       return;
     }
     await vscode.commands.executeCommand('workbench.action.quit');
@@ -147,7 +148,7 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
 
   const command = vscode.commands.registerCommand('hydra.checkForUpdates', () => check(true).catch(error => {
     log(`[updates] ${describe(error)}`);
-    void vscode.window.showErrorMessage(`Hydra couldn't check for updates: ${describe(error)}`);
+    void notices.error(`Hydra couldn't check for updates: ${describe(error)}`);
   }));
   const eligible = eligibility();
   if (eligible.eligible) schedule(); else log(`[updates] automatic checks off: ${eligible.reason}`);

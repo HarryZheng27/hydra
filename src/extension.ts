@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { notices } from './notices';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, stat as fsStat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -236,6 +237,7 @@ class Manager {
       Promise.resolve().then(() => callback(...args)).catch(error => { this.report(error); throw error; })));
     command('hydra.toggleMode', () => this.mode === 'editor' ? this.openAgents() : this.openEditor());
     command('hydra.openAgents', () => this.openAgents());
+    command('hydra.openEditor', () => this.openEditor());
     // Not contributed: desktop builds made before the walkthrough change still link "New Task"
     // here, so it opens the Agents view.
     command('hydra.newTask', () => this.openAgents());
@@ -259,7 +261,7 @@ class Manager {
     command('hydra.getImportStatus', () => this.settingsImport.status());
     command('hydra.stopAllHelpers', async () => {
       const stopped = await this.helpers?.service.stopAll() ?? 0;
-      void vscode.window.showInformationMessage(stopped ? `Stopped ${stopped} Hydra head${stopped === 1 ? '' : 's'}.` : 'No Hydra heads are running.');
+      void notices.info(stopped ? `Stopped ${stopped} Hydra head${stopped === 1 ? '' : 's'}.` : 'No Hydra heads are running.');
       return stopped;
     });
     command('hydra.listHelpers', () => structuredClone(this.helpers?.service.list() ?? []));
@@ -670,7 +672,7 @@ class Manager {
       const notified = new Set(this.context.workspaceState.get<string[]>(key, []));
       if (notified.has(needsOk.id)) return;
       await this.context.workspaceState.update(key, [...notified, needsOk.id]);
-      const pick = await vscode.window.showInformationMessage(`This project uses the ${needsOk.title} pack. Nothing from it runs until you review it.`, 'Review', 'Not now');
+      const pick = await notices.info(`This project uses the ${needsOk.title} pack. Nothing from it runs until you review it.`, 'Review', 'Not now');
       if (pick === 'Review') this.settings.show('packs');
     } catch { /* packs aren't available in this window; say nothing */ }
   }
@@ -689,7 +691,7 @@ class Manager {
       if (asked.has(folder)) return;
       await this.context.workspaceState.update(key, [...asked, folder]);
       const hasTest = await detectTestScript(folder);
-      const pick = await vscode.window.showInformationMessage(
+      const pick = await notices.info(
         'This project has no gates yet: nothing independently checks a head\'s work before it\'s accepted, or a lane before it merges.',
         hasTest ? 'Add a test gate (npm test)' : 'Add a test gate', 'No gates for this project', 'Not now',
       );
@@ -735,7 +737,7 @@ class Manager {
   private async showAllProjects(): Promise<void> {
     const dir = discoveryDirectory(path.join(this.context.globalStorageUri.fsPath, 'helpers'));
     const summaries = await readProjectSummaries(dir, new Date(), isWindowAlive);
-    if (!summaries.length) { void vscode.window.showInformationMessage('No Hydra projects found.'); return; }
+    if (!summaries.length) { void notices.info('No Hydra projects found.'); return; }
     const livenessLabel = { running: undefined, 'not-responding': 'Not responding', closed: 'Closed' } as const;
     const items = summaries
       .slice()
@@ -756,7 +758,7 @@ class Manager {
       });
     const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Every Hydra project window (read-only)', matchOnDetail: true });
     if (!pick || pick.isThisWindow) return;
-    if (pick.summary.liveness === 'closed') { void vscode.window.showInformationMessage(`${pick.summary.name}'s window has closed.`); return; }
+    if (pick.summary.liveness === 'closed') { void notices.info(`${pick.summary.name}'s window has closed.`); return; }
     await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(pick.summary.folder), { forceNewWindow: false, forceReuseWindow: false });
   }
   private laneHeads(laneId: string): number {
@@ -842,7 +844,7 @@ class Manager {
     });
     if (!wanted.length) return;
     const done: string[] = [], failed: string[] = [];
-    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Hydra: connecting your agents' }, async progress => {
+    await notices.withProgress({ title: 'Hydra: connecting your agents' }, async progress => {
       for (const provider of wanted) {
         const name = provider === 'claude' ? 'Claude Code' : 'Codex';
         progress.report({ message: `${name}…` });
@@ -852,9 +854,9 @@ class Manager {
     });
     this.onboarding.refreshConnections();
     if (failed.length) {
-      const pick = await vscode.window.showWarningMessage(`Hydra couldn't connect ${failed.join(', ')}.${done.length ? ` ${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected.` : ''}`, 'Open Connectors');
+      const pick = await notices.warning(`Hydra couldn't connect ${failed.join(', ')}.${done.length ? ` ${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected.` : ''}`, 'Open Connectors');
       if (pick) await vscode.commands.executeCommand('hydra.openSettings', 'connectors');
-    } else void vscode.window.showInformationMessage(`${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected to Hydra: chat in ${done.length === 1 ? 'its extension' : 'their extensions'}, and they can start Hydra heads.`);
+    } else void notices.info(`${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected to Hydra: chat in ${done.length === 1 ? 'its extension' : 'their extensions'}, and they can start Hydra heads.`);
   }
   /**
    * One Connect: install the official extension if it's missing, connect it to
@@ -972,7 +974,7 @@ class Manager {
     await this.audit.flush();
     const file = path.join(this.context.globalStorageUri.fsPath, 'audit', 'audit.jsonl');
     const content = await readFile(file, 'utf8').catch(() => undefined);
-    if (!content) { void vscode.window.showInformationMessage('No audit events yet.'); return; }
+    if (!content) { void notices.info('No audit events yet.'); return; }
     // A read-only document named audit.jsonl (a content provider's documents can't be saved);
     // the query changes each time, so it's never a stale cached copy.
     if (!this.auditProvider) {
@@ -996,7 +998,7 @@ class Manager {
     const parts = [heads ? `${heads} head${heads === 1 ? '' : 's'}` : '', lanes ? `${lanes} lane${lanes === 1 ? '' : 's'}` : ''].filter(Boolean);
     // 5.2: a stop — Stop All Agents itself, distinct from each head's own "head cancelled" line.
     this.audit.record({ kind: 'stop', what, detail: parts.join(', ') || undefined });
-    void vscode.window.showInformationMessage(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
+    void notices.info(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
     return { heads, lanes };
   }
   /** Resume Agents (5.3), shared by the command and the user role's hydra_resume (O8a). */
@@ -1005,7 +1007,7 @@ class Manager {
     await this.planRunner?.advanceAll().catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
     // 5.2: a resume.
     this.audit.record({ kind: 'resume', what });
-    void vscode.window.showInformationMessage('Hydra resumed: heads, lanes and plans may start again.');
+    void notices.info('Hydra resumed: heads, lanes and plans may start again.');
   }
   private readonly auditSnapshots = new Map<string, string>();
   private async stopHelpers(): Promise<void> {
@@ -1034,13 +1036,13 @@ class Manager {
     }
   }
   /**
-   * The packaged app's first launch: the Hydra side bar (New lane, New plan, Open Agents view) is shown, so the way
+   * The packaged app's first launch: the Hydra side bar (New lane, New plan, Open Agent Manager) is shown, so the way
    * into Hydra is in plain sight rather than behind a closed side bar. Once; the user's later layout is theirs.
    * True on that first launch.
    */
   private async firstRunLayoutOnce(): Promise<boolean> {
-    // The desktop smoke runs the installed build on a fresh profile; like the walkthrough (showWalkthroughOnce), its
-    // test environment is how it's told apart: it checks the editor and Agents switching from a known start.
+    // The desktop smoke runs the installed build on a fresh profile; its test environment is how it's told apart:
+    // it checks the editor and Agents switching from a known start.
     if (!this.settingsImport.available || process.env.HYDRA_TEST_REPOSITORY) return false;
     const key = 'hydra.firstRunLayout.v1';
     if (this.context.globalState.get(key)) return false;
@@ -1075,7 +1077,7 @@ class Manager {
   private report(error: unknown): void {
     this.error = this.describe(error);
     this.output.appendLine(this.error);
-    void vscode.window.showErrorMessage(`Hydra: ${this.error}`);
+    void notices.error(`Hydra: ${this.error}`);
     void this.publish();
   }
   private async verifyWorktree(task: Pick<HandoffTask, 'repository' | 'worktree' | 'branch'>): Promise<void> {
@@ -1126,8 +1128,8 @@ class Manager {
   private async publish(): Promise<void> {
     if (this.publishTimer) { clearTimeout(this.publishTimer); this.publishTimer = undefined; }
     const generation = ++this.snapshotGeneration;
-    this.status.text = `$(layout) ${this.mode === 'agents' ? 'Agents' : 'Editor'}${this.error ? ' $(warning)' : ''}`;
-    this.status.tooltip = 'Hydra: Switch Editor / Agents (Ctrl+Alt+A)';
+    this.status.text = `$(layout) ${this.mode === 'agents' ? 'Agent Manager' : 'Editor'}${this.error ? ' $(warning)' : ''}`;
+    this.status.tooltip = `Hydra: switch to the ${this.mode === 'agents' ? 'Editor' : 'Agent Manager'} (Alt+Shift+A)`;
     if (generation !== this.snapshotGeneration) return;
     const snapshot: Snapshot = {
       mode: this.mode, busy: this.busy || this.disabled, error: this.error,
@@ -1360,19 +1362,6 @@ class Manager {
   private async openWalkthrough(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.openWalkthrough', `${this.context.extension.id}#hydra.workWithHydra`, false);
   }
-  /**
-   * Opens the walkthrough once, the first time the Agents view opens in a window
-   * that has never seen it (tracked in globalState), never in a test/smoke run.
-   */
-  private async showWalkthroughOnce(): Promise<void> {
-    // The desktop smoke runs the installed build, which is Production too; its test
-    // environment is how it's told apart (the tab it opens would take the smoke's focus).
-    if (this.context.extensionMode !== vscode.ExtensionMode.Production || process.env.HYDRA_TEST_REPOSITORY) return;
-    const key = 'hydra.learn.seen.v1';
-    if (this.context.globalState.get(key)) return;
-    await this.context.globalState.update(key, true);
-    await this.openWalkthrough();
-  }
   private async newPlan(): Promise<void> {
     const loaded = !!this.panel;
     this.pendingNewPlan = !loaded;
@@ -1568,7 +1557,7 @@ class Manager {
       onChange: () => this.plansChanged(),
       // "Plan Checkout started lane Build API", with Show lane. It never switches views by itself.
       onLaneStarted: (plan, job, laneId) => {
-        void vscode.window.showInformationMessage(`Plan ${plan.title} started lane ${this.lanes.laneName(laneId) ?? job.title}.`, 'Show lane')
+        void notices.info(`Plan ${plan.title} started lane ${this.lanes.laneName(laneId) ?? job.title}.`, 'Show lane')
           .then(pick => { if (pick) void this.lanes.show('lanes', laneId); });
       },
       // O7: an unattended plan writes its morning report and notifies when it settles; an attended one is unaffected.
@@ -1594,7 +1583,7 @@ class Manager {
     const result = await this.requirePlanRunner().merge(id, via);
     this.plansChanged();
     if (result.compareUrl) await vscode.env.openExternal(vscode.Uri.parse(result.compareUrl, true));
-    else void vscode.window.showInformationMessage(via === 'pr' ? `Pushed ${result.plan.integration?.branch}. Open a pull request for it on your host.` : `Merged plan "${result.plan.title}" into ${result.into}.`);
+    else void notices.info(via === 'pr' ? `Pushed ${result.plan.integration?.branch}. Open a pull request for it on your host.` : `Merged plan "${result.plan.title}" into ${result.into}.`);
   }
   /** O3: Merge anyway (the canvas only; a lead's tool never can): asks first, records the approval in the audit log, then merges. */
   private async planMergeAnyway(id: string): Promise<void> {
@@ -1619,7 +1608,7 @@ class Manager {
     this.reportedPlans.set(plan.id, ending);
     try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ }
     const verdict = plan.integration && plan.state === 'done' ? ` Integration gate: ${integrationLeadView(plan)?.gate.label ?? 'not run'}.` : '';
-    void vscode.window.showInformationMessage(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'}.${verdict} Its report is open.`);
+    void notices.info(`Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'}.${verdict} Its report is open.`);
   }
   /** A plan's report as Markdown: the morning report (O7) and hydra_plan_report (O8b) are the same text. */
   private planReportMarkdown(plan: Plan): string {
@@ -1721,7 +1710,7 @@ class Manager {
     this.mode = 'agents';
     const modeChanged = vscode.commands.executeCommand('setContext', 'hydra.mode', this.mode);
     if (!this.panel) {
-      const panel = vscode.window.createWebviewPanel('hydra.manager', 'Hydra · Agents', vscode.ViewColumn.Active, {
+      const panel = vscode.window.createWebviewPanel('hydra.manager', 'Agent Manager', vscode.ViewColumn.Active, {
         enableScripts: true, retainContextWhenHidden: true,
         localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'dist')]
       });
@@ -1739,7 +1728,6 @@ class Manager {
     } else this.panel.reveal();
     await modeChanged;
     await this.publish();
-    void this.showWalkthroughOnce().catch(error => this.report(error));
   }
   private async openEditor(): Promise<void> {
     this.mode = 'editor';

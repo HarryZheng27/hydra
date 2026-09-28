@@ -19,7 +19,7 @@ This replaces the old Auto delegation, which read a `HYDRA_DELEGATION_V1` line o
 1. It installs the official extension if it's missing. It tries the extension gallery first. If the gallery can't install it, for any reason, Hydra downloads it straight from Open VSX instead. (Open VSX's gallery answers "Server returned 406" for some platform-specific extensions, Claude Code among them.)
 2. It connects the extension to Hydra.
 
-**Where to start:** Hydra's first launch shows its side bar (New lane, New plan, Open Agents view) and opens the welcome wizard. Finishing the wizard, or choosing **Set up later**, opens the Agents view. Later on, **Ctrl+Alt+A** switches between the editor and Agents.
+**Where to start:** Hydra's first launch shows its side bar (New lane, New plan, Open Agent Manager) and opens the welcome wizard. Finishing the wizard, or choosing **Set up later**, opens the Agent Manager. Later on, **Alt+Shift+A**, the **Agent Manager / Editor** switch in the title bar, or the status bar item switches between the two.
 
 The row also has Disconnect and Sign in. Claude Code and Codex keep their own sign-in and billing.
 
@@ -146,7 +146,7 @@ It's stored with the commit it describes, on the head's result, the lane's last 
 
 ## The Agents view
 
-Open it with **Ctrl+Alt+A**, or **Agents** in the status bar. It's a live canvas of your heads ([Agents_View_Plan.md](Agents_View_Plan.md)):
+Also called the **Agent Manager**. Open it with **Alt+Shift+A**, the **Agent Manager / Editor** switch in the title bar, or the status bar item. (Alt+Shift+A replaces the editor's own Toggle Block Comment shortcut.) It's a live canvas of your heads ([Agents_View_Plan.md](Agents_View_Plan.md)):
 
 - **Blank until a chat starts heads.** Each head grows out of the chat that started it: the **lead**, labelled with its provider, and a name if the chat gave one (`lead_label`).
 - **What each head is doing:** state (Queued, Working, Needs an answer, Checking, Done, Failed), its latest progress note or question, branch and elapsed time. When it finishes: checks passed and files changed.
@@ -300,16 +300,23 @@ Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `
 - **Restarting Hydra** ends the lanes' terminal sessions but keeps their worktrees. **Resume** continues the conversation (`claude --continue`, `codex resume --last`); **Start fresh** begins a new one. If the CLI never began a conversation in that worktree (it stopped at its own update or folder-trust prompt, or you quit before sending anything), Resume checks first and starts fresh instead, with a note on the tile: "No earlier conversation to resume, so the lane started fresh."
 - **On the canvas:** every open lane is a node, heads it started grow from it, and lanes that would conflict are joined by a red dashed line. Click a lane to jump to its terminal.
 
-The **Hydra panel** (the Hydra icon in the activity bar) lists your lanes, running heads and plans, with **New lane**, **New plan** and **Open Agents view** at the top. A plan shows its progress ("Running · 2 of 4 done · 1 lane waiting"), and a plan lane names its plan.
+The **Hydra panel** (the Hydra icon in the activity bar) lists your lanes, running heads and plans, with **New lane**, **New plan** and **Open Agent Manager** at the top. A plan shows its progress ("Running · 2 of 4 done · 1 lane waiting"), and a plan lane names its plan.
 
 In the Lanes view, running lanes come first. Exited lanes are compact rows with Resume, Start fresh, Merge and Close lane; **Show terminal** opens the full tile.
 
-New to all this? **Hydra: Learn Heads, Lanes, Plans and Gates** opens a short walkthrough. It also opens by itself the first time you open the Agents view, and the empty Agents and Lanes views link to it.
+New to all this? **Hydra: Learn Heads, Lanes, Plans and Gates** opens a short walkthrough, and the empty Agents and Lanes views link to it. It never opens by itself, and neither does the editor's Welcome page when an extension such as Claude Code or Codex is installed.
 
 ### All projects
 
 **Hydra: Show All Projects** lists every open Hydra window, across every project, read-only. Each window writes a small summary of its own heads, lanes, plans and evidence beside its discovery record, at most once a second plus a heartbeat every 60 seconds, in Hydra's global storage — never in a repository, so a head can't reach it. A window whose process has exited shows as "Closed"; one whose heartbeat is over three minutes old shows as "Not responding". Selecting a running project opens its folder, which focuses that window if it's already open. There is no action here that changes another window's jobs.
 
+## Hydra's notifications
+
+In the Hydra app, Hydra's own messages (a lane is ready, a job failed its gates, an update is available, a download's progress) show as Hydra-styled cards in the bottom-right corner, over whatever is open, instead of the editor's standard notifications. Information fades after 8 seconds and warnings after 14; hovering over a card holds it. Errors, cards with buttons and cards showing progress stay until you answer or close them (the × or Escape). At most five show at once. Confirmations that need an answer before anything happens (merging, closing a lane, installing an update) are still the editor's own dialogs. Outside the Hydra app, the same messages use the editor's notifications. Security notes are in [THREAT_MODEL.md](THREAT_MODEL.md) (HSEC-68, HR-20).
+
+## Folders you haven't trusted
+
+Hydra runs agents and commands in your folder, so it switches itself off in a folder you haven't trusted yet (Restricted Mode): no heads, lanes or plans, and no Agent Manager / Editor switch, until you choose **Trust**. Hydra's look (its themes and default layout) stays on in the meantime, so the trust prompt and the folder behind it already look like Hydra.
 ## Packs
 
 A **pack** bundles what one kind of work needs: **roles** for lanes, heads and plan jobs, **gates**, **MCP servers** and **skills** ([Packs_Plan.md](Packs_Plan.md)).
