@@ -554,7 +554,7 @@ test('a Claude lane starts with its settings file on every launch; the other lan
 });
 
 test('the first message says Hydra commits the work, and why a shell is off', () => {
-  const job = { id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c' };
+  const job = { id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c', provider: 'claude' as const };
   assert.match(helperPrompt(job), /Hydra commits your changes for you, so don't commit yourself: git commands that write \(commit, checkout, config\) may fail in your sandbox\./);
   assert.doesNotMatch(helperPrompt(job), /Your shell is off/);
   assert.match(helperPrompt(job, undefined, 'heads', undefined, 'Codex isn\'t installed'), /- Your shell is off: Codex's Windows sandbox isn't available \(Codex isn't installed\)\. Hydra's gates run the tests\./);
