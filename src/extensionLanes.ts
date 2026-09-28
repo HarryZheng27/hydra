@@ -41,6 +41,8 @@ export interface LanesHost {
   /** Post to the Agents panel, if it is open. */
   post(message: LaneServerMessage): void;
   openAgents(): Promise<void>;
+  /** The Agent Manager is the whole window: anything opening an editor switches to the Editor first. */
+  toEditor(): Promise<void>;
   /** The Agents panel is open and its webview has said it's ready. */
   webviewReady(): boolean;
   helperServerSpec(provider: Provider): HelperServerSpec;
@@ -817,6 +819,7 @@ export class LanesController implements vscode.Disposable {
       const onDisk = vscode.Uri.file(path.join(lane.worktree, ...file.path.split('/')));
       return [onDisk, file.status === 'A' ? baseUri('empty', file.path) : baseUri(base, file.path), file.status === 'D' ? baseUri('empty', file.path) : onDisk];
     });
+    await this.host.toEditor();
     await vscode.commands.executeCommand('vscode.changes', `Lane ${lane.name} (${lane.branch})`, resources);
     return { files: files.length };
   }
@@ -869,6 +872,7 @@ export class LanesController implements vscode.Disposable {
   private async openPreview(url: string): Promise<void> {
     // simpleBrowser.api.open is Simple Browser's own API command and its activation event, so it works
     // before the extension has loaded (getCommands() doesn't list an unactivated extension's commands).
+    await this.host.toEditor();
     try {
       await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url, true), { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
       return;
