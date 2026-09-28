@@ -10,7 +10,7 @@ import path from 'node:path';
 import { preferenceOnlySettings } from '../src/core/settingsRefresh';
 import {
   allowedDownloadUrl, compareVersions, downloadVerified, installerArguments, isNewer, latestRelease, parseSums, psQuote, releaseFromPayload,
-  releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, updateLauncherArguments, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
+  helperBridgeScripts, releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, updateLauncherArguments, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
 } from '../src/core/updateCheck';
 
 const tag = 'v0.25.0';
@@ -254,6 +254,17 @@ test('updateHelperScript quotes paths with quotes and spaces, waits bounded, run
   // No path appears anywhere unquoted.
   assert.ok(!script.includes("O'Brien"));
   assert.match(script, /AddMinutes\(10\)/);
+  // Bridges other apps run on Hydra.exe (the MCP server lives as long as Claude Code or Codex does) don't hold the
+  // update forever: it waits for Hydra itself, then stops only those, then waits for everything from the folder.
+  assert.deepEqual([...helperBridgeScripts], ['hydra-mcp.cjs', 'hydra-limit-hook.cjs', 'hydra-cli.cjs']);
+  assert.ok(script.includes("$bridgeScripts = @('\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-mcp.cjs', '\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-limit-hook.cjs', '\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-cli.cjs')"));
+  const lines = script.split('\r\n');
+  const waitForHydra = lines.indexOf('while (@(Get-HydraProcesses | Where-Object { -not (Test-Bridge $_) }).Count -gt 0) {');
+  const stopBridges = lines.indexOf('foreach ($bridge in @(Get-HydraProcesses | Where-Object { Test-Bridge $_ })) {');
+  const waitForAll = lines.indexOf('while ((Get-HydraProcesses).Count -gt 0) {');
+  assert.ok(waitForHydra > 0 && waitForHydra < stopBridges && stopBridges < waitForAll, 'Hydra first, then the bridges, then nothing left');
+  assert.deepEqual(lines.filter(line => /Stop-Process/.test(line)), ['  Stop-Process -Id $bridge.ProcessId -Force -ErrorAction SilentlyContinue'], 'only bridges are ever stopped');
+  assert.match(script, /ExecutablePath\.StartsWith\(\$root/, 'only processes run from this install folder');
   assert.ok(script.includes("-ArgumentList '/SILENT','/SP-','/SUPPRESSMSGBOXES','/NORESTART','/NORESTARTAPPLICATIONS','/MERGETASKS=!runcode' -Wait -PassThru"));
   assert.deepEqual([...installerArguments], ['/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NORESTARTAPPLICATIONS', '/MERGETASKS=!runcode']);
   assert.match(script, /Start-Process -FilePath \$exe/);
