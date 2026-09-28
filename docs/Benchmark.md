@@ -60,5 +60,16 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
 ## Results
 
 <!-- benchmark-results:start -->
-No run has been published yet.
+### 2026-09-28: first run
+
+| | Hydra (6-job plan, unattended) | One agent alone |
+| --- | --- | --- |
+| Wall-clock | 8m 13s | 1m 36s (claude) |
+| Gates at the end | Passed required gates | `npm test` passed |
+| Conflicts predicted / caught at landing | 0 / 0 | n/a |
+| Amendments | 0 | n/a |
+| Cost (as the providers reported it) | $1.30 | $0.57 |
+| Plan | done; 6 of 6 jobs done | |
+
+On a task this small, one Claude Code agent was faster (1m 36s against 8m 13s) and cheaper ($0.57 against $1.30): six jobs each pay for their own worktree, gate run and landing, and the integration gate runs on top. Hydra's run had every job land first time (no conflicts predicted or caught, no amendments), and the combined work passed `npm test` (26 tests; the single agent's has 23). Parallelism can't pay off when the whole task takes one agent under two minutes; a larger task is the next thing to measure. Not recorded on video.
 <!-- benchmark-results:end -->
