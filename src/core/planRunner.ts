@@ -1,13 +1,13 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
 import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobState } from './jobs';
 import {
-  applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
+  applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
   newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, type IntegrationGateRecord, type PlanIntegration,
 } from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
 import type { StopSwitch } from './stopSwitch';
 import {
-  cycleMessage, findCycle, jobRunAs, jobStarted, planOutcomeReasonMax, planResultFilesMax, planResultNoteMax, topologicalOrder,
+  applyPlanAmendment, cycleMessage, findCycle, jobRunAs, jobStarted, planOutcomeReasonMax, planResultFilesMax, planResultNoteMax, topologicalOrder,
   validatePlanDispatch, type Plan, type PlanDispatch, type PlanJob, type PlanJobOutcome, type PlanJobRunAs, type PlanStore,
 } from './plans';
 
@@ -332,6 +332,13 @@ export interface PlanIntegrationOptions {
   runGate(plan: Plan, tip: string): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }>;
   /** Tries a job gets to land before it is held for the lead. Default 3. */
   attempts?: number;
+  /**
+   * Rounds of automatic fixes after a failed integration gate (integrationFixJob): each adds a job that starts from
+   * the branch's tip with the gate's findings, and the gate runs again once it lands. Default 2; 0 turns it off.
+   */
+  fixRounds?(): number;
+  /** The per-head budget an unattended plan's fix job is estimated at (hydra.heads.defaultBudgetUsd). Default 5. */
+  headBudgetUsd?(): number;
 }
 /** What hydra_plan_merge (or the canvas) asked for. */
 export type PlanMergeVia = 'merge' | 'pr';
@@ -695,9 +702,26 @@ export class PlanRunner {
       const { checks, configured } = await gate.runGate(plan, tip);
       record = gateRecord(tip, checks, configured, () => this.now());
     } catch (error) { record = { tip, at: this.now().toISOString(), error: clip(describe(error), 2000), checks: [] }; }
-    await this.withPlan(planId, () => this.options.store.update(planId, current => current.integration?.gate?.running && current.integration.gate.tip === tip ? { ...current, integration: { ...current.integration, gate: record } } : undefined));
-    this.options.log?.(`[plans] ${planId} integration gate on ${tip.slice(0, 7)}: ${record.error ? `couldn't run (${record.error})` : record.failed ? 'failed' : record.status ?? 'done'}`);
+    // A failed gate hands its findings to a fix job in the same update that records it, so nothing waiting on the
+    // plan (hydra plan wait, the report) ever sees it settled on a failure a fix is about to address.
+    let fixing: string | undefined;
+    await this.withPlan(planId, () => this.options.store.update(planId, current => {
+      if (!current.integration?.gate?.running || current.integration.gate.tip !== tip) return undefined;
+      const updated: Plan = { ...current, integration: { ...current.integration, gate: record } };
+      const fix = current.state === 'done' ? integrationFixJob(current, record, gate.fixRounds?.()) : undefined;
+      if (!fix) return updated;
+      try {
+        const amended = applyPlanAmendment(current, { add: [fix] }, undefined, () => this.now(), gate.headBudgetUsd?.());
+        fixing = fix.key;
+        return { ...updated, jobs: amended.jobs, amendments: amended.amendments, state: 'running' };
+      } catch (error) {
+        this.options.log?.(`[plans] ${planId}: couldn't add a fix for the integration gate: ${describe(error)}`);
+        return updated;
+      }
+    }));
+    this.options.log?.(`[plans] ${planId} integration gate on ${tip.slice(0, 7)}: ${record.error ? `couldn't run (${record.error})` : record.failed ? `failed${fixing ? `; ${fixing} fixes it` : ''}` : record.status ?? 'done'}`);
     this.notify(planId);
+    if (fixing) { await this.advance(planId); return record; }
     const finished = this.options.store.get(planId);
     if (finished) this.options.onGateDone?.(finished);
     return record;

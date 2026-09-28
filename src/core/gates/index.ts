@@ -168,3 +168,30 @@ export function flattenGateFailureMessage(results: readonly JobCheckResult[], ma
   const flat = gateFailureMessage(results, ending).replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
+
+/**
+ * The project's gates, one line each, for a head's first prompt (helperService.ts, helperPrompt):
+ * a command gate shows its exact command, so a head can see what it would run itself; screenshots
+ * and review gates are only named, since a head can't run either. `packageTestScript` (package.json's
+ * own `scripts.test`, headBrief.ts) is never one of Hydra's gates — `loadGates` never reads
+ * package.json — so with no command gate it gets its own separate sentence saying plainly that
+ * Hydra won't run it, instead of joining the "Hydra runs these gates" list where it would read as
+ * something Hydra checks. Undefined with nothing to say, so the prompt adds no empty section.
+ */
+/** Whether any of `gates` is a command gate — the only kind that could be running a project's tests. */
+export const hasCommandGate = (gates: readonly Gate[]): boolean => gates.some(gate => gate.type === 'command');
+
+export function gateCommandsBrief(gates: readonly Gate[], packageTestScript?: string): string | undefined {
+  const lines = gateOrder(gates).map(gate => {
+    const optional = gate.required ? '' : ' (optional)';
+    if (gate.type === 'command') return `- ${gate.id}${optional}: ${gate.command.join(' ')}`;
+    if (gate.type === 'screenshots') return `- ${gate.id}${optional}: a screenshots gate (${gate.url})`;
+    return `- ${gate.id}${optional}: a review gate${gate.role ? ` (role: ${gate.role})` : ''}`;
+  });
+  const sections: string[] = [];
+  if (lines.length) sections.push(['Hydra runs these gates after you call hydra_done:', ...lines].join('\n'));
+  if (packageTestScript && !hasCommandGate(gates)) {
+    sections.push(`This project has no command gate, so Hydra won't run its tests; its test command is \`${packageTestScript}\`: run it yourself before hydra_done.`);
+  }
+  return sections.length ? sections.join('\n\n') : undefined;
+}

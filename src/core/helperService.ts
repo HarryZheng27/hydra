@@ -4,14 +4,15 @@ import path from 'node:path';
 import { git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, readOnlyStatus, type GitMetaFingerprint } from './git';
 import { isWindowsShim } from './process';
 import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
-import { otherWorktrees, storageListing } from './confineFiles';
+import { otherWorktrees, storageListing, userClaudePlugins } from './confineFiles';
 import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
 import { defaultMaxAttempts, evidenceStatus, finalJobStates, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
 import { carryOver, integrationAuthors, integrationGates, withGateWorktree, type IntegrationLeadView } from './integration';
-import { applyRigor, freshDirectory, gateFailureMessage, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
+import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
+import { headWorkingGuidance, parsePackageTestScript, repositoryListing } from './headBrief';
 import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
 import type { HeadConfinement, HelperRun, StartHelperRun } from './helperRunner';
 import type { Provider } from './model';
@@ -227,6 +228,8 @@ export class HelperService {
   private readonly headConflictsById = new Map<string, HeadConflict[]>();
   private readonly integrationConflictsById = new Map<string, IntegrationConflict>();
   private readonly headSyncTimer: ReturnType<typeof setInterval>;
+  /** A head's first prompt's "Repository" section, by base commit: the same repository and commit for every head a plan dispatches at once, so this is computed only the first time. Bounded so a long-running window's cache can't grow without limit. */
+  private readonly repoListingCache = new Map<string, string>();
   constructor(private readonly options: HelperServiceOptions) {
     this.now = options.now || Date.now;
     this.watchdog = setInterval(() => { void this.enforceLimits(); void this.refreshMerged(); void this.options.enforceUnattendedBudgets?.(); }, options.watchdogMs ?? 5000);
@@ -474,6 +477,33 @@ export class HelperService {
     try { snapshot.gitMetaAtStart = await gitMetaFingerprint(this.options.leadFolder); } catch { /* best effort: no git-metadata check for this head */ }
     try { snapshot.tamperAtStart = await hydraFileHashes(this.options.leadFolder); } catch { /* best effort: no tamper note for this head */ }
     return snapshot;
+  }
+
+  /**
+   * A head's "Repository" section and test/gate commands (helperPrompt): measured need, see
+   * headBrief.ts. Best-effort like headStartSnapshot — a piece that fails (an unreadable
+   * package.json, a repository too unusual for `git ls-tree`) is simply left off the prompt.
+   */
+  private async headStartContext(job: Job, baseCommit: string): Promise<{ repository?: string; tests?: string; hasCommandGate: boolean }> {
+    const repository = await this.repositoryListingFor(baseCommit);
+    const gates = job.gatesAtStart?.gates ?? [];
+    let tests: string | undefined;
+    try { tests = gateCommandsBrief(gates, await packageTestScript(this.options.leadFolder)); }
+    catch { /* best effort: no test summary for this head */ }
+    return { ...(repository ? { repository } : {}), ...(tests ? { tests } : {}), hasCommandGate: hasCommandGate(gates) };
+  }
+
+  /** git ls-tree at `baseCommit`, formatted once (repositoryListing, headBrief.ts) and cached: a plan dispatching several heads at once reads the same commit for every one of them. */
+  private async repositoryListingFor(baseCommit: string): Promise<string | undefined> {
+    const cached = this.repoListingCache.get(baseCommit);
+    if (cached !== undefined) return cached;
+    try {
+      const raw = await git(this.options.leadFolder, ['ls-tree', '-r', '--name-only', '-z', baseCommit]);
+      const listing = repositoryListing(raw.split('\0').filter(Boolean));
+      if (this.repoListingCache.size >= 32) { const oldest = this.repoListingCache.keys().next().value; if (oldest !== undefined) this.repoListingCache.delete(oldest); }
+      this.repoListingCache.set(baseCommit, listing);
+      return listing;
+    } catch { return undefined; }
   }
 
   /** 1.6: whether any of .hydra/gates.json, checks.json or packs.json changed since this head started. */
@@ -790,10 +820,11 @@ export class HelperService {
       // The time limit counts from here, before the job is visible as running.
       const startedAt = this.now();
       await this.options.store.transition(job.id, 'running');
+      const context = await this.headStartContext(job, created.baseCommit);
       const run = this.options.startRun({
         // Decision 4: the lead's model first, then the role's, which roleLaunch gives only on the role's own provider.
         provider: job.provider, executable, worktree: created.worktree, model: job.model ?? role?.model,
-        prompt: helperPrompt({ ...job, worktree: created.worktree, branch: created.branch, baseCommit: created.baseCommit }, dependencies.length ? dependencyBrief(dependencies) : undefined, dependencyNoun(dependencies), role, shell?.kind === 'off' ? shell.reason : undefined),
+        prompt: helperPrompt({ ...job, worktree: created.worktree, branch: created.branch, baseCommit: created.baseCommit }, dependencies.length ? dependencyBrief(dependencies) : undefined, dependencyNoun(dependencies), role, shell?.kind === 'off' ? shell.reason : undefined, context),
         maxTurns: job.limits.maxTurns, maxBudgetUsd: job.limits.maxBudgetUsd,
         bridge: { command: this.options.bridge.command, args: this.options.bridge.args, env: { ...(this.options.bridge.env || {}), HYDRA_HELPER_PORT: String(this.options.endpoint.port), HYDRA_HELPER_TOKEN: token } },
         logFile: path.join(this.options.logDirectory, `${job.id}.jsonl`),
@@ -961,6 +992,7 @@ export class HelperService {
     const settings = headSettings({
       platform, env: process.env, storage, storageRead: storageReadDeny(storage, keep, await storageListing(storage, keep), platform),
       worktree, addDirs, otherWorktrees: await otherWorktrees(this.options.leadFolder, worktree), leadFolder: this.options.leadFolder,
+      userPlugins: await userClaudePlugins(env),
     });
     await mkdir(this.options.logDirectory, { recursive: true });
     await writeFile(settingsFile, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 });
@@ -1311,6 +1343,12 @@ export class HelperService {
   }
 }
 
+/** The lead folder's own package.json `scripts.test`, for a head's "Hydra runs these gates" line (gateCommandsBrief) when there's no command gate to show instead. Undefined with no package.json, or nothing to read from it. */
+async function packageTestScript(folder: string): Promise<string | undefined> {
+  try { return parsePackageTestScript(await readFile(path.join(folder, 'package.json'), 'utf8')); }
+  catch { return undefined; }
+}
+
 /** SHA-256 of a file, or null when it doesn't exist. Used for 1.6's tamper note. */
 async function hashOptionalFile(file: string): Promise<string | null> {
   try { return createHash('sha256').update(await readFile(file)).digest('hex'); }
@@ -1390,19 +1428,29 @@ function describeGate(check: JobCheckResult) {
  * any of them is a plan's lane job. A head with a role (docs/Packs_Plan.md, "Heads")
  * hears it first: "Your role: Builder (Coding pack)", its instructions and its skill index.
  * `shellOff` is why a Claude head has no shell (Step 2, design 1), which it hears too.
+ * `context` is headBrief.ts's repository listing and gate/test commands (headStartContext):
+ * measured need — without them, a head spent its first several turns on `git ls-files`, `cat
+ * package.json` and reading the same handful of files, a cost paid by every head running at once.
+ * The working-guidance bullets it adds (headWorkingGuidance) are worded for this head specifically:
+ * `job.provider` (Codex has no Read/Grep/Glob tools) and `shellOff` (a Claude head can have no
+ * shell at all) change which of them make sense, and `context.hasCommandGate` decides whether
+ * "run only the tests your change touches" is true for this project.
  */
-export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeScope' | 'worktree' | 'branch' | 'baseCommit'>, dependencies?: string, noun: 'heads' | 'jobs' = 'heads', role?: Pick<RoleLaunch, 'label' | 'text' | 'changes'>, shellOff?: string): string {
+export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeScope' | 'worktree' | 'branch' | 'baseCommit' | 'provider'>, dependencies?: string, noun: 'heads' | 'jobs' = 'heads', role?: Pick<RoleLaunch, 'label' | 'text' | 'changes'>, shellOff?: string, context?: { repository?: string; tests?: string; hasCommandGate?: boolean }): string {
   return [
     `You are a Hydra head (job ${job.id}): ${job.title}`,
     '',
     ...(role ? [`Your role: ${role.label}`, role.text, ''] : []),
     job.brief,
     ...(dependencies ? ['', dependencies] : []),
+    ...(context?.repository ? ['', 'Repository:', context.repository] : []),
+    ...(context?.tests ? ['', context.tests] : []),
     '',
     'How to work:',
     `- Work only in this git worktree: ${job.worktree}, on branch ${job.branch}. It starts from commit ${job.baseCommit}${dependencies ? `, which already has the work of the ${noun} it depends on` : ''}.`,
     `- You may change only these paths: ${job.writeScope.length ? job.writeScope.map(entry => entry || '(whole repository)').join(', ') : '(whole repository)'}. Changes elsewhere are refused.`,
     '- Nobody will approve anything for you. Tools you are not allowed to use are denied; work around them.',
+    ...headWorkingGuidance({ provider: job.provider, shellOff: !!shellOff, hasCommandGate: !!context?.hasCommandGate }).map(line => `- ${line}`),
     ...(shellOff ? [`- Your shell is off: Codex's Windows sandbox isn't available (${shellOff}). Hydra's gates run the tests.`] : []),
     '- When you are finished, call the hydra_done tool with a summary. Hydra commits your changes for you, so don\'t commit yourself: git commands that write (commit, checkout, config) may fail in your sandbox. Hydra then runs the project\'s gates on the changes (its checks, and possibly a review by another agent), and tells you if anything must be fixed.',
     ...(role?.changes === 'optional' ? ['- Your role may finish without changing any file: then your summary is the result, so put everything the lead needs in it.'] : []),
