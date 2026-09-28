@@ -7,7 +7,7 @@ import path from 'node:path';
 import { planFromLeadInput, findCycle } from '../src/core/plans';
 import { planFileArguments } from '../src/core/hydraCli';
 // @ts-expect-error: a plain .mjs module with no type declarations.
-import { observePlan, renderResults, summarizeHydra, summarizeSingle, taskFromPlan, tasks, withResults, resultsStart, resultsEnd } from '../scripts/benchmark-lib.mjs';
+import { observePlan, renderResults, summarizeHydra, summarizeSingle, taskFromPlan, tasks, withResults, resultsStart, resultsEnd, fixturePath, pickTask, taskLabel, workDoneSeconds, landingFromStore, parseCheckOutput, summarizeReview, withReview, runRows, renderSummary, spread, rate, median, globSegment, isFixJob } from '../scripts/benchmark-lib.mjs';
 
 /**
  * O9 (docs/Benchmark.md): the benchmark's harness, without spending anything: the fixture and its plan file are
@@ -102,7 +102,7 @@ test('benchmark.mjs hydra watches the plan to the end and records time, the gate
     const repo = path.join(out, 'hydra');
     await mkdir(repo, { recursive: true });
     const fake = path.join(root, 'tests', 'fixtures', 'bench', 'fake-hydra.cjs');
-    const ran = await node([script, 'hydra', '--repo', repo, '--poll', '0.01', '--hydra', `"${process.execPath}" "${fake}"`]);
+    const ran = await node([script, 'hydra', '--repo', repo, '--poll', '0.01', '--plan-store', path.join(out, 'no-plans.json'), '--hydra', `"${process.execPath}" "${fake}"`]);
     assert.equal(ran.code, 0, ran.stderr);
     const results = JSON.parse(await readFile(path.join(out, 'hydra-results.json'), 'utf8'));
     assert.equal(results.kind, 'hydra');
@@ -111,6 +111,11 @@ test('benchmark.mjs hydra watches the plan to the end and records time, the gate
     assert.equal(results.conflicts.predicted, 1, 'the api job was predicted to conflict with the integration branch');
     assert.equal(results.conflicts.landingConflicts, 1, 'its head passed, then a new one started: its landing conflicted');
     assert.equal(results.amendments, 1);
+    assert.equal(results.fixture, 'shop');
+    assert.equal(results.fixRounds, 0);
+    assert.equal(results.landingTimesFrom, 'watching', 'no plan store had the plan');
+    assert.deepEqual(Object.keys(results.landedAtSeconds).sort(), ['api', 'discounts']);
+    assert.equal(typeof results.timeToWorkingCodeSeconds, 'number', 'both jobs were seen landed');
     assert.deepEqual(results.cost, { usd: 1.25, usdJobs: 2, inputTokens: 0, outputTokens: 0, tokenJobs: 0, jobs: 2 });
     assert.match(await readFile(path.join(out, 'hydra-report.md'), 'utf8'), /^# Discount codes/);
   } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
