@@ -8,10 +8,18 @@ This replaces the old Auto delegation, which read a `HYDRA_DELEGATION_V1` line o
 
 ## Connecting Claude Code and Codex
 
-Connect in onboarding (step 03, Providers) or in **Hydra Settings → Connectors**, which also shows the exact entries Hydra wrote. Each agent has one row with a single **Connect to Hydra** button:
+**On the first run, Hydra does it for you.** The first time the Hydra app opens a trusted project:
+- It connects whichever agents are already on this computer: `claude` or `codex` on your `PATH`, or the path set in `hydra.claudePath`/`hydra.codexPath`.
+- It installs their extensions as it goes, with its progress in a notification.
+- It happens once. An agent that's already connected with its extension installed here is left alone; one connected from another editor gets its extension here and is pointed at this Hydra. One that fails says why, with a button to **Connectors**.
+- An agent that isn't installed yet is connected with **Connect**, once you've installed it.
 
-1. It installs the official extension if it's missing. It uses the extension gallery, or downloads straight from Open VSX when the editor has none.
+**By hand:** connect in onboarding (step 03, Providers) or in **Hydra Settings → Connectors**, which also shows the exact entries Hydra wrote. Each agent has one row with a single **Connect to Hydra** button:
+
+1. It installs the official extension if it's missing. It tries the extension gallery first. If the gallery can't install it, for any reason, Hydra downloads it straight from Open VSX instead. (Open VSX's gallery answers "Server returned 406" for some platform-specific extensions, Claude Code among them.)
 2. It connects the extension to Hydra.
+
+**Where to start:** Hydra's first launch shows its side bar (New lane, New plan, Open Agents view) and opens the welcome wizard. Finishing the wizard, or choosing **Set up later**, opens the Agents view. Later on, **Ctrl+Alt+A** switches between the editor and Agents.
 
 The row also has Disconnect and Sign in. Claude Code and Codex keep their own sign-in and billing.
 
@@ -30,7 +38,7 @@ Connecting adds Hydra as a user-level tool server named `hydra`. That's per user
 | Codex | A marked `[mcp_servers.hydra]` block at the end of `~/.codex/config.toml`, and a marked "Hydra heads" block with the same delegation guidance at the end of `~/.codex/AGENTS.md` (Codex may not read MCP instructions) | Yes. Both files are restored byte for byte; an `AGENTS.md` that Hydra created is removed |
 
 - **What the tool server is:** `dist/hydra-mcp.cjs`, run by Hydra's own executable with `ELECTRON_RUN_AS_NODE=1`, so Node doesn't need to be installed.
-- **Hydra updates:** if an update moves Hydra's executable, Hydra refreshes an existing connection on its next start. It never connects anything you didn't.
+- **Hydra updates:** if an update moves Hydra's executable, Hydra refreshes an existing connection on its next start. Apart from the first run above, it never connects anything you didn't.
 - **When heads are available:** only while a Hydra window has that folder open. Otherwise the actions answer "Hydra isn't open for this folder".
 
 ## What the agents can do

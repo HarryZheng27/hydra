@@ -22,7 +22,8 @@ import { HeadSandbox } from './core/headSandbox';
 import { headShellSentence } from './core/confine';
 import { createLeadVerifier, createUserVerifier } from './core/leadVerification';
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from './core/claudeMem';
-import { downloadOpenVsx } from './core/openVsx';
+import { installWithFallback } from './core/openVsx';
+import { firstRunConnectKey, firstRunProviders, shouldConnectOnFirstRun } from './core/onboarding';
 import { selfCheckCli } from './core/cliSelfCheck';
 import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from './core/helperRegistration';
 import { claudeSupportsLimitHook, limitHookGroup, limitHookState, type LimitHookGroup } from './core/claudeLimitHook';
@@ -187,7 +188,7 @@ class Manager {
     this.quota = new ProviderQuota(context, this.settingsImport.available);
     this.packs = createPackService(context, line => this.output.appendLine(line), event => this.audit.record(event));
     this.settings = new AppearanceSettings(context, this.settingsImport, this.packs);
-    this.onboarding = new Onboarding(context, this.settingsImport, this.settings);
+    this.onboarding = new Onboarding(context, this.settingsImport, this.settings, () => void this.openAgents().catch(error => this.report(error)));
     context.subscriptions.push(this.settings, this.onboarding, this.accounts, this.quota, this.limitEvents, this.tree);
     const identity = (vscode.workspace.workspaceFolders || []).map(folder => folder.uri.toString()).sort().join('|') || 'empty';
     const key = createHash('sha256').update(identity).digest('hex').slice(0, 16);
@@ -589,7 +590,7 @@ class Manager {
     await this.planRunner.advanceAll({ startup: true }).catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
     this.tree.update({ lanes: this.lanes.state().lanes, heads: this.headViews() ?? [], plans: planStore.list(), planJobs: this.planJobViews() });
     this.output.appendLine(`[heads] ready for ${leadFolder}`);
-    void this.refreshHelperConnections();
+    void this.refreshHelperConnections().then(() => this.connectOnFirstRun()).catch(error => this.output.appendLine(`[heads] first run: ${this.describe(error)}`));
     // ---- Packs (docs/Packs_Plan.md): the active roles for the pickers, and the notification for a ----
     // ---- project whose packs.json lists a pack that still needs your OK on this machine. ----
     this.packsLeadFolder = leadFolder;
@@ -811,17 +812,49 @@ class Manager {
     if (!claude) throw new Error('Install the Claude Code extension or CLI first.');
     return setupClaudeMem(claude);
   }
-  /** Install an official extension from the gallery, or straight from Open VSX when this build has no gallery. */
+  /** Install an official extension from the gallery, or straight from Open VSX when the gallery can't (installWithFallback). */
   private async installProviderExtension(provider: ConnectableProvider): Promise<void> {
     if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown provider.');
     const id = provider === 'claude' ? 'anthropic.claude-code' : 'openai.chatgpt';
     if (vscode.extensions.getExtension(id)) return;
-    try { await vscode.commands.executeCommand('workbench.extensions.installExtension', id); }
-    catch (error) {
-      if (!/gallery/i.test(this.describe(error))) throw error;
-      this.output.appendLine(`[heads] no extension gallery; installing ${id} from Open VSX`);
-      await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(await downloadOpenVsx(id)));
-    }
+    const via = await installWithFallback(id,
+      extension => Promise.resolve(vscode.commands.executeCommand('workbench.extensions.installExtension', extension)),
+      file => Promise.resolve(vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file))),
+      undefined, line => this.output.appendLine(line));
+    this.output.appendLine(`[heads] installed ${id} from ${via === 'gallery' ? 'the extension gallery' : 'Open VSX'}`);
+  }
+  /**
+   * First run (docs/Heads.md, "Connecting Claude Code and Codex"): once, in an installed desktop Hydra, connect the
+   * agents whose command-line tools are already on this computer (installing their extensions), so a new user
+   * doesn't have to find Connect. Anything that fails says so, with a way to Settings → Connectors.
+   */
+  private async connectOnFirstRun(): Promise<void> {
+    const host = await Promise.resolve(vscode.commands.executeCommand<{ development: boolean }>('hydra.desktop.startupContext')).catch(() => undefined);
+    if (!shouldConnectOnFirstRun({ desktop: this.settingsImport.available, production: this.context.extensionMode === vscode.ExtensionMode.Production,
+      development: host?.development !== false, test: !!process.env.HYDRA_TEST_REPOSITORY, handoff: !!this.handoff, done: !!this.context.globalState.get(firstRunConnectKey) })) return;
+    await this.context.globalState.update(firstRunConnectKey, true);
+    const connections = await this.helperConnections();
+    const row = (provider: ConnectableProvider) => connections.find(item => item.provider === provider);
+    const cli = async (provider: 'claude' | 'codex') => !!(await findProvider(provider, vscode.workspace.getConfiguration('hydra').get<string>(provider === 'claude' ? 'claudePath' : 'codexPath') || undefined).catch(() => undefined))?.executable;
+    const wanted = firstRunProviders({
+      claude: { cli: await cli('claude'), connected: !!row('claude')?.connected, extension: !!row('claude')?.extensionInstalled },
+      codex: { cli: await cli('codex'), connected: !!row('codex')?.connected, extension: !!row('codex')?.extensionInstalled },
+    });
+    if (!wanted.length) return;
+    const done: string[] = [], failed: string[] = [];
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Hydra: connecting your agents' }, async progress => {
+      for (const provider of wanted) {
+        const name = provider === 'claude' ? 'Claude Code' : 'Codex';
+        progress.report({ message: `${name}…` });
+        try { await this.connectHelpers(provider); done.push(name); }
+        catch (error) { failed.push(`${name} (${this.describe(error)})`); this.output.appendLine(`[heads] first run: couldn't connect ${provider}: ${this.describe(error)}`); }
+      }
+    });
+    this.onboarding.refreshConnections();
+    if (failed.length) {
+      const pick = await vscode.window.showWarningMessage(`Hydra couldn't connect ${failed.join(', ')}.${done.length ? ` ${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected.` : ''}`, 'Open Connectors');
+      if (pick) await vscode.commands.executeCommand('hydra.openSettings', 'connectors');
+    } else void vscode.window.showInformationMessage(`${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected to Hydra: chat in ${done.length === 1 ? 'its extension' : 'their extensions'}, and they can start Hydra heads.`);
   }
   /**
    * One Connect: install the official extension if it's missing, connect it to
@@ -991,26 +1024,27 @@ class Manager {
     await helpers.endpoint.close();
   }
   async showFirstRun(): Promise<void> {
-    await this.collapseSidebarOnce();
+    const firstRun = await this.firstRunLayoutOnce();
     const onboarding = this.disabled ? false : await this.onboarding.autoShow(!!vscode.workspace.getConfiguration('hydra').get('handoff'));
-    // Onboarding has its own path into the Agents view (the Providers step); a
-    // handoff window is already forced to Agents in initialize(). Neither is
-    // overridden by the startup layout setting.
-    if (!onboarding && !this.handoff && this.mode === 'editor' && vscode.workspace.getConfiguration('hydra').get<string>('startupLayout') === 'agents') {
+    // Onboarding opens the Agents view when it's finished or set aside (Onboarding's `finished`); a handoff window
+    // is already forced to Agents in initialize(). Otherwise the first launch lands in Agents too, and later
+    // launches follow the startup layout setting.
+    if (!onboarding && !this.handoff && this.mode === 'editor' && (firstRun || vscode.workspace.getConfiguration('hydra').get<string>('startupLayout') === 'agents')) {
       await this.openAgents();
     }
   }
-  private async collapseSidebarOnce(): Promise<void> {
-    // The primary side bar has no configurationDefaults-controlled initial
-    // visibility (unlike the secondary side bar), so a one-time explicit
-    // close on first activation is the only extension-level way to start
-    // with a clean, uncluttered layout. Only in the packaged desktop app,
-    // and only once; the user's own later choice to reopen it is not undone.
-    if (!this.settingsImport.available) return;
+  /**
+   * The packaged app's first launch: the Hydra side bar (New lane, New plan, Open Agents view) is shown, so the way
+   * into Hydra is in plain sight rather than behind a closed side bar. Once; the user's later layout is theirs.
+   * True on that first launch.
+   */
+  private async firstRunLayoutOnce(): Promise<boolean> {
+    if (!this.settingsImport.available) return false;
     const key = 'hydra.firstRunLayout.v1';
-    if (this.context.globalState.get(key)) return;
+    if (this.context.globalState.get(key)) return false;
     await this.context.globalState.update(key, true);
-    await Promise.resolve(vscode.commands.executeCommand('workbench.action.closeSidebar')).catch(() => {});
+    await Promise.resolve(vscode.commands.executeCommand('workbench.view.extension.hydra')).catch(() => {});
+    return true;
   }
   private async verifyHandoffWorkspace(): Promise<void> {
     if (!this.handoff) throw new Error('Open the handoff workspace to use this action.');

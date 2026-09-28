@@ -30,3 +30,17 @@ export async function downloadOpenVsx(extensionId: string, fetchImpl: typeof fet
   await writeFile(vsix, Buffer.from(await file.arrayBuffer()));
   return vsix;
 }
+
+/**
+ * Install an extension from the editor's gallery, and when that fails for any reason (no gallery, or a gallery that
+ * answers an error such as Open VSX's "Server returned 406" for some platform-specific manifests), install its VSIX
+ * straight from Open VSX instead. Throws with both reasons when neither works.
+ */
+export async function installWithFallback(extensionId: string, fromGallery: (id: string) => Promise<unknown>, fromVsix: (file: string) => Promise<unknown>, download: (id: string) => Promise<string> = id => downloadOpenVsx(id), log?: (line: string) => void): Promise<'gallery' | 'open-vsx'> {
+  let galleryError: unknown;
+  try { await fromGallery(extensionId); return 'gallery'; }
+  catch (error) { galleryError = error; log?.(`[heads] installing ${extensionId} from the gallery failed (${reason(error)}); trying Open VSX`); }
+  try { await fromVsix(await download(extensionId)); return 'open-vsx'; }
+  catch (error) { throw new Error(`Couldn't install ${extensionId}: the extension gallery said "${reason(galleryError)}", and Open VSX said "${reason(error)}".`); }
+}
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 300);

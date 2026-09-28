@@ -21,3 +21,24 @@ export function advanceOnboarding(state: OnboardingState, skip: boolean): Onboar
 export function shouldOpenOnboarding(input: { desktop: boolean; trusted: boolean; development: boolean; handoff: boolean; completed: boolean }): boolean {
   return input.desktop && input.trusted && !input.development && !input.handoff && !input.completed;
 }
+
+// ---- First run: connect the agents already on this computer (docs/Heads.md, "Connecting Claude Code and Codex") ----
+
+export type OnboardingProvider = 'claude' | 'codex';
+export const firstRunConnectKey = 'hydra.firstRunConnect.v1';
+
+/**
+ * Whether this window connects Claude Code and Codex by itself, once: only an installed desktop Hydra (never a
+ * development or test window, which would point the real Claude and Codex at itself), not already done.
+ */
+export function shouldConnectOnFirstRun(input: { desktop: boolean; production: boolean; development: boolean; test: boolean; handoff: boolean; done: boolean }): boolean {
+  return input.desktop && input.production && !input.development && !input.test && !input.handoff && !input.done;
+}
+
+/**
+ * Which agents to set up on the first run: those whose command-line tool is on this computer, unless they're already
+ * connected with their extension installed here (a connection made from another editor leaves this one without it).
+ */
+export function firstRunProviders(input: Record<OnboardingProvider, { cli: boolean; connected: boolean; extension: boolean }>): OnboardingProvider[] {
+  return (['claude', 'codex'] as const).filter(provider => input[provider].cli && !(input[provider].connected && input[provider].extension));
+}
