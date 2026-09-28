@@ -4,11 +4,11 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { git, gitRun } from '../src/core/git';
-import { createPlan, PlanStore, applyPlanAmendment, type Plan, type PlanJob } from '../src/core/plans';
+import { createPlan, PlanStore, applyPlanAmendment, planJobBriefMax, type Plan, type PlanJob } from '../src/core/plans';
 import { PlanRunner, planHeadInput, type PlanHeadLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import {
   applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, integrationSettled, landCommit, mergeRefusal, newIntegration, reconcile,
-  laneMergeRefusal, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
+  integrationFixJob, laneMergeRefusal, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
 } from '../src/core/integration';
 import { parseGatesConfig, runGateList } from '../src/core/gates';
 import { JobStore, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
@@ -73,7 +73,7 @@ interface Started { key: string; id: string; dependsOn: string[]; inputs: Depend
 const headJob = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], runAs: 'head', ...extra });
 
 /** A plan runner over a real repository, with fake heads that a test finishes with real commits. */
-async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
+async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; fixRounds?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
   const directory = options.directory ?? path.join(repo.root, `plans-${++counter}`);
   const heads = new Map<string, PlanHeadLook>();
   const started: Started[] = [];
@@ -93,7 +93,8 @@ async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: Non
     commitSubjects: async () => [], changedFiles: async () => [],
     terminalsAvailable: () => true, debounceMs: 1,
     ...(options.now ? { now: options.now } : {}), ...options.hooks,
-    integration: { runGate: options.runGate ?? passingGate, ...(options.attempts ? { attempts: options.attempts } : {}) },
+    // Automatic fixes are off unless a test asks for them, so each test sees one gate run of its own.
+    integration: { runGate: options.runGate ?? passingGate, fixRounds: () => options.fixRounds ?? 0, ...(options.attempts ? { attempts: options.attempts } : {}) },
   });
   let store = new PlanStore(directory);
   await store.load();
@@ -615,5 +616,77 @@ test('O3: a done plan settles before its integration gate runs, and onGateDone f
     assert.equal(gated.length, 1);
     assert.equal(integrationSettled(gated[0]!), true);
     assert.equal(gated[0]!.integration!.gate!.status, 'passed');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('integrationFixJob (O3): a failed gate becomes one fix job with its findings, round by round, until the rounds run out', () => {
+  const review: JobCheckResult = { id: 'rigor-review', kind: 'review', state: 'failed', required: true, passed: false, exitCode: null, durationMs: 1, outputTail: '', summary: 'Input is not validated.', findings: [{ file: 'src/tax.js', line: 4, severity: 'major', note: 'Negative\n amounts pass.' }] };
+  const record = (checks: JobCheckResult[], extra: Partial<IntegrationGateRecord> = {}): IntegrationGateRecord => ({ tip: sha('c'), at: '2026-09-28T00:00:00.000Z', checks, failed: true, ...extra });
+  const plan = { title: 'Shop', jobs: [{ key: 'tax' }] };
+  const fix = integrationFixJob(plan, record([failedCheck(), review]))!;
+  assert.equal(fix.key, 'integration-fix-1');
+  assert.deepEqual(fix.write_scope, ['.'], 'a fix may touch whatever the findings need');
+  assert.equal(fix.rigor, 'quick', 'the integration gate, run again, reviews it with the rest');
+  assert.match(fix.title, /round 1 of 2/);
+  assert.match(fix.brief, /plan "Shop"/);
+  assert.match(fix.brief, /### unit \(command\) failed/);
+  assert.match(fix.brief, /boom/, 'a command gate\'s output');
+  assert.match(fix.brief, /### rigor-review \(review\) failed: Input is not validated\./);
+  assert.match(fix.brief, /- \[major\] src\/tax\.js:4: Negative amounts pass\./, 'each finding, on one line');
+  assert.equal(integrationFixJob({ ...plan, jobs: [...plan.jobs, { key: 'integration-fix-1' }] }, record([failedCheck()]))!.key, 'integration-fix-2');
+  assert.equal(integrationFixJob({ ...plan, jobs: [...plan.jobs, { key: 'integration-fix-1' }, { key: 'integration-fix-2' }] }, record([failedCheck()])), undefined, 'two rounds by default');
+  assert.equal(integrationFixJob(plan, record([failedCheck()]), 0), undefined, '0 turns it off');
+  assert.equal(integrationFixJob(plan, record([passed()], { failed: undefined, status: 'passed' })), undefined);
+  assert.equal(integrationFixJob(plan, record([], { error: 'no worktree' })), undefined, 'a gate that couldn\'t run has nothing to fix');
+  const long = integrationFixJob(plan, record([{ ...review, findings: Array.from({ length: 20 }, () => ({ severity: 'minor' as const, note: 'x'.repeat(600) })) }]))!;
+  assert.equal(long.brief.length, planJobBriefMax, 'clipped to what a plan job brief may hold');
+});
+
+test('O3 acceptance: a failed integration gate adds a fix job from the branch tip with the findings, and the gate passes once the fix lands', async () => {
+  const f = await repoFixture(renameFixture);
+  const gated: Plan[] = [];
+  const p = await planFixture(f, [headJob('rename'), headJob('caller')], { runGate: commandGate(f, [process.execPath, 'check.js']), fixRounds: 2, hooks: { onGateDone: plan => gated.push(plan) } });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('rename', await f.commitFrom(f.base, renamed, 'rename add to sum'));
+    await p.finish('caller', await f.commitFrom(f.base, callsOldName, 'call add'));
+    const first = await p.runner.integrate(p.plan.id);
+    assert.equal(first.failed, true, 'together they break');
+    assert.equal(p.get().state, 'running', 'a fix is under way: the plan isn\'t over, so hydra plan wait keeps waiting');
+    assert.equal(gated.length, 0, 'no report yet: the fix may still pass');
+    const fix = p.startedFor('integration-fix-1');
+    assert.equal(fix.length, 1, 'one fix head');
+    assert.equal(fix[0]!.start?.baseCommit, first.tip, 'it starts from the combined work');
+    assert.match(fix[0]!.brief, /### unit \(command\) failed/);
+    assert.equal(p.get().amendments?.at(-1)?.kind, 'add');
+
+    const tip = p.get().integration!.tip;
+    await p.finish('integration-fix-1', await f.commitFrom(tip, { 'src/use.js': 'const { sum } = require(\'./math.js\');\nmodule.exports = () => sum(1, 2);\n' }, 'fix: call sum'));
+    const second = await p.runner.integrate(p.plan.id);
+    assert.equal(second.status, 'passed');
+    assert.equal(p.get().state, 'done');
+    assert.equal(gated.length, 1, 'the report follows the last gate run');
+    assert.equal(mergeRefusal(p.get()), undefined, 'and the plan can merge');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('O3: automatic fixes stop after their rounds, leaving the failed gate for you', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const gated: Plan[] = [];
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [failedCheck()], configured: 'file' });
+  const p = await planFixture(f, [headJob('a')], { runGate: failing, fixRounds: 1, hooks: { onGateDone: plan => gated.push(plan) } });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a.txt': 'a\n' }, 'a'));
+    await p.runner.integrate(p.plan.id);
+    assert.equal(p.startedFor('integration-fix-1').length, 1);
+    await p.finish('integration-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a.txt': 'fixed?\n' }, 'try a fix'));
+    const last = await p.runner.integrate(p.plan.id);
+    assert.equal(last.failed, true);
+    assert.equal(p.startedFor('integration-fix-2').length, 0, 'one round only');
+    assert.equal(p.get().state, 'done');
+    assert.equal(integrationSettled(p.get()), true);
+    assert.equal(gated.length, 1);
+    assert.match(mergeRefusal(p.get())!, /Integration gate failed/);
   } finally { p.dispose(); await f.close(); }
 });

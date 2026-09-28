@@ -59,7 +59,7 @@ import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPl
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
 import type { LanePlanJobView } from './core/model';
 // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together"). Their own block. ----
-import { integrationLeadView, integrationSettled, laneMergeRefusal, mergeRefusal } from './core/integration';
+import { defaultIntegrationFixRounds, integrationLeadView, integrationSettled, laneMergeRefusal, mergeRefusal } from './core/integration';
 import type { PlanMergeVia } from './core/planRunner';
 // ---- Gates (docs/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
@@ -1579,6 +1579,7 @@ class Manager {
           review: plan.jobs.some(job => job.rigor === 'standard' || job.rigor === 'strict'),
           providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
         }),
+        fixRounds: () => vscode.workspace.getConfiguration('hydra').get<number>('plans.integrationFixRounds', defaultIntegrationFixRounds),
       },
     });
   }

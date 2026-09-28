@@ -264,6 +264,48 @@ export function gateRecord(tip: string, checks: JobCheckResult[], configured: Ga
   return { tip, at: now().toISOString(), checks, ...(failed ? { failed: true } : {}), ...(status ? { status } : {}) };
 }
 
+/** Rounds of automatic fixes after a failed integration gate, unless the window says otherwise. */
+export const defaultIntegrationFixRounds = 2;
+/** The job key of a plan's nth automatic fix. */
+export const integrationFixKey = (round: number): string => `integration-fix-${round}`;
+const integrationFixPattern = /^integration-fix-\d+$/;
+
+/**
+ * The job that fixes what a failed integration gate found (pure; docs/Heads.md, "Landing a plan together"), or
+ * undefined when there is nothing to hand a head: the gate didn't fail (or couldn't run at all), or the plan has
+ * had its rounds. It starts from the integration branch's tip like any plan job, may change the whole repository,
+ * and runs the project's own gates only: the integration gate, run again once it lands, reviews it with the rest.
+ */
+export function integrationFixJob(plan: { title: string; jobs: readonly { key: string }[] }, record: IntegrationGateRecord, rounds = defaultIntegrationFixRounds): { key: string; title: string; brief: string; write_scope: string[]; rigor: 'quick' } | undefined {
+  if (!record.failed || record.error || rounds <= 0) return undefined;
+  const round = plan.jobs.filter(job => integrationFixPattern.test(job.key)).length + 1;
+  if (round > rounds) return undefined;
+  const failed = record.checks.filter(gateBlocks);
+  if (!failed.length) return undefined;
+  const sections = failed.map(check => {
+    const lines = [`### ${check.id} (${gateKind(check)}) failed${check.summary ? `: ${oneLine(check.summary)}` : ''}`];
+    for (const finding of (check.findings ?? []).slice(0, 20)) lines.push(`- [${finding.severity}]${finding.file ? ` ${finding.file}${finding.line ? `:${finding.line}` : ''}` : ''}: ${oneLine(finding.note)}`);
+    if (gateKind(check) === 'command' && check.outputTail.trim()) lines.push('Last output:', '```', check.outputTail.trim().slice(-1500), '```');
+    return lines.join('\n');
+  });
+  const brief = [
+    `Every job of plan "${plan.title}" has landed on its integration branch, which you start from, but the plan's integration gate failed on the combined work.`,
+    'Fix what it found below, across whatever files that takes, without undoing what the jobs built. Keep every existing test passing, and add tests for what you fix. Then finish as usual: the integration gate runs again on the result.',
+    '',
+    ...sections,
+  ].join('\n');
+  return {
+    key: integrationFixKey(round),
+    title: rounds > 1 ? `Fix the integration gate's findings (round ${round} of ${rounds})` : "Fix the integration gate's findings",
+    brief: brief.length > fixBriefMax ? `${brief.slice(0, fixBriefMax - 1)}…` : brief,
+    write_scope: ['.'],
+    rigor: 'quick',
+  };
+}
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 600);
+/** plans.ts's planJobBriefMax: plans.ts imports this module, so the number is repeated rather than imported (tests/integration.test.ts checks they agree). */
+const fixBriefMax = 4000;
+
 /**
  * For a plan that has stopped running: true once its integration gate has nothing more to say on its own. A done
  * plan with work landed runs the gate by itself, so until a result for the current tip is in, a wait keeps waiting
