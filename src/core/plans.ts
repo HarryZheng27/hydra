@@ -5,7 +5,7 @@ import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
 import { gateState, type EvidenceStatus } from './jobs';
 import type { PlanRigor } from './gates/config';
-import { integrationGateLabel, integrationPassed, releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
+import { integrationGateLabel, integrationPassed, isIntegrationFixKey, releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
 
 /**
  * Hydra plans (docs/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
@@ -816,6 +816,8 @@ export function refuseScopeOverlap(jobs: readonly PlanJob[]): void {
     for (let j = i + 1; j < jobs.length; j++) {
       const a = jobs[i]!, b = jobs[j]!;
       if (!a.writeScope?.length || !b.writeScope?.length) continue;
+      // An automatic integration fix runs after everything else has landed (and after the fix before it), never alongside.
+      if (isIntegrationFixKey(a.key) || isIntegrationFixKey(b.key)) continue;
       if (closure.get(a.key)!.has(b.key) || closure.get(b.key)!.has(a.key)) continue;
       const path = writeScopeOverlap(a.writeScope, b.writeScope);
       if (path) throw new Error(`Job "${a.key}" and job "${b.key}" both change ${path}, but neither depends on the other. Add a dependency between them, or narrow their write_scope so they don't share paths.`);
