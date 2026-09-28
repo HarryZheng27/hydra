@@ -279,6 +279,13 @@ export function runningNotice(heads: number, lanes: number, stopped: boolean): s
 export const installerArguments = ['/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NORESTARTAPPLICATIONS', '/MERGETASKS=!runcode'] as const;
 /** How long the helper waits for Hydra to close before giving up on the update. */
 export const helperWaitMinutes = 10;
+/**
+ * The built-in extension's scripts that other programs run with Hydra.exe as their runtime: the MCP server Claude
+ * Code and Codex start, the usage-limit hook, and the `hydra` command. They keep Hydra.exe in use, and the MCP server
+ * runs as long as its app does, so the helper stops them once Hydra's own windows have closed; their apps start them
+ * again when they next need them.
+ */
+export const helperBridgeScripts = ['hydra-mcp.cjs', 'hydra-limit-hook.cjs', 'hydra-cli.cjs'] as const;
 
 /**
  * A single-quoted PowerShell string literal. PowerShell treats the typographic single
@@ -294,8 +301,8 @@ export interface HelperScriptInput { installer: string; installDir: string; exe:
 
 /**
  * The PowerShell started through WMI just before Hydra quits (updateLauncherArguments): wait (bounded) until
- * no process from the install folder runs, run the installer silently, log its exit code,
- * reopen Hydra. It deletes nothing but the downloaded installer, and only after it succeeded.
+ * Hydra itself has closed, stop the bridges other programs run on Hydra.exe (helperBridgeScripts), wait until no
+ * process from the install folder runs, run the installer silently, log its exit code, reopen Hydra. It deletes nothing but the downloaded installer, and only after it succeeded.
  * Written with a UTF-8 BOM (updateHelperFileContents) so Windows PowerShell reads non-ASCII paths.
  */
 export function updateHelperScript(input: HelperScriptInput): string {
@@ -311,10 +318,27 @@ export function updateHelperScript(input: HelperScriptInput): string {
     '}',
     "$root = [System.IO.Path]::GetFullPath($installDir).TrimEnd('\\') + '\\'",
     'function Get-HydraProcesses {',
-    '  @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID -and $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })',
+    '  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $PID -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })',
+    '}',
+    `$bridgeScripts = @(${helperBridgeScripts.map(name => psQuote(`\\resources\\app\\extensions\\hydra-agent-manager\\dist\\${name}`)).join(', ')})`,
+    'function Test-Bridge($process) {',
+    '  $line = [string]$process.CommandLine',
+    '  foreach ($script in $bridgeScripts) { if ($line.IndexOf($script, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true } }',
+    '  return $false',
     '}',
     "Write-Log ('Waiting for Hydra in ' + $root + ' to close.')",
     `$deadline = (Get-Date).AddMinutes(${helperWaitMinutes})`,
+    'while (@(Get-HydraProcesses | Where-Object { -not (Test-Bridge $_) }).Count -gt 0) {',
+    '  if ((Get-Date) -gt $deadline) {',
+    `    Write-Log 'Hydra was still running after ${helperWaitMinutes} minutes, so the update was not installed.'`,
+    '    exit 1',
+    '  }',
+    '  Start-Sleep -Seconds 1',
+    '}',
+    'foreach ($bridge in @(Get-HydraProcesses | Where-Object { Test-Bridge $_ })) {',
+    "  Write-Log ('Stopping ' + $bridge.ProcessId + ', a Hydra bridge another app runs, so the update can replace it; that app starts it again when it needs it.')",
+    '  Stop-Process -Id $bridge.ProcessId -Force -ErrorAction SilentlyContinue',
+    '}',
     'while ((Get-HydraProcesses).Count -gt 0) {',
     '  if ((Get-Date) -gt $deadline) {',
     `    Write-Log 'Hydra was still running after ${helperWaitMinutes} minutes, so the update was not installed.'`,
