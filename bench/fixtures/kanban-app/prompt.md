@@ -1,0 +1,65 @@
+# Kanban board features
+
+Build the kanban board to SPEC.md: seven features, each a domain module with its route module and tests (columns, cards, labels, due dates, filters, export) or a module with tests (persistence); the client's methods for all of them; then the server that serves every route with a data file, and an end-to-end test through the client. Plain Node, CommonJS, no dependencies. SPEC.md is exact about every function, field, route, status and error message: match it. Sections 1 to 8 describe the code as it is; read them first, and follow section 1's rules. Each feature job touches only its own files and its tests must not require another feature's new module. Run `npm test` before finishing.
+
+Do all of the following yourself, then make sure `npm test` passes.
+
+## 1. Columns: order and WIP limits
+
+Implement columns exactly as SPEC.md section 9 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the router and route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/columns.js (addColumn, updateColumn, removeColumn, listColumns), src/routes/columns.js (register, with the four routes), and test/columns.test.js. Tests: the functions directly (positions staying 0..n-1 after adding at a position, moving and removing; unique names ignoring case; wipLimit rules including a limit below the current cards; remove with and without force; every error code), and the routes through startServer from test/helpers.js with the board and column route modules (statuses, bodies, errors). Build cards in tests by hand per section 2. Change no other file.
+
+Files: src/columns.js, src/routes/columns.js, test/columns.test.js
+
+## 2. Cards: order, moves and archiving
+
+Implement cards exactly as SPEC.md section 10 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/cards.js (addCard, updateCard, moveCard, archiveCard, restoreCard, deleteCard, listCards), src/routes/cards.js and test/cards.test.js. Tests: the functions directly (positions without gaps in both columns after every add, move, archive, restore and delete; moving within a column up and down; WIP limits on add, move and restore; another board's column; archived-card rules; description kept exactly; every error code), and every route through startServer from test/helpers.js. Columns are another job's module: create them in tests by hand per section 2. Change no other file.
+
+Files: src/cards.js, src/routes/cards.js, test/cards.test.js
+
+## 3. Labels on cards
+
+Implement labels exactly as SPEC.md section 11 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/labels.js (createLabel, updateLabel, deleteLabel, attachLabel, detachLabel, listLabels), src/routes/labels.js and test/labels.test.js. Tests: the functions directly (unique names ignoring case, colours in either case stored in lower case and bad colours refused, deleting a label removes it from cards, attaching twice, attach order, a label from another board, detaching one that isn't attached, the sort order, every error code), and every route through startServer from test/helpers.js. Create columns and cards in tests by hand per section 2. Change no other file.
+
+Files: src/labels.js, src/routes/labels.js, test/labels.test.js
+
+## 4. Due dates, upcoming and overdue
+
+Implement due dates exactly as SPEC.md section 12 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/due.js (setDue, dueStatus, upcoming, overdue), src/routes/due.js and test/due.test.js. Work in whole UTC days. Tests: date validation (February 29 in and out of leap years, month 13, a bad format, null), every dueStatus including the boundaries at 1 and 3 days, upcoming with the default and a custom number of days (both ends included, archived cards left out, other boards left out, the order), overdue, the days limits, and the routes through startServer from test/helpers.js with a fixed `today`. Create columns and cards in tests by hand per section 2. Change no other file.
+
+Files: src/due.js, src/routes/due.js, test/due.test.js
+
+## 5. Search filters
+
+Implement search filters exactly as SPEC.md section 13 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/filters.js (parseQuery, filterCards), src/routes/filters.js and test/filters.test.js. Compute due statuses here yourself, by section 12's rules. Tests: parseQuery on every kind of term (quoted values and quoted text, several labels and columns, due values, is:archived, and each error), filterCards for text in titles and descriptions ignoring case, labels (all must match), columns (any may match), each due filter with a fixed today, archived cards, combinations, and the order; and the route through startServer from test/helpers.js with a fixed `today`. Create columns, cards and labels in tests by hand per section 2. Change no other file.
+
+Files: src/filters.js, src/routes/filters.js, test/filters.test.js
+
+## 6. CSV and JSON export
+
+Implement export exactly as SPEC.md section 14 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/export.js (boardToCsv, boardToJson), src/routes/export.js and test/export.test.js. Tests compare whole outputs: the CSV header and row order across several columns, archived cards with and without the option, label names sorted and joined, every quoting case (comma, quote, CR, LF), CRLF endings; the JSON snapshot's shape and order; an unknown board; and both routes through startServer from test/helpers.js, including the CSV content type. Create columns, cards and labels in tests by hand per section 2. Change no other file.
+
+Files: src/export.js, src/routes/export.js, test/export.test.js
+
+## 7. Saving the board to a JSON file
+
+Implement persistence exactly as SPEC.md section 15 says, following sections 1, 2 and 5 (the store interface in src/store.js). Create src/persistence.js (serialize, deserialize, saveState, loadState, createFileStore) and test/persistence.test.js. Tests use a temporary folder (fs.mkdtemp in os.tmpdir) and cover: a round trip, each deserialize error, saving through a .tmp file and rename into a folder that doesn't exist yet, loading a missing file, the file store saving after each update and not after a failed one (state put back, file unchanged), updates running one at a time, a failed save putting the state back, and a second store on the same file seeing the saved state. Change no other file.
+
+Files: src/persistence.js, test/persistence.test.js
+
+## 8. Client methods for every route
+
+Add the client methods exactly as SPEC.md section 16 says to client/api.js, following section 7 (keep the existing methods and ApiError as they are), for the routes of sections 9 to 14. Put the new tests in test/client.test.js, keeping the existing test: the routes are being written at the same time, so the new tests run against a stand-in server made in the test file with node:http, which records each request and answers with canned JSON. Check every method's HTTP method, path (with ids URL-encoded), query string and JSON body, that exportCsv resolves with text, that a 204 resolves with undefined, and that an error body becomes an ApiError with its status, code and message. Change no other file.
+
+Files: client/api.js, test/client.test.js
+
+## 9. The server with every route and a data file
+
+Wire the server exactly as SPEC.md section 17 says. The route modules for columns, cards, labels, due dates, filters and export, and src/persistence.js, now exist (sections 9 to 15): read them. Create src/routes/index.js (every register function), change src/server.js so createServer uses all of them by default and add openServer({ dataFile, port, today }), and create bin/serve.js. Write test/api.test.js: one flow on a real server through every route module (a board, columns, cards moved and archived, labels, due dates, a search, both exports), the error statuses (400, 404, 405, 409), and a restart: close the server, open another on the same data file (in a temporary folder), and find everything there. Add an API section to README.md listing every route with its status codes. Don't change the route or domain modules; if one breaks SPEC.md, say so in your summary.
+
+Files: src/routes/index.js, src/server.js, bin/serve.js, test/api.test.js, README.md
+
+## 10. End to end through the client
+
+Write the end-to-end test exactly as SPEC.md section 18 says: test/e2e.test.js drives a whole board through client/api.js (section 16) against openServer (section 17) with a data file in a temporary folder, covering columns with a WIP limit, cards added, moved and archived, labels, due dates with a fixed today, a search, both exports, and the WIP-limit and another-board errors as ApiErrors; then it closes the server, opens a new one on the same file, and checks everything is still there. Also write client/README.md with one line per client method. Don't change other files; if the client or server breaks SPEC.md, say so in your summary.
+
+Files: test/e2e.test.js, client/README.md
