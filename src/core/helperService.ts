@@ -194,6 +194,21 @@ interface Active {
 }
 const clip = (value: string, max: number) => value.length > max ? `${value.slice(0, max)}…` : value;
 
+/** One step of `hydra_done` and how long it took, in the order it ran (see formatDoneTiming). */
+export interface DoneStepTiming { name: string; ms: number }
+
+/**
+ * `hydra_done`'s step-by-step timing as one log line (docs/Heads.md, Troubleshooting): only the
+ * steps that actually ran, so a head with nothing to commit doesn't show a "commit" step, and one
+ * whose git metadata wasn't captured at start doesn't show "gitmeta". `totalMs` is the whole call,
+ * timed separately from the steps, so it also counts whatever ran between or after them.
+ */
+export function formatDoneTiming(jobId: string, totalMs: number, steps: readonly DoneStepTiming[]): string {
+  const seconds = (ms: number) => (ms / 1000).toFixed(1);
+  const parts = steps.map(step => `${step.name} ${seconds(step.ms)}s`);
+  return `[heads] ${jobId} hydra_done → checking in ${seconds(totalMs)}s${parts.length ? `: ${parts.join(', ')}` : ''}`;
+}
+
 export class HelperService {
   private readonly active = new Map<string, Active>();
   /** Every process Hydra started for a helper or its checks. None of them, or their children, may act as a lead. */
@@ -535,6 +550,16 @@ export class HelperService {
     if (typeof args.summary !== 'string' || !args.summary.trim()) throw new Error('summary is required.');
     const summary = clip(args.summary.trim(), 8000);
     const worktree = job.worktree!, base = job.baseCommit!;
+    // Step timing (Heads.md, Troubleshooting): one log line naming how long each git/gates step
+    // took, so a slow hydra_done (measured once at 179s, with nothing recording which part) says
+    // where the time went instead of leaving it a mystery.
+    const doneStart = this.now();
+    const steps: DoneStepTiming[] = [];
+    const timeStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+      const started = this.now();
+      try { return await run(); } finally { steps.push({ name, ms: this.now() - started }); }
+    };
+    const logTiming = () => this.options.log?.(formatDoneTiming(jobId, this.now() - doneStart, steps));
     // Hydra commits whatever the helper left uncommitted: in Codex's Windows sandbox a head can't
     // write its worktree's .git metadata, so it can't commit (R4). Hydra's own git calls in the head's
     // worktree run with hooks off (Step 2): a hook the head edited (a husky script, say) would otherwise
@@ -542,14 +567,16 @@ export class HelperService {
     await mkdir(this.tempRoot, { recursive: true });
     const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
     try {
-      if ((await git(worktree, [...noHooks(hooksOff), 'status', '--porcelain=v1', '--untracked-files=all'])).trim()) await commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff);
+      const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), 'status', '--porcelain=v1', '--untracked-files=all']));
+      if (dirty.trim()) await timeStep('commit', () => commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff));
     } finally { await rm(hooksOff, { recursive: true, force: true }).catch(() => undefined); }
-    const commit = (await git(worktree, ['rev-parse', 'HEAD'])).trim();
+    const commit = (await timeStep('rev-parse', () => git(worktree, ['rev-parse', 'HEAD']))).trim();
     if (commit === base) {
       // A role with changes "optional" (a reviewer, a fact-checker) may finish without changing
       // anything: its summary is the result, and with nothing to check no gate runs.
       if (this.active.get(jobId)?.role?.changes !== 'optional') return { accepted: false, message: 'You have not changed anything yet. Make the changes, then call hydra_done again.' };
       await this.options.store.transition(jobId, 'checking');
+      logTiming();
       await this.options.store.transition(jobId, 'done', undefined, { result: { summary, commit, changedFiles: [], checks: [] } });
       this.changed();
       return { accepted: true, message: 'Accepted: you changed nothing, so your summary is the result. Stop now.' };
@@ -557,20 +584,20 @@ export class HelperService {
     // Gates come from the lead's folder, never the head's worktree. A gates file Hydra can't
     // read is the project's problem, not the head's: no attempt is spent on it.
     let gates: Awaited<ReturnType<GatesLoader>>;
-    try { gates = await (this.options.gates ?? loadGates)(this.options.leadFolder); }
+    try { gates = await timeStep('gates', () => (this.options.gates ?? loadGates)(this.options.leadFolder)); }
     catch (error) { return { accepted: false, message: `Hydra can't check your work: ${error instanceof Error ? error.message : String(error)} That isn't your fault. Call hydra_stuck and ask the lead to fix it, then call hydra_done again.` }; }
     // 1.1: maxAttempts always comes from today's config, never the start-of-run snapshot below —
     // Settings -> Gates changes apply to heads started after they're made, never mid-run.
     const maxAttempts = gates.maxAttempts ?? defaultMaxAttempts;
     // 1.6's tamper note, and Step 2's reason a Claude head had no shell (design 7: said in the head's result).
-    const note = [await this.tamperNote(job), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
-    const changedFiles = (await git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'])).split('\0').filter(Boolean);
+    const note = [await timeStep('tamper', () => this.tamperNote(job)), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
+    const changedFiles = (await timeStep('diff', () => git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--']))).split('\0').filter(Boolean);
     const outside = changedFiles.filter(file => !inScope(file, job.writeScope));
     // 1.4: the git metadata a head shares with the main checkout (config, hooks, …) must not move.
     // Checked before anything runs. It spends no attempt: the change may not be the head's (you,
     // or another lane, can change them too), so the head restores what it changed or asks.
     if (job.gitMetaAtStart) {
-      const changedMeta = await gitMetaFingerprint(worktree).then(now => gitMetaChanges(job.gitMetaAtStart!, now), () => []);
+      const changedMeta = await timeStep('gitmeta', () => gitMetaFingerprint(worktree).then(now => gitMetaChanges(job.gitMetaAtStart!, now), () => []));
       if (changedMeta.length) {
         // 5.2: a denial — hydra_done refused for changed git settings or hooks.
         this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: git settings or hooks changed', detail: changedMeta.join(', '), jobId });
@@ -578,6 +605,7 @@ export class HelperService {
       }
     }
     await this.options.store.transition(jobId, 'checking');
+    logTiming();
     this.changed();
     const attempts = job.attempts + 1;
     if (outside.length) return this.checkFailed(jobId, attempts, maxAttempts, `These files are outside your write scope (${job.writeScope.join(', ') || '(whole repository)'}):\n${outside.join('\n')}\nUndo those changes in a new commit, then call hydra_done again.`, [], note);

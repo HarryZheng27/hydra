@@ -1,4 +1,4 @@
-import { git, gitRun } from './git';
+import { bigRepoGitTimeoutMs, git, gitRun } from './git';
 
 /**
  * What a head starts from (docs/Gates_Plan.md, section 3).
@@ -34,7 +34,7 @@ export class DependencyConflict extends Error {
 
 /** Two commits merged in memory: the tree, or the files that conflict. Never touches a worktree or the index. Also O3's integration queue (integration.ts). */
 export async function mergeTrees(repository: string, a: string, b: string): Promise<{ tree: string } | { conflicts: string[] }> {
-  const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b]);
+  const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b], undefined, bigRepoGitTimeoutMs);
   const [tree, ...files] = result.stdout.split('\0');
   if (result.code === 0 && tree && sha.test(tree)) return { tree };
   if (result.code === 1 && tree && sha.test(tree)) return { conflicts: [...new Set(files.filter(Boolean))] };

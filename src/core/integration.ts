@@ -1,7 +1,7 @@
 import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { git, gitRun } from './git';
+import { bigRepoGitTimeoutMs, git, gitRun } from './git';
 import { hydraIdentity, mergeTrees } from './headStart';
 import { branchTip } from './laneSync';
 import { githubCompareUrl, unlinkLinks } from './laneFinish';
@@ -487,7 +487,9 @@ export async function withGateWorktree<T>(repository: string, root: string, plan
   const worktree = path.join(root, `ig-${planId}-${randomBytes(3).toString('hex')}`);
   const hooksOff = await mkdtemp(path.join(root, 'nh-'));
   try {
-    await git(repository, ['-c', `core.hooksPath=${hooksOff}`, 'worktree', 'add', '--detach', worktree, tip]);
+    // A checkout, not just index/history bookkeeping: on a large repository's working tree
+    // this can outrun defaultGitTimeoutMs even when nothing is stuck.
+    await git(repository, ['-c', `core.hooksPath=${hooksOff}`, 'worktree', 'add', '--detach', worktree, tip], undefined, bigRepoGitTimeoutMs);
     try { return await work(worktree); }
     finally { await removeGateWorktree(repository, worktree); }
   } finally { await rm(hooksOff, { recursive: true, force: true }).catch(() => undefined); }

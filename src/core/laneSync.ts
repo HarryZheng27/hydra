@@ -2,7 +2,7 @@ import { copyFile, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { git, gitRun } from './git';
+import { bigRepoGitTimeoutMs, git, gitRun } from './git';
 import type { Lane } from './lanes';
 import type { LaneSyncView } from './model';
 
@@ -71,7 +71,7 @@ export async function changedFiles(repository: string, from: string, to: string)
  * after the tree id; anything else is an error ("couldn't check").
  */
 export async function mergeTreeConflicts(repository: string, a: string, b: string): Promise<string[]> {
-  const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b]);
+  const result = await gitRun(repository, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', a, b], undefined, bigRepoGitTimeoutMs);
   if (result.code === 0) return [];
   if (result.code !== 1) throw new Error(result.stderr.trim() || `git merge-tree exited with ${result.code}.`);
   const [tree, ...files] = result.stdout.split('\0');

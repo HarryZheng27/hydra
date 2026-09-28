@@ -1,6 +1,6 @@
 import { realpath, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { git } from './git';
+import { bigRepoGitTimeoutMs, git } from './git';
 export { git } from './git';
 export function isInside(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -44,6 +44,8 @@ export async function createWorktree(repository: string, title: string, id: stri
   const worktree = path.join(canonicalRoot, layout?.folder ?? id);
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'task';
   const branch = layout?.branch ?? `agent/${slug}-${id}`;
-  await git(repository, ['worktree', 'add', '-b', branch, worktree, baseCommit]);
+  // A checkout, not just index/history bookkeeping: on a large repository's working tree
+  // this can outrun defaultGitTimeoutMs even when nothing is stuck.
+  await git(repository, ['worktree', 'add', '-b', branch, worktree, baseCommit], undefined, bigRepoGitTimeoutMs);
   return { worktree, branch, baseCommit, integrationTarget };
 }

@@ -503,8 +503,8 @@ class Manager {
       // extensions' CLIs and Hydra's terminals; helpers are refused by process.
       allowedAncestors: new Set([process.pid, process.ppid]),
       deniedAncestors: service?.helperProcessIds() ?? new Set<number>(),
-    }));
-    const verifyUser = createUserVerifier(() => ({ deniedAncestors: service?.helperProcessIds() ?? new Set<number>() }));
+    }), undefined, undefined, line => this.output.appendLine(line));
+    const verifyUser = createUserVerifier(() => ({ deniedAncestors: service?.helperProcessIds() ?? new Set<number>() }), undefined, undefined, line => this.output.appendLine(line));
     const endpoint = new HelperEndpoint(async (caller, tool, args, signal) => {
       if (!service) throw new Error('Hydra heads are still starting.');
       // Every action is logged, whoever calls it (plan, Phase 3 security note).

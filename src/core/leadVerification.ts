@@ -38,38 +38,109 @@ export function evaluateLeadChain(chain: readonly ProcessLink[], rules: LeadRule
   return { ok: false, reason: 'it was not started from this Hydra window (use the Claude Code or Codex extension, or a terminal inside Hydra).' };
 }
 
-/** The connecting process and its ancestors, from the OS (Windows). */
-export function windowsConnectionChain(socket: Socket): Promise<ProcessLink[]> {
+const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
+/** Which process owns a loopback connection's client end — cheap, and specific to one socket, so it always runs fresh. */
+function connectionOwner(socket: Socket): Promise<number | undefined> {
   const clientPort = Number(socket.remotePort), serverPort = Number(socket.localPort);
-  if (!Number.isInteger(clientPort) || !Number.isInteger(serverPort)) return Promise.resolve([]);
+  if (!Number.isInteger(clientPort) || !Number.isInteger(serverPort)) return Promise.resolve(undefined);
   const script = [
     `$c = Get-NetTCPConnection -LocalPort ${clientPort} -RemotePort ${serverPort} -State Established -ErrorAction SilentlyContinue | Select-Object -First 1`,
-    "if (-not $c) { '[]'; exit }",
-    '$procs = @{}; Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name | ForEach-Object { $procs[[int]$_.ProcessId] = $_ }',
-    '$chain = @(); $id = [int]$c.OwningProcess',
-    'for ($i = 0; $i -lt 64 -and $procs.ContainsKey($id); $i++) { $p = $procs[$id]; $chain += [pscustomobject]@{ pid = $id; ppid = [int]$p.ParentProcessId; created = [int64]$p.CreationDate.ToFileTimeUtc(); name = $p.Name }; $id = [int]$p.ParentProcessId }',
-    'ConvertTo-Json -Compress @($chain)',
+    'if ($c) { [int]$c.OwningProcess } else { -1 }',
   ].join('; ');
-  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   return new Promise(resolve => {
     execFile(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30_000 }, (error, stdout) => {
-      if (error) return resolve([]);
-      try {
-        const parsed = JSON.parse(stdout.trim() || '[]') as ProcessLink[] | ProcessLink;
-        resolve((Array.isArray(parsed) ? parsed : [parsed]).filter(link => Number.isInteger(link.pid) && Number.isInteger(link.ppid) && Number.isFinite(link.created)));
-      } catch { resolve([]); }
+      if (error) return resolve(undefined);
+      const pid = Number(stdout.trim());
+      resolve(Number.isInteger(pid) && pid > 0 ? pid : undefined);
     });
   });
+}
+
+/** One process, as the machine-wide scan below reports it. */
+export interface ProcessTableEntry { ppid: number; created: number; name?: string }
+export type ProcessTable = ReadonlyMap<number, ProcessTableEntry>;
+
+/** Every process on the machine: what a chain is walked from (Get-CimInstance Win32_Process — a full table scan). */
+function scanWindowsProcesses(): Promise<ProcessTable> {
+  const script = [
+    '$procs = @(); Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,Name | ForEach-Object { $procs += [pscustomobject]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; created = [int64]$_.CreationDate.ToFileTimeUtc(); name = $_.Name } }',
+    'ConvertTo-Json -Compress @($procs)',
+  ].join('; ');
+  return new Promise(resolve => {
+    execFile(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30_000 }, (error, stdout) => {
+      const table = new Map<number, ProcessTableEntry>();
+      if (error) return resolve(table);
+      try {
+        const parsed = JSON.parse(stdout.trim() || '[]') as { pid: number; ppid: number; created: number; name?: string }[] | { pid: number; ppid: number; created: number; name?: string };
+        for (const entry of Array.isArray(parsed) ? parsed : [parsed]) {
+          if (Number.isInteger(entry.pid) && Number.isInteger(entry.ppid) && Number.isFinite(entry.created)) table.set(entry.pid, { ppid: entry.ppid, created: entry.created, name: entry.name });
+        }
+      } catch { /* an empty table refuses every chain, same as a script that failed to run */ }
+      resolve(table);
+    });
+  });
+}
+
+/**
+ * Coalesces concurrent calls to `scan` into whichever scan is already in flight, so a burst of new
+ * lead/user connections at once (several heads calling hydra_done in the same second; a script
+ * polling `hydra status`) shares one process-table scan instead of each paying for its own —
+ * `Get-CimInstance Win32_Process` enumerates every process on the machine, which is real CPU work
+ * to repeat N times over.
+ *
+ * Deliberately not a time-based cache (a short TTL, kept and reused after the scan that filled it
+ * finishes): HSEC-07/HSEC-63 catch a reused PID by comparing a process's own `created` timestamp
+ * against its child's in the *same* snapshot, which only holds if that snapshot reflects who is
+ * actually running right now. A process can exit and have its PID recycled within a second or two
+ * on a busy machine (exactly the kind of burst this exists to survive), so an entry served from a
+ * snapshot that has gone stale could describe the wrong process entirely — the very race the
+ * `created` check exists to catch. Coalescing only concurrent callers keeps every answer bounded by
+ * how long one real scan takes, never by an arbitrary hold time; the next call after a scan settles
+ * always starts a fresh one.
+ */
+export function coalescedScanner(scan: () => Promise<ProcessTable>, now: () => number = Date.now): (log?: (line: string) => void) => Promise<ProcessTable> {
+  let inFlight: Promise<ProcessTable> | undefined;
+  return log => {
+    if (!inFlight) {
+      const started = now();
+      const scanned = scan();
+      inFlight = scanned;
+      scanned.then(table => log?.(`[lead] process scan: ${table.size} processes in ${Math.max(0, Math.round(now() - started))}ms`), () => undefined);
+      // Attached directly to `scanned` (not chained off the logging `.then` above), so the very
+      // next call after this one settles sees `inFlight` already cleared, not one microtask late.
+      scanned.finally(() => { if (inFlight === scanned) inFlight = undefined; }).catch(() => undefined);
+    }
+    return inFlight;
+  };
+}
+
+const scanProcesses = coalescedScanner(scanWindowsProcesses);
+
+/** The connecting process and its ancestors, from the OS (Windows). */
+export async function windowsConnectionChain(socket: Socket, log?: (line: string) => void): Promise<ProcessLink[]> {
+  const ownerPid = await connectionOwner(socket);
+  if (ownerPid === undefined) return [];
+  const table = await scanProcesses(log);
+  const chain: ProcessLink[] = [];
+  let id = ownerPid;
+  for (let i = 0; i < 64; i++) {
+    const entry = table.get(id);
+    if (!entry) break;
+    chain.push({ pid: id, ppid: entry.ppid, created: entry.created, name: entry.name });
+    id = entry.ppid;
+  }
+  return chain;
 }
 
 /**
  * The lead check for this window. On Windows it uses the OS connection owner; on
  * other platforms Hydra has no such check yet and accepts, as before.
  */
-export function createLeadVerifier(rules: () => LeadRules, chainFor: (socket: Socket) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform): LeadVerifier {
+export function createLeadVerifier(rules: () => LeadRules, chainFor: (socket: Socket, log?: (line: string) => void) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform, log?: (line: string) => void): LeadVerifier {
   return async socket => {
     if (platform !== 'win32') return { ok: true };
-    return evaluateLeadChain(await chainFor(socket), rules());
+    return evaluateLeadChain(await chainFor(socket, log), rules());
   };
 }
 
@@ -103,9 +174,9 @@ export function evaluateUserChain(chain: readonly ProcessLink[], rules: Pick<Lea
 }
 
 /** The user-token check for this window: on Windows the OS connection owner; elsewhere Hydra has no such check yet and accepts, as the lead check does. */
-export function createUserVerifier(rules: () => Pick<LeadRules, 'deniedAncestors'>, chainFor: (socket: Socket) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform): (socket: Socket) => Promise<{ ok: true } | { ok: false; reason: string }> {
+export function createUserVerifier(rules: () => Pick<LeadRules, 'deniedAncestors'>, chainFor: (socket: Socket, log?: (line: string) => void) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform, log?: (line: string) => void): (socket: Socket) => Promise<{ ok: true } | { ok: false; reason: string }> {
   return async socket => {
     if (platform !== 'win32') return { ok: true };
-    return evaluateUserChain(await chainFor(socket), rules());
+    return evaluateUserChain(await chainFor(socket, log), rules());
   };
 }

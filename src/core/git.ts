@@ -12,27 +12,51 @@ const execute = promisify(execFile);
  * is unrelated (it keeps non-ASCII paths readable); both are passed on every call from this module.
  */
 const gitFlags = ['-c', 'core.quotepath=false', '-c', 'core.fsmonitor=false'];
-export async function gitBytes(cwd: string, args: string[], environment?: NodeJS.ProcessEnv): Promise<Buffer> {
+
+/**
+ * How long an ordinary git call may run before Hydra kills it and throws, instead of hanging
+ * forever: a stuck git process (a lock held by another process, a credential prompt with
+ * `GIT_TERMINAL_PROMPT` unset, …) used to block whatever awaited it with no way to notice. Set
+ * above the slowest step timing has actually measured on a real repository (`hydra_done`'s
+ * `commitAll` ran 179s once — see docs/Heads.md's timing line), so this catches a truly stuck
+ * process without tripping on the case it exists to diagnose.
+ */
+export const defaultGitTimeoutMs = 180_000;
+/**
+ * For git calls whose cost scales with the size of a repository's working tree or history —
+ * `merge-tree` (walks every path two commits touch) and `worktree add` (checks out a whole
+ * copy) — rather than with how much changed: a large repository can need more than
+ * `defaultGitTimeoutMs` for these even when nothing is actually stuck.
+ */
+export const bigRepoGitTimeoutMs = 300_000;
+const killOptions = { killSignal: 'SIGKILL' as const };
+
+function timeoutError(args: readonly string[], timeoutMs: number): Error {
+  return new Error(`git ${args[0] ?? ''} took longer than ${Math.round(timeoutMs / 1000)}s and was stopped.`);
+}
+
+export async function gitBytes(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = defaultGitTimeoutMs): Promise<Buffer> {
   try {
-    const { stdout } = await execute('git', [...gitFlags, ...args], { cwd, env: { ...process.env, ...environment }, windowsHide: true, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await execute('git', [...gitFlags, ...args], { cwd, env: { ...process.env, ...environment }, windowsHide: true, encoding: 'buffer', maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, ...killOptions });
     return stdout;
   } catch (error) {
-    const failure = error as Error & { stderr?: Buffer };
+    const failure = error as Error & { stderr?: Buffer; killed?: boolean };
+    if (failure.killed) throw timeoutError(args, timeoutMs);
     throw new Error(failure.stderr?.toString('utf8').trim() || failure.message);
   }
 }
-export async function git(cwd: string, args: string[], environment?: NodeJS.ProcessEnv): Promise<string> { return (await gitBytes(cwd, args, environment)).toString('utf8'); }
+export async function git(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = defaultGitTimeoutMs): Promise<string> { return (await gitBytes(cwd, args, environment, timeoutMs)).toString('utf8'); }
 export interface GitResult { code: number; stdout: string; stderr: string }
 /**
  * Run git and hand back its exit code and output instead of throwing on a
  * non-zero exit: `merge-tree` and `merge` report conflicts that way. Throws only
  * when git can't run or runs past `timeoutMs`.
  */
-export function gitRun(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = 0): Promise<GitResult> {
+export function gitRun(cwd: string, args: string[], environment?: NodeJS.ProcessEnv, timeoutMs = defaultGitTimeoutMs): Promise<GitResult> {
   return new Promise((resolve, reject) => {
-    execFile('git', [...gitFlags, ...args], { cwd, env: { ...process.env, ...environment }, windowsHide: true, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs }, (error, stdout, stderr) => {
+    execFile('git', [...gitFlags, ...args], { cwd, env: { ...process.env, ...environment }, windowsHide: true, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, ...killOptions }, (error, stdout, stderr) => {
       const code = (error as (Error & { code?: unknown }) | null)?.code;
-      if (error && typeof code !== 'number') return reject(new Error((error as Error & { killed?: boolean }).killed ? `git ${args[0]} took too long.` : stderr.trim() || error.message));
+      if (error && typeof code !== 'number') return reject((error as Error & { killed?: boolean }).killed ? timeoutError(args, timeoutMs) : new Error(stderr.trim() || error.message));
       resolve({ code: error ? code as number : 0, stdout, stderr });
     });
   });
