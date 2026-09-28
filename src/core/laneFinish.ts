@@ -1,6 +1,6 @@
 import { lstat, readdir, realpath, rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { git, gitRun, readOnlyGitTimeoutMs } from './git';
+import { git, gitRun, readOnlyGitTimeoutMs, readOnlyStatus } from './git';
 import { isInside } from './worktrees';
 import { branchTip, laneDiffBase, mergeTreeConflicts } from './laneSync';
 import { isLaneBranch, isSafeBranchName, laneFolder, type Lane, type LaneCloseMode, type LaneGatesRecord } from './lanes';
@@ -23,7 +23,7 @@ const firstLine = (text: string) => text.split(/\r?\n/).find(line => line.trim()
 
 /** Uncommitted changes in the lane, untracked files included. */
 export async function laneDirty(lane: FinishLane): Promise<boolean> {
-  return (await git(lane.worktree, ['status', '--porcelain=v1', '--untracked-files=all'], undefined, readOnlyGitTimeoutMs)).trim().length > 0;
+  return (await git(lane.worktree, [...readOnlyStatus, '--porcelain=v1', '--untracked-files=all'], undefined, readOnlyGitTimeoutMs)).trim().length > 0;
 }
 /** The branch the lane's worktree is on now, or undefined when it's detached. */
 async function checkedOut(folder: string): Promise<string | undefined> {

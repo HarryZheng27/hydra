@@ -29,12 +29,17 @@ const gitFlags = ['-c', 'core.quotepath=false', '-c', 'core.fsmonitor=false'];
  * out, adds or removes a worktree, or can run a hook.
  */
 export const readOnlyGitTimeoutMs = 300_000;
+/**
+ * `git status` refreshes and rewrites the index when it can, taking index.lock to do so; with this flag first it only
+ * reads, so a timed-out status can't leave a stale lock behind.
+ */
+export const readOnlyStatus = ['--no-optional-locks', 'status'] as const;
 const killOptions = { killSignal: 'SIGKILL' as const };
 
-/** The git subcommand `args` starts with, for naming it in an error — skips `noHooks`'s leading `-c core.hooksPath=…` pairs so the error names the real subcommand, not `-c`. */
+/** The git subcommand `args` starts with, for naming it in an error — skips `noHooks`'s leading `-c core.hooksPath=…` pairs and global flags such as `--no-optional-locks`, so the error names the real subcommand. */
 function commandName(args: readonly string[]): string {
   let index = 0;
-  while (args[index] === '-c' && index + 1 < args.length) index += 2;
+  while (index < args.length && (args[index] === '-c' || args[index]!.startsWith('--'))) index += args[index] === '-c' ? 2 : 1;
   return args[index] ?? '';
 }
 

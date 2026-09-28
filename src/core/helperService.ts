@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, type GitMetaFingerprint } from './git';
+import { git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, readOnlyStatus, type GitMetaFingerprint } from './git';
 import { isWindowsShim } from './process';
 import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
 import { otherWorktrees, storageListing } from './confineFiles';
@@ -412,7 +412,7 @@ export class HelperService {
     const laneWorktree = caller?.lane && laneName ? this.options.lanes?.worktree?.(caller.lane) : undefined;
     const from = laneWorktree ?? this.options.leadFolder;
     const head = (await git(from, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).trim();
-    const dirty = (await git(from, ['status', '--porcelain=v1', '--untracked-files=no'], undefined, readOnlyGitTimeoutMs)).trim();
+    const dirty = (await git(from, [...readOnlyStatus, '--porcelain=v1', '--untracked-files=no'], undefined, readOnlyGitTimeoutMs)).trim();
     const lead = caller?.leadSessionId ? { sessionId: caller.leadSessionId, ...(caller.provider ? { provider: caller.provider } : {}), ...(laneName ? { lane: caller.lane } : {}) } : undefined;
     // A plan head that depends only on lane jobs starts from their results, which never move, so its
     // base is known now: hydra_get_head shows it at once, and results that conflict refuse the start.
@@ -571,7 +571,7 @@ export class HelperService {
       await mkdir(this.tempRoot, { recursive: true });
       const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
       try {
-        const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), 'status', '--porcelain=v1', '--untracked-files=all'], undefined, readOnlyGitTimeoutMs));
+        const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), ...readOnlyStatus, '--porcelain=v1', '--untracked-files=all'], undefined, readOnlyGitTimeoutMs));
         // No timeout on the commit itself: killing it mid-write could leave index.lock behind in
         // the worktree's gitdir, which a sandboxed head can't remove, failing every later hydra_done.
         if (dirty.trim()) await timeStep('commit', () => commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff));
