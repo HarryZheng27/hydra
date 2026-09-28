@@ -11,8 +11,9 @@ import { HelperService, commitAll, helperPrompt } from '../src/core/helperServic
 import { claudeHelperArguments, codexHelperArguments, type HelperRun, type HelperRunSpec } from '../src/core/helperRunner';
 import {
   bashQuote, claudeHeadTools, confinedEnvironment, guardScript, headEnvironment, headSettings, headShellSentence, homeFolders, insideScript, laneSettings,
-  rulePath, ruleCovers, sandboxEnvironmentPolicy, sandboxProfile, sandboxProfileToml, secretTargets, settingsProblems, storageReadDeny, treeScript, wrapperScript, type HeadShell, type StorageListing,
+  rulePath, ruleCovers, sandboxEnvironmentPolicy, sandboxProfile, sandboxProfileToml, secretTargets, settingsProblems, storageReadDeny, treeScript, userPluginIds, wrapperScript, type HeadShell, type StorageListing,
 } from '../src/core/confine';
+import { userClaudePlugins } from '../src/core/confineFiles';
 import { HeadSandbox, codexSandboxExecutable, findGitBash, type CommandSandbox, type WrappedCommand } from '../src/core/headSandbox';
 import { runCommandGate } from '../src/core/gates/command';
 import { defaultGateRuntime, type GateRuntime } from '../src/core/gates';
@@ -101,6 +102,40 @@ test('the settings checker refuses anything Claude might reject or that would hi
   assert.throws(() => headSettings({ platform: 'win32', env: winHome, storage: 'C:\\Data\\Hydra', storageRead: [{ path: 'C:\\Data\\Hydra', dir: true }], worktree: 'C:\\Data\\Hydra\\wt\\aaa', addDirs: [], otherWorktrees: [], leadFolder: 'C:\\repo' }), /would stop it reading C:\\Data\\Hydra\\wt\\aaa/);
   assert.deepEqual(settingsProblems({ permissions: { deny: ['Read(//home/me/.ssh/**)'] } }, { platform: 'linux', blockReads: false }), []);
   assert.match(settingsProblems({ permissions: { deny: ['Read(//home/me/.ssh/**)'], blockReadsOutsideWorkingDirectories: true } }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own read settings/);
+});
+
+test('a Claude head turns your plugins off, and the checker lets enabledPlugins only turn plugins off, and only for a head', async () => {
+  // From settings.json's enabledPlugins and installed_plugins.json: deduplicated, sorted, odd ids left out, bad text ignored.
+  const settingsText = '\uFEFF' + JSON.stringify({ enabledPlugins: { 'claude-mem@thedotmack': true, 'off@market': false, 'bad id@x': true, '"quoted"@x': true }, hooks: {} });
+  const installedText = JSON.stringify({ version: 2, plugins: { 'claude-mem@thedotmack': [{ scope: 'user' }], 'tools@other.market': [{ scope: 'project' }], 'noMarket': [] } });
+  assert.deepEqual(userPluginIds(settingsText, installedText), ['claude-mem@thedotmack', 'off@market', 'tools@other.market']);
+  assert.deepEqual(userPluginIds(undefined, '{not json'), []);
+  assert.deepEqual(userPluginIds('null', '{"plugins": []}'), []);
+
+  const input = { platform: 'win32' as const, env: winHome, storage: 'C:\\Data\\Hydra', storageRead: [{ path: 'C:\\Data\\Hydra', dir: true }], worktree: 'C:\\wt\\aaa', addDirs: [], otherWorktrees: [], leadFolder: 'C:\\repo' };
+  const settings = headSettings({ ...input, userPlugins: ['tools@other.market', 'claude-mem@thedotmack', 'claude-mem@thedotmack', 'bad id@x'] });
+  assert.deepEqual(settings.enabledPlugins, { 'claude-mem@thedotmack': false, 'tools@other.market': false });
+  assert.equal(settings.permissions.blockReadsOutsideWorkingDirectories, true, 'the read block and deny rules are unchanged');
+  assert.deepEqual(Object.keys(headSettings(input)), ['permissions'], 'no plugins, no key');
+  assert.deepEqual(settingsProblems(JSON.parse(JSON.stringify(settings)), { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
+
+  const check = (enabledPlugins: unknown, blockReads = true) => settingsProblems({ ...settings, permissions: blockReads ? settings.permissions : { deny: settings.permissions.deny }, enabledPlugins }, { platform: 'win32', blockReads });
+  assert.match(check({ 'claude-mem@thedotmack': true })[0]!, /doesn't turn a plugin off/, 'never turns one on');
+  assert.match(check({ 'bad id@x': false })[0]!, /doesn't turn a plugin off/);
+  assert.match(check({})[0]!, /non-empty object/);
+  assert.match(check(['claude-mem@thedotmack'])[0]!, /non-empty object/);
+  assert.match(check({ 'claude-mem@thedotmack': false }, false)[0]!, /a lane keeps your own plugins/);
+  assert.match(settingsProblems({ ...settings, hooks: {} }, { platform: 'win32', blockReads: true })[0]!, /unknown setting "hooks"/, 'still an allowlist');
+
+  // Read from CLAUDE_CONFIG_DIR, where the head's Claude Code finds them.
+  const folder = await mkdtemp(path.join(tmpdir(), 'hydra-plugins-'));
+  try {
+    await mkdir(path.join(folder, 'plugins'));
+    await writeFile(path.join(folder, 'settings.json'), settingsText);
+    await writeFile(path.join(folder, 'plugins', 'installed_plugins.json'), installedText);
+    assert.deepEqual(await userClaudePlugins({ CLAUDE_CONFIG_DIR: folder }), ['claude-mem@thedotmack', 'off@market', 'tools@other.market']);
+    assert.deepEqual(await userClaudePlugins({ CLAUDE_CONFIG_DIR: path.join(folder, 'missing') }), [], 'no files, no plugins');
+  } finally { await rm(folder, { recursive: true, force: true }); }
 });
 
 const storage = 'C:\\Users\\me\\AppData\\Roaming\\Hydra\\User\\globalStorage\\nico-dunlap.hydra-agent-manager';
@@ -519,7 +554,7 @@ test('a Claude lane starts with its settings file on every launch; the other lan
 });
 
 test('the first message says Hydra commits the work, and why a shell is off', () => {
-  const job = { id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c' };
+  const job = { id: 'a'.repeat(12), title: 'T', brief: 'B', writeScope: ['src/'], worktree: 'W', branch: 'b', baseCommit: 'c', provider: 'claude' as const };
   assert.match(helperPrompt(job), /Hydra commits your changes for you, so don't commit yourself: git commands that write \(commit, checkout, config\) may fail in your sandbox\./);
   assert.doesNotMatch(helperPrompt(job), /Your shell is off/);
   assert.match(helperPrompt(job, undefined, 'heads', undefined, 'Codex isn\'t installed'), /- Your shell is off: Codex's Windows sandbox isn't available \(Codex isn't installed\)\. Hydra's gates run the tests\./);

@@ -1,7 +1,7 @@
 import { lstat, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { git, gitRun } from './git';
+import { git, gitRun, readOnlyGitTimeoutMs } from './git';
 import { hydraIdentity, mergeTrees } from './headStart';
 import { branchTip } from './laneSync';
 import { githubCompareUrl, unlinkLinks } from './laneFinish';
@@ -264,6 +264,50 @@ export function gateRecord(tip: string, checks: JobCheckResult[], configured: Ga
   return { tip, at: now().toISOString(), checks, ...(failed ? { failed: true } : {}), ...(status ? { status } : {}) };
 }
 
+/** Rounds of automatic fixes after a failed integration gate, unless the window says otherwise. */
+export const defaultIntegrationFixRounds = 2;
+/** The job key of a plan's nth automatic fix. */
+export const integrationFixKey = (round: number): string => `integration-fix-${round}`;
+const integrationFixPattern = /^integration-fix-\d+$/;
+/** A plan's automatic fix job: added only once every other job has landed, and the next only once it has, so it never runs alongside another. */
+export const isIntegrationFixKey = (key: string): boolean => integrationFixPattern.test(key);
+
+/**
+ * The job that fixes what a failed integration gate found (pure; docs/Heads.md, "Landing a plan together"), or
+ * undefined when there is nothing to hand a head: the gate didn't fail (or couldn't run at all), or the plan has
+ * had its rounds. It starts from the integration branch's tip like any plan job, may change the whole repository,
+ * and runs the project's own gates only: the integration gate, run again once it lands, reviews it with the rest.
+ */
+export function integrationFixJob(plan: { title: string; jobs: readonly { key: string }[] }, record: IntegrationGateRecord, rounds = defaultIntegrationFixRounds): { key: string; title: string; brief: string; write_scope: string[]; rigor: 'quick' } | undefined {
+  if (!record.failed || record.error || rounds <= 0) return undefined;
+  const round = plan.jobs.filter(job => integrationFixPattern.test(job.key)).length + 1;
+  if (round > rounds) return undefined;
+  const failed = record.checks.filter(gateBlocks);
+  if (!failed.length) return undefined;
+  const sections = failed.map(check => {
+    const lines = [`### ${check.id} (${gateKind(check)}) failed${check.summary ? `: ${oneLine(check.summary)}` : ''}`];
+    for (const finding of (check.findings ?? []).slice(0, 20)) lines.push(`- [${finding.severity}]${finding.file ? ` ${finding.file}${finding.line ? `:${finding.line}` : ''}` : ''}: ${oneLine(finding.note)}`);
+    if (gateKind(check) === 'command' && check.outputTail.trim()) lines.push('Last output:', '```', check.outputTail.trim().slice(-1500), '```');
+    return lines.join('\n');
+  });
+  const brief = [
+    `Every job of plan "${plan.title}" has landed on its integration branch, which you start from, but the plan's integration gate failed on the combined work.`,
+    'Fix what it found below, across whatever files that takes, without undoing what the jobs built. Keep every existing test passing, and add tests for what you fix. Then finish as usual: the integration gate runs again on the result.',
+    '',
+    ...sections,
+  ].join('\n');
+  return {
+    key: integrationFixKey(round),
+    title: rounds > 1 ? `Fix the integration gate's findings (round ${round} of ${rounds})` : "Fix the integration gate's findings",
+    brief: brief.length > fixBriefMax ? `${brief.slice(0, fixBriefMax - 1)}…` : brief,
+    write_scope: ['.'],
+    rigor: 'quick',
+  };
+}
+const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 600);
+/** plans.ts's planJobBriefMax: plans.ts imports this module, so the number is repeated rather than imported (tests/integration.test.ts checks they agree). */
+const fixBriefMax = 4000;
+
 /**
  * For a plan that has stopped running: true once its integration gate has nothing more to say on its own. A done
  * plan with work landed runs the gate by itself, so until a result for the current tip is in, a wait keeps waiting
@@ -393,7 +437,7 @@ const assertBranch = (branch: string) => { if (!branch.startsWith(integrationBra
 
 /** The commit and branch the main checkout is on now: where a plan's integration branch starts. */
 export async function integrationStart(repository: string): Promise<{ base: string; target?: string }> {
-  const base = (await git(repository, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+  const base = (await git(repository, ['rev-parse', '--verify', 'HEAD^{commit}'], undefined, readOnlyGitTimeoutMs)).trim();
   const symbolic = await gitRun(repository, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const target = symbolic.code === 0 ? symbolic.stdout.trim() : undefined;
   return { base, ...(target && isSafeBranchName(target) ? { target } : {}) };
@@ -430,7 +474,7 @@ async function isExactLanding(repository: string, flight: Pick<IntegrationInFlig
   if (parents.length !== 2 || parents[0] !== flight.from || parents[1] !== flight.commit) return false;
   const merged = await mergeTrees(repository, flight.from, flight.commit);
   if ('conflicts' in merged) return false;
-  return (await git(repository, ['rev-parse', `${actual}^{tree}`])).trim() === merged.tree;
+  return (await git(repository, ['rev-parse', `${actual}^{tree}`], undefined, readOnlyGitTimeoutMs)).trim() === merged.tree;
 }
 
 /** Puts a deleted integration branch back where Hydra left it; throws when that commit is gone too. */
@@ -487,6 +531,8 @@ export async function withGateWorktree<T>(repository: string, root: string, plan
   const worktree = path.join(root, `ig-${planId}-${randomBytes(3).toString('hex')}`);
   const hooksOff = await mkdtemp(path.join(root, 'nh-'));
   try {
+    // No timeout: a checkout, so a kill mid-command could leave the new worktree half-populated
+    // or its lock files behind.
     await git(repository, ['-c', `core.hooksPath=${hooksOff}`, 'worktree', 'add', '--detach', worktree, tip]);
     try { return await work(worktree); }
     finally { await removeGateWorktree(repository, worktree); }
@@ -520,10 +566,10 @@ export async function mergeIntegration(repository: string, integration: Pick<Pla
   const message = `Merge Hydra plan "${title.replace(/[\r\n]+/g, ' ').slice(0, 150)}" (${integration.branch})`;
   const result = await gitRun(repository, ['merge', '--no-edit', '-m', message, `refs/heads/${integration.branch}`]);
   if (result.code !== 0) {
-    if ((await gitRun(repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).code === 0) await gitRun(repository, ['merge', '--abort']);
+    if ((await gitRun(repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], undefined, readOnlyGitTimeoutMs)).code === 0) await gitRun(repository, ['merge', '--abort']);
     throw new Error(`git refused the merge: ${(result.stderr.trim() || result.stdout.trim()).split('\n').slice(0, 6).join(' ')}`);
   }
-  return { commit: (await git(repository, ['rev-parse', 'HEAD'])).trim(), into: target };
+  return { commit: (await git(repository, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).trim(), into: target };
 }
 
 /** Open PR: push the integration branch to origin (the lanes' own push, never prompting) and give GitHub's compare page, with the gate's result as the body. */
@@ -548,9 +594,9 @@ export async function carryOver(worktree: string, commit: string, hooksOff: stri
   if (!isSha(commit)) return 'skipped';
   const result = await gitRun(worktree, ['-c', `core.hooksPath=${hooksOff}`, '-c', 'user.name=Hydra', '-c', 'user.email=heads@hydra.invalid', 'merge', '--no-ff', '--no-commit', commit]);
   if (result.code === 0) return 'merged';
-  const conflicted = (await gitRun(worktree, ['diff', '--name-only', '--diff-filter=U'])).stdout.trim();
+  const conflicted = (await gitRun(worktree, ['diff', '--name-only', '--diff-filter=U'], undefined, readOnlyGitTimeoutMs)).stdout.trim();
   if (conflicted) return 'conflicts';
-  if ((await gitRun(worktree, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).code === 0) await gitRun(worktree, ['merge', '--abort']);
+  if ((await gitRun(worktree, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], undefined, readOnlyGitTimeoutMs)).code === 0) await gitRun(worktree, ['merge', '--abort']);
   return 'skipped';
 }
 

@@ -1,6 +1,6 @@
 import { lstat, readdir, realpath, rm, rmdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { git, gitRun } from './git';
+import { git, gitRun, readOnlyGitTimeoutMs, readOnlyStatus } from './git';
 import { isInside } from './worktrees';
 import { branchTip, laneDiffBase, mergeTreeConflicts } from './laneSync';
 import { isLaneBranch, isSafeBranchName, laneFolder, type Lane, type LaneCloseMode, type LaneGatesRecord } from './lanes';
@@ -23,7 +23,7 @@ const firstLine = (text: string) => text.split(/\r?\n/).find(line => line.trim()
 
 /** Uncommitted changes in the lane, untracked files included. */
 export async function laneDirty(lane: FinishLane): Promise<boolean> {
-  return (await git(lane.worktree, ['status', '--porcelain=v1', '--untracked-files=all'])).trim().length > 0;
+  return (await git(lane.worktree, [...readOnlyStatus, '--porcelain=v1', '--untracked-files=all'], undefined, readOnlyGitTimeoutMs)).trim().length > 0;
 }
 /** The branch the lane's worktree is on now, or undefined when it's detached. */
 async function checkedOut(folder: string): Promise<string | undefined> {
@@ -53,7 +53,7 @@ export async function commitLane(lane: FinishLane, message = defaultCommitMessag
     if (!/tell me who you are|user\.email|user\.name|empty ident/i.test(String(error))) throw error;
     await git(lane.worktree, ['-c', 'user.name=Hydra lane', '-c', 'user.email=lanes@hydra.invalid', 'commit', '-q', '-m', text]);
   }
-  return (await git(lane.worktree, ['rev-parse', 'HEAD'])).trim();
+  return (await git(lane.worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).trim();
 }
 
 export type MergeRefusal = 'nothing' | 'dirty' | 'wrongBranch' | 'conflicts' | 'noTarget';
@@ -71,7 +71,7 @@ export async function checkMerge(lane: FinishLane): Promise<MergeCheck> {
   await assertOnLaneBranch(lane);
   const tip = await branchTip(lane.repository, lane.target);
   if (!tip) return { ok: false, reason: 'noTarget', message: `The target branch ${lane.target} no longer exists.` };
-  const head = (await git(lane.worktree, ['rev-parse', '--verify', 'HEAD^{commit}'])).trim();
+  const head = (await git(lane.worktree, ['rev-parse', '--verify', 'HEAD^{commit}'], undefined, readOnlyGitTimeoutMs)).trim();
   const commits = Number((await git(lane.repository, ['rev-list', '--count', `${tip}..${head}`])).trim()) || 0;
   if (!commits) return { ok: false, reason: 'nothing', message: 'Nothing to merge.' };
   if (await laneDirty(lane)) return { ok: false, reason: 'dirty', message: `Lane ${lane.name} has uncommitted changes. Commit them first.` };
@@ -80,7 +80,7 @@ export async function checkMerge(lane: FinishLane): Promise<MergeCheck> {
   const conflicts = await mergeTreeConflicts(lane.repository, head, tip);
   if (conflicts.length) return { ok: false, reason: 'conflicts', message: `Merging would conflict in ${conflicts.length} file${conflicts.length === 1 ? '' : 's'} (${conflicts.slice(0, 3).join(', ')}${conflicts.length > 3 ? ', …' : ''}). Update the lane from ${lane.target} first.`, files: conflicts };
   const base = (await git(lane.repository, ['merge-base', tip, head])).trim();
-  const files = (await git(lane.repository, ['diff', '--name-only', '-z', '--no-renames', base, head, '--'])).split('\0').filter(Boolean).length;
+  const files = (await git(lane.repository, ['diff', '--name-only', '-z', '--no-renames', base, head, '--'], undefined, readOnlyGitTimeoutMs)).split('\0').filter(Boolean).length;
   return { ok: true, commits, files };
 }
 
@@ -94,10 +94,10 @@ export async function mergeLane(lane: FinishLane): Promise<string> {
   if (!check.ok) throw new Error(check.message);
   const result = await gitRun(lane.repository, ['merge', '--no-ff', '--no-edit', lane.branch]);
   if (result.code !== 0) {
-    if ((await gitRun(lane.repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).code === 0) await gitRun(lane.repository, ['merge', '--abort']);
+    if ((await gitRun(lane.repository, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], undefined, readOnlyGitTimeoutMs)).code === 0) await gitRun(lane.repository, ['merge', '--abort']);
     throw new Error(`git refused the merge: ${(result.stderr.trim() || result.stdout.trim()).split('\n').slice(0, 6).join(' ')}`);
   }
-  return (await git(lane.repository, ['rev-parse', 'HEAD'])).trim();
+  return (await git(lane.repository, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).trim();
 }
 
 /**
@@ -110,7 +110,7 @@ export async function updateLane(lane: FinishLane): Promise<{ conflicts: string[
   if (!await branchTip(lane.repository, lane.target)) throw new Error(`The target branch ${lane.target} no longer exists.`);
   const result = await gitRun(lane.worktree, ['merge', '--no-edit', lane.target]);
   if (result.code === 0) return { conflicts: [], upToDate: /already up to date/i.test(result.stdout) };
-  const conflicts = (await git(lane.worktree, ['diff', '--name-only', '-z', '--diff-filter=U'])).split('\0').filter(Boolean);
+  const conflicts = (await git(lane.worktree, ['diff', '--name-only', '-z', '--diff-filter=U'], undefined, readOnlyGitTimeoutMs)).split('\0').filter(Boolean);
   if (conflicts.length) return { conflicts, upToDate: false };
   if (/local changes .* would be overwritten|commit your changes or stash them/is.test(result.stderr)) throw new Error(`The lane has uncommitted changes to files ${lane.target} also changed. Commit them first (⋯ → Commit…), then update.`);
   throw new Error(`git refused the update: ${(result.stderr.trim() || result.stdout.trim()).split('\n').slice(0, 6).join(' ')}`);
@@ -164,9 +164,9 @@ export async function pushLane(lane: FinishLane): Promise<{ branch: string; comp
  */
 export async function laneDiffFiles(lane: FinishLane, max = 300): Promise<{ base: string; files: { path: string; status: 'A' | 'M' | 'D' }[] }> {
   assertLaneRefs(lane);
-  const base = await laneDiffBase(lane, (await git(lane.worktree, ['rev-parse', 'HEAD'])).trim());
+  const base = await laneDiffBase(lane, (await git(lane.worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs)).trim());
   const files: { path: string; status: 'A' | 'M' | 'D' }[] = [];
-  const parts = (await git(lane.worktree, ['diff', '--name-status', '-z', '--no-renames', base, '--'])).split('\0');
+  const parts = (await git(lane.worktree, ['diff', '--name-status', '-z', '--no-renames', base, '--'], undefined, readOnlyGitTimeoutMs)).split('\0');
   for (let index = 0; index + 1 < parts.length; index += 2) {
     const status = parts[index]!.charAt(0), file = parts[index + 1]!;
     if (file) files.push({ path: file, status: status === 'A' ? 'A' : status === 'D' ? 'D' : 'M' });

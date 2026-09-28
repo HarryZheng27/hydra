@@ -7,7 +7,7 @@ import { git } from '../src/core/git';
 import { gateBlocks, gateKind, gateState, processAlive, type JobCheckResult } from '../src/core/jobs';
 import type { ProbeOutput } from '../src/core/process';
 import { terminateProcessTree } from '../src/core/process';
-import { applyRigor, findBrowser, gateFailureMessage, gateOrder, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
+import { applyRigor, findBrowser, gateCommandsBrief, gateFailureMessage, gateOrder, hasCommandGate, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
 import { browserCandidates } from '../src/core/gates/browser';
 import { resolveCommand } from '../src/core/gates/command';
 import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewFails, reviewPrompt } from '../src/core/gates/review';
@@ -343,6 +343,42 @@ test('applyRigor (O6): the same gate id both times, so a snapshot taken at head 
   const after = applyRigor([], 'strict');
   assert.deepEqual(before, after);
   assert.equal(before[0]!.id, after[0]!.id);
+});
+
+test('gateCommandsBrief: a head\'s first prompt hears each gate\'s command (or that it\'s a screenshots/review gate); package.json\'s test script only fills in for a missing command gate', () => {
+  const command: Gate = { id: 'unit', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 };
+  const optional: Gate = { id: 'lint', type: 'command', required: false, command: ['npm', 'run', 'lint'], timeoutSeconds: 300 };
+  const shots: Gate = { id: 'ui', type: 'screenshots', required: true, start: ['npm', 'start'], url: 'http://localhost:{port}/', widths: [390], readyTimeoutSeconds: 90 };
+  const review: Gate = { id: 'review', type: 'review', required: true, reviewer: 'other', focus: '' };
+  const reviewWithRole: Gate = { id: 'review2', type: 'review', required: true, reviewer: 'other', focus: '', role: 'builder' };
+
+  assert.equal(gateCommandsBrief([], undefined), undefined, 'nothing configured, nothing to say');
+  // No command gate runs package.json's script, so it gets its own honest sentence, not a line under "Hydra runs these gates" (which would misleadingly say Hydra runs it).
+  assert.equal(gateCommandsBrief([], 'node --test'), 'This project has no command gate, so Hydra won\'t run its tests; its test command is `node --test`: run it yourself before hydra_done.');
+  assert.equal(hasCommandGate([]), false);
+
+  assert.equal(gateCommandsBrief([command], 'node --test'), 'Hydra runs these gates after you call hydra_done:\n- unit: npm test', 'a command gate already covers testing; package.json\'s script is left out entirely');
+  assert.equal(hasCommandGate([command]), true);
+
+  assert.equal(
+    gateCommandsBrief([command, optional, shots, review, reviewWithRole]),
+    [
+      'Hydra runs these gates after you call hydra_done:',
+      '- unit: npm test',
+      '- lint (optional): npm run lint',
+      '- ui: a screenshots gate (http://localhost:{port}/)',
+      '- review: a review gate',
+      '- review2: a review gate (role: builder)',
+    ].join('\n'),
+    'command gates first, then screenshots, then review (gateOrder); "(optional)" only for required: false',
+  );
+
+  // A review-only project (no command gate) still hears both: what Hydra runs, and that its own test script is on it.
+  assert.equal(
+    gateCommandsBrief([review], 'node --test'),
+    'Hydra runs these gates after you call hydra_done:\n- review: a review gate\n\nThis project has no command gate, so Hydra won\'t run its tests; its test command is `node --test`: run it yourself before hydra_done.',
+  );
+  assert.equal(hasCommandGate([review]), false);
 });
 
 test('review: "not run" with the reason when it can\'t run, and that never fails the work', async () => {
