@@ -99,6 +99,20 @@ test('benchmark.mjs single runs one agent on the whole task, then the same gate,
   } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
+test('benchmark.mjs single records nothing when the agent fails: an untouched fixture passing its own gate is not a result', async () => {
+  const out = await mkdtemp(path.join(tmpdir(), 'hydra-bench-'));
+  try {
+    const repo = path.join(out, 'single');
+    await cp(fixture, repo, { recursive: true });
+    const failing = path.join(root, 'tests', 'fixtures', 'bench', 'failing-agent.cjs');
+    const ran = await node([script, 'single', '--repo', repo, '--command', `"${process.execPath}" "${failing}"`]);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /exited with 1 .*no result to record/s);
+    assert.match(ran.stderr, /not signed in/);
+    assert.equal((await readdir(out)).includes('single-results.json'), false);
+  } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
 test('benchmark results render every run, failures included, into docs/Benchmark.md\'s results section', async () => {
   assert.equal(renderResults([]), 'No run has been published yet.');
   const hydra = summarizeHydra({
@@ -118,5 +132,5 @@ test('benchmark results render every run, failures included, into docs/Benchmark
   assert.ok(updated.includes('### 2026-10-01') && updated.includes(resultsEnd));
   assert.throws(() => withResults('no markers', []), /no results markers/);
   const history = JSON.parse(await readFile(path.join(root, 'bench', 'results.json'), 'utf8'));
-  assert.equal(withResults(doc, history.runs), doc.replace(/(<!-- benchmark-results:start -->)[\s\S]*(<!-- benchmark-results:end -->)/, `$1\n${renderResults(history.runs)}\n$2`), 'the published doc matches bench/results.json');
+  assert.equal(withResults(doc, history.runs), doc.replace(/(<!-- benchmark-results:start -->)[\s\S]*(<!-- benchmark-results:end -->)/, (_all: string, start: string, end: string) => `${start}\n${renderResults(history.runs)}\n${end}`), 'the published doc matches bench/results.json');
 });

@@ -1,4 +1,127 @@
 {
   "version": 1,
-  "runs": []
+  "runs": [
+    {
+      "at": "2026-09-28T00:28:47.259Z",
+      "label": "first run",
+      "notes": "On a task this small, one Claude Code agent was faster (1m 36s against 8m 13s) and cheaper ($0.57 against $1.30): six jobs each pay for their own worktree, gate run and landing, and the integration gate runs on top. Hydra's run had every job land first time (no conflicts predicted or caught, no amendments), and the combined work passed `npm test` (26 tests; the single agent's has 23). Parallelism can't pay off when the whole task takes one agent under two minutes; a larger task is the next thing to measure. Not recorded on video.",
+      "hydra": {
+        "version": 1,
+        "kind": "hydra",
+        "planId": "3705b6d08c6e",
+        "planState": "done",
+        "wallClockSeconds": 493,
+        "timedOut": false,
+        "integrationGate": {
+          "label": "Passed required gates",
+          "passed": true,
+          "checks": [
+            {
+              "id": "test",
+              "state": "passed"
+            }
+          ]
+        },
+        "landed": [
+          "discounts",
+          "api",
+          "ui",
+          "api-tests",
+          "ui-tests",
+          "docs"
+        ],
+        "jobs": [
+          {
+            "key": "discounts",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.29845
+            }
+          },
+          {
+            "key": "api",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.235646
+            }
+          },
+          {
+            "key": "ui",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.155434
+            }
+          },
+          {
+            "key": "api-tests",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.250991
+            }
+          },
+          {
+            "key": "ui-tests",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.178024
+            }
+          },
+          {
+            "key": "docs",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.17886
+            }
+          }
+        ],
+        "conflicts": {
+          "predicted": 0,
+          "predictedByJob": {},
+          "landingConflicts": 0
+        },
+        "amendments": 0,
+        "cost": {
+          "usd": 1.2974,
+          "usdJobs": 6,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "tokenJobs": 0,
+          "jobs": 6
+        }
+      },
+      "single": {
+        "version": 1,
+        "kind": "single",
+        "agent": "claude",
+        "wallClockSeconds": 96,
+        "agentExitCode": 0,
+        "gate": {
+          "passed": true,
+          "outputTail": "nimum is refused, naming the code\n  ---\n  duration_ms: 0.3357\n  type: 'test'\n  ...\n# Subtest: an unknown code is refused, naming the code\nok 13 - an unknown code is refused, naming the code\n  ---\n  duration_ms: 0.0793\n  type: 'test'\n  ...\n# Subtest: an order totals its lines\nok 14 - an order totals its lines\n  ---\n  duration_ms: 0.8011\n  type: 'test'\n  ...\n# Subtest: an unknown product or a bad quantity is refused\nok 15 - an unknown product or a bad quantity is refused\n  ---\n  duration_ms: 0.3429\n  type: 'test'\n  ...\n# Subtest: an order without a code has no discount\nok 16 - an order without a code has no discount\n  ---\n  duration_ms: 0.5757\n  type: 'test'\n  ...\n# Subtest: SAVE10 takes 10% off the total\nok 17 - SAVE10 takes 10% off the total\n  ---\n  duration_ms: 0.166\n  type: 'test'\n  ...\n# Subtest: FIVEOFF takes $5.00 off an order of at least $25.00\nok 18 - FIVEOFF takes $5.00 off an order of at least $25.00\n  ---\n  duration_ms: 0.4173\n  type: 'test'\n  ...\n# Subtest: a lower-case code is applied, and stored in upper case\nok 19 - a lower-case code is applied, and stored in upper case\n  ---\n  duration_ms: 0.1805\n  type: 'test'\n  ...\n# Subtest: an unknown code, or FIVEOFF under its minimum, is refused and makes no order\nok 20 - an unknown code, or FIVEOFF under its minimum, is refused and makes no order\n  ---\n  duration_ms: 0.1662\n  type: 'test'\n  ...\n# Subtest: an order renders its lines and its total\nok 21 - an order renders its lines and its total\n  ---\n  duration_ms: 0.9175\n  type: 'test'\n  ...\n# Subtest: an order with a code renders a discount row above the discounted total\nok 22 - an order with a code renders a discount row above the discounted total\n  ---\n  duration_ms: 0.258\n  type: 'test'\n  ...\n# Subtest: an order without a code renders no discount row\nok 23 - an order without a code renders no discount row\n  ---\n  duration_ms: 0.6685\n  type: 'test'\n  ...\n1..23\n# tests 23\n# suites 0\n# pass 23\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 212.6866\n"
+        },
+        "cost": {
+          "usd": 0.5685577999999999
+        },
+        "turns": 23
+      }
+    }
+  ]
 }
