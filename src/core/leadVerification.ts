@@ -38,8 +38,20 @@ export function evaluateLeadChain(chain: readonly ProcessLink[], rules: LeadRule
   return { ok: false, reason: 'it was not started from this Hydra window (use the Claude Code or Codex extension, or a terminal inside Hydra).' };
 }
 
-/** The connecting process and its ancestors, from the OS (Windows). */
-export function windowsConnectionChain(socket: Socket): Promise<ProcessLink[]> {
+/**
+ * The connecting process and its ancestors, from the OS (Windows): one script that first finds the
+ * connection's owning PID, then scans every process on the machine to walk its ancestors, so the
+ * scan always happens after (never before) the connection it's being asked about — a snapshot
+ * taken earlier could predate the very process it's meant to identify, refusing a legitimate
+ * caller (its PID not existing in the table yet) or, worse, folding under a reused PID that
+ * matched a since-exited process in the same walk (HSEC-07/HSEC-63's reused-PID guard only holds
+ * for a snapshot taken after the process it's checking is known to exist). Earlier this scan was
+ * split out and shared across concurrent connections to cut the CPU cost of a burst of new ones;
+ * that shortcut was reverted for exactly this reason — one script per connection, every time.
+ * `Get-CimInstance Win32_Process` (the process-table part) is real work, so callers get how long
+ * this took via `log`.
+ */
+export function windowsConnectionChain(socket: Socket, log?: (line: string) => void, now: () => number = Date.now): Promise<ProcessLink[]> {
   const clientPort = Number(socket.remotePort), serverPort = Number(socket.localPort);
   if (!Number.isInteger(clientPort) || !Number.isInteger(serverPort)) return Promise.resolve([]);
   const script = [
@@ -51,13 +63,15 @@ export function windowsConnectionChain(socket: Socket): Promise<ProcessLink[]> {
     'ConvertTo-Json -Compress @($chain)',
   ].join('; ');
   const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const started = now();
   return new Promise(resolve => {
     execFile(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30_000 }, (error, stdout) => {
-      if (error) return resolve([]);
+      const done = (chain: ProcessLink[]) => { log?.(`[lead] process check: ${chain.length} link(s) in ${Math.max(0, Math.round(now() - started))}ms`); resolve(chain); };
+      if (error) return done([]);
       try {
         const parsed = JSON.parse(stdout.trim() || '[]') as ProcessLink[] | ProcessLink;
-        resolve((Array.isArray(parsed) ? parsed : [parsed]).filter(link => Number.isInteger(link.pid) && Number.isInteger(link.ppid) && Number.isFinite(link.created)));
-      } catch { resolve([]); }
+        done((Array.isArray(parsed) ? parsed : [parsed]).filter(link => Number.isInteger(link.pid) && Number.isInteger(link.ppid) && Number.isFinite(link.created)));
+      } catch { done([]); }
     });
   });
 }
@@ -66,10 +80,10 @@ export function windowsConnectionChain(socket: Socket): Promise<ProcessLink[]> {
  * The lead check for this window. On Windows it uses the OS connection owner; on
  * other platforms Hydra has no such check yet and accepts, as before.
  */
-export function createLeadVerifier(rules: () => LeadRules, chainFor: (socket: Socket) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform): LeadVerifier {
+export function createLeadVerifier(rules: () => LeadRules, chainFor: (socket: Socket, log?: (line: string) => void) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform, log?: (line: string) => void): LeadVerifier {
   return async socket => {
     if (platform !== 'win32') return { ok: true };
-    return evaluateLeadChain(await chainFor(socket), rules());
+    return evaluateLeadChain(await chainFor(socket, log), rules());
   };
 }
 
@@ -103,9 +117,9 @@ export function evaluateUserChain(chain: readonly ProcessLink[], rules: Pick<Lea
 }
 
 /** The user-token check for this window: on Windows the OS connection owner; elsewhere Hydra has no such check yet and accepts, as the lead check does. */
-export function createUserVerifier(rules: () => Pick<LeadRules, 'deniedAncestors'>, chainFor: (socket: Socket) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform): (socket: Socket) => Promise<{ ok: true } | { ok: false; reason: string }> {
+export function createUserVerifier(rules: () => Pick<LeadRules, 'deniedAncestors'>, chainFor: (socket: Socket, log?: (line: string) => void) => Promise<ProcessLink[]> = windowsConnectionChain, platform = process.platform, log?: (line: string) => void): (socket: Socket) => Promise<{ ok: true } | { ok: false; reason: string }> {
   return async socket => {
     if (platform !== 'win32') return { ok: true };
-    return evaluateUserChain(await chainFor(socket), rules());
+    return evaluateUserChain(await chainFor(socket, log), rules());
   };
 }

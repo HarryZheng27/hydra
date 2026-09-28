@@ -194,8 +194,9 @@ test('a publisher only ever writes its own id: two publishers in the same direct
   const build = (folder: string) => () => ({ folder, name: path.basename(folder), heads: { running: 0, blocked: 0, done: 0 }, lanes: { running: 0, exited: 0 }, plans: { live: 0, lines: [] }, blocked: [], evidence: { passed: 0, partial: 0, none: 0, 'none-chosen': 0, override: 0 }, providers: [] });
   const a = startProjectSummaryPublisher({ dir, id: 'window-a', pid: 111, clock: clockA, build: build('/repo/a') });
   const b = startProjectSummaryPublisher({ dir, id: 'window-b', pid: 222, clock: clockB, build: build('/repo/b') });
-  await delay(20);
-  clockA.advance(2000); a.changed(); await delay(20);
+  await summaryAt(dir, 'window-a', 0); await summaryAt(dir, 'window-b', 0);
+  clockA.advance(2000); a.changed();
+  await summaryAt(dir, 'window-a', 2000);
   const views = await readProjectSummaries(dir, new Date(), () => true);
   assert.deepEqual(views.map(view => view.folder).sort(), ['/repo/a', '/repo/b']);
   const fileA = JSON.parse(await readFile(path.join(dir, 'window-a.summary.json'), 'utf8'));

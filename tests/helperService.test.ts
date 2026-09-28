@@ -6,7 +6,7 @@ import path from 'node:path';
 import { git } from '../src/core/git';
 import { JobStore } from '../src/core/jobs';
 import { HelperEndpoint, callHelperEndpoint } from '../src/core/helperEndpoint';
-import { HelperService, inScope, loadHelperChecks, helperPrompt, type HelperServiceOptions } from '../src/core/helperService';
+import { formatDoneTiming, HelperService, inScope, loadHelperChecks, helperPrompt, type HelperServiceOptions } from '../src/core/helperService';
 import type { HelperRun, HelperRunSpec } from '../src/core/helperRunner';
 import { claudeHelperArguments, codexHelperArguments } from '../src/core/helperRunner';
 import { supportedCliVersion, supportedCliVersionIn } from '../src/core/cliVersions';
@@ -18,7 +18,7 @@ import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
 type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
-async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
+async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -33,11 +33,14 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
   const endpoint = new HelperEndpoint((caller, tool, args, signal) => service.handle(caller, tool, args, signal));
   const port = await endpoint.start();
   const runs: HelperRunSpec[] = [];
+  const logs: string[] = [];
   service = new HelperService({
     store, endpoint, leadFolder: repo, leadKey: 'window', worktreeRoot: () => path.join(root, 'worktrees'),
     executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => options.maxConcurrent ?? 2, now: options.now, watchdogMs: 20,
     gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo), plans: options.plans, planBoard: options.planBoard,
+    gates: options.gatesLoader,
+    log: line => logs.push(line),
     startRun: spec => {
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
@@ -65,7 +68,7 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
   const call = (tool: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; result?: any; error?: string }> => callHelperEndpoint(port, lead, tool, args);
   const start = async (key: string, extra: Record<string, unknown> = {}): Promise<any> => (await call('hydra_start_head', { title: `Job ${key}`, brief: 'Do the thing.', write_scope: ['src/'], idempotency_key: key, ...extra })).result;
   const wait = async (ids: string[], max = 90): Promise<any> => (await call('hydra_wait_for_heads', { job_ids: ids, max_wait_s: max })).result;
-  return { root, repo, store, service, endpoint, runs, call, start, wait, close: async () => { await service.dispose(); await endpoint.close(); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); } };
+  return { root, repo, store, service, endpoint, runs, logs, call, start, wait, close: async () => { await service.dispose(); await endpoint.close(); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); } };
 }
 
 /** Wait for a condition instead of sleeping a fixed time; creating a worktree is slow on Windows. */
@@ -1228,3 +1231,92 @@ test('O3: a plan head re-queued after a conflict starts from the given commit, w
     await assert.rejects(f.service.startForPlan({ title: 'Bad', brief: 'x', write_scope: ['src/'], idempotency_key: 'bad' }, 'plan-aaaaaaaaaaaa', [], 'claude', { baseCommit: 'nope' }), /start commit is malformed/);
   } finally { await f.close(); }
 });
+
+// ---- hydra_done's step timing (docs/Heads.md, Troubleshooting) ----
+
+test('formatDoneTiming lists only the steps that ran, in order, with the total measured separately', () => {
+  assert.equal(
+    formatDoneTiming('job-1', 12345, [{ name: 'status', ms: 400 }, { name: 'commit', ms: 9800 }, { name: 'rev-parse', ms: 200 }, { name: 'gates', ms: 100 }, { name: 'tamper', ms: 0 }, { name: 'diff', ms: 300 }, { name: 'gitmeta', ms: 1500 }]),
+    '[heads] job-1 hydra_done → checking in 12.3s: status 0.4s, commit 9.8s, rev-parse 0.2s, gates 0.1s, tamper 0.0s, diff 0.3s, gitmeta 1.5s',
+  );
+  // No steps at all (shouldn't happen in practice, but the line stays well-formed).
+  assert.equal(formatDoneTiming('job-2', 50, []), '[heads] job-2 hydra_done → checking in 0.1s');
+  // Only the steps that ran: a head with nothing new to commit skips "commit", one with no
+  // gitMetaAtStart skips "gitmeta".
+  assert.equal(
+    formatDoneTiming('job-3', 600, [{ name: 'status', ms: 100 }, { name: 'rev-parse', ms: 50 }, { name: 'gates', ms: 20 }, { name: 'tamper', ms: 0 }, { name: 'diff', ms: 30 }]),
+    '[heads] job-3 hydra_done → checking in 0.6s: status 0.1s, rev-parse 0.1s, gates 0.0s, tamper 0.0s, diff 0.0s',
+  );
+});
+
+test('hydra_done logs one timing line naming every step it ran, on the way into checking', async () => {
+  const f = await fixture({ checks: passCheck, script: async helper => {
+    // The head commits its own work directly (as a real one would when its sandbox allows it),
+    // so the worktree is already clean by the time hydra_done runs: "commit" is skipped, but
+    // "status" still runs to notice that.
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    assert.equal(reported.result.accepted, true);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('timed');
+    await f.wait([started.job_id]);
+    const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
+    assert.ok(line, `expected a timing line among: ${JSON.stringify(f.logs)}`);
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s$`));
+  } finally { await f.close(); }
+});
+
+test('hydra_done\'s timing line includes "commit" only when Hydra itself had to commit uncommitted work', async () => {
+  const f = await fixture({ checks: passCheck, script: async helper => {
+    // Left uncommitted on purpose: Hydra's own commitAll runs inside hydra_done (helperService.ts,
+    // commitAll), unlike helper.commit's fixture shortcut which commits directly.
+    await mkdir(path.dirname(path.join(helper.spec.worktree, 'src/fixed.ts')), { recursive: true });
+    await writeFile(path.join(helper.spec.worktree, 'src', 'fixed.ts'), 'export const fixed = true;\n');
+    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    assert.equal(reported.result.accepted, true);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('timed-commit');
+    await f.wait([started.job_id]);
+    const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
+    assert.ok(line, `expected a timing line among: ${JSON.stringify(f.logs)}`);
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, commit \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s$`));
+  } finally { await f.close(); }
+});
+
+test('hydra_done still logs a timing line when a step throws, marking that step with "!"', async () => {
+  const f = await fixture({ gatesLoader: async () => { throw new Error('gates.json is broken'); }, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    assert.equal(reported.result.accepted, false);
+    assert.match(reported.result.message, /gates\.json is broken/);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('timed-failure');
+    await until(() => f.logs.some(entry => entry.includes('hydra_done → checking')), 'timing line logged');
+    const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
+    // The gates step threw, so it's marked, and nothing after it (tamper/diff/gitmeta) ran.
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates! \\d+\\.\\d+s$`));
+  } finally { await f.close(); }
+});
+
+test('hydra_done logs a partial timing line when refused because nothing changed yet', async () => {
+  const f = await fixture({ script: async helper => {
+    const reported = await helper.call('hydra_done', { summary: 'Nothing yet.' });
+    assert.equal(reported.result.accepted, false);
+    assert.match(reported.result.message, /have not changed anything/);
+    helper.endTurn();
+  } });
+  try {
+    const started = await f.start('timed-refusal');
+    await until(() => f.logs.some(entry => entry.includes('hydra_done → checking')), 'timing line logged');
+    const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
+    // Refused before gates ever load: only status and rev-parse ran.
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s$`));
+  } finally { await f.close(); }
+});
+
