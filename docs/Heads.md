@@ -146,7 +146,7 @@ It's stored with the commit it describes, on the head's result, the lane's last 
 
 ## The Agents view
 
-Also called the **Agent Manager**. Open it with **Alt+Shift+A**, the **Agent Manager / Editor** switch in the title bar, or the status bar item. (Alt+Shift+A replaces the editor's own Toggle Block Comment shortcut.) It's a live canvas of your heads ([Agents_View_Plan.md](Agents_View_Plan.md)):
+Also called the **Agent Manager**. Open it with **Alt+Shift+A**, the **Agent Manager / Editor** switch in the title bar, or the status bar item. (Alt+Shift+A replaces the editor's own Toggle Block Comment shortcut.) In the Editor, the button next to the switch shows or hides the agent side bar on the right, where Claude Code and Codex chat (Ctrl+Alt+B does the same). It's a live canvas of your heads ([Agents_View_Plan.md](Agents_View_Plan.md)):
 
 - **Blank until a chat starts heads.** Each head grows out of the chat that started it: the **lead**, labelled with its provider, and a name if the chat gave one (`lead_label`).
 - **What each head is doing:** state (Queued, Working, Needs an answer, Checking, Done, Failed), its latest progress note or question, branch and elapsed time. When it finishes: checks passed and files changed.
