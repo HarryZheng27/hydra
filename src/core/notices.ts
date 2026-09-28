@@ -57,16 +57,19 @@ export function createNotices(host: NoticeHost) {
       onCancellationRequested(listener) { listeners.add(listener); return { dispose: () => listeners.delete(listener) }; },
     };
     let percent: number | undefined;
-    try {
-      const shown = host.execute<string>('hydra.desktop.notice.show', { id, kind: 'info', message: toastText(options.title), actions: options.cancellable ? [cancelLabel] : [], progress: true, sticky: true });
-      void Promise.resolve(shown).then(choice => {
-        if (choice !== cancelLabel || cancelled) return;
-        cancelled = true;
-        for (const listener of [...listeners]) listener();
-      }, () => undefined);
-    } catch {
-      return await host.nativeProgress(options, task);
-    }
+    let done = false;
+    const shown = Promise.resolve().then(() => host.execute<string>('hydra.desktop.notice.show', { id, kind: 'info', message: toastText(options.title), actions: options.cancellable ? [cancelLabel] : [], progress: true, sticky: true }));
+    // The toast closed while the task still runs: Cancel, or (for a cancellable task) the × or Escape, cancels it.
+    const outcome = shown.then(choice => ({ choice, failed: false }), () => ({ choice: undefined, failed: true }));
+    void outcome.then(({ choice, failed }) => {
+      if (done || failed || cancelled || !options.cancellable) return;
+      if (choice !== undefined && choice !== cancelLabel) return;
+      cancelled = true;
+      for (const listener of [...listeners]) listener();
+    });
+    // If the workbench refuses the toast before anything else happens, run the task with the editor's own progress.
+    const refused = await Promise.race([outcome.then(({ failed }) => failed), new Promise<false>(resolve => setTimeout(() => resolve(false), 0))]);
+    if (refused) return await host.nativeProgress(options, task);
     const progress: NoticeProgress = {
       report({ message, increment }) {
         const update: { detail?: string; progress?: number } = {};
@@ -78,6 +81,7 @@ export function createNotices(host: NoticeHost) {
     try {
       return await task(progress, token);
     } finally {
+      done = true;
       void Promise.resolve(host.execute('hydra.desktop.notice.close', id)).catch(() => undefined);
     }
   }

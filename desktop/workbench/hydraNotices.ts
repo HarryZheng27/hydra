@@ -4,6 +4,7 @@ import { Codicon } from '../base/common/codicons.js';
 import { CommandsRegistry } from '../platform/commands/common/commands.js';
 import { IProductService } from '../platform/product/common/productService.js';
 import { ILayoutService } from '../platform/layout/browser/layoutService.js';
+import { IWorkbenchEnvironmentService } from './services/environment/common/environmentService.js';
 
 /**
  * Hydra's own notifications (docs/Heads.md, "Hydra's notifications"): a Hydra-styled toast stack drawn over the
@@ -38,6 +39,8 @@ function parseRequest(value: unknown): NoticeRequest {
 }
 
 const entries = new Map<string, Entry>();
+/** Ids closed before their show arrived (each command waits on its own activation, so close can overtake show). */
+const closedEarly = new Set<string>();
 let stack: HTMLElement | undefined;
 
 function container(layout: ILayoutService): HTMLElement {
@@ -90,6 +93,7 @@ function schedule(entry: Entry): void {
 }
 
 function show(layout: ILayoutService, request: NoticeRequest): Promise<string | undefined> {
+	if (closedEarly.delete(request.id)) { return Promise.resolve(undefined); }
 	if (entries.has(request.id)) { finish(request.id, undefined); }
 	const root = container(layout);
 	const element = $(`.hydra-notice.hydra-notice-${request.kind}`);
@@ -168,16 +172,25 @@ CommandsRegistry.registerCommand('hydra.desktop.notice.update', (accessor, id: u
 });
 CommandsRegistry.registerCommand('hydra.desktop.notice.close', (accessor, id: unknown) => {
 	requireHydra(accessor.get(IProductService));
-	if (typeof id === 'string') { finish(id, undefined); }
+	if (typeof id !== 'string' || !idPattern.test(id)) { return; }
+	if (entries.has(id)) { finish(id, undefined); return; }
+	closedEarly.add(id);
+	if (closedEarly.size > 100) { closedEarly.delete(closedEarly.values().next().value!); }
 });
-/** The notices showing now: for the desktop smoke, and for anything that needs to know. */
+/**
+ * list and choose exist for the desktop smoke only: in a normal window they refuse, so no other extension can read
+ * Hydra's notices or press their buttons.
+ */
+const requireTestHost = (environment: IWorkbenchEnvironmentService) => { if (!environment.isExtensionDevelopment && !environment.extensionTestsLocationURI) { throw new Error('Only a Hydra test host can read or answer notices.'); } };
 CommandsRegistry.registerCommand('hydra.desktop.notice.list', accessor => {
 	requireHydra(accessor.get(IProductService));
+	requireTestHost(accessor.get(IWorkbenchEnvironmentService));
 	return [...entries.values()].map(({ request }) => ({ id: request.id, kind: request.kind, message: request.message, actions: request.actions ?? [], progress: request.progress }));
 });
-/** Presses a shown notice's action, as a click would (the desktop smoke drives notices this way). */
+/** Presses a shown notice's action, as a click would. */
 CommandsRegistry.registerCommand('hydra.desktop.notice.choose', (accessor, id: unknown, action: unknown) => {
 	requireHydra(accessor.get(IProductService));
+	requireTestHost(accessor.get(IWorkbenchEnvironmentService));
 	const entry = typeof id === 'string' ? entries.get(id) : undefined;
 	if (!entry || typeof action !== 'string' || !entry.request.actions?.includes(action)) { return false; }
 	finish(entry.request.id, action);

@@ -501,6 +501,11 @@ test("Hydra's notifications and the Agent Manager / Editor switch are built into
   const notices = await fs.readFile('desktop/workbench/hydraNotices.ts', 'utf8');
   for (const command of ['show', 'update', 'close', 'list', 'choose']) assert.ok(notices.includes(`registerCommand('hydra.desktop.notice.${command}'`), command);
   assert.doesNotMatch(notices, /innerHTML|insertAdjacentHTML/, 'notice text is only ever set as text');
+  for (const command of ['list', 'choose']) {
+    const start = notices.indexOf(`registerCommand('hydra.desktop.notice.${command}'`);
+    assert.ok(notices.slice(start, notices.indexOf('});', start)).includes('requireTestHost('), `${command} refuses outside a test host`);
+  }
+  assert.ok(notices.includes('closedEarly'), 'a close that overtakes its show still closes it');
   const modeSwitch = await fs.readFile('desktop/workbench/hydraModeSwitch.ts', 'utf8');
   for (const command of ['hydra.openAgents', 'hydra.openEditor']) assert.ok(modeSwitch.includes(`'${command}'`));
   const manifest = JSON.parse(await fs.readFile('package.json', 'utf8'));
@@ -510,6 +515,6 @@ test("Hydra's notifications and the Agent Manager / Editor switch are built into
   const css = brandedWatermarkLayout(pinned);
   assert.ok(css.endsWith(hydraChromeCss));
   for (const selector of ['.hydra-notices', '.hydra-notice-warning', '.hydra-notice-error', '.hydra-notice-progress.indeterminate', '.hydra-notice-action.primary', '.hydra-mode-switch-option.checked', '.hydra-mode-switch[hidden]']) assert.ok(css.includes(selector), selector);
-  assert.match(hydraChromeCss, /-webkit-app-region: no-drag/, 'the switch is clickable inside the draggable title bar');
+  assert.match(hydraChromeCss, /position: relative;\s*z-index: 2500;\s*-webkit-app-region: no-drag/, 'the switch sits above the title bar drag region, so it can be clicked');
   assert.match(hydraChromeCss, /prefers-reduced-motion: reduce/);
 });

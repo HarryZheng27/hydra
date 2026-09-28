@@ -871,6 +871,9 @@ export const hydraChromeCss = `
 	gap: 2px;
 	border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
 	border-radius: 7px;
+	/* Above the title bar's drag region, like upstream's own title bar controls. */
+	position: relative;
+	z-index: 2500;
 	-webkit-app-region: no-drag;
 }
 

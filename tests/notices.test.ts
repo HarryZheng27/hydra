@@ -81,6 +81,31 @@ test('progress shows a sticky toast, reports message and percent, closes when do
   assert.deepEqual(executed.at(-1), { command: 'hydra.desktop.notice.close', args: [show.id] });
 });
 
+test('dismissing a cancellable progress toast cancels its task; a finished task closing its toast does not', async () => {
+  const { fake, press } = host({ desktop: true });
+  let cancelled = false;
+  await createNotices(fake).withProgress({ title: 'Downloading…', cancellable: true }, async (_progress, token) => {
+    token.onCancellationRequested(() => { cancelled = true; });
+    press(undefined);
+    await new Promise(resolve => setImmediate(resolve));
+  });
+  assert.equal(cancelled, true);
+  const plain = host({ desktop: true });
+  let plainCancelled = false;
+  await createNotices(plain.fake).withProgress({ title: 'Starting…' }, async (_progress, token) => {
+    token.onCancellationRequested(() => { plainCancelled = true; });
+    plain.press(undefined);
+    await new Promise(resolve => setImmediate(resolve));
+  });
+  assert.equal(plainCancelled, false, 'a task that cannot be cancelled keeps going');
+});
+
+test('progress falls back to the editor when the workbench refuses its toast', async () => {
+  const refused = host({ desktop: true, failShow: true });
+  assert.equal(await createNotices(refused.fake).withProgress({ title: 'Starting…' }, async () => 7), 7);
+  assert.ok(!refused.executed.some(call => call.command === 'hydra.desktop.notice.close'));
+});
+
 test('progress closes its toast even when the task fails', async () => {
   const { fake, executed } = host({ desktop: true });
   await assert.rejects(createNotices(fake).withProgress({ title: 'Starting lane a…' }, async () => { throw new Error('no'); }), /no/);
