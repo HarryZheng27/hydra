@@ -538,4 +538,8 @@ test('connectWithRetry: a refused DevTools connection right after the browser st
   await assert.rejects(connectWithRetry(async () => { exitedTries++; throw new Error('refused'); }, () => true, 2000, 5), /refused/);
   assert.equal(exitedTries, 1, 'the browser is gone: no point trying again');
   await assert.rejects(connectWithRetry(async () => { throw new Error('refused'); }, () => false, 50, 5), /refused/, 'bounded');
+  // An attempt that hangs is given only the time left, so a stalled handshake can't stretch the whole budget.
+  const started = Date.now(); const budgets: number[] = [];
+  await assert.rejects(connectWithRetry(remaining => { budgets.push(remaining); return new Promise((_, reject) => setTimeout(() => reject(new Error('did not open')), remaining)); }, () => false, 120, 5), /did not open/);
+  assert.ok(budgets[0]! <= 120 && Date.now() - started < 400, 'the whole connect stays within its budget');
 });
