@@ -122,6 +122,152 @@
         },
         "turns": 23
       }
+    },
+    {
+      "at": "2026-09-28T14:05:33.346Z",
+      "label": "second run, a wider task",
+      "notes": "On the wider task, one Claude Code agent was still faster (9m 46s against 20m 55s) and cheaper ($2.43 against $5.23). Hydra's run landed all eight jobs with no conflicts predicted or caught and no amendments. Three jobs needed a second or third attempt after their gates sent work back. The combined work passed its integration gate with 95 tests; the single agent's has 72. Hydra ran with up to 8 heads at once (hydra.maxConcurrentHelpers 8). Each job pays for its own worktree, gates (including a review gate) and landing, so parallelism doesn't yet beat one agent on a task that one agent finishes in under ten minutes. Not recorded on video.",
+      "hydra": {
+        "version": 1,
+        "kind": "hydra",
+        "task": "shop-features",
+        "planId": "7fb8c9ce7150",
+        "planState": "done",
+        "wallClockSeconds": 1255,
+        "timedOut": false,
+        "integrationGate": {
+          "label": "Passed required gates",
+          "passed": true,
+          "checks": [
+            {
+              "id": "test",
+              "state": "passed"
+            }
+          ]
+        },
+        "landed": [
+          "shipping",
+          "tax",
+          "export",
+          "search",
+          "reviews",
+          "inventory",
+          "receipt",
+          "wire"
+        ],
+        "jobs": [
+          {
+            "key": "search",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.250795
+            }
+          },
+          {
+            "key": "inventory",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 3,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.515192
+            }
+          },
+          {
+            "key": "tax",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.221789
+            }
+          },
+          {
+            "key": "shipping",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.218022
+            }
+          },
+          {
+            "key": "reviews",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.452489
+            }
+          },
+          {
+            "key": "export",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 1,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 0.395847
+            }
+          },
+          {
+            "key": "receipt",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 2,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 1.79959
+            }
+          },
+          {
+            "key": "wire",
+            "status": "done",
+            "provider": "claude",
+            "attempts": 2,
+            "usage": {
+              "runs": 1,
+              "cost_usd": 1.371562
+            }
+          }
+        ],
+        "conflicts": {
+          "predicted": 0,
+          "predictedByJob": {},
+          "landingConflicts": 0
+        },
+        "amendments": 0,
+        "cost": {
+          "usd": 5.2253,
+          "usdJobs": 8,
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "tokenJobs": 0,
+          "jobs": 8
+        }
+      },
+      "single": {
+        "version": 1,
+        "kind": "single",
+        "task": "shop-features",
+        "agent": "claude",
+        "wallClockSeconds": 586,
+        "agentExitCode": 0,
+        "gate": {
+          "passed": true,
+          "outputTail": "\n  ...\n# Subtest: standard is free from $50.00 up, saying why\nok 60 - standard is free from $50.00 up, saying why\n  ---\n  duration_ms: 0.0893\n  type: 'test'\n  ...\n# Subtest: express is always $14.99, on both sides of $50.00\nok 61 - express is always $14.99, on both sides of $50.00\n  ---\n  duration_ms: 0.1947\n  type: 'test'\n  ...\n# Subtest: pickup is always free, with no waiver to explain\nok 62 - pickup is always free, with no waiver to explain\n  ---\n  duration_ms: 0.0985\n  type: 'test'\n  ...\n# Subtest: an unknown method is refused\nok 63 - an unknown method is refused\n  ---\n  duration_ms: 0.4942\n  type: 'test'\n  ...\n# Subtest: a bad subtotal is refused\nok 64 - a bad subtotal is refused\n  ---\n  duration_ms: 0.9055\n  type: 'test'\n  ...\n# Subtest: the regions are CA, NY, TX and OR\nok 65 - the regions are CA, NY, TX and OR\n  ---\n  duration_ms: 1.7336\n  type: 'test'\n  ...\n# Subtest: each region charges its rate\nok 66 - each region charges its rate\n  ---\n  duration_ms: 0.1629\n  type: 'test'\n  ...\n# Subtest: half a cent rounds up, anything less rounds down\nok 67 - half a cent rounds up, anything less rounds down\n  ---\n  duration_ms: 0.1343\n  type: 'test'\n  ...\n# Subtest: rounding is exact where floating point would slip\nok 68 - rounding is exact where floating point would slip\n  ---\n  duration_ms: 0.0917\n  type: 'test'\n  ...\n# Subtest: a zero subtotal has no tax\nok 69 - a zero subtotal has no tax\n  ---\n  duration_ms: 0.3261\n  type: 'test'\n  ...\n# Subtest: an unknown region is refused\nok 70 - an unknown region is refused\n  ---\n  duration_ms: 0.4375\n  type: 'test'\n  ...\n# Subtest: a negative or non-integer subtotal is refused\nok 71 - a negative or non-integer subtotal is refused\n  ---\n  duration_ms: 0.973\n  type: 'test'\n  ...\n# Subtest: an order renders its lines and its total\nok 72 - an order renders its lines and its total\n  ---\n  duration_ms: 1.2707\n  type: 'test'\n  ...\n1..72\n# tests 72\n# suites 0\n# pass 72\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 183.723\n"
+        },
+        "cost": {
+          "usd": 2.4284991999999996
+        },
+        "turns": 48
+      }
     }
   ]
 }
