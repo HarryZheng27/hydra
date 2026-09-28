@@ -17,7 +17,7 @@ How a Hydra release is built, published and checked, and what's still needed bef
 
    This job is the only one allowed to write releases and attestations.
 
-The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published release. Move it to the new release once that release is out.
+The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published release, which must be strictly older than `package.json`'s version (`scripts/desktop-upgrade-test.ps1` refuses anything else). After a release, pin the release before it, the one installed copies upgrade from; the new release becomes the baseline once `main`'s version moves past it.
 
 ## Installing
 
