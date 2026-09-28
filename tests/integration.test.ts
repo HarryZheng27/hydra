@@ -629,6 +629,7 @@ test('integrationFixJob (O3): a failed gate becomes one fix job with its finding
   assert.equal(fix.rigor, 'quick', 'the integration gate, run again, reviews it with the rest');
   assert.match(fix.title, /round 1 of 2/);
   assert.match(fix.brief, /plan "Shop"/);
+  assert.match(fix.brief, /Fix the blocker and major findings below.*minor ones are optional/, 'minor notes never send a fix head chasing edge cases');
   assert.match(fix.brief, /### unit \(command\) failed/);
   assert.match(fix.brief, /boom/, 'a command gate\'s output');
   assert.match(fix.brief, /### rigor-review \(review\) failed: Input is not validated\./);

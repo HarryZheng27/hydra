@@ -292,7 +292,7 @@ export function integrationFixJob(plan: { title: string; jobs: readonly { key: s
   });
   const brief = [
     `Every job of plan "${plan.title}" has landed on its integration branch, which you start from, but the plan's integration gate failed on the combined work.`,
-    'Fix what it found below, across whatever files that takes, without undoing what the jobs built. Keep every existing test passing, and add tests for what you fix. Then finish as usual: the integration gate runs again on the result.',
+    'Fix the blocker and major findings below, across whatever files that takes, without undoing what the jobs built; minor ones are optional, so leave them unless a fix is quick and safe. Keep every existing test passing, and add tests for what you fix. Then finish as usual: the integration gate runs again on the result.',
     '',
     ...sections,
   ].join('\n');
