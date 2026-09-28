@@ -28,7 +28,7 @@ The row also has Disconnect and Sign in. Claude Code and Codex keep their own si
 - installs claude-mem through `claude plugin` if missing, or updates it;
 - installs claude-mem's dependencies.
 
-Hydra redistributes neither Bun nor claude-mem. Turning the toggle off only stops Hydra from managing it; anything already installed stays, and a **Repair** button (shown once the setting is on) re-runs the same setup to fix or update it.
+Hydra redistributes neither Bun nor claude-mem. Turning the toggle off only stops Hydra from managing it; anything already installed stays, and a **Repair** button (shown once the setting is on) re-runs the same setup to fix or update it. claude-mem runs in your chats and lanes; heads don't load it (see Limits and permissions).
 
 Connecting adds Hydra as a user-level tool server named `hydra`. That's per user, never per project; nothing is written inside a repository.
 
@@ -80,7 +80,7 @@ any unfinished state → failed or cancelled
 - **Starting point:** each head gets a new worktree and branch from the lead folder's **current HEAD**. If that folder has uncommitted changes, the lead is warned that the head won't see them.
 - **Limits** (the lead can change them per job): by default 30 minutes of work (time spent waiting for an answer doesn't count), 60 turns and 5 USD. Change the defaults in **Hydra Settings → Heads**. The turn and cost caps apply to Claude only.
 - **No permission prompts:** heads never ask anyone.
-  - **Claude:** `--permission-mode dontAsk` with an explicit tool list: file tools that write only inside the worktree, Bash only in Codex's Windows sandbox (see Security), never PowerShell, and Hydra's head actions; web tools only for a role that has them. Anything else is denied and the head carries on. Only your user settings load (`--setting-sources user`), so your user-level allow rules in `~/.claude/settings.json` still apply to heads.
+  - **Claude:** `--permission-mode dontAsk` with an explicit tool list: file tools that write only inside the worktree, Bash only in Codex's Windows sandbox (see Security), never PowerShell, and Hydra's head actions; web tools only for a role that has them. Anything else is denied and the head carries on. Only your user settings load (`--setting-sources user`), so your user-level allow rules in `~/.claude/settings.json` still apply to heads. Your plugins (claude-mem, for example) are turned off for heads: a head can't use their tools, and their hooks would slow every head command down. Your settings' own hooks, a role's skills and your sign-in are unaffected.
   - **Codex:** `codex exec` with the `workspace-write` sandbox and approval `never`. On Windows that sandbox blocks writes to a worktree's `.git` metadata, which is why Hydra does the commit.
 - **Stop everything (heads only):** **Hydra: Stop All Heads** in the command palette, **Stop all heads** in **Hydra Settings → Heads**, or **Stop all** on the dashboard. Cancels every running head; heads may still start again right away.
 - **Stop everything, for good (5.3):** **Hydra: Stop All Agents** (command palette, or **Stop all agents** in **Hydra Settings → Heads**) cancels every head (and its gates), ends every lane's process while keeping the lane and its worktree, and refuses new heads, lane launches and plan advances with the reason — until **Hydra: Resume Agents** clears it. It asks to confirm first, unless called with `{ confirm: false }`. The stop is saved for the workspace (it survives a reload) and a status bar item, **Hydra stopped**, shows while it's on; click it to resume.

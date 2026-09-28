@@ -7,7 +7,7 @@ import type { Provider } from './model';
  *
  * - Claude heads get a settings file (`--settings`) that blocks reads outside their working
  *   folders and denies Read and Edit on Hydra's data, the other worktrees, the lead's `.hydra`
- *   and `.git`, and the usual places secrets live (research R1).
+ *   and `.git`, and the usual places secrets live (research R1), and turns your plugins off.
  * - Their tools are an explicit list (`--tools`), writes are allowed only inside the worktree
  *   (`Edit(/**)`), PowerShell is never given, and Bash only runs through Codex's Windows sandbox
  *   (R5), by way of the wrapper scripts below.
@@ -126,7 +126,29 @@ export function secretTargets(env: Readonly<Record<string, string | undefined>>,
   return targets;
 }
 
-export interface ClaudeSettings { permissions: { blockReadsOutsideWorkingDirectories?: true; deny: string[] } }
+export interface ClaudeSettings { permissions: { blockReadsOutsideWorkingDirectories?: true; deny: string[] }; enabledPlugins?: Record<string, false> }
+
+/**
+ * A plugin id as `enabledPlugins` spells it, `name@marketplace`. Anything else is left out: one
+ * odd key could make Claude Code drop the whole settings file, deny rules and all (R1).
+ */
+export const pluginIdForm = /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * The plugins your user settings could turn on for a head, from the text of your Claude
+ * `settings.json` (its `enabledPlugins` keys) and `plugins/installed_plugins.json` (every installed
+ * plugin). Missing or malformed text adds none. Sorted, so the same files give the same list.
+ */
+export function userPluginIds(settingsText: string | undefined, installedText: string | undefined): string[] {
+  const keys = (text: string | undefined, pick: (value: Record<string, unknown>) => unknown) => {
+    try {
+      const found = pick(JSON.parse((text ?? '').replace(/^﻿/, '')) as Record<string, unknown>);
+      return found && typeof found === 'object' && !Array.isArray(found) ? Object.keys(found) : [];
+    } catch { return []; }
+  };
+  const ids = [...keys(settingsText, value => value?.enabledPlugins), ...keys(installedText, value => value?.plugins)];
+  return [...new Set(ids.filter(id => pluginIdForm.test(id)))].sort();
+}
 
 export interface HeadSettingsInput {
   platform: NodeJS.Platform;
@@ -143,6 +165,8 @@ export interface HeadSettingsInput {
   otherWorktrees: readonly string[];
   /** The main checkout, whose `.hydra` and `.git` are denied. */
   leadFolder: string;
+  /** Your plugins (userPluginIds): each is turned off for the head. */
+  userPlugins?: readonly string[];
 }
 
 /**
@@ -150,6 +174,10 @@ export interface HeadSettingsInput {
  * whatever the spelling (R1: 8.3 names, `\\?\` and UNC spellings otherwise got through), and Read
  * and Edit are denied on Hydra's data (reads as storageReadDeny says; edits on all of it, the pack
  * copy included), the other worktrees, the lead's `.hydra` and `.git`, and the secret folders.
+ * Your plugins are turned off (`enabledPlugins`, which beats your user settings): a head can't use
+ * their tools, and each of their hooks would run through the shell sandbox's wrapper, which made
+ * every head command take a minute or more.
+ * Your own settings' hooks still run. A role's `--plugin-dir` plugin isn't listed, so it still loads.
  * Throws when the result isn't a file Claude Code would accept, or when a Read rule would cover the
  * head's own worktree or its `--add-dir` folders: then the head doesn't start.
  */
@@ -162,7 +190,9 @@ export function headSettings(input: HeadSettingsInput): ClaudeSettings {
     ...denyPairs([{ path: api.join(input.leadFolder, '.hydra'), dir: true }, { path: api.join(input.leadFolder, '.git'), dir: true }], input.platform),
     ...denyPairs(secretTargets(input.env, input.platform), input.platform),
   ])];
+  const plugins = [...new Set(input.userPlugins ?? [])].filter(id => pluginIdForm.test(id)).sort();
   const settings: ClaudeSettings = { permissions: { blockReadsOutsideWorkingDirectories: true, deny } };
+  if (plugins.length) settings.enabledPlugins = Object.fromEntries(plugins.map(id => [id, false] as const));
   const problems = settingsProblems(settings, { platform: input.platform, blockReads: true, readable: [input.worktree, ...input.addDirs] });
   if (problems.length) throw new Error(`Hydra couldn't build the head's permission settings: ${problems[0]}`);
   return settings;
@@ -200,13 +230,20 @@ export function laneSettings(input: LaneSettingsInput): ClaudeSettings {
  * Everything wrong with a settings file Hydra is about to write, in words; empty when it's good.
  * Only the keys Hydra means to write are allowed, with exactly the right types, and every rule
  * must be a Read or Edit rule on an absolute `//…` path in the form R1 showed works. `readable`
- * lists folders no Read rule may cover (the worktree, a role's pack copy).
+ * lists folders no Read rule may cover (the worktree, a role's pack copy). A head's
+ * `enabledPlugins` may only turn plugins off; a lane keeps your plugins.
  */
 export function settingsProblems(value: unknown, options: { platform: NodeJS.Platform; blockReads: boolean; readable?: readonly string[] }): string[] {
   const problems: string[] = [];
   const plain = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item) && Object.getPrototypeOf(item) === Object.prototype;
   if (!plain(value)) return ['the settings must be an object'];
-  for (const key of Object.keys(value)) if (key !== 'permissions') problems.push(`unknown setting "${key}"`);
+  for (const key of Object.keys(value)) if (key !== 'permissions' && key !== 'enabledPlugins') problems.push(`unknown setting "${key}"`);
+  if ('enabledPlugins' in value) {
+    const plugins = value.enabledPlugins;
+    if (!options.blockReads) problems.push('a lane keeps your own plugins');
+    else if (!plain(plugins) || !Object.keys(plugins).length) problems.push('enabledPlugins must be a non-empty object');
+    else for (const [id, on] of Object.entries(plugins)) if (!pluginIdForm.test(id) || on !== false) problems.push(`the plugin setting ${JSON.stringify(id)} doesn't turn a plugin off`);
+  }
   const permissions = value.permissions;
   if (!plain(permissions)) return [...problems, 'permissions must be an object'];
   for (const key of Object.keys(permissions)) if (key !== 'deny' && key !== 'blockReadsOutsideWorkingDirectories') problems.push(`unknown permission setting "${key}"`);
