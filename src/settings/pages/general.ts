@@ -151,7 +151,7 @@ export const generalPage: SettingsPage = {
         const state = await Promise.resolve(vscode.commands.executeCommand<{ mode: 'editor' | 'agents' }>('hydra.getLayoutMode')).catch(() => undefined);
         if (state && state.mode !== value) await vscode.commands.executeCommand('hydra.toggleMode');
         await ctx.post({ type: 'windowLayoutState', value });
-        await ctx.post({ type: 'status', text: `Window layout set to ${value === 'agents' ? 'Agents' : 'Editor'}.` });
+        await ctx.post({ type: 'status', text: `Window layout set to ${value === 'agents' ? 'Agent Manager' : 'Editor'}.` });
         return true;
       }
       case 'previewImport': {

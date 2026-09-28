@@ -16,7 +16,7 @@ async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<voi
     await new Promise(resolve => setTimeout(resolve, 25));
   }
 }
-const managerOpen = () => vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputWebview && tab.label === 'Hydra · Agents');
+const managerOpen = () => vscode.window.tabGroups.all.flatMap(group => group.tabs).some(tab => tab.input instanceof vscode.TabInputWebview && tab.label === 'Agent Manager');
 const tabIdentity = (tab: vscode.Tab, column: vscode.ViewColumn): string => {
   const input = tab.input;
   const resource = input instanceof vscode.TabInputTextDiff ? ['diff', input.original.toString(), input.modified.toString()]
@@ -200,6 +200,21 @@ export async function run(): Promise<void> {
     assert.equal(setupTabs().length, 0, 'A built-in extension must not auto-open onboarding in an extension test host');
     const startup = await vscode.commands.executeCommand<{ development: boolean }>('hydra.desktop.startupContext');
     assert.equal(startup?.development, true, 'Owned workbench recognizes the separate native test harness');
+    // Hydra's notifications (docs/Heads.md, "Hydra's notifications"): Hydra's messages reach the workbench's toasts,
+    // the button pressed answers the caller, and a malformed notice is refused.
+    type ListedNotice = { id: string; kind: string; message: string; actions: string[] };
+    const listNotices = async () => await vscode.commands.executeCommand<ListedNotice[]>('hydra.desktop.notice.list') ?? [];
+    const { notices } = await import('../src/notices');
+    const answer = notices.warning('Hydra: smoke notice.', 'Got it', 'Later');
+    let routed: ListedNotice | undefined;
+    await waitFor(async () => !!(routed = (await listNotices()).find(notice => notice.message === 'Smoke notice.')));
+    assert.equal(routed!.kind, 'warning');
+    assert.deepEqual(routed!.actions, ['Got it', 'Later']);
+    assert.equal(await vscode.commands.executeCommand('hydra.desktop.notice.choose', routed!.id, 'Later'), true);
+    assert.equal(await answer, 'Later');
+    assert.ok(!(await listNotices()).some(notice => notice.id === routed!.id), 'An answered notice closes');
+    await assert.rejects(async () => await vscode.commands.executeCommand('hydra.desktop.notice.show', { id: 'not valid!', kind: 'info', message: 'x' }), /needs an id/);
+    console.log('PASS: Hydra messages show as Hydra toasts, the pressed button answers the caller, and a malformed notice is refused.');
     // The walkthrough (docs/Lanes_And_Planner_Plan.md, "A walkthrough"): hydra.learn is registered, and never opens itself in a test host.
     assert.ok((await vscode.commands.getCommands(true)).includes('hydra.learn'), 'hydra.learn is registered');
     assert.ok(vscode.extensions.getExtension('nico-dunlap.hydra-agent-manager')?.packageJSON?.contributes?.walkthroughs?.some((walkthrough: { id: string }) => walkthrough.id === 'hydra.workWithHydra'), 'the walkthrough is contributed');

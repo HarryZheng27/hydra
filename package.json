@@ -94,13 +94,18 @@
       },
       {
         "command": "hydra.toggleMode",
-        "title": "Hydra: Toggle Editor / Agents",
+        "title": "Hydra: Switch Agent Manager / Editor",
         "icon": "$(layout)"
       },
       {
         "command": "hydra.openAgents",
-        "title": "Hydra: Open Agents",
+        "title": "Hydra: Open Agent Manager",
         "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "hydra.openEditor",
+        "title": "Hydra: Open Editor",
+        "icon": "$(code)"
       },
       {
         "command": "hydra.newPlan",
@@ -138,7 +143,7 @@
       },
       {
         "command": "hydra.openCanvas",
-        "title": "Hydra: Open Agents Canvas"
+        "title": "Hydra: Open Agent Manager Canvas"
       },
       {
         "command": "hydra.overview.mergeLane",
@@ -216,14 +221,14 @@
     "viewsWelcome": [
       {
         "view": "hydra.overview",
-        "contents": "Run several agents at once.\n[New lane](command:hydra.newLane)\n[New plan](command:hydra.newPlan)\n[Open Agents view](command:hydra.openAgents)\n[Learn how](command:hydra.learn)"
+        "contents": "Run several agents at once.\n[New lane](command:hydra.newLane)\n[New plan](command:hydra.newPlan)\n[Open Agent Manager](command:hydra.openAgents)\n[Learn how](command:hydra.learn)"
       }
     ],
     "keybindings": [
       {
         "command": "hydra.toggleMode",
-        "key": "ctrl+alt+a",
-        "mac": "cmd+alt+a"
+        "key": "alt+shift+a",
+        "mac": "alt+shift+a"
       },
       {
         "command": "hydra.openSettings",
@@ -260,7 +265,7 @@
           {
             "id": "heads",
             "title": "Heads",
-            "description": "Ask your chat for something big; it splits the work across Hydra heads that run on their own. Watch them on the Agents canvas.\n[Open Agents](command:hydra.openCanvas)",
+            "description": "Ask your chat for something big; it splits the work across Hydra heads that run on their own. Watch them in the Agent Manager: press Alt+Shift+A, or use the Agent Manager / Editor switch in the title bar, to go back and forth between it and the editor.\n[Open Agent Manager](command:hydra.openCanvas)",
             "media": {
               "image": {
                 "dark": "media/walkthrough/heads-dark.svg",
@@ -394,7 +399,7 @@
           ],
           "enumDescriptions": [
             "Editor: this window opens in the code editor.",
-            "Agents: this window opens in the Agents view."
+            "Agent Manager: this window opens in the Agent Manager."
           ],
           "default": "editor",
           "description": "Which view a Hydra window opens in on startup."
