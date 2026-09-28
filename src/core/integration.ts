@@ -17,7 +17,7 @@ import type { Provider } from './model';
  * commit the plan started from. When a job passes its own gates, its commit joins a
  * serial queue that merges it onto that branch; the jobs that depend on it start from
  * the branch's tip, one base that is already merged. When everything has landed, the
- * integration gate runs the project's command gates (and, for a strict plan, a review)
+ * integration gate runs the project's command gates (and, for a plan with a standard or strict job, one review of the combined diff)
  * on the integrated tree; only a pass offers Merge plan.
  *
  * Shape (the same as every other plan feature): the queue's whole state is data on the
@@ -312,16 +312,16 @@ export function mergeRefusal(plan: { title: string; integration?: PlanIntegratio
 }
 
 /**
- * The gates the integration gate runs (pure): the project's command gates, always; with a strict job in
- * the plan (O6), also a review of the whole diff by the other provider: the project's own review gates,
+ * The gates the integration gate runs (pure): the project's command gates, always; with a standard or strict
+ * job in the plan (O6), also one review of the whole diff by the other provider: the project's own review gates,
  * or rigor's review when it has none. Screenshots belong to each job's own gates, not this one.
  */
-export function integrationGates(config: Pick<GatesConfig, 'gates'> & { notRun?: JobCheckResult[] }, strict: boolean): { gates: Gate[]; notRun: JobCheckResult[] } {
+export function integrationGates(config: Pick<GatesConfig, 'gates'> & { notRun?: JobCheckResult[] }, review: boolean): { gates: Gate[]; notRun: JobCheckResult[] } {
   const commands = config.gates.filter(gate => gate.type === 'command');
   const reviews = config.gates.filter((gate): gate is ReviewGate => gate.type === 'review');
-  const review: ReviewGate[] = !strict ? [] : reviews.length ? reviews : [{ id: rigorReviewGateId, type: 'review', required: true, reviewer: 'other', focus: 'Review the combined change of every job in this plan for correctness, safety and whether the pieces fit together.' }];
-  const wanted = new Set<string>(['command', ...(strict ? ['review'] : [])]);
-  return { gates: [...commands, ...review], notRun: (config.notRun ?? []).filter(result => wanted.has(gateKind(result))) };
+  const reviewGates: ReviewGate[] = !review ? [] : reviews.length ? reviews : [{ id: rigorReviewGateId, type: 'review', required: true, reviewer: 'other', focus: 'Review the combined change of every job in this plan for correctness, safety and whether the pieces fit together.' }];
+  const wanted = new Set<string>(['command', ...(review ? ['review'] : [])]);
+  return { gates: [...commands, ...reviewGates], notRun: (config.notRun ?? []).filter(result => wanted.has(gateKind(result))) };
 }
 
 /** Who "wrote" the integrated diff, for the review's "other" (O6): with both providers among the jobs, no reviewer is independent, and the evidence says so. */

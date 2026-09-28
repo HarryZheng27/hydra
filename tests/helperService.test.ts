@@ -684,12 +684,12 @@ test('O6: continueWith never lists the same provider twice in priorProviders (a 
 
 // ---- O6: both providers as one pool (docs/Heads.md, "Rigor") ----
 
-test('O6: rigor adds a review the project doesn\'t already have; quick adds nothing; the project\'s own review is never duplicated', async () => {
+test('O6: strict adds a review the project doesn\'t already have; quick and standard add nothing to the job itself', async () => {
   const reviewer = scriptedReviewer([{ verdict: 'pass', summary: 'Looks fine.', findings: [] }]);
   const f = await fixture({ checks: passCheck, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const standard = await helper.call('hydra_done', { summary: 'Standard rigor' });
-    assert.equal(standard.ok, true, standard.error);
+    const done = await helper.call('hydra_done', { summary: 'Rigor' });
+    assert.equal(done.ok, true, done.error);
     helper.endTurn();
   } });
   try {
@@ -703,11 +703,17 @@ test('O6: rigor adds a review the project doesn\'t already have; quick adds noth
     const [quickHead] = (await f.wait([quick.job_id])).heads;
     assert.deepEqual(quickHead.checks.map((check: { id: string }) => check.id), ['unit']);
 
-    // "standard": adds a review, since the project (passCheck) has none.
+    // "standard": nothing on the job itself; its plan gets one review of the combined work instead.
     const standard = await f.start('standard', { rigor: 'standard' });
     const [standardHead] = (await f.wait([standard.job_id])).heads;
-    assert.deepEqual(standardHead.checks.map((check: { id: string; kind: string }) => [check.id, check.kind]), [['unit', 'command'], ['rigor-review', 'review']]);
-    assert.equal(standardHead.state, 'done');
+    assert.deepEqual(standardHead.checks.map((check: { id: string }) => check.id), ['unit']);
+    assert.equal(reviewer.specs.length, 0);
+
+    // "strict": adds a review, since the project (passCheck) has none.
+    const strict = await f.start('strict', { rigor: 'strict' });
+    const [strictHead] = (await f.wait([strict.job_id])).heads;
+    assert.deepEqual(strictHead.checks.map((check: { id: string; kind: string }) => [check.id, check.kind]), [['unit', 'command'], ['rigor-review', 'review']]);
+    assert.equal(strictHead.state, 'done');
   } finally { await f.close(); }
 });
 
@@ -1129,10 +1135,10 @@ test('O3: runIntegrationGate runs the project\'s command gates on the integrated
     await git(f.repo, ['add', '.']); await git(f.repo, ['commit', '-qm', 'landed']);
     const tip = (await git(f.repo, ['rev-parse', 'HEAD'])).trim();
     await git(f.repo, ['checkout', '-q', 'main']);
-    const ran = await f.service.runIntegrationGate({ planId: 'aaaaaaaaaaaa', title: 'Checkout', base, tip, strict: false, providers: ['claude', 'codex'] });
+    const ran = await f.service.runIntegrationGate({ planId: 'aaaaaaaaaaaa', title: 'Checkout', base, tip, review: false, providers: ['claude', 'codex'] });
     assert.equal(ran.configured, 'file');
     assert.deepEqual(ran.checks.map(check => [check.id, check.state]), [['unit', 'passed']]);
-    const onBase = await f.service.runIntegrationGate({ planId: 'aaaaaaaaaaaa', title: 'Checkout', base, tip: base, strict: false, providers: ['claude'] });
+    const onBase = await f.service.runIntegrationGate({ planId: 'aaaaaaaaaaaa', title: 'Checkout', base, tip: base, review: false, providers: ['claude'] });
     assert.deepEqual(onBase.checks.map(check => [check.id, check.state]), [['unit', 'failed']]);
     assert.doesNotMatch(await git(f.repo, ['worktree', 'list', '--porcelain']), /ig-aaaaaaaaaaaa/, 'its worktree is gone');
     assert.equal(await git(f.repo, ['status', '--porcelain=v1']), '', 'the main checkout is untouched');
