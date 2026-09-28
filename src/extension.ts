@@ -1039,7 +1039,9 @@ class Manager {
    * True on that first launch.
    */
   private async firstRunLayoutOnce(): Promise<boolean> {
-    if (!this.settingsImport.available) return false;
+    // The desktop smoke runs the installed build on a fresh profile; like the walkthrough (showWalkthroughOnce), its
+    // test environment is how it's told apart: it checks the editor and Agents switching from a known start.
+    if (!this.settingsImport.available || process.env.HYDRA_TEST_REPOSITORY) return false;
     const key = 'hydra.firstRunLayout.v1';
     if (this.context.globalState.get(key)) return false;
     await this.context.globalState.update(key, true);
