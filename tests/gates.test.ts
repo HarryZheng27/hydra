@@ -8,7 +8,7 @@ import { gateBlocks, gateKind, gateState, processAlive, type JobCheckResult } fr
 import type { ProbeOutput } from '../src/core/process';
 import { terminateProcessTree } from '../src/core/process';
 import { applyRigor, findBrowser, gateCommandsBrief, gateFailureMessage, gateOrder, hasCommandGate, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
-import { browserCandidates } from '../src/core/gates/browser';
+import { browserCandidates, connectWithRetry } from '../src/core/gates/browser';
 import { resolveCommand } from '../src/core/gates/command';
 import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewFails, reviewPrompt } from '../src/core/gates/review';
 import { substitutePort } from '../src/core/gates/screenshots';
@@ -528,4 +528,18 @@ test('command gates find npm.cmd on Windows; anything with a path or an extensio
     assert.equal(await resolveCommand('missing', 'win32', env), 'missing');
     assert.equal(await resolveCommand('tool', 'linux', env), 'tool');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('connectWithRetry: a refused DevTools connection right after the browser starts is tried again; a gone browser or the deadline stops it', async () => {
+  let tries = 0;
+  assert.equal(await connectWithRetry(async () => { if (++tries < 3) throw new Error('refused'); return 'connected'; }, () => false, 2000, 5), 'connected');
+  assert.equal(tries, 3);
+  let exitedTries = 0;
+  await assert.rejects(connectWithRetry(async () => { exitedTries++; throw new Error('refused'); }, () => true, 2000, 5), /refused/);
+  assert.equal(exitedTries, 1, 'the browser is gone: no point trying again');
+  await assert.rejects(connectWithRetry(async () => { throw new Error('refused'); }, () => false, 50, 5), /refused/, 'bounded');
+  // An attempt that hangs is given only the time left, so a stalled handshake can't stretch the whole budget.
+  const started = Date.now(); const budgets: number[] = [];
+  await assert.rejects(connectWithRetry(remaining => { budgets.push(remaining); return new Promise((_, reject) => setTimeout(() => reject(new Error('did not open')), remaining)); }, () => false, 120, 5), /did not open/);
+  assert.ok(budgets[0]! <= 120 && Date.now() - started < 400, 'the whole connect stays within its budget');
 });
