@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { agentIsolation, codexHomeFolder, prepareCodexHome } from '../src/core/agentHome';
+import { agentIsolation, codexHomeFolder, newerSignIn, prepareCodexHome } from '../src/core/agentHome';
 
 /**
  * HSEC-70: heads and reviewers run with your sign-in only. These tests use a made-up Codex home
@@ -44,11 +44,40 @@ test('Hydra\'s own Codex home: your auth.json linked (one file, so a token refre
     // Signing in again makes a new auth.json: the next launch links that one instead.
     await writeFile(path.join(f.root, 'new-auth.json'), '{"tokens":"second login"}');
     await rename(path.join(f.root, 'new-auth.json'), path.join(f.user, 'auth.json'));
+    await utimes(path.join(home, 'auth.json'), new Date('2026-01-01'), new Date('2026-01-01'));
     assert.notEqual(await inode(path.join(home, 'auth.json')), await inode(path.join(f.user, 'auth.json')));
     await prepareCodexHome(f.storage, f.env);
     assert.equal(await inode(path.join(home, 'auth.json')), await inode(path.join(f.user, 'auth.json')));
     assert.equal(await readFile(path.join(home, 'auth.json'), 'utf8'), '{"tokens":"second login"}');
     assert.ok(!(await readdir(home)).some(name => name.endsWith('.link')), 'no half-made link left behind');
+  } finally { await f.close(); }
+});
+
+test('a split link whose copy in Hydra\'s home holds a later sign-in is never overwritten: that launch uses your home, and says to sign in again if asked', async () => {
+  const f = await fakeHomes();
+  try {
+    const home = path.join(f.storage, codexHomeFolder), own = path.join(home, 'auth.json'), yours = path.join(f.user, 'auth.json');
+    await prepareCodexHome(f.storage, f.env);
+    // A Codex that replaced auth.json on a refresh in Hydra's home: the link split, and Hydra's copy is newer.
+    await writeFile(path.join(home, 'refreshed.json'), '{"tokens":"rotated"}');
+    await rename(path.join(home, 'refreshed.json'), own);
+    await utimes(yours, new Date('2026-01-01'), new Date('2026-01-01'));
+    const prepared = await prepareCodexHome(f.storage, f.env);
+    assert.equal(prepared.home, undefined, 'your own home this launch');
+    assert.match(prepared.note!, /newer than yours[\s\S]*codex login/);
+    assert.equal(await readFile(own, 'utf8'), '{"tokens":"rotated"}', 'the newer tokens are kept');
+    assert.equal(await readFile(yours, 'utf8'), '{"tokens":"first"}', 'yours untouched');
+    const isolation = await agentIsolation('codex', f.storage, f.env);
+    assert.deepEqual(isolation.env, {}); assert.match(isolation.note!, /codex login/);
+
+    // `last_refresh` decides when both files have it, whatever the file times say.
+    await writeFile(own, '{"last_refresh":"2026-03-01T00:00:00Z"}'); await writeFile(yours, '{"last_refresh":"2026-05-01T00:00:00Z"}');
+    await utimes(yours, new Date('2026-01-01'), new Date('2026-01-01'));
+    assert.equal(await newerSignIn(own, yours), false, 'yours was refreshed later');
+    const relinked = await prepareCodexHome(f.storage, f.env);
+    assert.equal(relinked.home, home, 'so the link is remade');
+    assert.equal(await readFile(own, 'utf8'), '{"last_refresh":"2026-05-01T00:00:00Z"}');
+    assert.equal(await newerSignIn(path.join(f.root, 'missing.json'), yours), false);
   } finally { await f.close(); }
 });
 

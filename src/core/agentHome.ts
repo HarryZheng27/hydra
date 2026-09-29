@@ -17,7 +17,9 @@ import { userClaudePlugins } from './confineFiles';
  *   a token (checked with a hard-linked file), so both names stay one file: a refresh in either
  *   home is seen by the other, and your sign-in never goes stale. A copy would split them, and
  *   the first refresh in one would log the other out. The link is checked, and remade, before
- *   every launch, so signing in again (a new file) is picked up.
+ *   every launch, so signing in again (a new file) is picked up. It is never remade over a copy
+ *   here that holds a later sign-in than yours (a split link a refresh wrote to): that launch uses
+ *   your home instead, and the note says to run `codex login` if Codex asks.
  * - `.sandbox` and `.sandbox-secrets`, junctions to yours: the Windows sandbox you set up. Without
  *   them Codex would set up its elevated sandbox again, which needs an administrator.
  * Everything else Codex writes there itself (its sessions, logs and caches). Hydra's flags
@@ -52,6 +54,28 @@ async function sameFile(a: string, b: string): Promise<boolean> {
 }
 
 /**
+ * When an auth.json was last signed in or refreshed: its `last_refresh` time when both files have
+ * one, else when the file was last written. Undefined when the file isn't there.
+ */
+async function signInTime(file: string, byField: boolean): Promise<number | undefined> {
+  if (byField) {
+    try {
+      const value = (JSON.parse((await readFile(file, 'utf8')).replace(/^﻿/, '')) as { last_refresh?: unknown }).last_refresh;
+      const time = typeof value === 'string' ? Date.parse(value) : NaN;
+      if (Number.isFinite(time)) return time;
+    } catch { /* falls back to the file's time */ }
+  }
+  return stat(file).then(found => found.mtimeMs, () => undefined);
+}
+/** Whether `ours` holds a later sign-in than `yours`: by `last_refresh` when both have one, else by when each was written. */
+export async function newerSignIn(ours: string, yours: string): Promise<boolean> {
+  const hasField = async (file: string) => readFile(file, 'utf8').then(text => { try { return Number.isFinite(Date.parse(String((JSON.parse(text.replace(/^﻿/, '')) as { last_refresh?: unknown }).last_refresh))); } catch { return false; } }, () => false);
+  const byField = await hasField(ours) && await hasField(yours);
+  const [mine, theirs] = await Promise.all([signInTime(ours, byField), signInTime(yours, byField)]);
+  return mine !== undefined && theirs !== undefined && mine > theirs;
+}
+
+/**
  * Makes (or checks) Hydra's own Codex home under `storage` and says what a Codex head or reviewer
  * runs with. Never writes to your own home: it only links to it.
  */
@@ -69,6 +93,9 @@ export async function prepareCodexHome(storage: string, env: Readonly<Record<str
   try {
     await mkdir(home, { recursive: true });
     if (!await sameFile(auth, own)) {
+      // A split link (a Codex that replaced the file) whose copy here was refreshed later than yours: re-linking would
+      // throw away the newer tokens, and if the refresh token was rotated, sign you out. Keep it; use your home this time.
+      if (await newerSignIn(own, auth)) return { carry, note: 'the sign-in in Hydra\'s own Codex home is newer than yours, so Hydra left it alone; if Codex asks you to sign in, run `codex login`' };
       // A new name, then a rename over the old one: another window checking at the same moment never sees no auth.json.
       const temporary = path.join(home, `auth.json.${randomBytes(4).toString('hex')}.link`);
       await link(auth, temporary);

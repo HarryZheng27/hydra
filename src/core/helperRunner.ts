@@ -126,7 +126,7 @@ const toml = (value: string) => { if (value.includes("'") || /[\r\n]/.test(value
 /**
  * A Codex head's command line: first the flags that keep your own config.toml, plugins, hooks,
  * memories and connected apps out (HSEC-70; its CODEX_HOME is Hydra's own, so your AGENTS.md
- * isn't there), then Hydra's server, the only one it gets, and the sandbox.
+ * isn't there), then Hydra's server and its role's servers, the only ones it gets, and the sandbox.
  */
 export function codexHelperArguments(spec: HelperRunSpec, resumeThread?: string): string[] {
   const env = Object.entries(spec.bridge.env).map(([key, value]) => `${key} = ${toml(value)}`).join(', ');
