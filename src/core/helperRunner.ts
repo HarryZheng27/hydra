@@ -8,7 +8,7 @@ import { claudeHeadTools } from './confine';
 import { redactText } from './redact';
 import type { RunUsage } from './jobs';
 import { claudeProviderWaitSignal, codexProviderWaitSignal, ProviderWaitTracker, type ProviderWait } from './providerWait';
-import { ClaudeNudge, StreamActivity, type HeadActivity } from './headSilence';
+import { ClaudeNudge, claudeStreamLine, StreamActivity, type HeadActivity } from './headSilence';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -185,6 +185,8 @@ function spawnLogged(spec: HelperRunSpec, args: string[], log: (kind: string, da
   });
   child.stderr!.setEncoding('utf8');
   child.stderr!.on('data', (chunk: string) => log('stderr', chunk.slice(0, 4000)));
+  // Registered before the caller's own close handler, so the count lands before its 'exit' line.
+  child.on('close', () => { if (partials) { log('partial', { lines: partials }); partials = 0; } });
   return child;
 }
 
@@ -208,16 +210,17 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   const nudging = new ClaudeNudge(text => { void say(text, false); });
   let nudges = 0;
   const child = spawnLogged(spec, claudeHelperArguments(spec), log, message => {
-    // The CLI's answer to Hydra's own control requests (initialize, a nudge's interrupt) isn't the model producing anything.
-    if (message.type === 'control_response') { nudging.controlResponse(message); return; }
+    // Hydra's own control requests' answers, and everything a nudge's interrupt makes the CLI send before its
+    // result, are logged only: none of it is the model producing anything (claudeStreamLine, headSilence.ts).
+    const seen = claudeStreamLine(activity, nudging, message);
+    if (seen.held) return;
     waiting.observe(claudeProviderWaitSignal(message));
-    if (activity.observeClaude(message)) waiting.output();
+    if (seen.output) waiting.output();
     // A limit counts for the turn it ends; a later good turn clears it.
     if (message.type === 'assistant' || message.type === 'result') limit = claudeHeadLimit(message) ?? (message.type === 'result' && message.is_error !== true ? undefined : limit);
     // O9: each turn's result reports the session's cost so far; the run's cost is the largest seen.
     if (message.type === 'result') costUsd = claudeRunCost(message, costUsd);
-    if (message.type === 'result' && nudging.result()) return;
-    if (message.type === 'result') for (const listener of listeners) listener();
+    if (message.type === 'result' && seen.turnEnd) for (const listener of listeners) listener();
   });
   const exited = new Promise<{ code: number | null }>(resolve => child.on('close', code => { log('exit', { code }); waiting.end(); resolve({ code }); }));
   child.on('error', error => log('error', error.message));

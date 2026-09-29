@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ClaudeNudge, claudeSilenceLimits, codexSilenceLimits, headSilenceLimits, headSilenceStep, headSilentMs, StreamActivity } from '../src/core/headSilence';
+import { ClaudeNudge, claudeSilenceLimits, claudeStreamLine, codexSilenceLimits, headSilenceLimits, headSilenceStep, headSilentMs, StreamActivity } from '../src/core/headSilence';
 import { describeProviderWait, providerWaitLabel, ProviderWaitTracker, validateProviderWait, type ProviderWait } from '../src/core/providerWait';
 import { buildPlanReport, type Plan, type PlanReportJobDetail } from '../src/core/plans';
 import { noAnswerReply, unattendedAnswer } from '../src/core/helperService';
@@ -54,6 +54,54 @@ test('Claude: only model output counts; the lines a nudge causes, init and rate-
   assert.equal(activity.snapshot().lastOutputAt, 8000);
 });
 
+/** What Claude Code 2.1.282 really sends after Hydra's interrupt, in order (from a live run against the CLI). */
+const interruptLines = (id: string) => [
+  { type: 'control_response', response: { subtype: 'success', request_id: id, response: { still_queued: [] } } },
+  { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'I\'ll finish up n' }] } },
+  { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+  { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' },
+];
+
+test('Claude, replayed from the real CLI: a nudge\'s interrupt lines are not output, so a head still silent after it fails at 10 minutes', () => {
+  let clock = 0;
+  const activity = new StreamActivity(() => clock);
+  const sent: string[] = [];
+  const nudge = new ClaudeNudge(text => { sent.push(text); activity.turnStarted(false); });
+  activity.turnStarted();
+  clock = 1000; assert.deepEqual(claudeStreamLine(activity, nudge, { type: 'assistant', message: { content: [{ type: 'text', text: 'I\'ll finish up now.' }] } }), { held: false, output: true, turnEnd: false });
+  const done = { recorded: false, nudged: false };
+  // Silent: recorded at 3m, nudged at 5m.
+  clock = 1000 + 5 * 60_000;
+  assert.equal(headSilenceStep(headSilentMs(activity.snapshot(), clock), done), 'nudge');
+  done.recorded = done.nudged = true;
+  nudge.started('hydra-helper-nudge-1', 'continue');
+  const seen = interruptLines('hydra-helper-nudge-1').map(line => { clock += 200; return claudeStreamLine(activity, nudge, line); });
+  assert.deepEqual(seen, [
+    { held: true, output: false, turnEnd: false },
+    { held: true, output: false, turnEnd: false },
+    { held: true, output: false, turnEnd: false },
+    { held: false, output: false, turnEnd: false },
+  ], 'the interrupted turn\'s result is no turn end to report');
+  assert.deepEqual(sent, ['continue']);
+  // Then the "continue" turn opens with system init, and the head stays hung.
+  clock += 200; assert.deepEqual(claudeStreamLine(activity, nudge, { type: 'system', subtype: 'init', session_id: 's' }), { held: false, output: false, turnEnd: false });
+  assert.deepEqual(activity.snapshot(), { lastOutputAt: 1000, toolsInFlight: 0, turnOpen: true }, 'the silence still dates from the last real output');
+  clock = 1000 + 9 * 60_000;
+  assert.equal(headSilenceStep(headSilentMs(activity.snapshot(), clock), done), undefined, 'no second nudge');
+  clock = 1000 + 10 * 60_000;
+  assert.equal(headSilenceStep(headSilentMs(activity.snapshot(), clock), done), 'fail');
+  // Had the model come back, its output counts again, and a real turn end is reported.
+  clock += 1000; assert.equal(claudeStreamLine(activity, nudge, { type: 'assistant', message: { content: [{ type: 'text', text: 'Continuing.' }] } }).output, true);
+  assert.deepEqual(claudeStreamLine(activity, nudge, { type: 'result', subtype: 'success' }), { held: false, output: false, turnEnd: true });
+});
+
+test('Claude: a user line is output only with a tool_result in it', () => {
+  const activity = new StreamActivity(() => 5);
+  assert.equal(activity.observeClaude({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }), false);
+  assert.equal(activity.observeClaude({ type: 'user', message: { content: 'plain' } }), false);
+  assert.equal(activity.observeClaude({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] } }), true);
+});
+
 test('Claude nudge: the "continue" message waits for the interrupted turn\'s result, which is not a turn end; a later real one is', () => {
   const sent: string[] = [];
   const nudge = new ClaudeNudge(text => sent.push(text));
@@ -65,7 +113,7 @@ test('Claude nudge: the "continue" message waits for the interrupted turn\'s res
   assert.equal(nudge.result(), true, 'the interrupted turn\'s result is swallowed');
   assert.deepEqual(sent, ['continue']);
   assert.equal(nudge.result(), false, 'the continue turn\'s own result is reported');
-  // Nothing to interrupt: the CLI answers with an error, and the message goes at once; no later result is swallowed.
+  // A guarded fallback: the real CLI answers even an idle interrupt with success, but an error answer would send the message at once.
   nudge.started('hydra-helper-nudge-2', 'again');
   nudge.controlResponse({ type: 'control_response', response: { subtype: 'error', request_id: 'another-request' } });
   assert.deepEqual(sent, ['continue'], 'someone else\'s control response changes nothing');

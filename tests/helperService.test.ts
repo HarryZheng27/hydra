@@ -15,7 +15,7 @@ import type { LimitEvent } from '../src/core/limitEvents';
 import type { ReviewerSpec } from '../src/core/gates';
 import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 import type { ProviderWait } from '../src/core/providerWait';
-import { StreamActivity, type HeadActivity } from '../src/core/headSilence';
+import { ClaudeNudge, claudeStreamLine, StreamActivity, type HeadActivity } from '../src/core/headSilence';
 import type { AuditEvent } from '../src/core/audit';
 
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
@@ -314,7 +314,8 @@ test('a stuck head waits for the lead, gets the answer as its tool result and co
     const blocked = (await f.wait([job_id])).heads[0];
     assert.equal(blocked.state, 'blocked'); assert.equal(blocked.question, 'Use v1 or v2?');
     assert.match((await f.call('hydra_reply_to_head', { job_id, message: '' })).error || '', /1–8000/);
-    assert.deepEqual((await f.call('hydra_reply_to_head', { job_id, message: 'v2' })).result, { job_id, delivered: true });
+    const replied = await f.call('hydra_reply_to_head', { job_id, message: 'v2' });
+    assert.deepEqual(replied.result, { job_id, delivered: true }, JSON.stringify(replied));
     const done = (await f.wait([job_id])).heads[0];
     assert.equal(done.state, 'done'); assert.equal(done.summary, 'Used v2');
     assert.match((await f.call('hydra_reply_to_head', { job_id, message: 'late' })).error || '', /not waiting for an answer/);
@@ -1515,12 +1516,19 @@ test('a nudge whose own lines arrive (the interrupted turn\'s result) neither re
     const stream = new StreamActivity(() => clock);
     stream.turnStarted();
     helper.activity(() => stream.snapshot());
-    // What a real nudge produces: Claude's interrupted turn ends with a `result` (and a control_response,
-    // which the runner never passes on), then the "continue" turn starts without being a fresh one.
+    // What a nudge produces in the real CLI (Claude Code 2.1.282), through the runner's own line handling:
+    // the interrupt's control_response, the flushed partial text, "[Request interrupted by user]", the
+    // interrupted turn's result, then the "continue" turn's system init. The head stays hung after it.
+    const nudging = new ClaudeNudge(() => stream.turnStarted(false));
     helper.onNudge(() => {
-      stream.observeClaude({ type: 'result', subtype: 'error_during_execution', is_error: true });
-      stream.observeClaude({ type: 'system', subtype: 'init' });
-      stream.turnStarted(false);
+      nudging.started('hydra-helper-nudge-1', 'continue');
+      for (const line of [
+        { type: 'control_response', response: { subtype: 'success', request_id: 'hydra-helper-nudge-1', response: { still_queued: [] } } },
+        { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'I\'ll finish up n' }] } },
+        { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
+        { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' },
+        { type: 'system', subtype: 'init', session_id: 's' },
+      ]) claudeStreamLine(stream, nudging, line);
     });
   } });
   try {
@@ -1551,7 +1559,8 @@ test('a lead\'s reply that races the question\'s timeout is the answer the head 
   try {
     const { job_id } = await f.start('reply-race');
     await until(() => f.store.get(job_id)?.state === 'blocked', 'the head is blocked');
-    assert.deepEqual((await f.call('hydra_reply_to_head', { job_id, message: 'v2' })).result, { job_id, delivered: true });
+    const replied = await f.call('hydra_reply_to_head', { job_id, message: 'v2' });
+    assert.deepEqual(replied.result, { job_id, delivered: true }, JSON.stringify(replied));
     await until(() => asked !== undefined, 'the head heard back');
     assert.deepEqual(asked.result, { answered: true, answer: 'v2' });
     const job = f.store.get(job_id)!;

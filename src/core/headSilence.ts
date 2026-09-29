@@ -68,10 +68,12 @@ export class StreamActivity {
   /**
    * One `claude -p --output-format stream-json` line. True when it's model output: an assistant message,
    * a partial-message chunk (`stream_event`), a tool's result, or a retry notice (the CLI is working on
-   * it; providerWait.ts shows that wait). A `result`, `control_response`, `system` init or rate-limit note isn't.
+   * it; providerWait.ts shows that wait). A `result`, `control_response`, `system` init or rate-limit note
+   * isn't, and neither is a `user` line without a `tool_result` (the CLI's "[Request interrupted by user]").
    */
   observeClaude(line: Line): boolean {
-    const output = line.type === 'assistant' || line.type === 'user' || line.type === 'stream_event' || (line.type === 'system' && line.subtype === 'api_retry');
+    const toolResult = line.type === 'user' && blocks(line).some(block => block.type === 'tool_result');
+    const output = line.type === 'assistant' || toolResult || line.type === 'stream_event' || (line.type === 'system' && line.subtype === 'api_retry');
     if (output) this.lastOutputAt = this.now();
     if (line.type === 'assistant') for (const block of blocks(line)) { if (block.type === 'tool_use' && typeof block.id === 'string') this.tools.add(block.id); }
     else if (line.type === 'user') for (const block of blocks(line)) { if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') this.tools.delete(block.tool_use_id); }
@@ -116,8 +118,14 @@ export const headSilenceNudge = 'Hydra has seen no output from you for several m
 /**
  * A Claude head's nudge (HelperRun.nudge): an `interrupt` control request, then the "continue" message
  * once the interrupted turn has ended, so that turn's `result` is known to be the interrupt's and is
- * never mistaken for the head stopping; a later, real turn end is never swallowed. If the CLI answers
- * the interrupt with an error (nothing to interrupt), the message goes at once.
+ * never mistaken for the head stopping; a later, real turn end is never swallowed.
+ *
+ * What Claude Code 2.1 sends after the interrupt, in order: a `control_response` (`subtype: "success"`,
+ * even when the head was idle), an `assistant` line flushing whatever partial text it had, a `user` line
+ * "[Request interrupted by user]", then `result` (`error_during_execution`, `terminal_reason:
+ * "aborted_streaming"`). None of that is the model working again (claudeStreamLine holds it). An error
+ * answer to the interrupt isn't something the CLI has been seen to send; if it ever does, the message
+ * goes at once rather than waiting for a result that may never come.
  */
 export class ClaudeNudge {
   private pending: { id: string; text: string } | undefined;
@@ -139,4 +147,20 @@ export class ClaudeNudge {
     return true;
   }
   private send(): void { const text = this.pending!.text; this.pending = undefined; this.deliver(text); }
+}
+
+/**
+ * One Claude stream line through the silence bookkeeping (startClaude uses it for every line): whether
+ * it's model output, and whether it ends a turn Hydra should hear about. While a nudge is pending, from
+ * the interrupt until that turn's `result`, no line is output: the flushed partial text and the
+ * "[Request interrupted by user]" line are the interrupt's doing, not the model coming back. `held` lines
+ * (and `control_response`) are for the log only.
+ */
+export function claudeStreamLine(activity: StreamActivity, nudge: ClaudeNudge, line: Record<string, unknown>): { held: boolean; output: boolean; turnEnd: boolean } {
+  if (line.type === 'control_response') { nudge.controlResponse(line); return { held: true, output: false, turnEnd: false }; }
+  if (nudge.waiting && line.type !== 'result') return { held: true, output: false, turnEnd: false };
+  const output = activity.observeClaude(line);
+  if (line.type !== 'result') return { held: false, output, turnEnd: false };
+  // The interrupted turn's result: the "continue" message goes now, and it's no turn end.
+  return { held: false, output: false, turnEnd: !nudge.result() };
 }

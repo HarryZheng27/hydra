@@ -747,11 +747,9 @@ export class HelperService {
       this.changed();
       return { answered: true, automatic: true, answer: unattendedAnswer };
     }
-    await this.options.store.transition(jobId, 'blocked', reason, { question });
-    active.blockedSince = this.now();
-    this.changed();
     const waitMs = this.options.questionWaitMs ?? headQuestionWaitMs;
-    const answer = await new Promise<{ reply: string } | { none: 'timeout' | 'ended' }>(resolve => {
+    // Ready for an answer before the job reads as blocked, so a reply that arrives the moment it does is taken.
+    const answered = new Promise<{ reply: string } | { none: 'timeout' | 'ended' }>(resolve => {
       // Whichever comes first settles it, synchronously: the answer is taken away and the timer cleared in the same step.
       const settle = (value: { reply: string } | { none: 'timeout' | 'ended' }) => {
         if (active.answer !== answerWith) return;
@@ -763,6 +761,11 @@ export class HelperService {
       timer.unref?.();
       signal.addEventListener('abort', () => settle({ none: 'ended' }), { once: true });
     });
+    try { await this.options.store.transition(jobId, 'blocked', reason, { question }); }
+    catch (error) { active.answer?.(undefined as unknown as string); throw error; }
+    active.blockedSince = this.now();
+    this.changed();
+    const answer = await answered;
     if (active.blockedSince !== undefined) { active.blockedTotal += this.now() - active.blockedSince; active.blockedSince = undefined; }
     const current = this.options.store.get(jobId)!;
     if (current.state !== 'blocked') return { answered: false, message: 'No answer is coming: this head was stopped. Stop now.' };
