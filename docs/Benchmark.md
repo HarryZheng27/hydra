@@ -134,17 +134,59 @@ For each group it gives the median and the range (min–max) of time to working 
 node scripts/benchmark.mjs summarize --runs ".bench/overnight/bench-p1-*"
 ```
 
-### SWE-bench Verified (scaffolding, not run yet)
+### SWE-bench Verified (`benchmark.mjs swebench`; not run end to end yet)
 
-`scripts/benchmark-swebench.mjs` prepares a slice of SWE-bench Verified for both setups, graded in the cloud by `sb-cli`, so nothing is graded locally. It needs Python 3 with `pip install datasets sb-cli`, and `SWEBENCH_API_KEY` to submit.
+`scripts/benchmark-swebench.mjs` runs a seeded slice of SWE-bench Verified with one setup, end to end and resumable, and grades it in the cloud with `sb-cli`, so nothing is graded locally and no Docker is needed. Hydra's parallelism helps little on one issue; this measures whether its brief, gates and final review keep or improve quality.
 
-1. `node scripts/benchmark.mjs swebench select --n 30 --seed 7`: lists the dataset through Python and writes a seeded sample to `.bench/swebench-seed-7/instances.json`. The same seed gives the same sample.
-2. `node scripts/benchmark.mjs swebench prepare --dir .bench/swebench-seed-7`: clones each instance's repository at its base commit, twice (`single` and `hydra`), with the issue as `prompt.md` and, for Hydra, a one-job plan of the same text (`.hydra/plans/swebench.json`).
-3. Run each instance: `benchmark.mjs single --repo <instance>/single --prompt <instance>/prompt.md --gate none` (or `--gate "<the repository's test command>"`), and `benchmark.mjs hydra --repo <instance>/hydra --fixture none --task swebench`.
-4. `node scripts/benchmark.mjs swebench predictions --dir <dir> --setup single` (and `--setup hydra --ref <the plan's integration branch>`): writes `predictions-<setup>.jsonl` from each result's diff against its base commit.
-5. `node scripts/benchmark.mjs swebench submit --dir <dir> --setup single`: submits it with `sb-cli`.
+**Prerequisites**
+- Node and git (as for the rest of the benchmark), and network access to the instances' source repositories and the dataset host.
+- For running: Claude Code signed in (`single`); for `hydra`, the installed Hydra (`%LOCALAPPDATA%\Programs\Hydra\bin\hydra.cmd`) and Windows, since each instance's folder is opened with `scripts/bench-open.ps1`. `--out` must be inside a folder Hydra trusts (including subfolders), or every window stops at the trust prompt.
+- For grading: Python 3 with `pip install sb-cli`, `sb-cli` on `PATH`, and an API key in `SWEBENCH_API_KEY` (`sb-cli gen-api-key <email>`, then `sb-cli verify-api-key <code>` from the email).
+- Python's `datasets` is **not** needed: the instance list comes from the datasets server's JSON API by default (below).
 
-Hydra's parallelism helps little on one issue; this measures whether its brief, gates and final review keep or improve quality.
+**Run a slice** (one folder per setup; the same `--seed` and `--n` give the same instances):
+
+```
+node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup single --out .bench/<trusted>/swebench-s1-single
+node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup hydra  --out .bench/<trusted>/swebench-s1-hydra
+```
+
+For each instance it:
+1. **Selects** (once per folder): fetches the 500 instances, draws `--n` with `--seed` (mulberry32 over the sorted ids, so the dataset's order doesn't matter), and caches them with only `instance_id`, `repo`, `base_commit`, `problem_statement` and `version` in `<out>/instances.json`; the gold patch, test patch and hints never reach the folder. A resumed run reads the cache and needs no network.
+2. **Clones** `<out>/<instance_id>/repo` at `base_commit` from one bare mirror per repository (`.bench/swebench-mirrors/<owner>__<name>.git`, or `--mirrors <dir>`; cloned once, fetched only when a commit is missing). The repository is a new one that fetches a single temporary ref at the base commit from the mirror, so it holds only the base commit and its history: no remote, no tags, no alternates, and none of the later commits (the fix among them), not even by hash. Writing that pack costs a little CPU per instance; a clone, shared or not, would bring the whole history.
+3. **Runs the setup** with the issue as the brief (`prompt.md` beside the repository):
+   - `single`: `benchmark.mjs single --prompt <instance>/prompt.md --gate none`, the isolated `claude -p` described above (`--agent`, `--claude`, `--command` and `--gate` pass through);
+   - `hydra`: writes the one-job plan (`.hydra/plans/swebench.json`, write scope `['.']`, standard rigor), opens the folder with `scripts/bench-open.ps1 -WaitSeconds 180` (`--open none` if you open it yourself), then `benchmark.mjs hydra --fixture none --task swebench` (`--usd`, 10 by default, `--hydra`, `--plan-store`, `--poll` pass through). **Each instance opens its own window, and the runner can't close it**: the `hydra` command has no command that closes a window, and killing the process would take every Hydra window with it. So run the hydra setup in batches (below).
+   - `--minutes` is the time limit per instance (60 by default).
+4. **Captures the patch**: `git diff <base_commit>` to the working tree, new files included (`single`), or to the plan's integration tip (`hydra`), leaving out `.hydra`, into `<instance>/model.patch`.
+5. **Records** `<instance>/instance.json`: `status` (`done` or `error`), the error, seconds in all and for the agent, the reported cost in USD, and the patch size; the setup's own `single-results.json` or `hydra-results.json` sits beside it. Then it rewrites `<out>/predictions.jsonl`, one line per instance run (`instance_id`, `model_name_or_path`, `model_patch`; `--model` names it, `hydra-benchmark-<setup>` by default). A failed instance is still a prediction, with whatever patch it left (maybe empty), so it counts as unresolved.
+
+**Resuming**: run the same command again. Instances with a record are skipped; `--retry-errors yes` runs the failed ones again, and an instance that was interrupted (no record) starts again from a fresh folder. `--only <id,id>` runs just those, and `--limit <k>` at most k of the ones left. A folder refuses a different `--seed`, `--n` or `--setup`.
+
+**Usage limits**: the run stops and exits 3 when a limit stopped an instance: the error says so, Claude Code's own result is an error that says so, Hydra's final review didn't run for one, or Hydra's plan didn't finish and its report names one. That instance gets no record and no prediction (only `usage-limit.txt` in its folder), so the same command, run again once the limit resets, starts it over. A plan that finished after waiting out a rate limit isn't stopped.
+
+**Batches and cleanup for the hydra setup**:
+1. `node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup hydra --out <dir> --limit 5`: five instances, five windows.
+2. Close the windows that batch opened (their folders are `<dir>/<instance_id>/repo`). Leave your own windows open.
+3. Run the same command again for the next five, until its last line shows 0 not run.
+
+With `--open none` the runner opens no window: open each instance's `repo` yourself with `bench-open.ps1`, run it with `--only <id>`, and close it before the next. When the slice is graded, the instance folders and `.bench/swebench-mirrors` can be deleted; keep `instances.json`, `predictions.jsonl`, `resolved.json` and the `sb-cli-reports` folder.
+
+`node scripts/benchmark.mjs swebench predictions --out <dir>` rewrites the predictions file from the records.
+
+**Grade**:
+
+```
+node scripts/benchmark.mjs swebench-submit --out .bench/<trusted>/swebench-s1-single [--run-id <id>] [--wait 120]
+```
+
+It first checks that `predictions.jsonl` has lines, `SWEBENCH_API_KEY` is set and `sb-cli` runs, and fails naming everything missing. Then it runs `sb-cli submit swe-bench_verified test --predictions_path <out>/predictions.jsonl --run_id <id> --output_dir <out>/sb-cli-reports`, which waits for the grading and writes `swe-bench_verified__test__<id>.json`. While that report still has pending instances, it runs `sb-cli get-report swe-bench_verified test <id> --output_dir <out>/sb-cli-reports --overwrite 1` once a minute, for up to `--wait` minutes. It writes `<out>/resolved.json`: resolved, selected, the rate over the selected instances, sb-cli's counts, and the resolved ids when the report lists them. Running it again after a submit only fetches the report. `summarize --runs <folders>` adds a SWE-bench table with the resolved rate per folder and per setup.
+
+**Verified, and assumed**
+- Verified against sb-cli's README and source (September 2026): `pip install sb-cli`; `SWEBENCH_API_KEY`; the subset `swe-bench_verified` and split `test`; `submit`'s `--predictions_path`, `--run_id` and `--output_dir`, and that it waits for grading and writes a report by default (`--wait_for_evaluation 1`, `--gen_report 1`); predictions may be JSONL (any file not ending `.json`) with those three keys, and a subset of instances is accepted; `get-report <subset> <split> <run_id> --output_dir --overwrite`; the report's file name; and the count keys it prints (`resolved_instances`, `submitted_instances`, `total_instances`, `pending_instances`, `completed_instances`, `error_instances`, `failed_instances`). `total_instances` is the whole split, so the rate here is over the sample, not sb-cli's "resolved (total)".
+- Assumed, not verified: that the report JSON also lists per-instance ids (`resolved_ids`, `unresolved_ids`, `error_ids`, as the local harness's report does). Without them, `resolved.json` has the counts only; `sb-cli get-report` output is kept in `sb-cli-reports`.
+- The dataset: `princeton-nlp/SWE-bench_Verified` through the dataset host's rows API (`datasetRowsUrl` in the script: `config=default`, `split=test`, `offset`, `length=100`) was checked to answer 500 rows, 100 a page. The rows API has no Python dependency but depends on the service being up; each page is retried 4 times. `--source python` lists the dataset with Python's `datasets` instead (`pip install datasets`; `--python <path>`), as a fallback.
+- Not run end to end against a real instance, a real Hydra window or sb-cli yet: the tests drive the whole loop with local git repositories and fakes for the dataset, the agent, Hydra and sb-cli.
 
 ## What it doesn't show
 
