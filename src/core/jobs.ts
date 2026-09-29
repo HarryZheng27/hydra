@@ -6,6 +6,7 @@ import type { Provider } from './model';
 import type { DependencyResult } from './headStart';
 import { gateIdPattern, type Gate, type PlanRigor } from './gates/config';
 import type { GitMetaFingerprint } from './git';
+import { validateProviderWait, type ProviderWait } from './providerWait';
 
 /**
  * Hydra helper jobs (docs/Official_Extensions_Plan.md, Phase 2).
@@ -223,6 +224,10 @@ export interface Job {
   priorProviders?: Provider[];
   /** O9: what its runs cost, as the providers reported it (Claude Code in dollars, Codex in tokens), summed over its runs. */
   usage?: JobUsage;
+  /** While its CLI retries against the provider (docs/Heads.md, "Waiting on the provider"): since when, how many retries, and what the provider said. Cleared when ordinary output resumes. */
+  providerWait?: ProviderWait;
+  /** The total time its runs spent waiting on the provider, in milliseconds, over every wait that ended, so a benchmark can subtract or flag it. */
+  providerWaitMs?: number;
   /** O6 (docs/Heads.md, "Rigor"): a plan job's own rigor, added to the project's gate floor, never replacing it. Internal only: hydra_start_head's schema has no such field; only a plan sets it (planHeadInput). */
   rigor?: PlanRigor;
   /** The helper's own git worktree, created when it starts. */
@@ -518,6 +523,28 @@ export class JobStore {
       try { await this.write(); } catch (error) { if (previous) job.usage = previous; else delete job.usage; throw error; }
     });
   }
+  /**
+   * A head's wait on its provider (docs/Heads.md, "Waiting on the provider"): `wait` while it's open,
+   * undefined once it ends, adding `waitedMs` to the job's total. Whatever the job's state, like recordUsage,
+   * since the run's last wait can end as its process exits.
+   */
+  async recordProviderWait(id: string, wait: ProviderWait | undefined, waitedMs = 0): Promise<void> {
+    return this.serialize(async () => {
+      this.assertLoaded();
+      const job = this.jobs.get(id);
+      if (!job) return;
+      const added = Number.isFinite(waitedMs) && waitedMs > 0 ? Math.round(waitedMs) : 0;
+      if (!wait && !job.providerWait && !added) return;
+      const previous = { wait: job.providerWait, ms: job.providerWaitMs };
+      if (wait) job.providerWait = wait; else delete job.providerWait;
+      if (added) job.providerWaitMs = (job.providerWaitMs ?? 0) + added;
+      try { await this.write(); } catch (error) {
+        if (previous.wait) job.providerWait = previous.wait; else delete job.providerWait;
+        if (previous.ms !== undefined) job.providerWaitMs = previous.ms; else delete job.providerWaitMs;
+        throw error;
+      }
+    });
+  }
   async update(id: string, patch: Partial<Pick<Job, 'progress' | 'replies' | 'worktree' | 'baseCommit' | 'branch' | 'question' | 'nudged' | 'attempts' | 'maxAttempts'>>): Promise<Job> {
     return this.serialize(async () => {
       this.assertLoaded();
@@ -649,6 +676,10 @@ function parseStoreFile(value: unknown): StoreFile {
     (job as Job).tamperAtStart = validateTamperSnapshot((job as Job).tamperAtStart);
     const usage = validateUsage((job as Job).usage);
     if (usage) (job as Job).usage = usage; else delete (job as Job).usage;
+    const wait = validateProviderWait((job as Job).providerWait);
+    if (wait) (job as Job).providerWait = wait; else delete (job as Job).providerWait;
+    const waitedMs = (job as Job).providerWaitMs;
+    if (!(typeof waitedMs === 'number' && Number.isFinite(waitedMs) && waitedMs > 0 && waitedMs < 1e12)) delete (job as Job).providerWaitMs;
   }
   return { version: 1, jobs: source.jobs };
 }

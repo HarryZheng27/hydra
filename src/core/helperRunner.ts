@@ -7,6 +7,7 @@ import { claudeHeadLimit, codexHeadLimit, type HeadLimit } from './limitDetectio
 import { claudeHeadTools } from './confine';
 import { redactText } from './redact';
 import type { RunUsage } from './jobs';
+import { claudeProviderWaitSignal, codexProviderWaitSignal, ProviderWaitTracker, type ProviderWait } from './providerWait';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -81,6 +82,11 @@ export interface HelperRun {
   limitHit?(): HeadLimit | undefined;
   /** O9: what this run cost, as the CLI reported it: Claude Code's session cost in dollars, Codex's tokens over its turns. */
   usage?(): RunUsage | undefined;
+  /**
+   * Waiting on the provider (docs/Heads.md, "Waiting on the provider"): called when the CLI starts or keeps
+   * retrying (`wait` set) and when ordinary output resumes or the run ends (`wait` undefined, with how long it lasted).
+   */
+  onProviderWait?(listener: (wait: ProviderWait | undefined, waitedMs: number) => void): void;
 }
 export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
 
@@ -172,14 +178,18 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   const log = logger(spec.logFile, spec.bridge.env.HYDRA_HELPER_TOKEN), listeners: (() => void)[] = [];
   log('start', { provider: 'claude', worktree: spec.worktree, args: claudeHelperArguments(spec) });
   let limit: HeadLimit | undefined, costUsd: number | undefined;
+  const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
+  const waiting = new ProviderWaitTracker((wait, waitedMs) => { for (const listener of waitListeners) listener(wait, waitedMs); });
+  waiting.quiet();
   const child = spawnLogged(spec, claudeHelperArguments(spec), log, message => {
+    waiting.observe(claudeProviderWaitSignal(message));
     // A limit counts for the turn it ends; a later good turn clears it.
     if (message.type === 'assistant' || message.type === 'result') limit = claudeHeadLimit(message) ?? (message.type === 'result' && message.is_error !== true ? undefined : limit);
     // O9: each turn's result reports the session's cost so far; the run's cost is the largest seen.
     if (message.type === 'result') costUsd = claudeRunCost(message, costUsd);
     if (message.type === 'result') for (const listener of listeners) listener();
   });
-  const exited = new Promise<{ code: number | null }>(resolve => child.on('close', code => { log('exit', { code }); resolve({ code }); }));
+  const exited = new Promise<{ code: number | null }>(resolve => child.on('close', code => { log('exit', { code }); waiting.end(); resolve({ code }); }));
   child.on('error', error => log('error', error.message));
   const write = (value: unknown) => new Promise<boolean>(resolve => {
     if (child.exitCode !== null || !child.stdin || child.stdin.destroyed) return resolve(false);
@@ -187,7 +197,8 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   });
   const say = (text: string) => write({ type: 'user', message: { role: 'user', content: text } });
   void write({ type: 'control_request', request_id: 'hydra-helper-init', request: { subtype: 'initialize' } }).then(() => say(spec.prompt));
-  return { onTurnEnd: listener => { listeners.push(listener); }, exited, send: async text => { limit = undefined; return say(text); }, stop: stopper(() => child), limitHit: () => limit, usage: () => costUsd === undefined ? undefined : { costUsd } };
+  return { onTurnEnd: listener => { listeners.push(listener); }, exited, send: async text => { limit = undefined; waiting.quiet(); return say(text); }, stop: stopper(() => child), limitHit: () => limit, usage: () => costUsd === undefined ? undefined : { costUsd },
+    onProviderWait: listener => { waitListeners.push(listener); } };
 }
 /** O9: a Claude Code result line's session cost (`total_cost_usd`), kept as the largest seen for the run. */
 export function claudeRunCost(message: Record<string, unknown>, current: number | undefined): number | undefined {
@@ -207,12 +218,15 @@ function startCodex(spec: HelperRunSpec): HelperRun {
   const log = logger(spec.logFile, spec.bridge.env.HYDRA_HELPER_TOKEN), listeners: (() => void)[] = [];
   let thread: string | undefined, current: ChildProcess | undefined, finished = false, limit: HeadLimit | undefined, usage: RunUsage | undefined;
   let resolveExit!: (value: { code: number | null }) => void;
+  const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
+  const waiting = new ProviderWaitTracker((wait, waitedMs) => { for (const listener of waitListeners) listener(wait, waitedMs); });
   const exited = new Promise<{ code: number | null }>(resolve => { resolveExit = resolve; });
   const run = (prompt: string, resumeThread?: string) => {
     const args = codexHelperArguments(spec, resumeThread);
     log('start', { provider: 'codex', worktree: spec.worktree, resume: resumeThread, args });
-    limit = undefined;
+    limit = undefined; waiting.quiet();
     const child = spawnLogged(spec, args, log, message => {
+      waiting.observe(codexProviderWaitSignal(message));
       if (message.type === 'thread.started' && typeof message.thread_id === 'string') thread = message.thread_id;
       usage = codexRunUsage(message, usage);
       // An error line can be a retry notice; a completed turn clears it.
@@ -224,6 +238,7 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     child.on('error', error => log('error', error.message));
     child.on('close', code => {
       log('exit', { code });
+      waiting.end();
       if (finished) return;
       // Each exec is one turn. A clean exit is a turn end; the helper may get a follow-up.
       if (code === 0 && thread) for (const listener of listeners) listener();
@@ -237,6 +252,7 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     send: async text => { if (finished || !thread || (current && current.exitCode === null)) return false; run(text, thread); return true; },
     limitHit: () => limit,
     usage: () => usage,
+    onProviderWait: listener => { waitListeners.push(listener); },
     stop: async () => { const wasFinished = finished; finished = true; await stopper(() => current)(); if (!wasFinished) resolveExit({ code: current?.exitCode ?? null }); },
   };
 }

@@ -76,6 +76,23 @@ any unfinished state → failed or cancelled
 - **Queueing:** heads wait in a queue up to `hydra.maxConcurrentHelpers` (default 3). A head whose dependency failed or was cancelled fails too.
 - **Silent stops:** a head that stops without calling `hydra_done` or `hydra_stuck` is nudged once, then failed. A head process that exits is failed.
 - **After a restart:** heads that were running are failed with the reason, because no head process survives a restart.
+- **Waiting on the provider:** a running head can also be waiting on its provider. See [Waiting on the provider](#waiting-on-the-provider).
+
+### Waiting on the provider
+
+A head whose CLI is retrying against its provider stays **running**, but produces nothing until a request gets through. That can take many minutes when the account is rate-limited. Hydra reads it from the head's own stream:
+
+- **Claude Code:** `{"type":"system","subtype":"api_retry","attempt","max_retries","retry_delay_ms","error_status","error"}` lines while it retries. A `{"type":"rate_limit_event","rate_limit_info":{"status","resetsAt","rateLimitType","utilization",…}}` line starts a wait only when its `status` is `rejected`; while a wait is open, it adds the limit window, how much of it is used, and when it resets.
+- **Codex:** an error line or error item whose message reads `Reconnecting... n/m (…)`.
+
+The wait is dated from the last line before the first retry, which is when the stalled request went out. The wait ends at the next ordinary line, or when the process ends. While it lasts, the head's job keeps `providerWait`: since when, the retry count and attempt, whether the provider said it's a rate or usage limit, and any reset time or detail. It shows:
+
+- on the head's card on the Agents canvas, in the heads list and in the Hydra tree: "Waiting on your Claude usage limit for 13m (retry 3)", or "Waiting on Claude's servers for 2m (retry 3 of 10)" when the provider only dropped the request;
+- in `hydra_get_head` and `hydra_list_heads` as `provider_wait` (`message`, `since`, `retries`, `attempt`, `max_retries`, `limit`, `resets_at`, `detail`, `waited_ms`).
+
+Every wait that ends adds to the job's `providerWaitMs`, returned as `provider_wait_ms`. A plan's report lists the jobs slowed by provider limits and their total wait, and the benchmark keeps each job's `providerWaitMs` so a comparison can subtract or flag it. A wait still counts toward the head's time limit.
+
+This only covers a CLI that is still retrying. A turn that ends on a usage limit is a hard limit, handled as described in [When a provider hits its limit](#when-a-provider-hits-its-limit), and nothing about that changes.
 
 ## Limits and permissions
 

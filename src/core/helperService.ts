@@ -17,6 +17,7 @@ import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
 import type { HeadConfinement, HelperRun, StartHelperRun } from './helperRunner';
 import type { Provider } from './model';
 import { headLimitReason } from './limitDetection';
+import { describeProviderWait, providerWaitDetail, providerWaitLabel } from './providerWait';
 import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
@@ -838,6 +839,11 @@ export class HelperService {
       const active: Active = { run, token, startedAt, blockedTotal: 0, ...(role ? { role } : {}), ...(mcpConfigFile ? { mcpConfigFile } : {}), ...(settingsFile ? { settingsFile } : {}), temp, ...(shellNote ? { shellNote } : {}) };
       this.active.set(job.id, active);
       run.onTurnEnd(() => { void this.turnEnded(job.id); });
+      // Waiting on the provider (docs/Heads.md): kept on the job for the views and hydra_get_head, and its total for the report.
+      run.onProviderWait?.((wait, waitedMs) => {
+        void this.options.store.recordProviderWait(job.id, wait, waitedMs).then(() => this.changed(), error => this.options.log?.(`[heads] ${job.id}: couldn't record its wait on the provider: ${error instanceof Error ? error.message : String(error)}`));
+        if (wait?.retries === 1 || (wait && !wait.retries)) this.options.log?.(`[heads] ${job.id}: ${providerWaitLabel(job.provider, wait)}${providerWaitDetail(wait) ? ` (${providerWaitDetail(wait)})` : ''}`);
+      });
       // O9: what the run cost, as its CLI reported it, is kept before anything else is settled.
       void run.exited.then(async ({ code }) => {
         await this.options.store.recordUsage(job.id, run.usage?.()).catch(error => this.options.log?.(`[heads] ${job.id}: couldn't record its usage: ${error instanceof Error ? error.message : String(error)}`));
@@ -1268,6 +1274,9 @@ export class HelperService {
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
+      // Waiting on the provider (docs/Heads.md): an open wait while it runs, and the total its runs waited.
+      ...(job.providerWait && job.state === 'running' ? { provider_wait: describeProviderWait(job.provider, job.providerWait, this.now()) } : {}),
+      ...(job.providerWaitMs ? { provider_wait_ms: job.providerWaitMs } : {}),
       // O9: what its runs cost so far, as the provider reported it (Claude Code in dollars, Codex in tokens).
       ...(detail && job.usage ? { usage: { runs: job.usage.runs, ...(job.usage.costUsd !== undefined ? { cost_usd: job.usage.costUsd } : {}), ...(job.usage.inputTokens !== undefined ? { input_tokens: job.usage.inputTokens } : {}), ...(job.usage.outputTokens !== undefined ? { output_tokens: job.usage.outputTokens } : {}) } } : {}),
       // O2/O3: predicted merge conflicts, as of the last pass: with other running heads, and with the plan's integration branch.
