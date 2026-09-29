@@ -93,7 +93,7 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
 The single Claude Code agent runs as isolated as a head, so the two setups work under the same conditions:
 
 ```
-claude -p --output-format json --permission-mode acceptEdits --settings <run>/single-settings.json --strict-mcp-config --mcp-config <run>/single-mcp.json --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm:*),Bash(node:*),Bash(git:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(mkdir:*)
+claude -p --output-format json --permission-mode acceptEdits --settings <run>/single-settings.json --strict-mcp-config --mcp-config <run>/single-mcp.json --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm:*),Bash(node:*),Bash(git:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(mkdir:*),Bash(cd:*),Bash(grep:*),Bash(echo:*),Bash(sort:*),Bash(diff:*),Bash(pwd:*)
 ```
 
 - `single-settings.json` turns off every one of your Claude Code plugins, the same list a head turns off (`userClaudePlugins`, from Hydra's own code); `single-mcp.json` has no MCP servers, and `--strict-mcp-config` keeps out your own.

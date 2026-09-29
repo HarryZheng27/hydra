@@ -275,6 +275,6 @@ test('the single Claude Code agent runs isolated like a head: no user plugins, n
   assert.ok(args.includes('--strict-mcp-config'));
   assert.equal(args[args.indexOf('--mcp-config') + 1], 'm.json');
   const allowed = args[args.indexOf('--allowedTools') + 1]!.split(',');
-  for (const tool of ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(tail:*)']) assert.ok(allowed.includes(tool), tool);
+  for (const tool of ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(tail:*)', 'Bash(cd:*)', 'Bash(grep:*)', 'Bash(echo:*)']) assert.ok(allowed.includes(tool), tool);
   assert.deepEqual(allowed, [...singleAllowedTools]);
 });
