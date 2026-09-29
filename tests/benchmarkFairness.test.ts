@@ -307,7 +307,7 @@ test('summarize reports first-pass review, final review, passed within N rounds,
   const single = { kind: 'single', task: 'cli', wallClockSeconds: 600, gate: { passed: true }, check: { passed: true }, cost: { usd: 3, fixUsd: 0.5 }, review: reviewResult('pass', 'fail', { afterFix: { gatePassed: true, checkPassed: true } }) };
   const hydra = { kind: 'hydra', task: 'cli', wallClockSeconds: 1500, timeToWorkingCodeSeconds: 700, integrationGate: { passed: true, checks: [] }, check: { passed: true }, review: { state: 'passed' }, firstReview: { ran: true, passed: false }, fixRounds: 1, jobs: [{ key: 'a' }, { key: 'integration-fix-1' }], cost: { usd: 4, usdJobs: 2, fixUsd: 0.5 } };
   const rows = [...runRows(single, 'r1-single'), ...runRows(hydra, 'r1-hydra')];
-  const byRow = Object.fromEntries(rows.map((row: { setup: string }) => [row.setup, row]));
+  const byRow: Record<string, any> = Object.fromEntries(rows.map((row: { setup: string }) => [row.setup, row]));
   assert.deepEqual([byRow['single+review'].workSeconds, byRow['single+review'].workAfterSeconds, byRow['single+review'].totalSeconds], [600, 920, 920], 'before: the agent\'s run; after: plus the review (120) and the fix (200)');
   assert.deepEqual([byRow.hydra.workSeconds, byRow.hydra.workAfterSeconds, byRow.hydra.totalSeconds], [700, 1500, 1500], 'before: the last own job landed; after: the gate settled');
   assert.deepEqual([byRow['single+review'].firstReviewPassed, byRow['single+review'].reviewPassed, byRow['single+review'].passedWithin], [false, true, true]);
@@ -419,7 +419,7 @@ test('tool defaults: the flag, then PATH, then the usual install location, then 
   const missing = resolveTool('hydra', { env: { PATH: '' }, platform: 'win32', exists: () => false });
   assert.deepEqual([missing.command, missing.missing], ['hydra', true]);
   assert.match(missing.source, /not found/);
-  assert.equal(resolveTool('claude', { env: { PATH: '/a:/b', HOME: '/h' }, platform: 'linux', exists: file => file === '/b/claude' }).command, 'claude');
+  assert.equal(resolveTool('claude', { env: { PATH: '/a:/b', HOME: '/h' }, platform: 'linux', exists: (file: string) => file === '/b/claude' }).command, 'claude');
 });
 
 test('benchmark.mjs hydra without --hydra uses Hydra\'s install location when hydra isn\'t on PATH, and logs it', { skip: process.platform !== 'win32' }, async () => {
