@@ -104,6 +104,7 @@ test('the job keeps an open wait and the total of those that ended, across a rel
   try {
     const store = new JobStore(dir); await store.load();
     const { job } = await store.create('window', { title: 'Slow', brief: 'Do it.', writeScope: ['src/'], provider: 'claude', idempotencyKey: 'k' });
+    await store.transition(job.id, 'starting'); await store.transition(job.id, 'running');
     const wait: ProviderWait = { since: '2026-09-28T10:00:00.000Z', retries: 1, attempt: 1, maxRetries: 10 };
     await store.recordProviderWait(job.id, wait);
     assert.deepEqual(store.get(job.id)!.providerWait, wait);
@@ -133,4 +134,35 @@ test('the plan report names the jobs slowed by provider limits and their total w
   assert.match(report, /Slowed by provider limits: waited 2m on Codex/);
   assert.doesNotMatch(report.split('## Docs')[1]!, /Slowed by provider limits/);
   assert.doesNotMatch(buildPlanReport(plan, [details[2]!], 5), /Slowed by provider limits/);
+});
+
+test('a stale wait never survives: leaving running, a restart mid-wait, or a late notice clears it; the total stays', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hydra-provider-wait-'));
+  try {
+    const wait: ProviderWait = { since: '2026-09-28T10:00:00.000Z', retries: 3, attempt: 3, limit: true };
+    const store = new JobStore(dir); await store.load();
+    const { job } = await store.create('window', { title: 'Slow', brief: 'Do it.', writeScope: ['src/'], provider: 'claude', idempotencyKey: 'k' });
+    await store.recordProviderWait(job.id, wait);
+    assert.equal(store.get(job.id)!.providerWait, undefined, 'a queued job opens no wait');
+    await store.transition(job.id, 'starting'); await store.transition(job.id, 'running');
+    await store.recordProviderWait(job.id, undefined, 45_000);
+    await store.recordProviderWait(job.id, wait);
+    // Hydra dies mid-wait: the record still has the open wait when it loads again.
+    const restarted = new JobStore(dir); await restarted.load();
+    const after = restarted.get(job.id)!;
+    assert.equal(after.state, 'failed');
+    assert.equal(after.providerWait, undefined);
+    assert.equal(after.providerWaitMs, 45_000);
+    assert.doesNotMatch(await readFile(path.join(dir, 'jobs.json'), 'utf8'), /"providerWait":/);
+    // Any move out of running ends a wait, and a notice arriving after that opens nothing.
+    const { job: other } = await restarted.create('window', { title: 'Other', brief: 'Do it.', writeScope: ['src/'], provider: 'claude', idempotencyKey: 'k2' });
+    await restarted.transition(other.id, 'starting'); await restarted.transition(other.id, 'running');
+    await restarted.recordProviderWait(other.id, wait);
+    await restarted.transition(other.id, 'blocked', 'A question.');
+    assert.equal(restarted.get(other.id)!.providerWait, undefined);
+    await restarted.recordProviderWait(other.id, wait);
+    assert.equal(restarted.get(other.id)!.providerWait, undefined);
+    await restarted.transition(other.id, 'running');
+    assert.equal(restarted.get(other.id)!.providerWait, undefined, 'back to running shows no stale wait');
+  } finally { await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

@@ -454,6 +454,8 @@ export class JobStore {
       let changed = false;
       for (const job of this.jobs.values()) {
         if (job.state === 'starting' || job.state === 'running' || job.state === 'checking') { this.apply(job, 'failed', 'Hydra stopped while this head was running.'); changed = true; }
+        // No head process survives a restart, so no wait on its provider does either; the total it waited stays.
+        if (job.providerWait) { delete job.providerWait; changed = true; }
       }
       if (changed) await this.write();
       return this.list();
@@ -534,6 +536,8 @@ export class JobStore {
       const job = this.jobs.get(id);
       if (!job) return;
       const added = Number.isFinite(waitedMs) && waitedMs > 0 ? Math.round(waitedMs) : 0;
+      // A late notice from a run whose job has already moved on opens nothing.
+      if (wait && job.state !== 'running') wait = undefined;
       if (!wait && !job.providerWait && !added) return;
       const previous = { wait: job.providerWait, ms: job.providerWaitMs };
       if (wait) job.providerWait = wait; else delete job.providerWait;
@@ -586,6 +590,8 @@ export class JobStore {
     if (to === 'running' && !job.startedAt) job.startedAt = at;
     if (finalJobStates.has(to)) job.finishedAt = at;
     job.state = to; job.updatedAt = at;
+    // A wait on the provider belongs to one running process: any other state ends it (its total, providerWaitMs, stays).
+    if (to !== 'running') delete job.providerWait;
     if (reason !== undefined || finalJobStates.has(to)) job.reason = reason;
   }
   private assertLoaded(): void { if (!this.loaded) throw new Error('Hydra head jobs are not loaded yet.'); }
