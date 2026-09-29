@@ -78,6 +78,7 @@ body.vscode-light .agents-canvas { --canvas-claude: #b8552f; --canvas-codex: #3d
 @keyframes canvas-pulse { 50% { opacity: .3; } }
 .canvas-node-title { display: block; margin: 7px 0 3px; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .canvas-node-detail { margin: 0; font-size: 12px; line-height: 1.4; color: var(--body-text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.8em; animation: canvas-fade .4s ease; }
+.canvas-node-detail.provider-wait { color: var(--state-ask); }
 @keyframes canvas-fade { from { opacity: 0; } }
 /* Gate chips (docs/Gates_Plan.md, "Seeing results"): text carries the state, colour only adds to it. */
 .canvas-node-gates { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }

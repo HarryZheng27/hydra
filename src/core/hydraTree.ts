@@ -2,6 +2,7 @@ import type { HelperJobView, LaneView, Provider, SnapshotRole } from './model';
 import type { Plan } from './plans';
 import { isActive } from './agentsCanvas';
 import { evidenceLabel } from './jobs';
+import { providerWaitLabel } from './providerWait';
 // Type-only, same rule as agentsCanvas.ts: planRunner.ts's PlanJobView is plain data the extension computes.
 import type { PlanJobView } from './planRunner';
 
@@ -59,7 +60,7 @@ export function buildHydraTree(lanes: readonly LaneView[], heads: readonly Helpe
     return { id: lane.id, label: lane.name, description, state: lane.state, conflicts, dirty: !!lane.sync?.dirty };
   });
   const headItems: TreeHeadItem[] = heads.filter(isActive).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(head => ({
-    id: head.id, label: head.title, description: `${headStatus[head.state] || head.state}${head.lead?.label ? ` · ${head.lead.label}` : ''}${head.status ? ` · ${evidenceLabel(head.status)}` : ''}`, state: head.state,
+    id: head.id, label: head.title, description: `${head.providerWait && head.state === 'running' ? providerWaitLabel(head.provider, head.providerWait) : headStatus[head.state] || head.state}${head.lead?.label ? ` · ${head.lead.label}` : ''}${head.status ? ` · ${evidenceLabel(head.status)}` : ''}`, state: head.state,
   }));
   const planItems: TreePlanItem[] = livePlans(plans).map(plan => ({ id: plan.id, label: plan.title, description: planProgressLine(plan, planJobs[plan.id]), state: plan.state }));
   return { lanes: laneItems, heads: headItems, plans: planItems, empty: !laneItems.length && !headItems.length && !planItems.length };

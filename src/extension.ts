@@ -1111,6 +1111,8 @@ class Manager {
       ...(job.result?.status ? { status: job.result.status } : {}),
       ...(service.headConflicts(job.id).length ? { conflicts: service.headConflicts(job.id) } : {}),
       ...(service.headIntegrationConflict(job.id) ? { integrationConflict: { branch: service.headIntegrationConflict(job.id)!.branch, files: service.headIntegrationConflict(job.id)!.files } } : {}),
+      ...(job.providerWait && job.state === 'running' ? { providerWait: job.providerWait } : {}),
+      ...(job.providerWaitMs ? { providerWaitMs: job.providerWaitMs } : {}),
     })).reverse();
   }
   /** Head changes go to the webview at once (the Agents canvas animates them); the full snapshot follows, debounced. */
@@ -1643,6 +1645,7 @@ class Manager {
         ...(head?.usage?.costUsd !== undefined ? { costUsd: head.usage.costUsd } : {}),
         ...(head?.usage?.inputTokens !== undefined ? { inputTokens: head.usage.inputTokens } : {}),
         ...(head?.usage?.outputTokens !== undefined ? { outputTokens: head.usage.outputTokens } : {}),
+        ...(head?.providerWaitMs ? { providerWaitMs: head.providerWaitMs } : {}),
       };
     });
     return buildPlanReport(plan, details, defaultHeadBudgetUsd);

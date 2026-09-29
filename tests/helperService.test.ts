@@ -14,9 +14,10 @@ import type { HeadLimit } from '../src/core/limitDetection';
 import type { LimitEvent } from '../src/core/limitEvents';
 import type { ReviewerSpec } from '../src/core/gates';
 import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
+import type { ProviderWait } from '../src/core/providerWait';
 
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
-type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
+type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; providerWait: (wait: ProviderWait | undefined, waitedMs?: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
 async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
@@ -44,6 +45,7 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
     startRun: spec => {
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
+      const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
       let exit!: (code: number) => void; let stopped = false; let limit: HeadLimit | undefined;
       const exited = new Promise<{ code: number | null }>(resolve => { exit = code => { if (!stopped) { stopped = true; resolve({ code }); } }; });
       const run: HelperRun = {
@@ -51,11 +53,13 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
         send: async message => { if (stopped) return false; const reader = readers.shift(); if (reader) reader(message); else inbox.push(message); return true; },
         stop: async () => exit(137),
         limitHit: () => limit,
+        onProviderWait: listener => { waitListeners.push(listener); },
       };
       const token = spec.bridge.env.HYDRA_HELPER_TOKEN!;
       // A real helper takes seconds to start; the fake one starts on the next tick.
       setTimeout(() => void options.script({
         spec, exit, limit: hit => { limit = hit; },
+        providerWait: (wait, waitedMs = 0) => { for (const listener of waitListeners) listener(wait, waitedMs); },
         call: (tool, args = {}) => callHelperEndpoint(Number(spec.bridge.env.HYDRA_HELPER_PORT), token, tool, args),
         endTurn: () => { for (const listener of listeners) listener(); },
         nextMessage: () => inbox.length ? Promise.resolve(inbox.shift()!) : new Promise(resolve => readers.push(resolve)),
@@ -1323,3 +1327,32 @@ test('hydra_done logs a partial timing line when refused because nothing changed
   } finally { await f.close(); }
 });
 
+
+test('waiting on the provider: hydra_get_head and hydra_list_heads show the open wait, and the job keeps the total', async () => {
+  let release!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const f = await fixture({ script: async helper => {
+    helper.providerWait({ since: new Date(Date.now() - 90_000).toISOString(), retries: 3, attempt: 3, maxRetries: 10, limit: true, resetsAt: '2026-09-28T18:00:00.000Z' });
+    await released;
+    helper.providerWait(undefined, 780_000);
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    await helper.call('hydra_done', { summary: 'Fixed.' });
+  } });
+  try {
+    const { job_id } = await f.start('wait');
+    await until(() => !!f.store.get(job_id)?.providerWait, 'the wait is recorded');
+    const head = (await f.call('hydra_get_head', { job_id })).result;
+    assert.equal(head.provider_wait.message, 'Waiting on your Claude usage limit for 2m (retry 3)');
+    assert.equal(head.provider_wait.retries, 3);
+    assert.equal(head.provider_wait.limit, true);
+    assert.equal(head.provider_wait.resets_at, '2026-09-28T18:00:00.000Z');
+    const listed = (await f.call('hydra_list_heads')).result;
+    const row = (listed.heads ?? listed).find((item: { job_id: string }) => item.job_id === job_id);
+    assert.equal(row.provider_wait.retries, 3);
+    release();
+    await until(() => !f.store.get(job_id)?.providerWait && f.store.get(job_id)?.providerWaitMs === 780_000, 'the wait is cleared and totalled');
+    const after = (await f.call('hydra_get_head', { job_id })).result;
+    assert.equal(after.provider_wait, undefined);
+    assert.equal(after.provider_wait_ms, 780_000);
+  } finally { release(); await f.close(); }
+});

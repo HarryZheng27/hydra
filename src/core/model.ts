@@ -2,6 +2,7 @@ import type { Lane } from './lanes';
 import type { Plan, PlanDispatch, PlanJobRunAs } from './plans';
 import type { PlanJobStatus, PlanJobView } from './planRunner';
 import type { EvidenceStatus, HeadCheckView, JobCheckResult } from './jobs';
+import type { ProviderWait } from './providerWait';
 export type { HeadCheckView, EvidenceStatus } from './jobs';
 
 export type Provider = 'claude' | 'codex';
@@ -38,6 +39,10 @@ export interface HelperJobView {
   conflicts?: { jobId: string; files: string[] }[];
   /** O3: a plan head's predicted conflict with its plan's integration branch, which it has to land on. */
   integrationConflict?: { branch: string; files: string[] };
+  /** While it runs: its CLI is retrying against the provider (docs/Heads.md, "Waiting on the provider"). */
+  providerWait?: ProviderWait;
+  /** The total time its runs waited on the provider, in milliseconds. */
+  providerWaitMs?: number;
 }
 /**
  * Packs (docs/Packs_Plan.md, "Picking a role"): one active role, for the New
