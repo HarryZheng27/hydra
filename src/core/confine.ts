@@ -126,7 +126,7 @@ export function secretTargets(env: Readonly<Record<string, string | undefined>>,
   return targets;
 }
 
-export interface ClaudeSettings { permissions: { blockReadsOutsideWorkingDirectories?: true; deny: string[] }; enabledPlugins?: Record<string, false> }
+export interface ClaudeSettings { disableAllHooks?: true; permissions: { blockReadsOutsideWorkingDirectories?: true; deny: string[] }; enabledPlugins?: Record<string, false> }
 
 /**
  * A plugin id as `enabledPlugins` spells it, `name@marketplace`. Anything else is left out: one
@@ -177,7 +177,8 @@ export interface HeadSettingsInput {
  * Your plugins are turned off (`enabledPlugins`, which beats your user settings): a head can't use
  * their tools, and each of their hooks would run through the shell sandbox's wrapper, which made
  * every head command take a minute or more.
- * Your own settings' hooks still run. A role's `--plugin-dir` plugin isn't listed, so it still loads.
+ * Every hook is off (`disableAllHooks`, HSEC-70): your settings' own hooks don't run for a head.
+ * A role's `--plugin-dir` plugin isn't listed, so it still loads.
  * Throws when the result isn't a file Claude Code would accept, or when a Read rule would cover the
  * head's own worktree or its `--add-dir` folders: then the head doesn't start.
  */
@@ -191,7 +192,7 @@ export function headSettings(input: HeadSettingsInput): ClaudeSettings {
     ...denyPairs(secretTargets(input.env, input.platform), input.platform),
   ])];
   const plugins = [...new Set(input.userPlugins ?? [])].filter(id => pluginIdForm.test(id)).sort();
-  const settings: ClaudeSettings = { permissions: { blockReadsOutsideWorkingDirectories: true, deny } };
+  const settings: ClaudeSettings = { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny } };
   if (plugins.length) settings.enabledPlugins = Object.fromEntries(plugins.map(id => [id, false] as const));
   const problems = settingsProblems(settings, { platform: input.platform, blockReads: true, readable: [input.worktree, ...input.addDirs] });
   if (problems.length) throw new Error(`Hydra couldn't build the head's permission settings: ${problems[0]}`);
@@ -231,13 +232,15 @@ export function laneSettings(input: LaneSettingsInput): ClaudeSettings {
  * Only the keys Hydra means to write are allowed, with exactly the right types, and every rule
  * must be a Read or Edit rule on an absolute `//…` path in the form R1 showed works. `readable`
  * lists folders no Read rule may cover (the worktree, a role's pack copy). A head's
- * `enabledPlugins` may only turn plugins off; a lane keeps your plugins.
+ * `enabledPlugins` may only turn plugins off, and its hooks must be off (`disableAllHooks`); a lane
+ * keeps your plugins and hooks.
  */
 export function settingsProblems(value: unknown, options: { platform: NodeJS.Platform; blockReads: boolean; readable?: readonly string[] }): string[] {
   const problems: string[] = [];
   const plain = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item) && Object.getPrototypeOf(item) === Object.prototype;
   if (!plain(value)) return ['the settings must be an object'];
-  for (const key of Object.keys(value)) if (key !== 'permissions' && key !== 'enabledPlugins') problems.push(`unknown setting "${key}"`);
+  for (const key of Object.keys(value)) if (key !== 'permissions' && key !== 'enabledPlugins' && key !== 'disableAllHooks') problems.push(`unknown setting "${key}"`);
+  if (options.blockReads ? value.disableAllHooks !== true : 'disableAllHooks' in value) problems.push(options.blockReads ? 'a head\'s hooks must be off' : 'a lane keeps your own hooks');
   if ('enabledPlugins' in value) {
     const plugins = value.enabledPlugins;
     if (!options.blockReads) problems.push('a lane keeps your own plugins');
@@ -388,6 +391,8 @@ export interface HeadEnvironmentInput {
   /** A role's variables (RoleLaunch.variables) and its values for Codex servers (RoleLaunch.env). */
   roleNames?: readonly string[];
   roleValues?: Readonly<Record<string, string>>;
+  /** A Codex head's own CODEX_HOME (agentHome.ts), when Hydra could make one (HSEC-70). */
+  codexHome?: string;
 }
 
 /**
@@ -400,10 +405,69 @@ export interface HeadEnvironmentInput {
  */
 export function headEnvironment(input: HeadEnvironmentInput): Record<string, string> {
   const set: Record<string, string> = { ...input.roleValues, TEMP: input.temp, TMP: input.temp, DISABLE_AUTOUPDATER: '1', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' };
+  if (input.provider === 'claude') Object.assign(set, claudeIsolationVariables);
+  if (input.provider === 'codex' && input.codexHome) set.CODEX_HOME = input.codexHome;
   if (input.provider === 'claude' && input.shell?.kind === 'sandboxed') {
     Object.assign(set, { CLAUDE_CODE_SHELL_PREFIX: input.shell.wrapper, HYDRA_WT: input.worktree, PATH: [input.shell.gitBin, envValue(input.base, 'PATH', input.platform)].filter(Boolean).join(';') });
   }
   return confinedEnvironment({ base: input.base, platform: input.platform, provider: input.provider, roleNames: input.roleNames ?? [], set });
+}
+
+// ---- Your own agent configuration stays out of heads and reviewers (HSEC-70) ----
+
+/**
+ * What a Claude head or reviewer gets so none of your own instructions reach it: no CLAUDE.md
+ * (your `~/.claude/CLAUDE.md` and rules; a head never loaded the project's, since only user
+ * settings load) and no auto memory. Claude Code reads both variables itself (2.1.282); your
+ * sign-in, model and permission settings still load.
+ */
+export const claudeIsolationVariables: Readonly<Record<string, string>> = { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' };
+
+/**
+ * Codex features that are on by default and reach past the task: your connected apps, plugins
+ * (the bundled ones too), hooks, memories, the browser and computer use, and suggestions to install
+ * more tools. Each is turned off for heads and reviewers. Names from `codex features list` (0.157.1).
+ */
+export const codexDisabledFeatures = ['apps', 'plugins', 'remote_plugin', 'hooks', 'memories', 'browser_use', 'browser_use_external', 'computer_use', 'in_app_browser', 'tool_suggest', 'skill_mcp_dependency_install'] as const;
+
+/** The few settings of your Codex config.toml a head or reviewer keeps: which model, how hard it thinks, and the Windows sandbox mode. */
+export interface CodexCarry { model?: string; model_reasoning_effort?: string; service_tier?: string; windowsSandbox?: string }
+
+/**
+ * Your model, effort, service tier and Windows sandbox mode, read from your Codex config.toml's
+ * text. Only a plain `key = "value"` line counts (top level, or `sandbox` under `[windows]`), and
+ * only a value of letters, digits, `.`, `_` and `-`: anything else is left out rather than
+ * passed on. Nothing else of the file (servers, plugins, hooks, instructions, profiles) is read.
+ */
+export function codexCarry(configText: string | undefined): CodexCarry {
+  const carry: CodexCarry = {};
+  let table = '';
+  for (const raw of (configText ?? '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const line = raw.trim();
+    const header = /^\[\s*([^\]]*?)\s*\]\s*(#.*)?$/.exec(line);
+    if (header) { table = header[1]!; continue; }
+    if (line.startsWith('[[')) { table = '(array)'; continue; }
+    const pair = /^([A-Za-z_]+)\s*=\s*(?:"([A-Za-z0-9._-]+)"|'([A-Za-z0-9._-]+)')\s*(#.*)?$/.exec(line);
+    if (!pair) continue;
+    const key = pair[1]!, value = (pair[2] ?? pair[3])!;
+    if (table === '' && (key === 'model' || key === 'model_reasoning_effort' || key === 'service_tier')) carry[key] = value;
+    if (table === 'windows' && key === 'sandbox') carry.windowsSandbox = value;
+  }
+  return carry;
+}
+
+/**
+ * The flags that keep a Codex head or reviewer to your sign-in: `--ignore-user-config` (no
+ * config.toml, so none of your MCP servers, Hydra's own lead entry included, plugins, hooks,
+ * memories, notify command or profiles), each default-on feature above off, no skills listing,
+ * then what codexCarry kept. With Hydra's own CODEX_HOME (agentHome.ts) your AGENTS.md and skills
+ * aren't there either. Every value passes through a Windows `.cmd` shim unchanged.
+ */
+export function codexIsolationArguments(carry: CodexCarry): string[] {
+  const safe = (value: string | undefined) => value !== undefined && /^[A-Za-z0-9._-]+$/.test(value);
+  const kept = ([['model', carry.model], ['model_reasoning_effort', carry.model_reasoning_effort], ['service_tier', carry.service_tier], ['windows.sandbox', carry.windowsSandbox]] as const)
+    .filter(([, value]) => safe(value)).flatMap(([key, value]) => ['-c', `${key}='${value}'`]);
+  return ['--ignore-user-config', ...codexDisabledFeatures.flatMap(feature => ['-c', `features.${feature}=false`]), '-c', 'skills.include_instructions=false', ...kept];
 }
 
 // ---- The shell: Codex's Windows sandbox around each Bash command (R5, design 1, 5 and 7) ----

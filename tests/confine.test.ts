@@ -10,7 +10,7 @@ import { HelperEndpoint, callHelperEndpoint } from '../src/core/helperEndpoint';
 import { HelperService, commitAll, helperPrompt } from '../src/core/helperService';
 import { claudeHelperArguments, codexHelperArguments, type HelperRun, type HelperRunSpec } from '../src/core/helperRunner';
 import {
-  bashQuote, claudeHeadTools, confinedEnvironment, guardScript, headEnvironment, headSettings, headShellSentence, homeFolders, insideScript, laneSettings,
+  bashQuote, claudeHeadTools, codexCarry, codexIsolationArguments, confinedEnvironment, guardScript, headEnvironment, headSettings, headShellSentence, homeFolders, insideScript, laneSettings,
   rulePath, ruleCovers, sandboxEnvironmentPolicy, sandboxProfile, sandboxProfileToml, secretTargets, settingsProblems, storageReadDeny, treeScript, userPluginIds, wrapperScript, type HeadShell, type StorageListing,
 } from '../src/core/confine';
 import { userClaudePlugins } from '../src/core/confineFiles';
@@ -72,7 +72,7 @@ test('a Claude head\'s settings: exactly the read block and the deny pairs, and 
     platform: 'win32', env: winHome, storage: 'C:\\Data\\Hydra', storageRead: [{ path: 'C:\\Data\\Hydra', dir: true }],
     worktree: 'C:\\wt\\aaa', addDirs: [], otherWorktrees: ['C:\\wt\\bbb', 'C:\\wt\\lane-ccc'], leadFolder: 'C:\\repo',
   });
-  assert.deepEqual(settings, { permissions: { blockReadsOutsideWorkingDirectories: true, deny: [
+  assert.deepEqual(settings, { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: [
     'Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)',
     'Read(//c/wt/bbb/**)', 'Edit(//c/wt/bbb/**)', 'Read(//c/wt/lane-ccc/**)', 'Edit(//c/wt/lane-ccc/**)',
     'Read(//c/repo/.hydra/**)', 'Edit(//c/repo/.hydra/**)', 'Read(//c/repo/.git/**)', 'Edit(//c/repo/.git/**)',
@@ -80,23 +80,27 @@ test('a Claude head\'s settings: exactly the read block and the deny pairs, and 
   ] } });
   // What goes into the file is what Claude reads back: only known keys, each rule in the form R1 showed works.
   const written = JSON.parse(JSON.stringify(settings, null, 2));
-  assert.deepEqual(Object.keys(written), ['permissions']);
+  assert.deepEqual(Object.keys(written), ['disableAllHooks', 'permissions'], 'HSEC-70: every hook off');
   assert.deepEqual(Object.keys(written.permissions).sort(), ['blockReadsOutsideWorkingDirectories', 'deny']);
   for (const rule of written.permissions.deny) assert.match(rule, /^(Read|Edit)\(\/\/c\/[^\\[\]*]+(\/\*\*)?\)$/);
   assert.deepEqual(settingsProblems(written, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
 });
 
 test('the settings checker refuses anything Claude might reject or that would hide the head\'s own files', () => {
-  const good = { permissions: { blockReadsOutsideWorkingDirectories: true, deny: ['Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)'] } };
+  const good = { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: ['Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)'] } };
   const check = (value: unknown, readable: string[] = []) => settingsProblems(value, { platform: 'win32', blockReads: true, readable });
   assert.deepEqual(check(good), []);
+  // HSEC-70: a head's hooks are off, exactly; a lane keeps yours.
+  assert.match(check({ permissions: good.permissions })[0]!, /a head's hooks must be off/);
+  assert.match(check({ ...good, disableAllHooks: false })[0]!, /a head's hooks must be off/);
+  assert.match(settingsProblems({ disableAllHooks: true, permissions: { deny: ['Read(//home/me/.ssh/**)'] } }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own hooks/);
   assert.match(check({ ...good, sandbox: { enabled: true } })[0]!, /unknown setting "sandbox"/);
-  assert.match(check({ permissions: { ...good.permissions, defaultMode: 'notAMode' } })[0]!, /unknown permission setting "defaultMode"/);
-  assert.match(check({ permissions: { deny: good.permissions.deny } })[0]!, /reads outside the worktree must be blocked/);
+  assert.match(check({ ...good, permissions: { ...good.permissions, defaultMode: 'notAMode' } })[0]!, /unknown permission setting "defaultMode"/);
+  assert.match(check({ ...good, permissions: { deny: good.permissions.deny } })[0]!, /reads outside the worktree must be blocked/);
   for (const rule of ['Read(C:\\Users\\me\\.ssh)', 'Bash(rm -rf *)', 'Read(//C/Users/me/x)', 'Read(//c/Users)', 'Read(//c/a[b]/c)', 'Read(//c/a/**/b)', 'Read(~/.ssh/**)', 7]) {
-    assert.match(check({ permissions: { ...good.permissions, deny: [rule] } })[0]!, /isn't a Read or Edit rule on an absolute path/, String(rule));
+    assert.match(check({ ...good, permissions: { ...good.permissions, deny: [rule] } })[0]!, /isn't a Read or Edit rule on an absolute path/, String(rule));
   }
-  assert.match(check({ permissions: { ...good.permissions, deny: ['Read(//c/x/y)', 'Read(//c/x/y)'] } })[0]!, /listed twice/);
+  assert.match(check({ ...good, permissions: { ...good.permissions, deny: ['Read(//c/x/y)', 'Read(//c/x/y)'] } })[0]!, /listed twice/);
   assert.match(check(good, ['C:\\Data\\Hydra\\packs\\cache\\kit'])[0]!, /would stop it reading/);
   // A worktree inside the storage folder would be hidden from its own head: it doesn't start.
   assert.throws(() => headSettings({ platform: 'win32', env: winHome, storage: 'C:\\Data\\Hydra', storageRead: [{ path: 'C:\\Data\\Hydra', dir: true }], worktree: 'C:\\Data\\Hydra\\wt\\aaa', addDirs: [], otherWorktrees: [], leadFolder: 'C:\\repo' }), /would stop it reading C:\\Data\\Hydra\\wt\\aaa/);
@@ -116,7 +120,7 @@ test('a Claude head turns your plugins off, and the checker lets enabledPlugins 
   const settings = headSettings({ ...input, userPlugins: ['tools@other.market', 'claude-mem@thedotmack', 'claude-mem@thedotmack', 'bad id@x'] });
   assert.deepEqual(settings.enabledPlugins, { 'claude-mem@thedotmack': false, 'tools@other.market': false });
   assert.equal(settings.permissions.blockReadsOutsideWorkingDirectories, true, 'the read block and deny rules are unchanged');
-  assert.deepEqual(Object.keys(headSettings(input)), ['permissions'], 'no plugins, no key');
+  assert.deepEqual(Object.keys(headSettings(input)), ['disableAllHooks', 'permissions'], 'no plugins, no key');
   assert.deepEqual(settingsProblems(JSON.parse(JSON.stringify(settings)), { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
 
   const check = (enabledPlugins: unknown, blockReads = true) => settingsProblems({ ...settings, permissions: blockReads ? settings.permissions : { deny: settings.permissions.deny }, enabledPlugins }, { platform: 'win32', blockReads });
@@ -124,7 +128,7 @@ test('a Claude head turns your plugins off, and the checker lets enabledPlugins 
   assert.match(check({ 'bad id@x': false })[0]!, /doesn't turn a plugin off/);
   assert.match(check({})[0]!, /non-empty object/);
   assert.match(check(['claude-mem@thedotmack'])[0]!, /non-empty object/);
-  assert.match(check({ 'claude-mem@thedotmack': false }, false)[0]!, /a lane keeps your own plugins/);
+  assert.ok(check({ 'claude-mem@thedotmack': false }, false).some(problem => /a lane keeps your own plugins/.test(problem)));
   assert.match(settingsProblems({ ...settings, hooks: {} }, { platform: 'win32', blockReads: true })[0]!, /unknown setting "hooks"/, 'still an allowlist');
 
   // Read from CLAUDE_CONFIG_DIR, where the head's Claude Code finds them.
@@ -234,6 +238,35 @@ test('Codex head arguments are as before: workspace-write, approval never; the e
   const codex = codexHelperArguments(spec({ provider: 'codex' }));
   assert.ok(codex.includes('workspace-write') && codex.includes("approval_policy='never'"));
   assert.ok(!codex.some(arg => /--settings|--tools|deny/.test(arg)), 'no read-deny profiles for Codex heads (R4)');
+  // HSEC-70: the isolation flags come first, then Hydra's server, the only one; on a resume too.
+  const isolation = codexIsolationArguments({ model: 'gpt-x', windowsSandbox: 'elevated' });
+  const isolated = codexHelperArguments(spec({ provider: 'codex', confine: { addDirs: [], shell: false, env: {}, codexArgs: isolation } }));
+  assert.deepEqual(isolated.slice(0, 2 + isolation.length), ['exec', '--json', ...isolation]);
+  assert.ok(isolated.indexOf('--ignore-user-config') < isolated.findIndex(arg => arg.startsWith('mcp_servers.hydra.command=')));
+  assert.deepEqual([...new Set(isolated.filter(arg => arg.startsWith('mcp_servers.')).map(arg => arg.split('.')[1]))], ['hydra'], 'no other server');
+  const resumed = codexHelperArguments(spec({ provider: 'codex', confine: { addDirs: [], shell: false, env: {}, codexArgs: isolation } }), 'thread-1');
+  assert.deepEqual(resumed.slice(0, 3 + isolation.length), ['exec', 'resume', '--json', ...isolation]);
+});
+
+test('HSEC-70: Codex heads and reviewers keep only your model, effort, tier and Windows sandbox; everything else of your config stays out', () => {
+  const config = [
+    '\uFEFFmodel = "gpt-main"', 'model_reasoning_effort = "medium"', "service_tier = 'default'", 'personality = "pragmatic"',
+    'developer_instructions = "Call me Sam"', 'notify = ["x.exe"]', 'model_provider = "evil provider"',
+    '[windows]', 'sandbox = "elevated"  # set up once', '',
+    '[mcp_servers.hydra]', 'command = "Hydra.exe"', 'model = "not-top-level"',
+    '[profiles.fast]', 'model = "gpt-fast"', '[[skills.config]]', 'sandbox = "nope"',
+  ].join('\r\n');
+  assert.deepEqual(codexCarry(config), { model: 'gpt-main', model_reasoning_effort: 'medium', service_tier: 'default', windowsSandbox: 'elevated' });
+  assert.deepEqual(codexCarry(undefined), {});
+  assert.deepEqual(codexCarry('model = "a b"\nmodel_reasoning_effort = "x\'y"'), {}, 'a value with odd characters is left out');
+  const args = codexIsolationArguments(codexCarry(config));
+  assert.equal(args[0], '--ignore-user-config');
+  for (const feature of ['apps', 'plugins', 'remote_plugin', 'hooks', 'memories', 'browser_use', 'computer_use']) assert.ok(args.includes(`features.${feature}=false`), feature);
+  assert.ok(args.includes('skills.include_instructions=false'));
+  assert.deepEqual(args.slice(-8), ['-c', "model='gpt-main'", '-c', "model_reasoning_effort='medium'", '-c', "service_tier='default'", '-c', "windows.sandbox='elevated'"]);
+  assert.ok(args.every(arg => !/["%^&|<>!]/.test(arg)), 'every value passes a .cmd shim unchanged');
+  assert.ok(!codexIsolationArguments({}).some(arg => /model|windows/.test(arg)), 'nothing carried, nothing set');
+  assert.ok(!codexIsolationArguments({ model: "x'; rm" }).some(arg => arg.startsWith('model=')), 'never mis-quoted');
 });
 
 // ---- Environment ----
@@ -281,6 +314,13 @@ test('a head\'s environment: its own TEMP and TMP, background tasks off, and the
   const codex = headEnvironment({ base: hydraEnv, platform: 'win32', provider: 'codex', temp: 'C:\\h\\temp\\bbb-1', worktree: 'W', shell: sandboxed, roleValues: { KIT_TOKEN: 'v' } });
   assert.equal(codex.CLAUDE_CODE_SHELL_PREFIX, undefined, 'Codex heads keep Codex\'s own sandbox');
   assert.deepEqual([codex.TEMP, codex.TMP, codex.KIT_TOKEN], ['C:\\h\\temp\\bbb-1', 'C:\\h\\temp\\bbb-1', 'v']);
+  // HSEC-70: a Claude head loads no CLAUDE.md and no auto memory; a Codex head gets Hydra's own CODEX_HOME when there is one.
+  assert.deepEqual([claude.CLAUDE_CODE_DISABLE_CLAUDE_MDS, claude.CLAUDE_CODE_DISABLE_AUTO_MEMORY], ['1', '1']);
+  assert.equal(codex.CLAUDE_CODE_DISABLE_CLAUDE_MDS, undefined);
+  assert.equal(codex.CODEX_HOME, 'C:\\codex', 'without its own home, your CODEX_HOME as before');
+  const ownHome = headEnvironment({ base: hydraEnv, platform: 'win32', provider: 'codex', temp: 'T', worktree: 'W', codexHome: 'C:\\h\\codex-home' });
+  assert.equal(ownHome.CODEX_HOME, 'C:\\h\\codex-home');
+  assert.equal(headEnvironment({ base: hydraEnv, platform: 'win32', provider: 'claude', temp: 'T', worktree: 'W', codexHome: 'C:\\h\\codex-home' }).CODEX_HOME, undefined, 'a Claude head never gets it');
 });
 
 // ---- The wrapper ----

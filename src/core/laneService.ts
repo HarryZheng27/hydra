@@ -527,6 +527,7 @@ export class LaneService {
         author: lane.provider, title: lane.name, brief: lane.goal, logDirectory,
         executable: this.options.gatesExecutable,
         ...(this.options.gatesLimited ? { limited: this.options.gatesLimited } : {}),
+        ...(this.options.hydraStorage ? { agentStorage: this.options.hydraStorage } : {}),
         signal: controller.signal, ...(onProgress ? { onProgress } : {}), ...(this.options.log ? { log: this.options.log } : {}),
         ...(this.options.gatesRuntime ? { runtime: this.options.gatesRuntime } : {}),
       }, this.options.gates);

@@ -7,6 +7,7 @@ import { loadGates, type Gate, type GatesConfig } from './config';
 import { cdpBrowser } from './browser';
 import { runCommandGate } from './command';
 import { defaultRunReviewer, formatFinding, runReviewGate } from './review';
+import { agentIsolation } from '../agentHome';
 import { freePort, runScreenshotsGate } from './screenshots';
 import { clip, notRun, providerName, redactGateResult, type GateContext, type GateRuntime } from './types';
 
@@ -32,6 +33,7 @@ export const gateOrder = (gates: readonly Gate[]): Gate[] => [...gates].sort((a,
 export const defaultGateRuntime = (): GateRuntime => ({
   runCommand: (command, cwd, logFile, timeoutMs, signal, spawned) => runCheckCommand(command, cwd, logFile, signal, undefined, 3000, timeoutMs, undefined, spawned),
   runReviewer: defaultRunReviewer,
+  isolation: (provider, storage) => agentIsolation(provider, storage),
   browser: cdpBrowser,
   freePort,
   fetch: (input, init) => fetch(input, init),

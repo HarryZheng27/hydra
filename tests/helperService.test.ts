@@ -15,10 +15,12 @@ import type { LimitEvent } from '../src/core/limitEvents';
 import type { ReviewerSpec } from '../src/core/gates';
 import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 import type { ProviderWait } from '../src/core/providerWait';
+import type { AgentIsolation } from '../src/core/agentHome';
 
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
 type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; providerWait: (wait: ProviderWait | undefined, waitedMs?: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
+const noIsolation = async (): Promise<AgentIsolation> => ({ env: {}, codexArgs: [], claudePlugins: [] });
 async function fixture(options: { script: Script; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
@@ -39,7 +41,9 @@ async function fixture(options: { script: Script; checks?: unknown; gates?: unkn
     store, endpoint, leadFolder: repo, leadKey: 'window', worktreeRoot: () => path.join(root, 'worktrees'),
     executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => options.maxConcurrent ?? 2, now: options.now, watchdogMs: 20,
-    gateRuntime: options.gateRuntime, lanes: options.lanes?.(root, repo), plans: options.plans, planBoard: options.planBoard,
+    // HSEC-70's isolation, emptied: no test reads your own Claude or Codex folders (tests/agentHome.test.ts covers it).
+    gateRuntime: { isolation: noIsolation, ...options.gateRuntime }, agentIsolation: noIsolation,
+    lanes: options.lanes?.(root, repo), plans: options.plans, planBoard: options.planBoard,
     gates: options.gatesLoader,
     log: line => logs.push(line),
     startRun: spec => {
