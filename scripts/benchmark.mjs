@@ -241,9 +241,12 @@ let hydraBundle;
 async function hydraModule() {
   if (hydraBundle) return hydraBundle;
   const { build } = await import('esbuild');
-  const outfile = path.join(root, '.bench', '.build', 'benchmark-review.cjs');
+  // One file per process: two harness processes at once (the tests run several) would otherwise load each other's
+  // half-written bundle ("reviewRepository is not a function"). Removed again once loaded.
+  const outfile = path.join(root, '.bench', '.build', `benchmark-review-${process.pid}-${Date.now().toString(36)}.cjs`);
   await build({ entryPoints: [path.join(root, 'scripts', 'benchmark-review.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile, external: ['vscode'], logLevel: 'error' });
-  return (hydraBundle = createRequire(import.meta.url)(outfile));
+  try { return (hydraBundle = createRequire(import.meta.url)(outfile)); }
+  finally { await fs.rm(outfile, { force: true }).catch(() => undefined); }
 }
 
 async function review(flags) {
