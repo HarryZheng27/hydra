@@ -166,8 +166,8 @@ export function singleSettings(pluginIds) {
   const ids = [...new Set(pluginIds ?? [])].filter(id => /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)).sort();
   return ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false])) } : {};
 }
-/** What the single Claude Code agent may run without asking: the project's tools and reading, not anything. */
-export const singleAllowedTools = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(wc:*)', 'Bash(mkdir:*)']);
+/** What the single Claude Code agent may run without asking: the project's tools and reading, not anything. It includes cd, grep and echo, because a compound command (`cd x && npm test 2>&1 | tail`) is allowed only when every part is, the same shapes a head runs. */
+export const singleAllowedTools = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(wc:*)', 'Bash(mkdir:*)', 'Bash(cd:*)', 'Bash(grep:*)', 'Bash(echo:*)', 'Bash(sort:*)', 'Bash(diff:*)', 'Bash(pwd:*)']);
 /**
  * The single Claude Code agent's command line (pure), isolated like a head: its settings file (no user plugins),
  * no MCP servers but the empty config's (--strict-mcp-config), and the allowed tools above. The brief goes to stdin.
