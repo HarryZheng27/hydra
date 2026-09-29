@@ -121,15 +121,15 @@ function fakeClock(): ProjectSummaryClock & { advance(ms: number): void; interva
   return clock;
 }
 
-/** Waits (up to 5s of real time) for a publisher's file to say it was written at `ms` on the fake clock. */
+/** Waits (up to 20 s of real time, polling every 50 ms) for a publisher's file to say it was written at `ms` on the fake clock. Polling faster holds the file open often enough, under a loaded test run on Windows, to keep the writer's rename retrying past its limit. */
 async function summaryAt(dir: string, id: string, ms: number): Promise<void> {
   const expected = new Date(ms).toISOString();
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 20_000;
   let seen: string | undefined;
   while (Date.now() < deadline) {
     seen = await readFile(path.join(dir, `${id}.summary.json`), 'utf8').then(text => JSON.parse(text).updatedAt as string, () => undefined);
     if (seen === expected) return;
-    await delay(10);
+    await delay(50);
   }
   assert.equal(seen, expected);
 }
