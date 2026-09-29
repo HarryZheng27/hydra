@@ -43,13 +43,15 @@ Three tasks of about an hour for one strong agent, each splitting into a wide st
 
 | Fixture | The work | Jobs |
 | --- | --- | --- |
-| `kanban-app` | A kanban board with an HTTP API and a client: columns with WIP limits, cards with ordering and archiving, labels, due dates, search filters, CSV and JSON export, persistence to a JSON file, and the client's methods | 8 at once (each a domain module with its routes and tests, or persistence, or the client), then `server` (every route and a data file), then `e2e` (a whole board through the client, across a restart) |
-| `cli-toolkit` | A command-line toolkit's subcommands: `csv-stats`, `json-query`, `wrap`, `date-diff`, `checksum`, `table`, `case` | 7 at once (one per subcommand), then `cli` (argument parsing, dispatch, help, exit codes) |
-| `module-refactor` | Six billing modules that each carry private copies of money, date, CSV and validation helpers, which differ in small, tested ways: extract a shared core and move every module onto it, behaviour unchanged | 3 core jobs at once, then 6 module moves at once, then `finish` (a core index, a structure test and the README) |
+| `kanban-app` | A kanban board with an HTTP API and a client: columns with WIP limits, cards with ordering and archiving, labels, due dates, search filters, CSV and JSON export, persistence to a JSON file, and the client's methods | **10 jobs.** 8 at once (each a domain module with its routes and tests, or the client, or `persistence`, which also writes `openServer` and `bin/serve.js`, since they need no other feature), then `server` (`src/routes/index.js`, the API test and the README), then `e2e` (a whole board through the client, across a restart) |
+| `cli-toolkit` | A command-line toolkit's subcommands: `csv-stats`, `json-query`, `wrap`, `date-diff`, `checksum`, `table`, `case` | **9 jobs.** 8 at once (one per subcommand, and `cli-core`: argument parsing, help, `--version`, errors and exit codes, tested with stand-in commands), then `cli` (each command end to end through `bin/toolkit.js`, and the README) |
+| `module-refactor` | Six billing modules that each carry private copies of money, date, CSV and validation helpers, which differ in small, tested ways: extract a shared core and move every module onto it, behaviour unchanged | **10 jobs.** 3 core jobs at once, then 6 module moves at once, then `finish` (a core index and the README) |
 
-Each plan leaves room for Hydra's two rounds of integration fixes within its 12-job limit and the default $80 budget (Hydra refuses to add a job when the job count times $5 would pass the budget).
+Each plan leaves room for Hydra's two rounds of integration fixes within its 12-job limit and the default $80 budget (Hydra refuses to add a job when the job count times $5 would pass the budget): at most 12 jobs, 60 dollars. `tests/benchmarkFairness.test.ts` checks the counts above, that no two jobs share a file, and that `prompt.md` stays the plan's brief.
 
-**The hidden check.** `bench/fixtures/<name>/check.mjs` is never copied into the repositories the agents work in. After each setup, the harness runs `node check.mjs <result>`: for the single agent on its repository, and for Hydra on a clone of the plan's integration branch at its tip (`hydra-final`, beside the repository). It exercises what `SPEC.md` specifies (importing the modules, calling the API, running the command line) and ends with a JSON line of how many checks passed; the result goes into the results file as `check`. For `module-refactor` it also runs the modules' original tests, taken from the fixture, on the result's code, so an edited test can't pass for them.
+**`module-refactor`'s structure test** (`test/structure.test.js`) ships in the fixture, so both setups have it from the start and each move's own `npm test` catches a helper left behind. Once a module requires `./core/…` it fails if any helper named for it in SPEC section 6 is still defined; a module not moved yet is skipped, so the starting code passes. Nobody edits it, and `finish` no longer writes it.
+
+**The hidden check.** `bench/fixtures/<name>/check.mjs` is never copied into the repositories the agents work in. After each setup, the harness runs `node check.mjs <result>`: for the single agent on its repository, and for Hydra on a clone of the plan's integration branch at its tip (`hydra-final`, beside the repository). It exercises what `SPEC.md` specifies (importing the modules, calling the API, running the command line) and ends with a JSON line of how many checks passed; the result goes into the results file as `check`. For `module-refactor` it also runs the modules' original tests, taken from the fixture, on the result's code, so an edited test can't pass for them, and it scores the core index, the core's tests, the README section, and each module's "requires the core" and "keeps no private helper" as separate items, so one miss costs one item. `kanban-app`'s check asks `src/routes/index.js` for seven register functions in any shape (an array, an object of functions, or a nested array), because the spec doesn't say which.
 
 **The single agent** gets the same work as one brief: the fixture's `prompt.md`, or for `shop` one generated from the plan file: the plan's brief, then every job's title, brief and files, in order (`taskFromPlan` in `scripts/benchmark-lib.mjs`). So both sides always get exactly the same work. The first published run predates this: its single agent got a hand-written brief of the same work.
 
@@ -60,8 +62,13 @@ Each plan leaves room for Hydra's two rounds of integration fixes within its 12-
 - **Gates at the end:**
   - for Hydra, the integration gate's result on every job's work merged together;
   - for the single agent, `npm test` on its result.
-- **The review:** Hydra's integration gate includes one review of the whole change by the other agent. `benchmark.mjs review` runs the same review on the single agent's result, so both have a verdict (below). A review that didn't run (no reviewer, a usage limit, a timeout, or a gate failed before it) is "not run", never a failure: `summarize` leaves it out of the pass rate and counts it beside it.
-- **Fix rounds:** the jobs a failed integration gate added to fix what it found (`integration-fix-<n>`).
+- **The review, first pass and final:** Hydra's integration gate includes one review of the whole change by the other agent, and when it fails Hydra adds up to two fix jobs (`hydra.plans.integrationFixRounds`) and reviews again. So the two sides are compared like for like:
+  - *first-pass review*: the first review of the work. For Hydra it is the round 1 gate's, read from the plan's `integration-fix-1` job, whose brief lists what failed (the plan's gate result and the reviewer's `plan-<id>-integration/rigor-review-reply.txt` are overwritten each round); with no fix round it is the final review. It is recorded as `firstReview`. For the single agent it is the first `review`.
+  - *final review*: the last one, after up to N fix rounds. `benchmark.mjs review` gives the single agent the same rounds (`--fix-rounds`, 2 by default): a failed review resumes the agent with the findings, formatted like Hydra's fix brief, then reviews again (below).
+  - *passed within N fix rounds*: the final review passed after at most N rounds.
+  A review that didn't run (no reviewer, a usage limit, a timeout, or a gate failed before it) is "not run", never a failure: `summarize` leaves it out of the pass rate and counts it beside it.
+- **Fix rounds:** for Hydra, the jobs a failed integration gate added to fix what it found (`integration-fix-<n>`); for the single agent, its resumed runs.
+- **Time to working code, before and after the review loop:** before is the time above. After is when the review and its fix rounds are done and the work still works: for the single agent, its run plus every review and fix round, with `npm test` and the hidden check run again on the fixed repository; for Hydra, when the plan's integration gate settled after its fix jobs.
 - **The hidden check:** how many of the fixture's acceptance checks passed.
 - **Conflicts:**
   - predicted: conflicts Hydra predicted while heads ran, with each other or with the plan's integration branch;
@@ -69,18 +76,19 @@ Each plan leaves room for Hydra's two rounds of integration fixes within its 12-
 - **Amendments:** changes made to the plan while it ran.
 - **Cost, as the providers reported it:**
   - Claude Code reports each run's cost in dollars. Hydra keeps it per head, and the single agent's comes from `claude -p --output-format json`.
-  - Codex reports tokens, not dollars, so a Codex run shows tokens.
+  - Codex reports tokens, not dollars, so a Codex run shows tokens, and the review itself (Codex's) counts on neither side.
+  - **Symmetric:** cost is the agent's work plus its fix rounds on both sides: Hydra's includes its `integration-fix-<n>` jobs, and the `single+review` row adds the resumed fix runs (`cost.fixUsd` in `single-results.json`) to the agent's own cost. The summary's column says "agent work, fix rounds included".
   - A job that reported nothing counts as nothing, and the table says how many jobs did report.
 
 ## How to run it
 
-Running it spends real subscription usage, and the Hydra run is best recorded, so it is run by hand. You need Hydra (with the `hydra` command on `PATH`: the installer's **Add to PATH**), and Claude Code or Codex signed in.
+Running it spends real subscription usage, and the Hydra run is best recorded, so it is run by hand. You need Hydra and Claude Code or Codex signed in. Each of `hydra`, `claude` and `codex` is looked up as the flag says (`--hydra`, `--claude`, `--codex`), else on `PATH` (the installer's **Add to PATH**), else in its usual install location (`%LOCALAPPDATA%\Programs\Hydra\bin\hydra.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, `%APPDATA%\npm\codex.cmd`), and every run logs which one it used (`Using claude: … (default install location …)`).
 
 1. `node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>]`: makes two fresh repositories of the fixture under `.bench/run-<time>/` (`hydra` and `single`), each with one commit, leaving out `prompt.md` and `check.mjs`. It records the fixture and task in `benchmark.json` in the run folder, so the next commands needn't be told again.
 2. Open the `hydra` folder in Hydra, trust it, and start recording. From a shell that runs inside a Hydra window, open it with `scripts/bench-open.ps1` (below).
 3. `node scripts/benchmark.mjs hydra --repo .bench/run-<time>/hydra`:
    - runs `hydra plan run <task> --unattended` (`--task discounts` by default for `shop`, or the fixture's only plan; with a 120-minute and $80 budget by default: `--minutes`, `--usd`);
-   - watches the plan until its integration gate has a result;
+   - watches the plan until its integration gate has a result: every 10 seconds (`--poll`), less often while nothing changes (15 seconds after 3 quiet looks, 20 after 6, 30 after 9), because each `hydra plan show` makes Hydra check its process table, which takes 2 to 6 seconds on Windows. An interval under 10 seconds is only for tests, and says so;
    - reads when each job landed from Hydra's plan store (`%APPDATA%\Hydra\User\globalStorage\…\plans\plans.json`, or `--plan-store <file>`);
    - runs the fixture's hidden check on the integration branch's tip;
    - writes `hydra-results.json` and the plan's report.
@@ -119,16 +127,17 @@ With `-WaitSeconds`, it then runs `hydra status` in the folder (from the same cl
 - The review sees `base..HEAD`, where the base is the repository's first commit (`--base` to change it). Work the agent left uncommitted is committed first, and `committedLeftovers` says so.
 - It writes `single-review.json` (the verdict, every check with its duration, the findings, and where the reviewer's prompt and reply are kept) and adds `review` to `single-results.json`: the verdict, whether it passed, its duration and the findings by severity.
 - The gates are read from the fixture, as Hydra reads a plan's gates from the lead folder, never from the repository under review, whose agent could have changed them.
+- **The fix loop (`--fix-rounds N`, 2 by default, as `hydra.plans.integrationFixRounds`; 0 for none).** When the review fails, the single agent is resumed (`claude -p --resume <session>` with the run's own isolation; `single-results.json` keeps the session id) with the findings, formatted like Hydra's fix brief (`integrationFixJob`: one section per failed gate, its findings, then what to do), and the fixed work is reviewed again, up to N times. The fix runs' time and cost count in the single run. After a fix, `npm test` and the hidden check run again on the fixed repository. `single-review.json` keeps every round; `single-results.json`'s `review` has the final verdict plus `firstPass`, `fixRounds`, `fixRoundsAllowed`, `passedWithinRounds`, `fixSeconds` and `afterFix`, and `cost.fixUsd`. `--fix-command "<command>"` replaces the resume command (a stand-in, or another agent; a Codex run needs it). An agent that can't be resumed, or fails, is recorded as `fixSkipped` with the reason, and the review stays failed.
 - Like any review gate, it runs for at most 5 minutes. A review that doesn't run is recorded with `verdict: "not run"`, `ran: false` and the reason, and the command then exits 1, or 3 when a usage limit stopped it (`usageLimit: true`), so a night of runs notices and stops.
 
 ### Repeat runs and summaries: `benchmark.mjs summarize`
 
 Runs are kept one folder each (`prepare --out <folder>`). `node scripts/benchmark.mjs summarize --runs "<glob or folders, comma-separated>"` reads every `*-results.json` in them and groups the runs by task and setup:
 - `single`: one agent alone;
-- `single+review`: the same runs once reviewed, their total time including the review;
+- `single+review`: the same runs once reviewed (with their fix rounds), their total time and cost including the review loop;
 - `hydra`: Hydra's plan.
 
-For each group it gives the median and the range (min–max) of time to working code, total time and reported cost, the gate, review and hidden-check pass rates, and fix rounds; then one line per run, so nothing hides behind a median. It prints the table and writes it to `summary.md` beside the run folders (`--out` to change that). For Hydra results written before landing times were recorded, it takes them from Hydra's plan store (`--plan-store`).
+For each group it gives the median and the range (min–max) of time to working code before and after the review loop, total time and reported cost (agent work, fix rounds included), the gate pass rate, the first-pass review, the final review, "passed within N fix rounds", fix rounds, and the hidden check; then one line per run, so nothing hides behind a median. It prints the table and writes it to `summary.md` beside the run folders (`--out` to change that). For Hydra results written before landing times were recorded, it takes them from Hydra's plan store (`--plan-store`).
 
 ```
 node scripts/benchmark.mjs summarize --runs ".bench/overnight/bench-p1-*"

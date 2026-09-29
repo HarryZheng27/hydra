@@ -80,7 +80,7 @@ test('benchmark.mjs review commits what the agent left, reviews base..HEAD, and 
     assert.deepEqual(review.checks.map((check: { id: string; state: string }) => [check.id, check.state]), [['test', 'passed'], ['rigor-review', 'passed']]);
     assert.ok((await readdir(out)).includes(review.logs), 'the reviewer\'s prompt and reply are kept');
     const updated = JSON.parse(await readFile(path.join(out, 'single-results.json'), 'utf8'));
-    assert.deepEqual(updated.review, { verdict: 'pass', passed: true, ran: true, gatesPassed: true, durationSeconds: review.durationSeconds, reviewer: 'codex', findings: { blocker: 0, major: 0, minor: 0 } });
+    assert.deepEqual(updated.review, { verdict: 'pass', passed: true, ran: true, gatesPassed: true, durationSeconds: review.durationSeconds, reviewer: 'codex', findings: { blocker: 0, major: 0, minor: 0 }, firstPass: { verdict: 'pass', ran: true, passed: true, findings: { blocker: 0, major: 0, minor: 0 } }, fixRounds: 0, fixRoundsAllowed: 2, passedWithinRounds: true });
     assert.equal(updated.cost.usd, 2, 'the rest of the results are kept');
     assert.match(await readFile(path.join(out, 'fake-reviewer-prompt.md'), 'utf8'), /Plan "Shop features": every job's work together/, 'the plan comes from the fixture the results name');
     assert.equal(review.ran, true);
@@ -212,11 +212,11 @@ test('the summary table groups by task and setup, and lists every run below it',
   ];
   const markdown = renderSummary(rows);
   const lines = markdown.split('\n');
-  assert.ok(lines[0]!.startsWith('| Task | Setup | Runs | Time to working code | Total time | Cost reported | Gate passed | Review passed | Fix rounds | Check passed |'));
-  assert.equal(lines[2], '| shop-features | single | 1 | 6m 40s | 6m 40s | $2.00 | 1/1 | – | – | – |');
-  assert.equal(lines[3], '| shop-features | single+review | 1 | 6m 40s | 8m 20s | $2.00 | 1/1 | 1/1 | – | – |');
-  assert.equal(lines[4], '| shop-features | hydra | 2 | 3m 50s (3m 20s–4m 20s) | 11m 40s (10m 00s–13m 20s) | $3.50 ($3.00–$4.00) | 2/2 | 1/2 | 2 (1–3) | – |');
-  assert.ok(markdown.includes('| r2-hydra | shop-features | hydra | 4m 20s | 13m 20s | $4.00 | passed | failed | 3 | – |'));
+  assert.ok(lines[0]!.startsWith('| Task | Setup | Runs | Working code, before the review loop | Working code, after the review loop | Total time | Cost (agent work, fix rounds included) | Gate passed | First-pass review | Final review | Passed within 2 fix rounds | Fix rounds | Check passed |'));
+  assert.equal(lines[2], '| shop-features | single | 1 | 6m 40s | – | 6m 40s | $2.00 | 1/1 | – | – | – | – | – |');
+  assert.equal(lines[3], '| shop-features | single+review | 1 | 6m 40s | 8m 20s | 8m 20s | $2.00 | 1/1 | 1/1 | 1/1 | 1/1 | 0 | – |');
+  assert.equal(lines[4], '| shop-features | hydra | 2 | 3m 50s (3m 20s–4m 20s) | 11m 40s (10m 00s–13m 20s) | 11m 40s (10m 00s–13m 20s) | $3.50 ($3.00–$4.00) | 2/2 | 1/2 | 1/2 | 1/2 | 2 (1–3) | – |');
+  assert.ok(markdown.includes('| r2-hydra | shop-features | hydra | 4m 20s | 13m 20s | 13m 20s | $4.00 | passed | failed | failed | 3 | – |'));
 });
 
 test('benchmark.mjs summarize reads every run folder a glob matches, fills old Hydra results\' timing from the plan store, and writes the table', async () => {
@@ -230,7 +230,7 @@ test('benchmark.mjs summarize reads every run folder a glob matches, fills old H
     const ran = await node([script, 'summarize', '--runs', path.join(out, 'bench-p1-*'), '--plan-store', path.join(out, 'store', 'plans.json')]);
     assert.equal(ran.code, 0, ran.stderr);
     const summary = await readFile(path.join(out, 'summary.md'), 'utf8');
-    assert.ok(summary.includes('| shop-features | hydra | 1 | 3m 47s | 13m 10s | $3.00 | 1/1 | – | 0 | – |'), summary);
+    assert.ok(summary.includes('| shop-features | hydra | 1 | 3m 47s | 13m 10s | 13m 10s | $3.00 | 1/1 | – | – | – | 0 | – |'), summary);
     assert.ok(summary.includes('| shop-features | single | 1 | 6m 40s |'));
     assert.match(summary, /No results in: bench-p1-r2-hydra/);
     assert.ok(ran.stdout.includes('| Task | Setup |'), 'printed as well as written');

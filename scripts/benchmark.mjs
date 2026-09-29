@@ -5,19 +5,21 @@
 //   node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>]
 //   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--fixture <name>] [--task <plan>] [--minutes 120] [--usd 80] [--hydra "<command>"] [--plan-store <plans.json>]
 //   node scripts/benchmark.mjs single --repo <dir>/single [--fixture <name>] [--task <plan>] [--agent claude|codex] [--minutes 120] [--claude <path>] [--command "<agent command>"] [--prompt <file>] [--gate "<command>"|none]
-//   node scripts/benchmark.mjs review --results <dir> [--codex <path>] [--claude <path>] [--base <commit>] [--reviewer-command "<command>"]
+//   node scripts/benchmark.mjs review --results <dir> [--fix-rounds 2] [--codex <path>] [--claude <path>] [--base <commit>] [--reviewer-command "<command>"] [--fix-command "<agent command>"]
+//     (a failed review resumes the single agent with the findings, up to --fix-rounds times, and reviews again, as Hydra's integration gate does)
 //     (exits 1 when the review didn't run, and 3 when a usage limit stopped it)
 //   node scripts/benchmark.mjs summarize --runs <folders or globs, comma-separated> [--out <file>] [--plan-store <plans.json>]
 //   node scripts/benchmark.mjs publish --results <dir> [--label <text>] [--notes <text>]
 //   node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup single|hydra [--out <dir>] … (scripts/benchmark-swebench.mjs)
 //   node scripts/benchmark.mjs swebench-submit --out <dir> [--run-id <id>] [--wait <minutes>]
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  defaultFixture, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, renderSummary, runRows,
-  singleAllowedTools, singleClaudeArgs, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReview,
+  defaultFixRounds, defaultFixture, defaultPollSeconds, defaultUsd, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, planSignature, pollDelayMs,
+  renderSummary, resolveTool, runRows, singleAllowedTools, singleClaudeArgs, singleFixBrief, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReviewLoop,
 } from './benchmark-lib.mjs';
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
 import { run } from './benchmark-run.mjs';
@@ -43,6 +45,16 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const now = () => Date.now();
 const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8'));
 const exists = file => fs.access(file).then(() => true, () => false);
+
+/**
+ * Where a tool (claude, hydra, codex) is: the flag, else on PATH, else its usual install location (resolveTool), and
+ * which of those it was is logged, so a run says what it used.
+ */
+function toolFor(name, flag) {
+  const tool = resolveTool(name, { flag, exists: existsSync });
+  console.log(`Using ${name}: ${tool.command} (${tool.source})`);
+  return tool;
+}
 
 /**
  * The fixture a command works on: --fixture, else the one `prepare` wrote into the run folder (benchmark.json),
@@ -110,17 +122,21 @@ async function hydra(flags) {
   const repo = path.resolve(flags.repo ?? '');
   const out = path.dirname(repo);
   const fixture = await fixtureOf(flags, out);
-  const [command, ...prefix] = commandLine(flags.hydra ?? 'hydra');
+  // --hydra is a command line; a found tool is one command (its path may hold spaces).
+  const hydraTool = toolFor('hydra', flags.hydra);
+  const [command, ...prefix] = flags.hydra ? commandLine(flags.hydra) : [hydraTool.command];
   const cli = (...argv) => run(command, [...prefix, ...argv], { cwd: repo });
   const status = await cli('status', '--json');
   if (status.code !== 0) throw new Error(`hydra status answered ${status.code}: ${status.stderr.trim() || status.stdout.trim()}\nOpen ${repo} in Hydra (and trust it) first.`);
-  const minutes = Number(flags.minutes ?? 120), usd = Number(flags.usd ?? 80), poll = Number(flags.poll ?? 10) * 1000;
+  const minutes = Number(flags.minutes ?? 120), usd = Number(flags.usd ?? defaultUsd), poll = Number(flags.poll ?? defaultPollSeconds) * 1000;
+  // Every plan show makes Hydra check its process table (2 to 6 seconds of PowerShell on Windows): 10 seconds is the floor for a real run.
+  if (poll < defaultPollSeconds * 1000) console.log(`Polling every ${poll / 1000}s: under ${defaultPollSeconds}s makes Hydra check its process table on every look, which slows it.`);
   const started = now();
   const created = await cli('plan', 'run', fixture.task, '--unattended', '--minutes', String(minutes), '--usd', String(usd), '--json');
   if (created.code !== 0) throw new Error(`hydra plan run failed (${created.code}): ${created.stderr.trim()}`);
   const planId = JSON.parse(created.stdout).plan_id;
-  console.log(`Plan ${planId} started; watching it every ${poll / 1000}s.`);
-  let observed, view;
+  console.log(`Plan ${planId} started; watching it every ${poll / 1000}s, less often while nothing changes.`);
+  let observed, view, lastSignature, steady = 0;
   const deadline = started + (minutes + 30) * 60_000;
   while (now() < deadline) {
     const shown = await cli('plan', 'show', planId, '--json');
@@ -130,8 +146,11 @@ async function hydra(flags) {
       const done = view.jobs.filter(job => job.status === 'done').length;
       process.stdout.write(`\r${Math.round((now() - started) / 1000)}s: ${view.state}, ${done} of ${view.jobs.length} done${view.integration ? `, gate: ${view.integration.gate.label}` : ''}        `);
       if (view.state !== 'running' && view.integration?.settled !== false) break;
+      const signature = planSignature(view);
+      steady = signature === lastSignature ? steady + 1 : 0;
+      lastSignature = signature;
     }
-    await sleep(poll);
+    await sleep(pollDelayMs(poll, steady));
   }
   const wallClockSeconds = Math.round((now() - started) / 1000);
   const waited = await cli('plan', 'wait', planId, '--timeout', '60', '--json');
@@ -142,7 +161,7 @@ async function hydra(flags) {
   const stored = await storedPlan(planId, flags['plan-store']);
   const results = summarizeHydra({
     view: finalView, observed, wallClockSeconds, passed: waited.code === 0, timedOut: final.timed_out, task: fixture.task, fixture: fixture.name,
-    startedAt: new Date(started).toISOString(), ...(stored ? { landing: landingFromStore(stored, started) } : {}),
+    startedAt: new Date(started).toISOString(), ...(stored ? { landing: landingFromStore(stored, started), storedPlan: stored } : {}),
   });
   // The hidden check runs on every job's work together: the integration branch's tip, in a clone beside the repository.
   const tip = finalView?.integration?.tip;
@@ -206,12 +225,13 @@ async function single(flags) {
   if (custom) spec = { command: custom[0], args: custom.slice(1) };
   else if (agent === 'claude') {
     // --claude: where Claude Code is (a path, or a command line), when it isn't `claude` on PATH; the isolation still applies.
-    const [command, ...prefix] = flags.claude ? commandLine(flags.claude) : [agents.claude.command];
+    const claudeTool = toolFor('claude', flags.claude);
+    const [command, ...prefix] = flags.claude ? commandLine(flags.claude) : [claudeTool.command];
     const isolated = await claudeIsolation(out);
     spec = { command, args: [...prefix, ...isolated.args] };
     isolation = { pluginsOff: isolated.pluginsOff, strictMcp: true, allowedTools: [...singleAllowedTools] };
   }
-  else spec = agents[agent];
+  else { const codexTool = toolFor('codex', undefined); spec = { ...agents[agent], command: codexTool.command }; }
   console.log(`Running ${agent} alone on ${repo} (up to ${minutes} minutes)…`);
   const started = now();
   const result = await run(spec.command, spec.args, { cwd: repo, input: brief, timeoutMs: minutes * 60_000 });
@@ -262,6 +282,56 @@ async function hydraModule() {
   finally { await fs.rm(outfile, { force: true }).catch(() => undefined); }
 }
 
+/**
+ * The reviewer's CLI paths (like hydra.claudePath and hydra.codexPath): the flag, else the tool's usual install
+ * location when it isn't on PATH (Hydra's own lookup is PATH only); a tool on PATH is left for Hydra to find.
+ */
+function reviewerPaths(flags) {
+  const paths = {};
+  for (const name of ['codex', 'claude']) {
+    if (flags[name]) { paths[name] = path.resolve(flags[name]); continue; }
+    const tool = resolveTool(name, { exists: existsSync });
+    if (!tool.onPath && !tool.missing) { paths[name] = tool.command; console.log(`Using ${name}: ${tool.command} (${tool.source})`); }
+  }
+  return paths;
+}
+
+/** The gate the single agent's run is judged by: npm test for a fixture (--gate to change it, "none" for no gate), else none. */
+function gateCommandOf(flags, fixture) {
+  return flags.gate ? (flags.gate === 'none' ? undefined : commandLine(flags.gate)) : fixture?.dir ? ['npm', 'test'] : undefined;
+}
+
+/**
+ * Resumes the single agent with a review's findings (the fix brief, formatted like Hydra's): Claude Code with the same
+ * isolation as its first run and --resume <session>; --fix-command replaces the whole command line (a stand-in in
+ * tests, or another agent). Resolves with what the run cost, and undefined with the reason when it can't resume.
+ */
+async function fixWithAgent({ flags, single, out, repo, brief }) {
+  let spec;
+  if (flags['fix-command']) { const custom = commandLine(flags['fix-command']); spec = { command: custom[0], args: custom.slice(1) }; }
+  else if ((single.agent ?? 'claude') !== 'claude') return { skipped: 'a fix round resumes Claude Code; for another agent pass --fix-command' };
+  else if (!single.sessionId) return { skipped: 'single-results.json has no session id (from before it was kept), so the agent can\'t be resumed; pass --fix-command, or --fix-rounds 0' };
+  else {
+    const settingsFile = path.join(out, 'single-settings.json'), mcpConfigFile = path.join(out, 'single-mcp.json');
+    if (!await exists(settingsFile) || !await exists(mcpConfigFile)) return { skipped: 'the run\'s isolation files (single-settings.json, single-mcp.json) are gone, so the agent can\'t be resumed the way it ran; pass --fix-command' };
+    const claudeTool = toolFor('claude', flags.claude);
+    // In review, --claude is a path (the reviewer's lookup); a command line (a stand-in) also works here.
+    const [command, ...prefix] = flags.claude ? (existsSync(flags.claude) ? [path.resolve(flags.claude)] : commandLine(flags.claude)) : [claudeTool.command];
+    spec = { command, args: [...prefix, ...singleClaudeArgs({ settingsFile, mcpConfigFile, resume: single.sessionId })] };
+  }
+  const started = now();
+  const minutes = Number(flags.minutes ?? 60);
+  const result = await run(spec.command, spec.args, { cwd: repo, input: brief, timeoutMs: minutes * 60_000 });
+  const seconds = Math.round((now() - started) / 1000);
+  let output;
+  try { output = JSON.parse(result.stdout); } catch { /* not JSON */ }
+  const failed = (result.code !== 0 && !result.timedOut) || output?.is_error === true;
+  return {
+    fix: { seconds: result.timedOut ? minutes * 60 : seconds, exitCode: result.code, ...(typeof output?.total_cost_usd === 'number' ? { usd: output.total_cost_usd } : {}) },
+    ...(failed ? { failed: (output?.result ? String(output.result) : (result.stderr || result.stdout).trim()).slice(-500) || ('exited with ' + result.code) } : {}),
+  };
+}
+
 async function review(flags) {
   const out = path.resolve(flags.results ?? '');
   const resultsFile = path.join(out, 'single-results.json');
@@ -269,33 +339,71 @@ async function review(flags) {
   const single = await readJson(resultsFile);
   const repo = path.resolve(flags.repo ?? path.join(out, 'single'));
   const fixture = await fixtureOf({ ...flags, fixture: flags.fixture ?? single.fixture, task: flags.task ?? single.task }, out);
+  // Hydra's integration gate has up to hydra.plans.integrationFixRounds (2) automatic fix rounds before its final review; the single agent gets as many.
+  const allowed = flags['fix-rounds'] === undefined ? defaultFixRounds : Number(flags['fix-rounds']);
+  if (!Number.isInteger(allowed) || allowed < 0) throw new Error('--fix-rounds is a whole number, 0 or more.');
   // The plan gives the reviewer its task, and the gates come from the fixture, as Hydra reads them from the lead
   // folder: never from the repository under review. With --fixture none, both come from the repository.
   const plan = await readJson(path.join(fixture.dir ?? repo, '.hydra', 'plans', `${fixture.task}.json`));
-  // The review sees base..HEAD, as a plan's does; work the agent left uncommitted is committed first, and that's recorded.
-  let committedLeftovers = false;
-  if ((await git(['status', '--porcelain'], repo)).trim()) {
-    await git(['add', '-A'], repo);
-    await git(['-c', 'user.name=Hydra benchmark', '-c', 'user.email=benchmark@hydra.invalid', 'commit', '-qm', 'The single agent\'s work, left uncommitted'], repo);
-    committedLeftovers = true;
-  }
-  const base = flags.base ?? (await git(['rev-list', '--max-parents=0', 'HEAD'], repo)).trim().split('\n').pop();
-  const head = (await git(['rev-parse', 'HEAD'], repo)).trim();
   const { reviewRepository } = await hydraModule();
-  const logDirectory = await freshPath(out, 'single-review');
-  console.log(`Reviewing ${repo} (${base.slice(0, 12)}..${head.slice(0, 12)}) with the gates a plan's integration gate runs…`);
-  const reviewed = await reviewRepository({
-    repo, gatesFolder: fixture.dir ?? repo, base, planTitle: plan.title, planBrief: plan.brief, logDirectory,
-    paths: { ...(flags.codex ? { codex: path.resolve(flags.codex) } : {}), ...(flags.claude ? { claude: path.resolve(flags.claude) } : {}) },
-    ...(flags['reviewer-command'] ? { reviewerCommand: commandLine(flags['reviewer-command']) } : {}),
-    log: line => console.log(line),
-  });
-  const summary = summarizeReview({ ...reviewed, base, head, committedLeftovers, fixture: fixture.name, task: fixture.task });
-  await fs.writeFile(path.join(out, 'single-review.json'), JSON.stringify({ ...summary, logs: path.basename(logDirectory) }, null, 2) + '\n');
-  await fs.writeFile(resultsFile, JSON.stringify(withReview(single, summary), null, 2) + '\n');
-  console.log(`\n${JSON.stringify(summary, null, 2)}\n\nWrote ${path.join(out, 'single-review.json')} and added the review to single-results.json.`);
-  // A review that didn't run is recorded as not run, and the command fails so a run of many notices; a usage limit
-  // gets its own exit code (3), since it means stopping, not retrying.
+  let committedLeftovers = false;
+  // The review sees base..HEAD, as a plan's does; work the agent left uncommitted is committed first, and that's recorded.
+  const commitLeftovers = async message => {
+    if (!(await git(['status', '--porcelain'], repo)).trim()) return;
+    await git(['add', '-A'], repo);
+    await git(['-c', 'user.name=Hydra benchmark', '-c', 'user.email=benchmark@hydra.invalid', 'commit', '-qm', message], repo);
+    committedLeftovers = true;
+  };
+  await commitLeftovers('The single agent\'s work, left uncommitted');
+  const base = flags.base ?? (await git(['rev-list', '--max-parents=0', 'HEAD'], repo)).trim().split('\n').pop();
+  // One review: the gates a plan's integration gate runs, on base..HEAD. Its summary, the checks it ran (for the fix brief) and where its logs are.
+  const reviewOnce = async () => {
+    const head = (await git(['rev-parse', 'HEAD'], repo)).trim();
+    const logDirectory = await freshPath(out, 'single-review');
+    console.log(`Reviewing ${repo} (${base.slice(0, 12)}..${head.slice(0, 12)}) with the gates a plan's integration gate runs…`);
+    const reviewed = await reviewRepository({
+      repo, gatesFolder: fixture.dir ?? repo, base, planTitle: plan.title, planBrief: plan.brief, logDirectory,
+      paths: reviewerPaths(flags),
+      ...(flags['reviewer-command'] ? { reviewerCommand: commandLine(flags['reviewer-command']) } : {}),
+      log: line => console.log(line),
+    });
+    return { summary: summarizeReview({ ...reviewed, base, head, committedLeftovers, fixture: fixture.name, task: fixture.task }), checks: reviewed.checks, logs: path.basename(logDirectory) };
+  };
+
+  // The loop: review; while it failed and fix rounds are left, resume the agent with the findings and review again.
+  const rounds = [];
+  let skipped, after, current = await reviewOnce();
+  rounds.push({ review: current.summary, logs: current.logs });
+  while (current.summary.verdict === 'fail' && rounds.filter(round => round.fix).length < allowed) {
+    const brief = singleFixBrief(plan.title, current.checks);
+    if (!brief) break;
+    const number = rounds.length;
+    console.log(`The review failed: fix round ${number} of ${allowed}, resuming the agent with the findings…`);
+    const fixed = await fixWithAgent({ flags, single, out, repo, brief });
+    if (fixed.skipped) { skipped = fixed.skipped; console.log(`No fix round: ${skipped}`); break; }
+    rounds[rounds.length - 1].fix = fixed.fix;
+    if (fixed.failed) { skipped = `fix round ${number}: the agent failed: ${fixed.failed}`; console.log(skipped); break; }
+    await commitLeftovers(`The single agent's fix round ${number}`);
+    current = await reviewOnce();
+    rounds.push({ review: current.summary, logs: current.logs });
+  }
+  // After a fix, the fixed repository's own gate and the hidden check say whether it still works.
+  if (rounds.some(round => round.fix)) {
+    const gateCommand = gateCommandOf(flags, fixture);
+    const gate = gateCommand ? await run(gateCommand[0], gateCommand.slice(1), { cwd: repo, timeoutMs: 10 * 60_000 }) : undefined;
+    const check = fixture.dir ? await runCheck(fixture, repo) : undefined;
+    after = { gatePassed: gate ? gate.code === 0 : true, ...(check ? { checkPassed: !!check.passed, check } : {}) };
+  }
+  const summary = current.summary;
+  const fixRounds = rounds.filter(round => round.fix).length;
+  await fs.writeFile(path.join(out, 'single-review.json'), JSON.stringify({
+    ...summary, logs: current.logs, fixRoundsAllowed: allowed, fixRounds, ...(skipped ? { fixSkipped: skipped } : {}), ...(after ? { afterFix: after } : {}),
+    rounds: rounds.map(round => ({ review: round.review, logs: round.logs, ...(round.fix ? { fix: round.fix } : {}) })),
+  }, null, 2) + '\n');
+  await fs.writeFile(resultsFile, JSON.stringify(withReviewLoop(single, { rounds: rounds.map(({ review, fix }) => ({ review, fix })), allowed, skipped, after }), null, 2) + '\n');
+  console.log(`\n${JSON.stringify(summary, null, 2)}\n\nWrote ${path.join(out, 'single-review.json')} and added the review (first pass, ${fixRounds} fix round(s), final) to single-results.json.`);
+  // A review that didn't run is recorded as not run, and the command fails so a run of many notices; a usage
+  // limit gets its own exit code (3), since it means stopping, not retrying.
   if (!summary.ran) {
     const error = new Error(`${summary.usageLimit ? 'USAGE LIMIT: ' : ''}The review didn't run: ${summary.notRunReason}`);
     error.exitCode = summary.usageLimit ? 3 : 1;
@@ -334,8 +442,8 @@ async function summarize(flags, rest) {
     if (!files.length) { if (!entries.includes('resolved.json')) skipped.push(folder); continue; }
     for (const name of files) {
       const result = await readJson(path.join(folder, name));
-      const stored = result.kind === 'hydra' && result.timeToWorkingCodeSeconds === undefined && result.planId ? await storedPlan(result.planId, flags['plan-store']) : undefined;
-      rows.push(...runRows(result, path.relative(parent, folder) || path.basename(folder), stored ? landingFromStore(stored) : undefined));
+      const stored = result.kind === 'hydra' && (result.timeToWorkingCodeSeconds === undefined || (result.firstReview === undefined && result.fixRounds > 0)) && result.planId ? await storedPlan(result.planId, flags['plan-store']) : undefined;
+      rows.push(...runRows(result, path.relative(parent, folder) || path.basename(folder), stored ? { ...landingFromStore(stored), fixBrief: stored.jobs?.find(job => job.key === 'integration-fix-1')?.brief } : undefined));
     }
   }
   if (!rows.length && !swebenchRows.length) throw new Error(`No *-results.json or resolved.json in ${patterns.join(', ')}.`);
