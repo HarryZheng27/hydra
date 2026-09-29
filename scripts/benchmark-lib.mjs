@@ -195,6 +195,8 @@ export function firstReviewOf({ jobKeys, fixBrief, finalReview }) {
     else if (sections.length) sections[sections.length - 1].lines.push(line);
   }
   const review = sections.find(section => section.kind === 'review');
+  // The brief is cut at 4000 characters (with an ellipsis): a review section after a long command section may be the part that was cut.
+  if (!review && fixBrief.endsWith('…')) return { source: 'the round 1 fix brief, cut at its length limit', gateFailed: true };
   if (!review) return { source: 'the round 1 fix brief', gateFailed: true, ran: false, notRunReason: 'a command gate failed first' };
   return { source: 'the round 1 fix brief', gateFailed: true, ran: true, passed: false, findings: findingCounts(review.lines), ...(review.summary ? { summary: review.summary.slice(0, 500) } : {}) };
 }

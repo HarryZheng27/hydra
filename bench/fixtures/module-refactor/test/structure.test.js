@@ -17,7 +17,8 @@ const helpers = {
   customers: ['readCsv', 'usToIso', 'requireText', 'checkEmail', 'tidyPhone'],
 };
 
-const usesCore = source => /require\(\s*['"]\.\/core(\/[a-z]+)?(\.js)?['"]\s*\)/.test(source);
+// Any require of ./core (a folder, a file of it, however it is named) counts as moved, so a leftover helper can't hide behind an unusual file name.
+const usesCore = source => /require\(\s*['"]\.\/core/.test(source);
 const defines = (source, helper) => new RegExp(`\\b(function\\s*\\*?\\s*|const\\s+|let\\s+|var\\s+)${helper}\\b`).test(source);
 
 for (const [name, list] of Object.entries(helpers)) {
