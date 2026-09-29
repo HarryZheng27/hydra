@@ -113,6 +113,8 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
     key: job.key, status: job.status,
     ...(job.head ? { provider: job.head.provider, attempts: job.head.attempts } : {}),
     ...(job.head?.usage ? { usage: job.head.usage } : {}),
+    // Time its head waited on the provider (rate limits, retries), so a comparison can subtract or flag it.
+    ...(job.head?.provider_wait_ms ? { providerWaitMs: job.head.provider_wait_ms } : {}),
   }));
   let usd = 0, usdJobs = 0, inputTokens = 0, outputTokens = 0, tokenJobs = 0;
   for (const job of view.jobs ?? []) {

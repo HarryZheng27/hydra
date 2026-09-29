@@ -5,6 +5,7 @@ import { replaceAtomic } from './atomicFile';
 import type { Provider } from './model';
 import { gateState, type EvidenceStatus } from './jobs';
 import type { PlanRigor } from './gates/config';
+import { waitDuration } from './providerWait';
 import { integrationGateLabel, integrationPassed, isIntegrationFixKey, releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
 
 /**
@@ -189,6 +190,8 @@ export interface PlanReportJobDetail {
   costUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** How long its runs waited on the provider (docs/Heads.md, "Waiting on the provider"), in milliseconds. */
+  providerWaitMs?: number;
 }
 
 const money = (usd: number) => '$' + (usd < 0.01 && usd > 0 ? usd.toFixed(4) : usd.toFixed(2));
@@ -237,6 +240,8 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
   const reported = reportTotals(jobs);
   if (reported) lines.push(`Reported cost: ${reported}.`);
   if (overall) lines.push(`Ran for ${overall}.`);
+  const slowed = jobs.filter(job => job.providerWaitMs && job.providerWaitMs > 0);
+  if (slowed.length) lines.push(`Slowed by provider limits: ${slowed.length} ${slowed.length === 1 ? 'job' : 'jobs'} waited ${waitDuration(slowed.reduce((sum, job) => sum + job.providerWaitMs!, 0))} in total on their provider (${slowed.map(job => job.key).join(', ')}).`);
   lines.push('');
   for (const job of jobs) {
     lines.push(`## ${job.title}`, '');
@@ -248,6 +253,7 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
     if (job.attempts !== undefined) lines.push(`Attempts: ${job.attempts}.`);
     const duration = reportDuration(job.startedAt, job.finishedAt);
     if (duration) lines.push(`Time: ${duration}.`);
+    if (job.providerWaitMs && job.providerWaitMs > 0) lines.push(`Slowed by provider limits: waited ${waitDuration(job.providerWaitMs)} on ${job.provider === 'codex' ? 'Codex' : job.provider === 'claude' ? 'Claude' : 'its provider'} (part of its time, not its work).`);
     // O9: what the provider reported (Claude Code: dollars; Codex: tokens only). Nothing reported: the budget's estimate, said as such.
     lines.push(`Cost: ${reportCost(job) ?? `not reported; budgeted up to ${money(defaultHeadBudgetUsd).replace(/\.00$/, '')}`}.`);
     if (job.summary) lines.push('', job.summary);

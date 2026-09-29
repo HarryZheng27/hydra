@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientMessage, HelperJobView, LaneView, Provider, SnapshotRole } from '../src/core/model';
+import { providerWaitDetail, providerWaitLabel } from '../src/core/providerWait';
 import { buildCanvas, elapsedLabel, evidenceLabel, gateChip, headStatus, integrationCanvasView, isActive, layout, type CanvasHead, type CanvasLead, type CanvasPlanJob, type CanvasPlanNode } from '../src/core/agentsCanvas';
 // Type-only (see the note in agentsCanvas.ts): plans.ts's storage code must never
 // enter this browser bundle, so only PlanJob's shape crosses this boundary.
@@ -347,7 +348,7 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
             onContextMenu={event => { event.preventDefault(); openMenu(head.id, event.clientX, event.clientY); }}
             onKeyDown={event => { if (event.key === 'Enter') onAction('helperReview', head.id); }}>
             <span className={`canvas-dot state-${head.state}`} aria-hidden="true" />
-            <span className="canvas-row-copy"><b>{head.title}</b><span>{headStatus[head.state] || head.state}{head.merged ? ' · merged' : ''} · {head.lead?.label || (head.lead?.provider === 'codex' ? 'Codex chat' : head.lead?.provider === 'claude' ? 'Claude Code chat' : 'This window')}</span></span>
+            <span className="canvas-row-copy"><b>{head.title}</b><span>{head.providerWait && head.state === 'running' ? providerWaitLabel(head.provider, head.providerWait, now) : headStatus[head.state] || head.state}{head.merged ? ' · merged' : ''} · {head.lead?.label || (head.lead?.provider === 'codex' ? 'Codex chat' : head.lead?.provider === 'claude' ? 'Claude Code chat' : 'This window')}</span></span>
             <span className="canvas-row-time">{elapsedLabel(head, now)}</span>
           </button>
         </li>)}
@@ -377,7 +378,9 @@ function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, o
   onSelect: () => void; onOpen: () => void; onMenu: (x: number, y: number) => void; onKey: (event: React.KeyboardEvent) => void;
 }) {
   const head = item.head, status = headStatus[head.state] || head.state, active = isActive(head);
+  const waiting = head.providerWait && head.state === 'running' ? head.providerWait : undefined;
   const detail = head.state === 'blocked' ? `Asks: ${head.question || 'a question'}`
+    : waiting ? providerWaitLabel(head.provider, waiting, now)
     : active ? head.progress || (head.state === 'queued' ? (head.dependsOn.length ? 'Waiting for what it depends on' : 'Waiting for a free slot') : 'Working…')
     : head.state === 'done' ? `${head.changedFiles} ${head.changedFiles === 1 ? 'file' : 'files'} changed`
     : head.reason || status;
@@ -392,7 +395,7 @@ function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, o
         <span className={`canvas-state state-${head.state}`}><i aria-hidden="true" />{status}</span>
       </div>
       <strong className="canvas-node-title" title={head.title}>{head.title}</strong>
-      <p key={detail} className="canvas-node-detail" title={detail}>{detail}</p>
+      <p key={waiting ? 'provider-wait' : detail} className={`canvas-node-detail${waiting ? ' provider-wait' : ''}`} title={waiting ? [detail, providerWaitDetail(waiting)].filter(Boolean).join(' · ') : detail}>{detail}</p>
       {!!head.checks.length && <div className="canvas-node-gates" aria-label="Gate results">
         {head.checks.map(check => { const chip = gateChip(check); return <span key={chip.id} className={`gate-chip tone-${chip.tone}`} title={chip.title}>{chip.label}</span>; })}
       </div>}
