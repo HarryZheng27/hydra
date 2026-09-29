@@ -6,63 +6,113 @@
       "key": "columns",
       "title": "Columns: order and WIP limits",
       "brief": "Implement columns exactly as SPEC.md section 9 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the router and route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/columns.js (addColumn, updateColumn, removeColumn, listColumns), src/routes/columns.js (register, with the four routes), and test/columns.test.js. Tests: the functions directly (positions staying 0..n-1 after adding at a position, moving and removing; unique names ignoring case; wipLimit rules including a limit below the current cards; remove with and without force; every error code), and the routes through startServer from test/helpers.js with the board and column route modules (statuses, bodies, errors). Build cards in tests by hand per section 2. Change no other file.",
-      "write_scope": ["src/columns.js", "src/routes/columns.js", "test/columns.test.js"]
+      "write_scope": [
+        "src/columns.js",
+        "src/routes/columns.js",
+        "test/columns.test.js"
+      ]
     },
     {
       "key": "cards",
       "title": "Cards: order, moves and archiving",
       "brief": "Implement cards exactly as SPEC.md section 10 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/cards.js (addCard, updateCard, moveCard, archiveCard, restoreCard, deleteCard, listCards), src/routes/cards.js and test/cards.test.js. Tests: the functions directly (positions without gaps in both columns after every add, move, archive, restore and delete; moving within a column up and down; WIP limits on add, move and restore; another board's column; archived-card rules; description kept exactly; every error code), and every route through startServer from test/helpers.js. Columns are another job's module: create them in tests by hand per section 2. Change no other file.",
-      "write_scope": ["src/cards.js", "src/routes/cards.js", "test/cards.test.js"]
+      "write_scope": [
+        "src/cards.js",
+        "src/routes/cards.js",
+        "test/cards.test.js"
+      ]
     },
     {
       "key": "labels",
       "title": "Labels on cards",
       "brief": "Implement labels exactly as SPEC.md section 11 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/labels.js (createLabel, updateLabel, deleteLabel, attachLabel, detachLabel, listLabels), src/routes/labels.js and test/labels.test.js. Tests: the functions directly (unique names ignoring case, colours in either case stored in lower case and bad colours refused, deleting a label removes it from cards, attaching twice, attach order, a label from another board, detaching one that isn't attached, the sort order, every error code), and every route through startServer from test/helpers.js. Create columns and cards in tests by hand per section 2. Change no other file.",
-      "write_scope": ["src/labels.js", "src/routes/labels.js", "test/labels.test.js"]
+      "write_scope": [
+        "src/labels.js",
+        "src/routes/labels.js",
+        "test/labels.test.js"
+      ]
     },
     {
       "key": "due",
       "title": "Due dates, upcoming and overdue",
       "brief": "Implement due dates exactly as SPEC.md section 12 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/due.js (setDue, dueStatus, upcoming, overdue), src/routes/due.js and test/due.test.js. Work in whole UTC days. Tests: date validation (February 29 in and out of leap years, month 13, a bad format, null), every dueStatus including the boundaries at 1 and 3 days, upcoming with the default and a custom number of days (both ends included, archived cards left out, other boards left out, the order), overdue, the days limits, and the routes through startServer from test/helpers.js with a fixed `today`. Create columns and cards in tests by hand per section 2. Change no other file.",
-      "write_scope": ["src/due.js", "src/routes/due.js", "test/due.test.js"]
+      "write_scope": [
+        "src/due.js",
+        "src/routes/due.js",
+        "test/due.test.js"
+      ]
     },
     {
       "key": "filters",
       "title": "Search filters",
       "brief": "Implement search filters exactly as SPEC.md section 13 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/filters.js (parseQuery, filterCards), src/routes/filters.js and test/filters.test.js. Compute due statuses here yourself, by section 12's rules. Tests: parseQuery on every kind of term (quoted values and quoted text, several labels and columns, due values, is:archived, and each error), filterCards for text in titles and descriptions ignoring case, labels (all must match), columns (any may match), each due filter with a fixed today, archived cards, combinations, and the order; and the route through startServer from test/helpers.js with a fixed `today`. Create columns, cards and labels in tests by hand per section 2. Change no other file.",
-      "write_scope": ["src/filters.js", "src/routes/filters.js", "test/filters.test.js"]
+      "write_scope": [
+        "src/filters.js",
+        "src/routes/filters.js",
+        "test/filters.test.js"
+      ]
     },
     {
       "key": "export",
       "title": "CSV and JSON export",
       "brief": "Implement export exactly as SPEC.md section 14 says, following sections 1 to 8 (the state in section 2, the helpers in src/state.js, the route conventions in section 6; src/boards.js and src/routes/boards.js are the examples). Create src/export.js (boardToCsv, boardToJson), src/routes/export.js and test/export.test.js. Tests compare whole outputs: the CSV header and row order across several columns, archived cards with and without the option, label names sorted and joined, every quoting case (comma, quote, CR, LF), CRLF endings; the JSON snapshot's shape and order; an unknown board; and both routes through startServer from test/helpers.js, including the CSV content type. Create columns, cards and labels in tests by hand per section 2. Change no other file.",
-      "write_scope": ["src/export.js", "src/routes/export.js", "test/export.test.js"]
+      "write_scope": [
+        "src/export.js",
+        "src/routes/export.js",
+        "test/export.test.js"
+      ]
     },
     {
       "key": "persistence",
-      "title": "Saving the board to a JSON file",
-      "brief": "Implement persistence exactly as SPEC.md section 15 says, following sections 1, 2 and 5 (the store interface in src/store.js). Create src/persistence.js (serialize, deserialize, saveState, loadState, createFileStore) and test/persistence.test.js. Tests use a temporary folder (fs.mkdtemp in os.tmpdir) and cover: a round trip, each deserialize error, saving through a .tmp file and rename into a folder that doesn't exist yet, loading a missing file, the file store saving after each update and not after a failed one (state put back, file unchanged), updates running one at a time, a failed save putting the state back, and a second store on the same file seeing the saved state. Change no other file.",
-      "write_scope": ["src/persistence.js", "test/persistence.test.js"]
+      "title": "Saving the board to a JSON file, and opening the server on it",
+      "brief": "Implement persistence exactly as SPEC.md section 15 says, following sections 1, 2 and 5 (the store interface in src/store.js). Create src/persistence.js (serialize, deserialize, saveState, loadState, createFileStore) and test/persistence.test.js. Tests use a temporary folder (fs.mkdtemp in os.tmpdir) and cover: a round trip, each deserialize error, saving through a .tmp file and rename into a folder that doesn't exist yet, loading a missing file, the file store saving after each update and not after a failed one (state put back, file unchanged), updates running one at a time, a failed save putting the state back, and a second store on the same file seeing the saved state. Change no other file. Then, in the same job, do the part of the server that doesn't need the other features' routes, as SPEC.md section 17 says. In src/server.js add openServer({ dataFile, port = 0, today }): with dataFile it uses createFileStore(dataFile), otherwise an in-memory store; it starts listening and resolves with { server, url, store }. Create bin/serve.js ([--port N] [--data <file>]; it starts openServer and prints `Listening on <url>`). Change createServer's default routes to every register function that src/routes/index.js exports (another job writes that file later; take whatever it exports, an array or an object of functions), falling back to the board routes alone while the file doesn't exist yet: require it inside a try and ignore only its own MODULE_NOT_FOUND, so today's tests keep passing. Add tests to test/persistence.test.js: openServer with routes [require('../src/routes/boards').register] on a data file in a temporary folder (create a board, close the server, open another on the same file and find the board; without dataFile the state is in memory), and bin/serve.js started with a free port and a temporary data file prints Listening on a URL that answers GET /health (stop it afterwards). Do not create src/routes/index.js, and change no other file.",
+      "write_scope": [
+        "src/persistence.js",
+        "test/persistence.test.js",
+        "src/server.js",
+        "bin/serve.js"
+      ]
     },
     {
       "key": "client",
       "title": "Client methods for every route",
       "brief": "Add the client methods exactly as SPEC.md section 16 says to client/api.js, following section 7 (keep the existing methods and ApiError as they are), for the routes of sections 9 to 14. Put the new tests in test/client.test.js, keeping the existing test: the routes are being written at the same time, so the new tests run against a stand-in server made in the test file with node:http, which records each request and answers with canned JSON. Check every method's HTTP method, path (with ids URL-encoded), query string and JSON body, that exportCsv resolves with text, that a 204 resolves with undefined, and that an error body becomes an ApiError with its status, code and message. Change no other file.",
-      "write_scope": ["client/api.js", "test/client.test.js"]
+      "write_scope": [
+        "client/api.js",
+        "test/client.test.js"
+      ]
     },
     {
       "key": "server",
-      "title": "The server with every route and a data file",
-      "brief": "Wire the server exactly as SPEC.md section 17 says. The route modules for columns, cards, labels, due dates, filters and export, and src/persistence.js, now exist (sections 9 to 15): read them. Create src/routes/index.js (every register function), change src/server.js so createServer uses all of them by default and add openServer({ dataFile, port, today }), and create bin/serve.js. Write test/api.test.js: one flow on a real server through every route module (a board, columns, cards moved and archived, labels, due dates, a search, both exports), the error statuses (400, 404, 405, 409), and a restart: close the server, open another on the same data file (in a temporary folder), and find everything there. Add an API section to README.md listing every route with its status codes. Don't change the route or domain modules; if one breaks SPEC.md, say so in your summary.",
-      "write_scope": ["src/routes/index.js", "src/server.js", "bin/serve.js", "test/api.test.js", "README.md"],
-      "depends_on": ["columns", "cards", "labels", "due", "filters", "export", "persistence"]
+      "title": "Every route module registered, and the API test",
+      "brief": "Wire the routes exactly as SPEC.md section 17 says. The route modules for columns, cards, labels, due dates, filters and export, and src/persistence.js, src/server.js (with openServer and createServer's default routes) and bin/serve.js, now exist (sections 9 to 15 and 17): read them. Create src/routes/index.js, which exports the register functions of every route module: boards, columns, cards, labels, due, filters, export (module.exports = an array of the seven; createServer already registers whatever it exports by default). Write test/api.test.js: one flow on a real server through every route module (a board, columns, cards moved and archived, labels, due dates, a search, both exports), the error statuses (400, 404, 405, 409), and a restart: close the server, open another with openServer on the same data file (in a temporary folder), and find everything there. Add an API section to README.md listing every route with its status codes. Don't change the route or domain modules, src/server.js or bin/serve.js; if one breaks SPEC.md, say so in your summary.",
+      "write_scope": [
+        "src/routes/index.js",
+        "test/api.test.js",
+        "README.md"
+      ],
+      "depends_on": [
+        "columns",
+        "cards",
+        "labels",
+        "due",
+        "filters",
+        "export",
+        "persistence"
+      ]
     },
     {
       "key": "e2e",
       "title": "End to end through the client",
       "brief": "Write the end-to-end test exactly as SPEC.md section 18 says: test/e2e.test.js drives a whole board through client/api.js (section 16) against openServer (section 17) with a data file in a temporary folder, covering columns with a WIP limit, cards added, moved and archived, labels, due dates with a fixed today, a search, both exports, and the WIP-limit and another-board errors as ApiErrors; then it closes the server, opens a new one on the same file, and checks everything is still there. Also write client/README.md with one line per client method. Don't change other files; if the client or server breaks SPEC.md, say so in your summary.",
-      "write_scope": ["test/e2e.test.js", "client/README.md"],
-      "depends_on": ["server", "client"]
+      "write_scope": [
+        "test/e2e.test.js",
+        "client/README.md"
+      ],
+      "depends_on": [
+        "server",
+        "client"
+      ]
     }
   ]
 }

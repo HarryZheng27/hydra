@@ -40,11 +40,11 @@ Implement export exactly as SPEC.md section 14 says, following sections 1 to 8 (
 
 Files: src/export.js, src/routes/export.js, test/export.test.js
 
-## 7. Saving the board to a JSON file
+## 7. Saving the board to a JSON file, and opening the server on it
 
-Implement persistence exactly as SPEC.md section 15 says, following sections 1, 2 and 5 (the store interface in src/store.js). Create src/persistence.js (serialize, deserialize, saveState, loadState, createFileStore) and test/persistence.test.js. Tests use a temporary folder (fs.mkdtemp in os.tmpdir) and cover: a round trip, each deserialize error, saving through a .tmp file and rename into a folder that doesn't exist yet, loading a missing file, the file store saving after each update and not after a failed one (state put back, file unchanged), updates running one at a time, a failed save putting the state back, and a second store on the same file seeing the saved state. Change no other file.
+Implement persistence exactly as SPEC.md section 15 says, following sections 1, 2 and 5 (the store interface in src/store.js). Create src/persistence.js (serialize, deserialize, saveState, loadState, createFileStore) and test/persistence.test.js. Tests use a temporary folder (fs.mkdtemp in os.tmpdir) and cover: a round trip, each deserialize error, saving through a .tmp file and rename into a folder that doesn't exist yet, loading a missing file, the file store saving after each update and not after a failed one (state put back, file unchanged), updates running one at a time, a failed save putting the state back, and a second store on the same file seeing the saved state. Change no other file. Then, in the same job, do the part of the server that doesn't need the other features' routes, as SPEC.md section 17 says. In src/server.js add openServer({ dataFile, port = 0, today }): with dataFile it uses createFileStore(dataFile), otherwise an in-memory store; it starts listening and resolves with { server, url, store }. Create bin/serve.js ([--port N] [--data <file>]; it starts openServer and prints `Listening on <url>`). Change createServer's default routes to every register function that src/routes/index.js exports (another job writes that file later; take whatever it exports, an array or an object of functions), falling back to the board routes alone while the file doesn't exist yet: require it inside a try and ignore only its own MODULE_NOT_FOUND, so today's tests keep passing. Add tests to test/persistence.test.js: openServer with routes [require('../src/routes/boards').register] on a data file in a temporary folder (create a board, close the server, open another on the same file and find the board; without dataFile the state is in memory), and bin/serve.js started with a free port and a temporary data file prints Listening on a URL that answers GET /health (stop it afterwards). Do not create src/routes/index.js, and change no other file.
 
-Files: src/persistence.js, test/persistence.test.js
+Files: src/persistence.js, test/persistence.test.js, src/server.js, bin/serve.js
 
 ## 8. Client methods for every route
 
@@ -52,11 +52,11 @@ Add the client methods exactly as SPEC.md section 16 says to client/api.js, foll
 
 Files: client/api.js, test/client.test.js
 
-## 9. The server with every route and a data file
+## 9. Every route module registered, and the API test
 
-Wire the server exactly as SPEC.md section 17 says. The route modules for columns, cards, labels, due dates, filters and export, and src/persistence.js, now exist (sections 9 to 15): read them. Create src/routes/index.js (every register function), change src/server.js so createServer uses all of them by default and add openServer({ dataFile, port, today }), and create bin/serve.js. Write test/api.test.js: one flow on a real server through every route module (a board, columns, cards moved and archived, labels, due dates, a search, both exports), the error statuses (400, 404, 405, 409), and a restart: close the server, open another on the same data file (in a temporary folder), and find everything there. Add an API section to README.md listing every route with its status codes. Don't change the route or domain modules; if one breaks SPEC.md, say so in your summary.
+Wire the routes exactly as SPEC.md section 17 says. The route modules for columns, cards, labels, due dates, filters and export, and src/persistence.js, src/server.js (with openServer and createServer's default routes) and bin/serve.js, now exist (sections 9 to 15 and 17): read them. Create src/routes/index.js, which exports the register functions of every route module: boards, columns, cards, labels, due, filters, export (module.exports = an array of the seven; createServer already registers whatever it exports by default). Write test/api.test.js: one flow on a real server through every route module (a board, columns, cards moved and archived, labels, due dates, a search, both exports), the error statuses (400, 404, 405, 409), and a restart: close the server, open another with openServer on the same data file (in a temporary folder), and find everything there. Add an API section to README.md listing every route with its status codes. Don't change the route or domain modules, src/server.js or bin/serve.js; if one breaks SPEC.md, say so in your summary.
 
-Files: src/routes/index.js, src/server.js, bin/serve.js, test/api.test.js, README.md
+Files: src/routes/index.js, test/api.test.js, README.md
 
 ## 10. End to end through the client
 

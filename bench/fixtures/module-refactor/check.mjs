@@ -136,18 +136,26 @@ check('core index re-exports every core function', () => {
   for (const name of ['parseMoney', 'formatMoney', 'parseDate', 'formatDate', 'addDays', 'addMonths', 'daysBetween', 'dayOfWeek', 'isWeekend', 'monthKey', 'formatLong', 'parseUsDate', 'parseCsv', 'parseCsvObjects', 'formatCsvRow', 'formatCsv', 'requireString', 'requireInteger', 'isEmail', 'normalizePhone', 'oneOf']) assert.equal(typeof index[name], 'function', name);
 });
 
-// ---- no private helper is left (SPEC.md section 6) ----
+// ---- each module moved, with no private helper left (SPEC.md section 6) ----
+// Scored separately, so one miss costs one item: a module that doesn't use the core, one that keeps a helper, the core
+// index, the core's tests and the README section are each their own item.
 for (const [name, helpers] of Object.entries(modules)) {
-  check(`${name}: uses the core and keeps none of its private helpers`, () => {
+  check(`${name}: requires from ./core`, () => {
     const source = readFileSync(path.join(repo, 'src', `${name}.js`), 'utf8');
     assert.match(source, /require\(\s*['"]\.\/core(\/[a-z]+)?(\.js)?['"]\s*\)/, 'requires from ./core');
+  });
+  check(`${name}: keeps none of its private helpers`, () => {
+    const source = readFileSync(path.join(repo, 'src', `${name}.js`), 'utf8');
     const left = helpers.filter(helper => new RegExp(`\\b(function\\s*\\*?\\s*|const\\s+|let\\s+|var\\s+)${helper}\\b`).test(source));
     assert.deepEqual(left, [], `still defines ${left.join(', ')}`);
   });
 }
-check('the finishing files exist: the core tests, the structure test and the README section', () => {
-  for (const file of ['test/core/money.test.js', 'test/core/dates.test.js', 'test/core/csv.test.js', 'test/core/validate.test.js', 'test/structure.test.js']) assert.ok(existsSync(path.join(repo, file)), file);
-  assert.match(readFileSync(path.join(repo, 'README.md'), 'utf8'), /core/i);
+// test/structure.test.js ships with the starting code, so it isn't a check: the plan's own gate runs it.
+check('the core has its own tests', () => {
+  for (const file of ['test/core/money.test.js', 'test/core/dates.test.js', 'test/core/csv.test.js', 'test/core/validate.test.js']) assert.ok(existsSync(path.join(repo, file)), file);
+});
+check('the README has a section on the core', () => {
+  assert.match(readFileSync(path.join(repo, 'README.md'), 'utf8'), /^#{1,4}[^\n]*\bcore\b/im, 'a heading that names the core');
 });
 
 const failed = results.filter(result => !result.ok).map(result => result.name);

@@ -27,7 +27,9 @@ const instance = { instance_id: 'owner__project-1234', repo: 'owner/project', ba
 
 function node(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd: root, windowsHide: true, env });
+    // A child `node --test` that inherits the runner's context only reports to it and exits 0: it must run on its own.
+    const { NODE_TEST_CONTEXT: _context, ...clean } = env;
+    const child = spawn(process.execPath, args, { cwd: root, windowsHide: true, env: clean });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', reject); child.on('close', code => resolve({ code, stdout, stderr }));
