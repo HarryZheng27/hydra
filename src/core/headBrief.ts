@@ -81,11 +81,25 @@ export interface HeadWorkingGuidanceOptions {
  * true only when a command gate actually runs the rest after hydra_done — with none configured
  * (gateCommandsBrief's package.json fallback), telling a head to skip its own tests would leave
  * nothing testing the change at all, so that line is left out. A generous timeout always applies.
+ *
+ * A Claude head with a shell also hears which command shapes Claude Code refuses, and to retry in
+ * a simpler shape. Its settings block reads outside its working folders
+ * (`blockReadsOutsideWorkingDirectories`, confine.ts headSettings), and with that block on, Claude
+ * Code must resolve every path a Bash command touches before it runs; when it can't, the command is
+ * a safety-check "ask", which `dontAsk` turns into a denial that the `Bash` allow rule doesn't
+ * override. Measured on Claude Code 2.1.282: `cd <worktree> && … 2>&1 | tail` (a `cd` with a
+ * redirect), any `for` loop, and a redirect to `/tmp` or `"$TMPDIR/…"` were denied, while the same
+ * commands without the `cd`, and pipes to `tail`/`grep`, ran. Heads used to lead every test run
+ * with `cd <worktree>`, got denied, and stopped using the shell.
  */
 export function headWorkingGuidance(options: HeadWorkingGuidanceOptions): string[] {
   const lines: string[] = [];
   if (options.shellOff) lines.push('Your shell is off: read files with Read, Grep or Glob instead of a shell command.');
-  else if (options.provider === 'claude') lines.push('Shell commands start slowly here (each one is its own sandboxed process): batch them instead of running many small ones, and prefer Read, Grep or Glob to `cat`, `ls` or `find`.');
+  else if (options.provider === 'claude') lines.push(
+    'Shell commands start slowly here (each one is its own sandboxed process): batch them with `&&` instead of running many small ones, and prefer Read, Grep or Glob to `cat`, `ls` or `find`.',
+    'Your shell already starts in your worktree: never `cd` into it. Claude Code denies commands whose paths it can\'t check first: a `cd` with any redirect (even `2>&1`), `for`/`while` loops, redirects to `/tmp` or `$VAR` paths.',
+    'So pipe output to `tail`, `grep` or `head` rather than saving it to a file. If a shell command is denied, run it again in a simpler shape (no `cd`, loop or file redirect; split in two): don\'t give up on the shell.',
+  );
   else lines.push('Shell commands start slowly here (each one is its own sandboxed process): batch them instead of running many small ones.');
   if (options.hasCommandGate) lines.push('Run only the tests your change touches. Hydra runs the project\'s full gates after hydra_done.');
   lines.push('Give a slow test command a generous timeout rather than retrying it after it times out.');
