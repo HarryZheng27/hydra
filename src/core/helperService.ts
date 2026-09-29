@@ -8,7 +8,7 @@ import { otherWorktrees, storageListing, userClaudePlugins } from './confineFile
 import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
-import { defaultMaxAttempts, evidenceStatus, finalJobStates, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
+import { defaultMaxAttempts, evidenceStatus, finalJobStates, type JobReply, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
 import { carryOver, integrationAuthors, integrationGates, withGateWorktree, type IntegrationLeadView } from './integration';
 import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
@@ -17,7 +17,8 @@ import type { HelperCaller, HelperEndpoint } from './helperEndpoint';
 import type { HeadConfinement, HelperRun, StartHelperRun } from './helperRunner';
 import type { Provider } from './model';
 import { headLimitReason } from './limitDetection';
-import { describeProviderWait, providerWaitDetail, providerWaitLabel } from './providerWait';
+import { describeProviderWait, providerWaitDetail, providerWaitLabel, waitDuration } from './providerWait';
+import { headSilenceLimits, headSilenceNudge, headSilenceStep, headSilentMs, type HeadSilenceLimits } from './headSilence';
 import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
@@ -98,6 +99,8 @@ export interface PlanBoardBridge {
   jobPlan(jobId: string): { planId: string; jobKey: string } | undefined;
   /** O3: the integration branch a plan's head lands on, and its tip now; undefined for a loose head, or a plan without one. */
   integrationTarget?(jobId: string): { branch: string; tip: string } | undefined;
+  /** O7: whether a plan runs unattended (`plan.unattended`): nobody answers its heads' questions, so Hydra does at once. */
+  unattended?(planId: string): boolean;
   /** hydra_share (a job) posts to its plan's board. */
   post(planId: string, input: { from: BoardFrom; to: 'all' | string[]; topic?: string; body: string }): Promise<void>;
   /** hydra_board: every post a job (by key) may read. */
@@ -129,6 +132,10 @@ export interface HelperServiceOptions {
   log?: (line: string) => void;
   now?: () => number;
   watchdogMs?: number;
+  /** How long an attended head's hydra_stuck waits for an answer before it carries on without one. Defaults to headQuestionWaitMs. */
+  questionWaitMs?: number;
+  /** A silent head's thresholds (headSilence.ts). Defaults to headSilenceLimits. */
+  silence?: HeadSilenceLimits;
   /** O2: how often running heads are checked against each other for a predicted merge conflict. Defaults to headSyncIntervalMs (headSync.ts). */
   headSyncIntervalMs?: number;
   /** O7: checked on the same watchdog tick — cancels an unattended plan's unfinished jobs once its wall-clock budget elapses. */
@@ -193,8 +200,25 @@ interface Active {
   temp?: string;
   /** Step 2: why a Claude head had no shell, for its result. */
   shellNote?: string;
+  /** A silent head (headSilence.ts): the silence the watchdog is acting on (from its last line) and what it did about it. */
+  silence?: { from: number; recorded: boolean; nudged: boolean };
 }
 const clip = (value: string, max: number) => value.length > max ? `${value.slice(0, max)}…` : value;
+
+// ---- When nobody answers a head (docs/Heads.md, "When nobody answers") ----
+/**
+ * How long an attended head's hydra_stuck waits for the lead before it carries on without an answer.
+ * Far below the head's MCP call timeout (an hour, which also has to cover hydra_done's gates), so the
+ * head is never left blocked with nobody coming, and its call returns while it can still use the result.
+ */
+export const headQuestionWaitMs = 20 * 60_000;
+/** The answer a head in an unattended plan gets at once: nobody is there to give another. */
+export const unattendedAnswer = 'Nobody is watching this plan, so no one will answer. Decide within your scope and brief. If something outside your write scope needs changing, finish your own part and describe what needs changing in hydra_done\'s summary. Then call hydra_done.';
+/** The answer a head gets when its wait ended with none. */
+export function noAnswerReply(why: 'timeout' | 'ended', waitedMs: number): string {
+  const when = why === 'timeout' ? `No answer came within ${waitDuration(waitedMs)}` : 'Your question\'s call ended before anyone answered';
+  return `${when}, so carry on without one. Decide within your scope and brief. If something outside your write scope needs changing, finish your own part and describe what needs changing in hydra_done's summary. Then call hydra_done.`;
+}
 
 /** One step of `hydra_done` and how long it took, in the order it ran (see formatDoneTiming). */
 export interface DoneStepTiming { name: string; ms: number }
@@ -551,7 +575,11 @@ export class HelperService {
     const job = this.ownJob(args.job_id);
     if (typeof args.message !== 'string' || !args.message.trim() || args.message.length > 8000) throw new Error('message must be 1–8000 characters.');
     const active = this.active.get(job.id);
-    if (job.state !== 'blocked' || !active?.answer) throw new Error(`Head ${job.id} is not waiting for an answer (it is ${job.state}).`);
+    if (job.state !== 'blocked' || !active?.answer) {
+      const last = job.replies.at(-1);
+      const carried = last?.auto ? ` It stopped waiting at ${last.at} and carried on without an answer (${last.auto === 'unattended' ? 'its plan runs unattended' : 'none came in time'}).` : '';
+      throw new Error(`Head ${job.id} is not waiting for an answer (it is ${job.state}).${carried}`);
+    }
     await this.options.store.update(job.id, { replies: [...job.replies, { at: new Date(this.now()).toISOString(), message: args.message }] });
     active.answer(args.message);
     return { job_id: job.id, delivered: true };
@@ -703,20 +731,55 @@ export class HelperService {
     if (!job || job.state !== 'running' || !active) throw new Error(`This head can't ask a question while it is ${job?.state ?? 'unknown'}.`);
     const reason = typeof args.reason === 'string' && args.reason.trim() ? clip(args.reason.trim(), 2000) : 'Blocked.';
     const question = typeof args.question === 'string' && args.question.trim() ? clip(args.question.trim(), 2000) : reason;
+    // O7: nobody answers an unattended plan's heads, so Hydra does at once, and says so on the job, in the report and in the audit log.
+    const plan = this.options.planBoard?.jobPlan(jobId);
+    if (plan && this.options.planBoard?.unattended?.(plan.planId)) {
+      await this.options.store.transition(jobId, 'blocked', reason, { question });
+      await this.options.store.transition(jobId, 'running', 'Answered automatically: nobody is watching this unattended plan.', { question: undefined });
+      await this.recordAutoAnswer(jobId, question, unattendedAnswer, 'unattended');
+      this.changed();
+      return { answered: true, automatic: true, answer: unattendedAnswer };
+    }
     await this.options.store.transition(jobId, 'blocked', reason, { question });
     active.blockedSince = this.now();
     this.changed();
-    const answer = await new Promise<string | undefined>(resolve => {
-      active.answer = reply => resolve(reply);
-      signal.addEventListener('abort', () => resolve(undefined), { once: true });
+    const waitMs = this.options.questionWaitMs ?? headQuestionWaitMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const answer = await new Promise<{ reply: string } | { none: 'timeout' | 'ended' }>(resolve => {
+      active.answer = reply => resolve(typeof reply === 'string' ? { reply } : { none: 'ended' });
+      signal.addEventListener('abort', () => resolve({ none: 'ended' }), { once: true });
+      timer = setTimeout(() => resolve({ none: 'timeout' }), waitMs);
+      timer.unref?.();
     });
+    clearTimeout(timer);
     active.answer = undefined;
     if (active.blockedSince !== undefined) { active.blockedTotal += this.now() - active.blockedSince; active.blockedSince = undefined; }
     const current = this.options.store.get(jobId)!;
-    if (answer === undefined || current.state !== 'blocked') return { answered: false, message: 'No answer is coming: this head was stopped. Stop now.' };
-    await this.options.store.transition(jobId, 'running', 'The lead answered.', { question: undefined });
+    if (current.state !== 'blocked') return { answered: false, message: 'No answer is coming: this head was stopped. Stop now.' };
+    if ('reply' in answer) {
+      await this.options.store.transition(jobId, 'running', 'The lead answered.', { question: undefined });
+      this.changed();
+      return { answered: true, answer: answer.reply };
+    }
+    // The wait ended with no answer (its time ran out, or the head's own call ended: the MCP timeout, a cancel in
+    // its CLI) while the head still runs. It goes back to running rather than failing: its work so far is kept, it
+    // can usually decide within its brief, and hydra_done works again. Left blocked, every hydra_done was refused
+    // and the head burned its whole work clock doing nothing.
+    const auto = noAnswerReply(answer.none, waitMs);
+    await this.options.store.transition(jobId, 'running', answer.none === 'timeout' ? `No answer within ${waitDuration(waitMs)}; carrying on without one.` : 'Its question\'s call ended with no answer; carrying on without one.', { question: undefined });
+    await this.recordAutoAnswer(jobId, current.question ?? question, auto, 'no-answer');
     this.changed();
-    return { answered: true, answer };
+    return { answered: true, automatic: true, answer: auto };
+  }
+
+  /** A question Hydra answered itself: on the job's replies (so the report and hydra_get_head show it), in the log and in the audit log. */
+  private async recordAutoAnswer(jobId: string, question: string, message: string, auto: NonNullable<JobReply['auto']>): Promise<void> {
+    const job = this.options.store.get(jobId);
+    if (!job || finalJobStates.has(job.state)) return;
+    await this.options.store.update(jobId, { replies: [...job.replies, { at: new Date(this.now()).toISOString(), message, auto, question }] });
+    const why = auto === 'unattended' ? 'nobody is watching this unattended plan' : 'no answer came';
+    this.options.log?.(`[heads] ${jobId}: answered its question automatically (${why})`);
+    this.options.audit?.({ kind: 'auto', what: 'head question answered automatically', detail: `${why}: ${clip(question, 300)}`, jobId });
   }
 
   private async progress(jobId: string, args: Record<string, unknown>) {
@@ -919,7 +982,42 @@ export class HelperService {
       const blocked = active.blockedTotal + (active.blockedSince !== undefined ? this.now() - active.blockedSince : 0);
       if (this.now() - active.startedAt - blocked > job.limits.wallClockMs) {
         await this.finish(id, 'failed', `Time limit reached (${Math.round(job.limits.wallClockMs / 60000)} minutes of work).`).catch(() => undefined);
+        continue;
       }
+      await this.watchSilence(id, active, job).catch(error => this.options.log?.(`[heads] ${id}: silence watchdog: ${error instanceof Error ? error.message : String(error)}`));
+    }
+  }
+
+  /**
+   * A silent head (headSilence.ts): a running head whose stream has produced nothing for a while, with a
+   * turn open and no tool call in flight. Recorded as a wait on the provider, nudged once, then failed.
+   * Each step happens once per silence; any new line starts over.
+   */
+  private async watchSilence(id: string, active: Active, job: Job): Promise<void> {
+    const activity = job.state === 'running' ? active.run.activity?.() : undefined;
+    const silentMs = headSilentMs(activity, this.now());
+    if (!activity || silentMs === undefined) { active.silence = undefined; return; }
+    if (active.silence?.from !== activity.lastLineAt) active.silence = { from: activity.lastLineAt, recorded: false, nudged: false };
+    const silence = active.silence;
+    const step = headSilenceStep(silentMs, silence, this.options.silence ?? headSilenceLimits);
+    if (!step) return;
+    const name = job.provider === 'codex' ? 'Codex' : 'Claude';
+    if (step === 'fail') {
+      const nudged = silence.nudged;
+      silence.recorded = silence.nudged = true;
+      this.options.log?.(`[heads] ${id}: no response from ${name} for ${waitDuration(silentMs)}; failing this attempt`);
+      await this.finish(id, 'failed', `No response from ${name} for ${waitDuration(silentMs)}: its stream went silent with no tool running${nudged ? ', and a nudge didn\'t help' : ''}. Hydra stopped this attempt so the plan can go on.`);
+      return;
+    }
+    if (!silence.recorded) {
+      silence.recorded = true;
+      this.options.log?.(`[heads] ${id}: no response from ${name} for ${waitDuration(silentMs)} (no tool running)`);
+      active.run.stalled?.();
+    }
+    if (step === 'nudge') {
+      silence.nudged = true;
+      const sent = await active.run.nudge?.(headSilenceNudge).catch(() => false) ?? false;
+      this.options.log?.(`[heads] ${id}: ${sent ? 'nudged after' : 'could not nudge after'} ${waitDuration(silentMs)} of silence`);
     }
   }
 
@@ -1271,6 +1369,8 @@ export class HelperService {
       ...(job.role ? { role: job.role.ref, role_title: job.role.title } : {}),
       ...(job.branch ? { branch: job.branch } : {}), ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.baseCommit ? { base_commit: job.baseCommit } : {}),
       ...(job.progress ? { progress: job.progress } : {}), ...(job.question && job.state === 'blocked' ? { question: job.question } : {}),
+      // When nobody answers (docs/Heads.md): the questions Hydra answered itself, so the lead sees the head carried on.
+      ...(job.replies.some(reply => reply.auto) ? { auto_answered: job.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto, ...(reply.question ? { question: reply.question } : {}) })) } : {}),
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),

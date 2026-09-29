@@ -8,6 +8,7 @@ import { claudeHeadTools } from './confine';
 import { redactText } from './redact';
 import type { RunUsage } from './jobs';
 import { claudeProviderWaitSignal, codexProviderWaitSignal, ProviderWaitTracker, type ProviderWait } from './providerWait';
+import { StreamActivity, type HeadActivity } from './headSilence';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -87,6 +88,17 @@ export interface HelperRun {
    * retrying (`wait` set) and when ordinary output resumes or the run ends (`wait` undefined, with how long it lasted).
    */
   onProviderWait?(listener: (wait: ProviderWait | undefined, waitedMs: number) => void): void;
+  // ---- A silent head (docs/Heads.md, headSilence.ts) ----
+  /** The stream's last line, tools in flight and whether a turn is open, for Hydra's silence watchdog. */
+  activity?(): HeadActivity | undefined;
+  /** The watchdog saw the stream go silent: report it as a wait on the provider (onProviderWait), until the next line. */
+  stalled?(): void;
+  /**
+   * Nudge a head whose stream went silent mid-turn: Claude's turn is interrupted (a stream-json
+   * `interrupt` control request) and `message` sent, without the interrupted turn counting as a turn
+   * end; Codex's stalled exec is stopped and its thread resumed with `message`. False if it can't.
+   */
+  nudge?(message: string): Promise<boolean>;
 }
 export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
 
@@ -181,12 +193,19 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
   const waiting = new ProviderWaitTracker((wait, waitedMs) => { for (const listener of waitListeners) listener(wait, waitedMs); });
   waiting.quiet();
+  const activity = new StreamActivity();
+  // A turn Hydra interrupted to nudge a silent head: its `result` isn't the head stopping, and the nudge's message is already queued.
+  let interrupted = 0, nudges = 0;
   const child = spawnLogged(spec, claudeHelperArguments(spec), log, message => {
+    // The CLI's answer to Hydra's own control requests (initialize, a nudge's interrupt) isn't the model producing anything.
+    if (message.type === 'control_response') return;
     waiting.observe(claudeProviderWaitSignal(message));
+    activity.observeClaude(message);
     // A limit counts for the turn it ends; a later good turn clears it.
     if (message.type === 'assistant' || message.type === 'result') limit = claudeHeadLimit(message) ?? (message.type === 'result' && message.is_error !== true ? undefined : limit);
     // O9: each turn's result reports the session's cost so far; the run's cost is the largest seen.
     if (message.type === 'result') costUsd = claudeRunCost(message, costUsd);
+    if (message.type === 'result' && interrupted > 0) { interrupted--; activity.turnStarted(); return; }
     if (message.type === 'result') for (const listener of listeners) listener();
   });
   const exited = new Promise<{ code: number | null }>(resolve => child.on('close', code => { log('exit', { code }); waiting.end(); resolve({ code }); }));
@@ -195,10 +214,18 @@ function startClaude(spec: HelperRunSpec): HelperRun {
     if (child.exitCode !== null || !child.stdin || child.stdin.destroyed) return resolve(false);
     child.stdin.write(JSON.stringify(value) + '\n', error => resolve(!error));
   });
-  const say = (text: string) => write({ type: 'user', message: { role: 'user', content: text } });
+  const say = (text: string, fresh = true) => { activity.turnStarted(fresh); return write({ type: 'user', message: { role: 'user', content: text } }); };
   void write({ type: 'control_request', request_id: 'hydra-helper-init', request: { subtype: 'initialize' } }).then(() => say(spec.prompt));
+  const nudge = async (text: string) => {
+    if (!await write({ type: 'control_request', request_id: `hydra-helper-nudge-${++nudges}`, request: { subtype: 'interrupt' } })) return false;
+    log('nudge', { reason: 'silent stream' });
+    interrupted++;
+    // Not a fresh turn: the silence it answers keeps counting until a line arrives.
+    return say(text, false);
+  };
   return { onTurnEnd: listener => { listeners.push(listener); }, exited, send: async text => { limit = undefined; waiting.quiet(); return say(text); }, stop: stopper(() => child), limitHit: () => limit, usage: () => costUsd === undefined ? undefined : { costUsd },
-    onProviderWait: listener => { waitListeners.push(listener); } };
+    onProviderWait: listener => { waitListeners.push(listener); },
+    activity: () => activity.snapshot(), stalled: () => waiting.stall(), nudge };
 }
 /** O9: a Claude Code result line's session cost (`total_cost_usd`), kept as the largest seen for the run. */
 export function claudeRunCost(message: Record<string, unknown>, current: number | undefined): number | undefined {
@@ -221,12 +248,18 @@ function startCodex(spec: HelperRunSpec): HelperRun {
   const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
   const waiting = new ProviderWaitTracker((wait, waitedMs) => { for (const listener of waitListeners) listener(wait, waitedMs); });
   const exited = new Promise<{ code: number | null }>(resolve => { resolveExit = resolve; });
-  const run = (prompt: string, resumeThread?: string) => {
+  const activity = new StreamActivity();
+  // A nudge (a silent exec, headSilence.ts): the stalled exec is stopped, and its close resumes the thread with this message.
+  let resumeWith: string | undefined;
+  const run = (prompt: string, resumeThread?: string, fresh = true) => {
     const args = codexHelperArguments(spec, resumeThread);
     log('start', { provider: 'codex', worktree: spec.worktree, resume: resumeThread, args });
-    limit = undefined; waiting.quiet();
+    limit = undefined;
+    if (fresh) waiting.quiet();
+    activity.turnStarted(fresh);
     const child = spawnLogged(spec, args, log, message => {
       waiting.observe(codexProviderWaitSignal(message));
+      activity.observeCodex(message);
       if (message.type === 'thread.started' && typeof message.thread_id === 'string') thread = message.thread_id;
       usage = codexRunUsage(message, usage);
       // An error line can be a retry notice; a completed turn clears it.
@@ -238,6 +271,8 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     child.on('error', error => log('error', error.message));
     child.on('close', code => {
       log('exit', { code });
+      activity.turnEnded();
+      if (resumeWith !== undefined && !finished && thread) { const text = resumeWith; resumeWith = undefined; run(text, thread, false); return; }
       waiting.end();
       if (finished) return;
       // Each exec is one turn. A clean exit is a turn end; the helper may get a follow-up.
@@ -253,6 +288,16 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     limitHit: () => limit,
     usage: () => usage,
     onProviderWait: listener => { waitListeners.push(listener); },
+    activity: () => activity.snapshot(),
+    stalled: () => waiting.stall(),
+    nudge: async text => {
+      if (finished || !thread || !current || current.exitCode !== null || resumeWith !== undefined) return false;
+      resumeWith = text;
+      log('nudge', { reason: 'silent stream' });
+      const stalled = current;
+      await stopper(() => stalled)();
+      return true;
+    },
     stop: async () => { const wasFinished = finished; finished = true; await stopper(() => current)(); if (!wasFinished) resolveExit({ code: current?.exitCode ?? null }); },
   };
 }

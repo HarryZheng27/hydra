@@ -10,10 +10,11 @@ import { redactText } from './redact';
  * for changed git settings or hooks, a failed sandbox self-test, a pack
  * server refused by 5.4 (denials); Merge/Mark done with these changes,
  * Merge anyway, turning on a pack (approvals); a head cancelled, Stop all,
- * Resume (stops).
+ * Resume (stops); a head's question Hydra answered itself because nobody did (auto).
  */
 export interface AuditEvent {
-  kind: 'denial' | 'approval' | 'stop' | 'resume';
+  /** `auto`: Hydra decided something on its own that a person would otherwise have, such as answering a head's question nobody answered. */
+  kind: 'denial' | 'approval' | 'stop' | 'resume' | 'auto';
   what: string;
   detail?: string;
   role?: string;

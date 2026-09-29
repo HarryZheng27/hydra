@@ -58,7 +58,7 @@ Connecting adds Hydra as a user-level tool server named `hydra`. That's per user
 | Action | What it does |
 | --- | --- |
 | `hydra_done` | Report the work finished. Hydra commits anything left uncommitted, refuses changes outside the write scope, and runs the checks, all inside the call. If something fails, the head is told what to fix, with up to 3 attempts. |
-| `hydra_stuck` | Ask the lead one question. The call waits, and the lead's answer comes back as its result. |
+| `hydra_stuck` | Ask the lead one question. The call waits, and the lead's answer comes back as its result. If nobody answers, Hydra answers instead: at once in an unattended plan, after 20 minutes otherwise (see [When nobody answers](#when-nobody-answers)). |
 | `hydra_progress` | A short note for the dashboard. |
 
 **A head's first message** is the brief plus, so it doesn't spend its first turns rediscovering the project: its worktree, branch and base commit, the paths it may change, and what the heads or jobs it depends on did. It also gets a **Repository** section — the base commit's tracked files, one per line (an unusual name with a control character, a backslash or a quote in it is shown quoted, never raw), or, past ~200 paths or ~6000 characters, collapsed to top-level directories with a file count each (capped at 60 directory lines) — and the project's gate commands from `.hydra/gates.json`, stated as "Hydra runs these gates after you call hydra_done." With no command gate, `package.json`'s own `test` script gets its own honest line instead — Hydra doesn't run it, so the head is told to run it itself before `hydra_done`, and isn't told to "run only what your change touches" (nothing else would test the rest). A few lines of working guidance come with it, worded for what this particular head has: Claude heads are told to prefer Read, Grep or Glob over `cat`/`ls`/`find`, that their shell already starts in the worktree (so no `cd`), which command shapes Claude Code denies them (see "Limits and permissions"), to pipe output to `tail`/`grep`/`head` rather than save it to a file, and to rerun a denied command in a simpler shape instead of giving up on the shell; Codex heads, which have no such tools, only hear to batch shell commands, since each one starts slowly here; a Claude head with no shell at all hears to use Read, Grep or Glob instead, since there's nothing to batch. A generous timeout for a slow test command, rather than retrying it after it times out, always applies. None of it is file contents, and the whole addition is capped, so it can't grow the brief open-ended.
@@ -77,6 +77,42 @@ any unfinished state → failed or cancelled
 - **Silent stops:** a head that stops without calling `hydra_done` or `hydra_stuck` is nudged once, then failed. A head process that exits is failed.
 - **After a restart:** heads that were running are failed with the reason, because no head process survives a restart.
 - **Waiting on the provider:** a running head can also be waiting on its provider. See [Waiting on the provider](#waiting-on-the-provider).
+- **Never blocked for good:** a blocked head goes back to running when its question is answered, including when Hydra answers it itself. See [When nobody answers](#when-nobody-answers).
+- **Silent heads:** a running head whose stream goes silent mid-turn is recorded, nudged, and then failed. See [A silent head](#a-silent-head).
+
+### When nobody answers
+
+`hydra_stuck` blocks the head until someone answers: the lead with `hydra_reply_to_head`, or you with **Answer question…** on the canvas. Both work as before. When nobody does, the head doesn't stay blocked:
+
+- **In an unattended plan,** nobody is watching, so Hydra answers at once: "Nobody is watching this plan, so no one will answer. Decide within your scope and brief. If something outside your write scope needs changing, finish your own part and describe what needs changing in hydra_done's summary. Then call hydra_done." The head never waits.
+- **Otherwise,** the question waits 20 minutes. If no answer comes by then, or the head's own call ends first (its MCP call timeout, or its CLI cancels the call), the head goes back to **running** with the same kind of answer ("No answer came within 20m, so carry on without one…"), and `hydra_done` is accepted again.
+
+Back to running, rather than failed, because the head is still alive and its work is still in its worktree. It can usually decide within its brief, and its gates still check the result. Before this, a head whose call timed out stayed **blocked**: every `hydra_done` it sent was refused ("can't report done while it is blocked"), and it burned its whole 30-minute work clock doing nothing.
+
+Why a Hydra-side wait instead of a shorter MCP timeout: the head's MCP timeout (an hour) covers every Hydra tool, including `hydra_done`, whose gates can take many minutes. Shortening it would cut those off too.
+
+Each automatic answer is recorded:
+
+- on the job, as a reply marked `auto` (`unattended` or `no-answer`) with the question it answered, and in its history;
+- for the lead, as `auto_answered` in `hydra_get_head` and `hydra_list_heads`. A late `hydra_reply_to_head` is refused and says when the head stopped waiting and why;
+- in the plan's report, under the job and under **Needs you** ("its question was answered automatically; check its summary…");
+- in the audit log, as `kind: "auto"`.
+
+Time spent blocked still doesn't count toward the head's work time.
+
+### A silent head
+
+A head's CLI can go quiet with a turn still open: a response stream the provider stopped sending, with no retry notice for [Waiting on the provider](#waiting-on-the-provider) to see. One benchmark head wrote "I'll finish up now" and then produced nothing for 25 minutes, until its CLI gave up on the stream by itself. Hydra's watchdog, checked every few seconds, now handles this:
+
+| Silent for | What Hydra does |
+| --- | --- |
+| 3 minutes | Records it as a wait on the provider: "No response from Claude for 3m" on the card, in the heads list and in `hydra_get_head` (`provider_wait.silent: true`). It ends at the next line, and its time adds to `providerWaitMs` and the plan report like any other wait. |
+| 5 minutes | Nudges the head once. For Claude Code, Hydra interrupts the stalled turn with a stream-json `interrupt` control request and sends a "continue where you left off" message on the same input (the interrupted turn doesn't count as the head stopping). For Codex, Hydra stops the stalled `codex exec` and resumes its thread with the same message. |
+| 10 minutes | Fails the attempt ("No response from Claude for 10m: its stream went silent with no tool running…"), so the plan's next steps or a retry go ahead instead of hanging. |
+
+Silence counts only while a turn is open and **no tool call is in flight**. A `tool_use` without its `tool_result` yet (Claude Code), or an item started and not completed (Codex), is work: a long `npm test` or a head's own `hydra_stuck`/`hydra_done` never counts. The gap after a turn ends isn't silence either; a head that stops without reporting is still nudged once and then failed, as before. Any new line starts the count over. Hydra's own control messages (the CLI's answer to `initialize` or an interrupt) don't count as a line. The thresholds are `headSilenceLimits` in `src/core/headSilence.ts`.
+
+The trade-off: without partial messages, Claude Code writes an assistant message only when it's complete, so a very long single response (a huge file written in one tool call) looks silent until it lands. The 5-minute nudge leaves room for that; the 3-minute record only labels it.
 
 ### Waiting on the provider
 
@@ -215,9 +251,9 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
 - **A budget, checked up front and enforced while it runs:**
   - **`usd`** and **`max_jobs`** are checked when the plan is created or amended: `max_jobs` refuses a job count over the cap outright, and `usd` refuses a worst-case estimate (job count × `hydra.heads.defaultBudgetUsd`) over the cap. Hydra has no live spend meter — only wall-clock time is ever actually enforced while a job runs — so both are honest estimates checked at the door, not a running total. (What each head's runs did cost is recorded after they end, as the provider reported it, for the report; it's never used to stop a plan.)
   - **`wall_clock_minutes`** is enforced for real: once that many minutes have passed since the plan started running, Hydra cancels whatever is still going, the same as **Cancel job**.
-- **It asks nothing while it runs:** it always behaves as if `hydra.limits.autoContinuePlans` were on, regardless of that setting.
+- **It asks nothing while it runs:** it always behaves as if `hydra.limits.autoContinuePlans` were on, regardless of that setting, and a head's `hydra_stuck` gets an automatic answer at once (see [When nobody answers](#when-nobody-answers)).
 - **Stop All Agents still latches** — it stops an unattended plan exactly like any other.
-- **The report.** When the plan ends (finishes, or its wall-clock budget runs out), Hydra writes a Markdown report next to the plan, opens it as a tab, and shows a notification. For each job: what changed, its gates and evidence, its attempts, provider (and any usage-limit handoff), time and cost as the provider reported it (Claude Code in dollars, Codex in tokens; a job that reported nothing says so, with the per-head budget as the estimate), with the plan's total at the top, plus every amendment made to the plan. Then the integration gate (see **Landing a plan together**): the branch, what landed, and the gate's result and checks for the branch as it is now. Last, what still needs you: a job that failed or is asking a question, a stopped landing queue, an integration gate that didn't pass, or, when it passed, merging the plan. A plan that finishes waits for its integration gate before writing the report, so the report has the result; one that stops incomplete writes it at once. Running the gate again later updates the saved report without opening it again. `hydra report <id>` prints the same report.
+- **The report.** When the plan ends (finishes, or its wall-clock budget runs out), Hydra writes a Markdown report next to the plan, opens it as a tab, and shows a notification. For each job: what changed, its gates and evidence, its attempts, provider (and any usage-limit handoff), time and cost as the provider reported it (Claude Code in dollars, Codex in tokens; a job that reported nothing says so, with the per-head budget as the estimate), with the plan's total at the top, plus every amendment made to the plan. Then the integration gate (see **Landing a plan together**): the branch, what landed, and the gate's result and checks for the branch as it is now. A question Hydra answered automatically is named under its job. Last, what still needs you: a job that failed or is asking a question, a job whose question was answered automatically, a stopped landing queue, an integration gate that didn't pass, or, when it passed, merging the plan. A plan that finishes waits for its integration gate before writing the report, so the report has the result; one that stops incomplete writes it at once. Running the gate again later updates the saved report without opening it again. `hydra report <id>` prints the same report.
 
 **Landing a plan together.** Every job can pass its own gates while the combination is broken, so nothing a plan does reaches your branch until the combined work has passed too:
 - **The integration branch.** The first time a plan runs, Hydra cuts `hydra/plan-<id>` from the commit your checkout is on, and remembers the branch you were on.
