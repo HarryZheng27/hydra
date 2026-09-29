@@ -24,6 +24,11 @@ export interface ProviderWait {
   resetsAt?: string;
   /** What the notice said, shortened: the error, or the limit window and how much of it is used. */
   detail?: string;
+  /**
+   * No retry notice at all: the stream went silent with a turn open and no tool running (headSilence.ts).
+   * Opened by Hydra's watchdog, closed by the next line like any other wait.
+   */
+  silent?: boolean;
 }
 
 /** What one stream line says about waiting on the provider. `undefined`: nothing either way. */
@@ -113,6 +118,10 @@ export class ProviderWaitTracker {
   quiet(): void { this.lastLineAt = this.now(); }
   observe(signal: ProviderWaitSignal | undefined): void {
     const at = this.now();
+    // A silent wait ends only at model output (output()): the lines a nudge itself produces (an interrupted
+    // turn's result, say) don't end it. A retry notice turns it into an ordinary wait, dated from the same silence.
+    if (this.wait?.silent && (!signal || signal.kind === 'note' || signal.kind === 'resume')) { this.lastLineAt = at; return; }
+    if (this.wait?.silent && signal && (signal.kind === 'retry' || signal.kind === 'limited')) { const { silent: _silent, ...rest } = this.wait; this.wait = rest; }
     if (!signal) { this.lastLineAt = at; return; }
     if (signal.kind === 'resume') { this.close(at); this.lastLineAt = at; return; }
     if (signal.kind === 'note') {
@@ -135,6 +144,17 @@ export class ProviderWaitTracker {
     };
     this.onChange(this.current, 0);
   }
+  /**
+   * Hydra's watchdog saw the stream go silent (headSilence.ts): open a wait dated from the model's last
+   * output (`since`, else the last line), unless one is already open (a retry wait already says the head is waiting).
+   */
+  stall(since?: number): void {
+    if (this.wait) return;
+    this.wait = { since: new Date(since ?? this.lastLineAt ?? this.now()).toISOString(), retries: 0, silent: true };
+    this.onChange(this.current, 0);
+  }
+  /** The model produced output (StreamActivity): a silent wait is over. */
+  output(): void { if (this.wait?.silent) this.close(this.now()); }
   /** The run ended: a wait still open ends with it. */
   end(): void { this.close(this.now()); }
   private close(at: number): void {
@@ -160,9 +180,10 @@ export function waitDuration(ms: number): string {
  */
 export function providerWaitLabel(provider: Provider, wait: ProviderWait, now?: number): string {
   const name = providerName(provider);
-  const what = wait.limit ? `Waiting on your ${name} usage limit` : `Waiting on ${name}'s servers`;
   const since = Date.parse(wait.since);
   const lasted = now !== undefined && Number.isFinite(since) && now - since >= 1000 ? ` for ${waitDuration(now - since)}` : '';
+  if (wait.silent) return `No response from ${name}${lasted}`;
+  const what = wait.limit ? `Waiting on your ${name} usage limit` : `Waiting on ${name}'s servers`;
   const attempt = wait.attempt ?? wait.retries;
   const retry = attempt ? ` (retry ${attempt}${!wait.limit && wait.maxRetries ? ` of ${wait.maxRetries}` : ''})` : '';
   return `${what}${lasted}${retry}`;
@@ -179,7 +200,7 @@ export function describeProviderWait(provider: Provider, wait: ProviderWait, now
   return {
     message: providerWaitLabel(provider, wait, now), since: wait.since, retries: wait.retries,
     ...(wait.attempt !== undefined ? { attempt: wait.attempt } : {}), ...(wait.maxRetries !== undefined ? { max_retries: wait.maxRetries } : {}),
-    limit: !!wait.limit, ...(wait.resetsAt ? { resets_at: wait.resetsAt } : {}), ...(wait.detail ? { detail: wait.detail } : {}),
+    limit: !!wait.limit, ...(wait.silent ? { silent: true } : {}), ...(wait.resetsAt ? { resets_at: wait.resetsAt } : {}), ...(wait.detail ? { detail: wait.detail } : {}),
     ...(Number.isFinite(since) ? { waited_ms: Math.max(0, now - since) } : {}),
   };
 }
@@ -193,6 +214,7 @@ export function validateProviderWait(value: unknown): ProviderWait | undefined {
     ...(count(wait.attempt) !== undefined ? { attempt: wait.attempt } : {}),
     ...(count(wait.maxRetries) !== undefined ? { maxRetries: wait.maxRetries } : {}),
     ...(wait.limit === true ? { limit: true } : {}),
+    ...(wait.silent === true ? { silent: true } : {}),
     ...(typeof wait.resetsAt === 'string' && Number.isFinite(Date.parse(wait.resetsAt)) ? { resetsAt: wait.resetsAt } : {}),
     ...(clean(wait.detail) ? { detail: clean(wait.detail) } : {}),
   };

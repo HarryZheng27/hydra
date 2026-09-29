@@ -235,7 +235,7 @@ export interface Job {
   baseCommit?: string;
   branch?: string;
   question?: string;
-  replies: { at: string; message: string }[];
+  replies: JobReply[];
   progress?: string;
   reason?: string;
   result?: JobResult;
@@ -272,6 +272,12 @@ export interface Job {
   finishedAt?: string;
   history: JobEvent[];
 }
+/**
+ * An answer to a head's hydra_stuck. `auto` marks one Hydra gave itself (docs/Heads.md, "When nobody answers"):
+ * `unattended` for a head in an unattended plan, answered at once; `no-answer` when the wait ended with no answer
+ * (its time ran out, or the head's call ended). `question` is what it had asked, kept since the job's own clears.
+ */
+export interface JobReply { at: string; message: string; auto?: 'unattended' | 'no-answer'; question?: string }
 /** A head's role: "coding/builder", with the titles it had when the head was started, for the views. */
 export interface JobRole { ref: string; title: string; packTitle: string }
 

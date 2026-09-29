@@ -192,6 +192,8 @@ export interface PlanReportJobDetail {
   outputTokens?: number;
   /** How long its runs waited on the provider (docs/Heads.md, "Waiting on the provider"), in milliseconds. */
   providerWaitMs?: number;
+  /** Questions Hydra answered itself (docs/Heads.md, "When nobody answers"): nobody watches an unattended plan, or no answer came in time. */
+  autoAnswered?: { at: string; why: 'unattended' | 'no-answer'; question?: string }[];
 }
 
 const money = (usd: number) => '$' + (usd < 0.01 && usd > 0 ? usd.toFixed(4) : usd.toFixed(2));
@@ -267,6 +269,7 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
     }
     if (job.reason) lines.push('', `Reason: ${job.reason}`);
     if (job.question) lines.push('', `Asked: ${job.question}`);
+    for (const auto of job.autoAnswered ?? []) lines.push('', `Asked${auto.question ? ` "${auto.question}"` : ' a question'} and was answered automatically: ${auto.why === 'unattended' ? 'nobody is watching this plan' : 'no answer came in time'}, so it decided within its brief.`);
     lines.push('');
   }
   if (plan.amendments?.length) {
@@ -297,6 +300,8 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
   }
   const needsYou = jobs.filter(job => job.status === 'failed' || job.question);
   const needs = needsYou.map(job => `- ${job.title}: ${job.question ? `asked "${job.question}"` : job.reason ? job.reason : 'failed'}`);
+  // A question nobody answered: the head decided on its own, and its summary says what it left for you.
+  for (const job of jobs) if (job.autoAnswered?.length && !needsYou.includes(job)) needs.push(`- ${job.title}: its question was answered automatically; check its summary for anything it left outside its scope.`);
   if (integration && !integration.merged) {
     if (integration.error) needs.push(`- The landing queue on ${integration.branch}: ${integration.error}`);
     else if (integration.gate && !integration.gate.running && integration.gate.tip === integration.tip && !integrationPassed(integration)) needs.push(`- The integration gate: ${integrationGateLabel(integration.gate, integration.tip)}. Fix it and run the gate again, or merge anyway from the canvas.`);
