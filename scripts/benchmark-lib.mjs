@@ -161,7 +161,37 @@ export function landingFromStore(plan, startedMs) {
     const seconds = Math.round((Date.parse(entry.at) - start) / 1000);
     if (Number.isFinite(seconds) && !(landedAtSeconds[entry.key] >= seconds)) landedAtSeconds[entry.key] = seconds;
   }
-  return { startedAt: new Date(start).toISOString(), landedAtSeconds, jobKeys: (plan.jobs ?? []).map(job => job.key) };
+  const end = endFromStore(plan, start);
+  return { startedAt: new Date(start).toISOString(), landedAtSeconds, jobKeys: (plan.jobs ?? []).map(job => job.key), ...(end ? { end } : {}) };
+}
+
+/**
+ * When the plan ended, from Hydra's own timestamps rather than the poll that noticed it (pure): the integration gate
+ * record's `at` (the last gate run, after every fix round) when the gate isn't still running, else the plan's
+ * `updatedAt` once its state is no longer running. In seconds from `startedMs`, with `source` naming which one.
+ * Undefined when the record has neither, so the caller keeps the poll time.
+ */
+export function endFromStore(plan, startedMs) {
+  const start = startedMs ?? Date.parse(plan.startedAt ?? plan.createdAt);
+  const gate = plan.integration?.gate;
+  const candidates = [];
+  if (gate?.at && !gate.running) candidates.push({ at: gate.at, source: 'integration gate record' });
+  if (plan.updatedAt && plan.state && plan.state !== 'running') candidates.push({ at: plan.updatedAt, source: 'plan settle time' });
+  for (const { at, source } of candidates) {
+    const seconds = Math.round((Date.parse(at) - start) / 1000);
+    if (Number.isFinite(seconds) && seconds >= 0) return { seconds, source };
+  }
+  return undefined;
+}
+
+/**
+ * The end of a Hydra run (pure): Hydra's own time (`end`, from endFromStore) unless it is missing, comes before the last
+ * landing, or is later than the poll that saw the plan settled (`pollSeconds`, give or take a little clock skew), in
+ * which case it is the poll time, marked as such.
+ */
+export function endOfRun(end, pollSeconds, lastLandingSeconds) {
+  const usable = end && Number.isFinite(end.seconds) && end.seconds >= (lastLandingSeconds ?? 0) && (pollSeconds === undefined || end.seconds <= pollSeconds + 5);
+  return usable ? { seconds: end.seconds, from: end.source } : { seconds: pollSeconds, from: 'polling' };
 }
 
 /** The findings a fix brief lists under one gate, counted by severity (pure). */
@@ -224,10 +254,13 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
   const review = reviewCheckOf(integration?.gate?.checks);
   const landedAtSeconds = { ...(observed?.landedAt ?? {}), ...(landing?.landedAtSeconds ?? {}) };
   const finalReview = review ? { state: review.state } : undefined;
+  // The run ends when Hydra says the plan settled, not when a poll noticed; a timed-out run ended at its poll.
+  const landedTimes = Object.entries(landedAtSeconds).filter(([key]) => !isFixJob(key)).map(([, seconds]) => seconds);
+  const ended = timedOut ? { seconds: wallClockSeconds, from: 'polling' } : endOfRun(landing?.end, wallClockSeconds, landedTimes.length ? Math.max(...landedTimes) : 0);
   const firstReview = firstReviewOf({ jobKeys: jobs.map(job => job.key), fixBrief: storedPlan?.jobs?.find(job => job.key === 'integration-fix-1')?.brief, finalReview });
   return {
     version: resultsVersion, kind: 'hydra', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), planId: view.plan_id, planState: view.state,
-    ...(startedAt ? { startedAt } : {}), wallClockSeconds, timedOut: !!timedOut,
+    ...(startedAt ? { startedAt } : {}), wallClockSeconds: ended.seconds, wallClockFrom: ended.from, timedOut: !!timedOut,
     timeToWorkingCodeSeconds: workDoneSeconds(jobs.map(job => job.key), landedAtSeconds),
     landedAtSeconds, landingTimesFrom: landing ? 'plan store' : 'watching',
     integrationGate: integration ? { label: integration.gate?.label, passed: !!passed, checks: (integration.gate?.checks ?? []).map(check => ({ id: check.id, ...(check.kind ? { kind: check.kind } : {}), state: check.state })) } : null,
@@ -255,7 +288,7 @@ export function summarizeSingle({ agent, wallClockSeconds, exitCode, gatePassed,
   const usd = typeof agentOutput?.total_cost_usd === 'number' ? agentOutput.total_cost_usd : undefined;
   const agentResult = agentOutput && (agentOutput.subtype !== undefined || agentOutput.is_error !== undefined) ? { ...(agentOutput.subtype !== undefined ? { subtype: String(agentOutput.subtype) } : {}), isError: agentOutput.is_error === true, ...(agentOutput.is_error === true && agentOutput.result ? { message: String(agentOutput.result).slice(0, 500) } : {}) } : undefined;
   return {
-    version: resultsVersion, kind: 'single', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), agent, ...(startedAt ? { startedAt } : {}), wallClockSeconds, agentExitCode: exitCode,
+    version: resultsVersion, kind: 'single', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), agent, ...(startedAt ? { startedAt } : {}), wallClockSeconds, wallClockFrom: 'process exit', agentExitCode: exitCode,
     ...(agentResult ? { agentResult } : {}),
     gate: { passed: !!gatePassed, outputTail: String(gateOutput ?? '').slice(-2000) },
     cost: { ...(usd !== undefined ? { usd } : {}), ...(codexUsage ? { inputTokens: codexUsage.inputTokens, outputTokens: codexUsage.outputTokens } : {}) },
@@ -443,6 +476,12 @@ export function runRows(result, folder, fallback) {
     let work = result.timeToWorkingCodeSeconds;
     if (work === undefined && fallback) work = workDoneSeconds(fallback.jobKeys?.length ? fallback.jobKeys : (result.jobs ?? []).map(job => job.key), fallback.landedAtSeconds);
     if (result.check && !(checkPassed && result.integrationGate?.passed)) work = null;
+    // Results written before Hydra's own end time was kept ended at the poll that noticed: correct them from the plan store.
+    let wall = result.wallClockSeconds;
+    if ((!result.wallClockFrom || result.wallClockFrom === 'polling') && !result.timedOut && fallback?.end) {
+      const landed = Object.entries(fallback.landedAtSeconds ?? {}).filter(([key]) => !isFixJob(key)).map(([, seconds]) => seconds);
+      wall = endOfRun(fallback.end, result.wallClockSeconds, landed.length ? Math.max(...landed) : 0).seconds;
+    }
     const review = result.review ?? (() => { const check = reviewCheckOf(result.integrationGate?.checks); return check ? { state: check.state } : undefined; })();
     const reviewPassed = !review ? undefined : review.state !== undefined ? reviewOutcome(review.state) : review.passed;
     const jobKeys = (result.jobs ?? []).map(job => job.key);
@@ -451,7 +490,7 @@ export function runRows(result, folder, fallback) {
     return [{
       folder, task: taskLabel(result), setup: 'hydra', workSeconds: work ?? null,
       // The plan ends when its integration gate has settled, after every fix round: that is the time after the review loop.
-      workAfterSeconds: work === null || work === undefined ? null : result.wallClockSeconds, totalSeconds: result.wallClockSeconds,
+      workAfterSeconds: work === null || work === undefined ? null : wall, totalSeconds: wall,
       usd: result.cost?.usdJobs ? result.cost.usd : undefined, gatePassed: !!result.integrationGate?.passed,
       reviewPassed, reviewNotRun: !!review && reviewPassed === undefined, fixRounds,
       firstReviewPassed: first?.ran === false ? undefined : first?.passed, firstReviewNotRun: first?.ran === false,
