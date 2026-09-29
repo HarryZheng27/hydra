@@ -9,7 +9,7 @@ This replaces the old Auto delegation, which read a `HYDRA_DELEGATION_V1` line o
 ## Connecting Claude Code and Codex
 
 **On the first run, Hydra does it for you.** The first time the Hydra app opens a trusted project:
-- It connects whichever agents are already on this computer: `claude` or `codex` on your `PATH`, or the path set in `hydra.claudePath`/`hydra.codexPath`.
+- It connects whichever agents are already on this computer: `claude` or `codex` on your `PATH`, or the path set in `hydra.claudePath`/`hydra.codexPath` (user settings only: a repository's own settings can't set them, nor `hydra.worktreeRoot`, `hydra.packs.folder`, `hydra.claudeMem.enabled` or `hydra.updates.check`).
 - It installs their extensions as it goes, with its progress in a notification.
 - It happens once. An agent that's already connected with its extension installed here is left alone; one connected from another editor gets its extension here and is pointed at this Hydra. One that fails says why, with a button to **Connectors**.
 - An agent that isn't installed yet is connected with **Connect**, once you've installed it.

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { machineSetting } from './core/machineSetting';
 import path from 'node:path';
 import { defaultMcpContext, listMcpServers } from './core/mcpServers';
 import { PackService, defaultUserPacksFolder } from './core/packs/service';
@@ -22,7 +23,7 @@ export function createPackService(context: vscode.ExtensionContext, log: (line: 
     audit,
     builtin: path.join(context.extensionPath, 'packs'),
     userFolder: () => {
-      const configured = (vscode.workspace.getConfiguration('hydra').get<string>('packs.folder') ?? '').trim();
+      const configured = (machineSetting<string>(vscode.workspace.getConfiguration('hydra'), 'packs.folder') ?? '').trim();
       if (configured && path.isAbsolute(configured)) return configured;
       if (configured && configured !== warned) { warned = configured; log(`[packs] hydra.packs.folder must be an absolute path; using ${defaultUserPacksFolder()} instead of "${configured}".`); }
       return defaultUserPacksFolder();

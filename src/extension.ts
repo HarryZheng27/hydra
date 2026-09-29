@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, stat as fsStat, writeFile } from 'node:fs/promises';
@@ -199,7 +200,7 @@ class Manager {
     this.headSandbox = new HeadSandbox({
       // Short paths (Windows' 260-character limit): the sandbox's scripts and check folders, per window.
       folder: path.join(this.context.globalStorageUri.fsPath, 'sb', path.basename(this.storageDirectory)),
-      codex: async () => (await findProvider('codex', vscode.workspace.getConfiguration('hydra').get<string>('codexPath') || undefined)).executable,
+      codex: async () => (await findProvider('codex', machineSetting<string>(vscode.workspace.getConfiguration('hydra'), 'codexPath') || undefined)).executable,
       log: line => this.output.appendLine(line),
       audit: event => this.audit.record(event),
     });
@@ -473,7 +474,7 @@ class Manager {
     return { command: process.execPath, args: [path.join(this.context.extensionPath, 'dist', 'hydra-mcp.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: path.join(this.context.globalStorageUri.fsPath, 'helpers'), ...(provider ? { HYDRA_LEAD_PROVIDER: provider } : {}) } };
   }
   private async helperExecutable(provider: Provider): Promise<string> {
-    const info = await findProvider(provider, vscode.workspace.getConfiguration('hydra').get<string>(`${provider}Path`));
+    const info = await findProvider(provider, machineSetting<string>(vscode.workspace.getConfiguration('hydra'), `${provider}Path`));
     if (!info.executable) throw new Error(`${provider === 'claude' ? 'Claude Code' : 'Codex'} CLI not found. Install it or set Hydra's ${provider} path.`);
     const check = await selfCheckCli(provider, info.executable);
     if (!check.ok) throw new Error(check.error);
@@ -533,7 +534,7 @@ class Manager {
     const port = await endpoint.start();
     service = new HelperService({
       store, endpoint, leadFolder, leadKey,
-      worktreeRoot: () => vscode.workspace.getConfiguration('hydra').get<string>('worktreeRoot') || undefined,
+      worktreeRoot: () => machineSetting<string>(vscode.workspace.getConfiguration('hydra'), 'worktreeRoot') || undefined,
       startRun: startHelperRun, executable: provider => this.helperExecutable(provider),
       bridge: this.helperBridge(), logDirectory: path.join(directory, 'logs'),
       maxConcurrent: () => Math.max(1, Math.min(8, vscode.workspace.getConfiguration('hydra').get<number>('maxConcurrentHelpers', 3))),
@@ -796,7 +797,7 @@ class Manager {
     const claudeExtension = vscode.extensions.getExtension('anthropic.claude-code');
     const codexExtension = vscode.extensions.getExtension('openai.chatgpt');
     const development = this.context.extensionMode !== vscode.ExtensionMode.Production;
-    const memoryEnabled = vscode.workspace.getConfiguration('hydra').get<boolean>('claudeMem.enabled', false);
+    const memoryEnabled = (machineSetting<boolean>(vscode.workspace.getConfiguration('hydra'), 'claudeMem.enabled') ?? false);
     const memoryRow = claudeMemRowText(memoryEnabled, claude.connected && claude.current, memory);
     return [
       { ...claude, name: 'Claude Code', extensionInstalled: !!claudeExtension, extensionVersion: (claudeExtension?.packageJSON as { version?: string } | undefined)?.version, memory: memoryEnabled ? (memory.plugin && memory.bun && memory.dependencies ? 'ready' : 'missing') : undefined, memoryEnabled, memoryText: memoryRow.text, memoryRepair: memoryRow.repair, signedIn: accounts.claude.status, ...(development ? { development } : {}) },
@@ -809,7 +810,7 @@ class Manager {
   }
   /** Re-run claude-mem's setup idempotently: the Repair button, and reused by Connect. Both are gated on the opt-in setting. */
   private async repairClaudeMem(): Promise<{ status: Awaited<ReturnType<typeof claudeMemStatus>>; installed: string[] }> {
-    if (!shouldSetUpClaudeMem(vscode.workspace.getConfiguration('hydra').get<boolean>('claudeMem.enabled', false))) throw new Error('Turn on Memory (claude-mem) in Settings → Connectors first.');
+    if (!shouldSetUpClaudeMem((machineSetting<boolean>(vscode.workspace.getConfiguration('hydra'), 'claudeMem.enabled') ?? false))) throw new Error('Turn on Memory (claude-mem) in Settings → Connectors first.');
     const claude = await claudeForRegistration();
     if (!claude) throw new Error('Install the Claude Code extension or CLI first.');
     return setupClaudeMem(claude);
@@ -837,7 +838,7 @@ class Manager {
     await this.context.globalState.update(firstRunConnectKey, true);
     const connections = await this.helperConnections();
     const row = (provider: ConnectableProvider) => connections.find(item => item.provider === provider);
-    const cli = async (provider: 'claude' | 'codex') => !!(await findProvider(provider, vscode.workspace.getConfiguration('hydra').get<string>(provider === 'claude' ? 'claudePath' : 'codexPath') || undefined).catch(() => undefined))?.executable;
+    const cli = async (provider: 'claude' | 'codex') => !!(await findProvider(provider, machineSetting<string>(vscode.workspace.getConfiguration('hydra'), provider === 'claude' ? 'claudePath' : 'codexPath') || undefined).catch(() => undefined))?.executable;
     const wanted = firstRunProviders({
       claude: { cli: await cli('claude'), connected: !!row('claude')?.connected, extension: !!row('claude')?.extensionInstalled },
       codex: { cli: await cli('codex'), connected: !!row('codex')?.connected, extension: !!row('codex')?.extensionInstalled },
@@ -874,7 +875,7 @@ class Manager {
       if (!claude) throw new Error('Install the Claude Code extension or CLI first; Hydra connects through it.');
       await connectClaude(claude, paths, spec, await this.limitHookFor(claude));
       this.output.appendLine('[heads] connected claude to Hydra');
-      if (!shouldSetUpClaudeMem(vscode.workspace.getConfiguration('hydra').get<boolean>('claudeMem.enabled', false))) return undefined;
+      if (!shouldSetUpClaudeMem((machineSetting<boolean>(vscode.workspace.getConfiguration('hydra'), 'claudeMem.enabled') ?? false))) return undefined;
       try {
         const memory = await setupClaudeMem(claude);
         if (memory.installed.length) this.output.appendLine(`[heads] set up ${memory.installed.join(' and ')} for claude-mem`);
@@ -1814,7 +1815,7 @@ class Manager {
       this.diagnostics.set(message.provider, { provider: message.provider, status: 'checking', checkedAt: new Date().toISOString(), advertised: [], probes: [] });
       await this.publish();
       try {
-        const info = await findProvider(message.provider, vscode.workspace.getConfiguration('hydra').get<string>(`${message.provider}Path`));
+        const info = await findProvider(message.provider, machineSetting<string>(vscode.workspace.getConfiguration('hydra'), `${message.provider}Path`));
         const diagnostic = await checkProvider(info, this.repositories[0] || this.context.extensionUri.fsPath, controller.signal);
         if (generation === this.diagnosticGeneration && !this.closing) this.diagnostics.set(message.provider, diagnostic);
       } catch (error) {
