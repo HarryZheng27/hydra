@@ -9,7 +9,8 @@
 //     (exits 1 when the review didn't run, and 3 when a usage limit stopped it)
 //   node scripts/benchmark.mjs summarize --runs <folders or globs, comma-separated> [--out <file>] [--plan-store <plans.json>]
 //   node scripts/benchmark.mjs publish --results <dir> [--label <text>] [--notes <text>]
-//   node scripts/benchmark.mjs swebench select|prepare|predictions|submit … (scripts/benchmark-swebench.mjs)
+//   node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup single|hydra [--out <dir>] … (scripts/benchmark-swebench.mjs)
+//   node scripts/benchmark.mjs swebench-submit --out <dir> [--run-id <id>] [--wait <minutes>]
 import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -18,7 +19,7 @@ import {
   defaultFixture, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, renderSummary, runRows,
   singleAllowedTools, singleClaudeArgs, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReview,
 } from './benchmark-lib.mjs';
-import { swebench } from './benchmark-swebench.mjs';
+import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
 import { run } from './benchmark-run.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,7 +64,7 @@ async function fixtureOf(flags, runFolder) {
 async function prepare(flags) {
   const out = path.resolve(flags.out ?? path.join(root, '.bench', `run-${new Date().toISOString().replace(/[:.]/g, '-')}`));
   const fixture = await fixtureOf(flags);
-  if (!fixture.dir) throw new Error('prepare needs a fixture (SWE-bench instances are prepared with swebench prepare).');
+  if (!fixture.dir) throw new Error('prepare needs a fixture (SWE-bench instances are run with benchmark.mjs swebench).');
   for (const name of ['hydra', 'single']) {
     const repo = path.join(out, name);
     await fs.mkdir(repo, { recursive: true });
@@ -145,6 +146,9 @@ async function hydra(flags) {
   });
   // The hidden check runs on every job's work together: the integration branch's tip, in a clone beside the repository.
   const tip = finalView?.integration?.tip;
+  // The combined work's commit and branch: a SWE-bench run diffs its model patch from here.
+  if (tip) results.integrationTip = tip;
+  if (finalView?.integration?.branch) results.integrationBranch = finalView.integration.branch;
   if (tip && fixture.dir && await exists(path.join(fixture.dir, 'check.mjs'))) {
     const tree = await freshPath(out, 'hydra-final');
     try {
@@ -156,6 +160,7 @@ async function hydra(flags) {
   await fs.writeFile(path.join(out, 'hydra-results.json'), JSON.stringify(results, null, 2) + '\n');
   await fs.writeFile(path.join(out, 'hydra-report.md'), report.stdout);
   console.log(`\n\n${JSON.stringify(results, null, 2)}\n\nWrote ${path.join(out, 'hydra-results.json')} and hydra-report.md.`);
+  return results;
 }
 
 const agents = {
@@ -231,6 +236,14 @@ async function single(flags) {
   await fs.writeFile(path.join(out, 'single-results.json'), JSON.stringify(results, null, 2) + '\n');
   console.log(`${JSON.stringify(results, null, 2)}\n\nWrote ${path.join(out, 'single-results.json')}.`);
   if (results.agentResult?.isError) console.error(`The agent reported an error (${results.agentResult.subtype ?? 'no subtype'}): the run is recorded, with no time to working code.`);
+  return results;
+}
+
+/** Opens a SWE-bench instance's repository in Hydra the way every benchmark folder is opened: scripts/bench-open.ps1. */
+async function openHydra(repo) {
+  if (process.platform !== 'win32') throw new Error('Opening a Hydra window uses scripts/bench-open.ps1 (Windows). Elsewhere, open the folder in Hydra yourself and pass --open none.');
+  const opened = await run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts', 'bench-open.ps1'), '-Folder', repo, '-WaitSeconds', '180'], { cwd: root, timeoutMs: 5 * 60_000, shell: false });
+  if (opened.code !== 0) throw new Error(`bench-open.ps1 couldn't open ${repo} in Hydra (${opened.code}): ${(opened.stderr || opened.stdout).trim().slice(-1000)}`);
 }
 
 /**
@@ -310,18 +323,24 @@ async function summarize(flags, rest) {
   if (!patterns.length) throw new Error('--runs needs run folders or globs, comma-separated.');
   const folders = [...new Set((await Promise.all(patterns.map(expandGlob))).flat())].sort();
   const parent = folders.length === 1 ? path.dirname(folders[0]) : folders.reduce((common, folder) => { while (!(folder + path.sep).toLowerCase().startsWith(common.toLowerCase() + path.sep) && common !== path.dirname(common)) common = path.dirname(common); return common; }, folders[0]);
-  const rows = [], skipped = [];
+  const rows = [], skipped = [], swebenchRows = [];
   for (const folder of folders) {
-    const files = (await fs.readdir(folder).catch(() => [])).filter(name => name.endsWith('-results.json')).sort();
-    if (!files.length) { skipped.push(folder); continue; }
+    const entries = await fs.readdir(folder).catch(() => []);
+    // A SWE-bench slice's folder: its resolved rate, once swebench-submit has written resolved.json.
+    if (entries.includes('resolved.json')) {
+      try { const resolved = await readJson(path.join(folder, 'resolved.json')); swebenchRows.push({ ...resolved, folder: path.relative(parent, folder) || path.basename(folder) }); } catch { /* unreadable */ }
+    }
+    const files = entries.filter(name => name.endsWith('-results.json')).sort();
+    if (!files.length) { if (!entries.includes('resolved.json')) skipped.push(folder); continue; }
     for (const name of files) {
       const result = await readJson(path.join(folder, name));
       const stored = result.kind === 'hydra' && result.timeToWorkingCodeSeconds === undefined && result.planId ? await storedPlan(result.planId, flags['plan-store']) : undefined;
       rows.push(...runRows(result, path.relative(parent, folder) || path.basename(folder), stored ? landingFromStore(stored) : undefined));
     }
   }
-  if (!rows.length) throw new Error(`No *-results.json in ${patterns.join(', ')}.`);
-  const markdown = `# Benchmark summary\n\n${folders.length - skipped.length} run folder(s) under ${parent}, summarized ${new Date().toISOString()}.${skipped.length ? ` No results in: ${skipped.map(folder => path.relative(parent, folder)).join(', ')}.` : ''}\n\n${renderSummary(rows)}`;
+  if (!rows.length && !swebenchRows.length) throw new Error(`No *-results.json or resolved.json in ${patterns.join(', ')}.`);
+  const sections = [rows.length ? renderSummary(rows) : '', renderSwebenchSummary(swebenchRows)].filter(Boolean).join('\n');
+  const markdown = `# Benchmark summary\n\n${folders.length - skipped.length} run folder(s) under ${parent}, summarized ${new Date().toISOString()}.${skipped.length ? ` No results in: ${skipped.map(folder => path.relative(parent, folder)).join(', ')}.` : ''}\n\n${sections}`;
   const file = path.resolve(flags.out ?? path.join(parent, 'summary.md'));
   await fs.writeFile(file, markdown);
   console.log(`${markdown}\nWrote ${file}.`);
@@ -342,6 +361,10 @@ async function publish(flags) {
 }
 
 const { command, flags, rest } = args(process.argv.slice(2));
-const commands = { prepare, hydra, single, review, summarize, publish, swebench: (options, extra) => swebench(options, extra, { root, run, git }) };
-if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish|swebench [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
+const commands = {
+  prepare, hydra, single, review, summarize, publish,
+  swebench: (options, extra) => swebench(options, extra, { root, run, git, runSingle: single, runHydra: hydra, openHydra }),
+  'swebench-submit': (options, extra) => swebenchSubmit(options, extra, { run }),
+};
+if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish|swebench|swebench-submit [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
 else commands[command](flags, rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = error?.exitCode ?? 1; });
