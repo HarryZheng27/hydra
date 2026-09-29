@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { machineSetting } from './core/machineSetting';
 import { mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { accountRpc, supportedAccountVersion } from './core/accountSetup';
@@ -50,7 +51,7 @@ export class ProviderQuota implements vscode.Disposable {
     this.update({ status: 'checking', text: 'Checking the installed Codex CLI…', snapshot: previous });
     const action = async () => {
       try {
-        const found = await findProvider('codex', vscode.workspace.getConfiguration('hydra').get<string>('codexPath'));
+        const found = await findProvider('codex', machineSetting<string>(vscode.workspace.getConfiguration('hydra'), 'codexPath'));
         if (controller.signal.aborted) return;
         if (!found.executable) throw new Error(`Install ${supportedCliDescription('codex')} or set its executable path in Hydra settings.`);
         const cwd = this.context.globalStorageUri.fsPath; await mkdir(cwd, { recursive: true });

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -140,7 +141,7 @@ export function registerUpdates(deps: UpdateDeps): vscode.Disposable {
       // Another window may have checked meanwhile: re-read the shared time before asking GitHub.
       const last = context.globalState.get<number>(lastCheckKey), now = Date.now();
       const due = typeof last !== 'number' || last > now || now - last >= checkIntervalMs - 60_000;
-      const enabled = vscode.workspace.getConfiguration('hydra').get<boolean>('updates.check', true);
+      const enabled = (machineSetting<boolean>(vscode.workspace.getConfiguration('hydra'), 'updates.check') ?? true);
       const run = due && enabled ? check(false) : Promise.resolve();
       void run.catch(error => log(`[updates] ${describe(error)}`)).finally(schedule);
     }, delay);
