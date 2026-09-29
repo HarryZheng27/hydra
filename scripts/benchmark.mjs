@@ -442,8 +442,8 @@ async function summarize(flags, rest) {
     if (!files.length) { if (!entries.includes('resolved.json')) skipped.push(folder); continue; }
     for (const name of files) {
       const result = await readJson(path.join(folder, name));
-      const stored = result.kind === 'hydra' && (result.timeToWorkingCodeSeconds === undefined || (result.firstReview === undefined && result.fixRounds > 0)) && result.planId ? await storedPlan(result.planId, flags['plan-store']) : undefined;
-      rows.push(...runRows(result, path.relative(parent, folder) || path.basename(folder), stored ? { ...landingFromStore(stored), fixBrief: stored.jobs?.find(job => job.key === 'integration-fix-1')?.brief } : undefined));
+      const stored = result.kind === 'hydra' && (result.timeToWorkingCodeSeconds === undefined || !result.wallClockFrom || result.wallClockFrom === 'polling' || (result.firstReview === undefined && result.fixRounds > 0)) && result.planId ? await storedPlan(result.planId, flags['plan-store']) : undefined;
+      rows.push(...runRows(result, path.relative(parent, folder) || path.basename(folder), stored ? { ...landingFromStore(stored, Date.parse(result.startedAt) || undefined), fixBrief: stored.jobs?.find(job => job.key === 'integration-fix-1')?.brief } : undefined));
     }
   }
   if (!rows.length && !swebenchRows.length) throw new Error(`No *-results.json or resolved.json in ${patterns.join(', ')}.`);
