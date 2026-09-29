@@ -264,8 +264,8 @@ export async function run(): Promise<void> {
   }
   if (repository && process.env.HYDRA_TEST_PROVIDER) {
     const config = vscode.workspace.getConfiguration('hydra');
-    await config.update('claudePath', process.env.HYDRA_TEST_PROVIDER, vscode.ConfigurationTarget.Workspace);
-    await config.update('codexPath', process.env.HYDRA_TEST_CODEX_PROVIDER, vscode.ConfigurationTarget.Workspace);
+    await config.update('claudePath', process.env.HYDRA_TEST_PROVIDER, vscode.ConfigurationTarget.Global);
+    await config.update('codexPath', process.env.HYDRA_TEST_CODEX_PROVIDER, vscode.ConfigurationTarget.Global);
     const diagnostic = await vscode.commands.executeCommand<ProviderDiagnostic>('hydra.checkProvider', 'claude');
     assert.equal(diagnostic?.status, 'checked'); assert.equal(diagnostic.version, '2.1.270');
     const probeCalls = (await readFile(path.join(repository, 'hydra-probes.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
@@ -292,11 +292,11 @@ export async function run(): Promise<void> {
       assert.equal(quotas.snapshot?.buckets[0]?.secondary, undefined); assert.equal(quotas.snapshot?.ordinaryUsageAllowed, undefined);
       assert.ok(!JSON.stringify(quotas).includes('private-fixture-account')); assert.ok(!JSON.stringify(quotas).includes('private-reset-token'));
       assert.deepEqual(await vscode.commands.executeCommand('hydra.listHelpers'), headsBeforeQuota); assert.equal(hydraTerminals().length, 0, 'Quota refresh starts no provider terminal');
-      await vscode.workspace.getConfiguration('hydra').update('codexPath', 'relative-invalid-quota', vscode.ConfigurationTarget.Workspace);
+      await vscode.workspace.getConfiguration('hydra').update('codexPath', 'relative-invalid-quota', vscode.ConfigurationTarget.Global);
       await waitFor(async () => (await vscode.commands.executeCommand<QuotaState>('hydra.getQuotaState'))?.status === 'unchecked');
       assert.equal((await vscode.commands.executeCommand<QuotaState>('hydra.getQuotaState'))?.snapshot, undefined);
       await vscode.commands.executeCommand('hydra.refreshQuota'); assert.equal((await vscode.commands.executeCommand<QuotaState>('hydra.getQuotaState'))?.status, 'error');
-      await vscode.workspace.getConfiguration('hydra').update('codexPath', process.env.HYDRA_TEST_CODEX_PROVIDER, vscode.ConfigurationTarget.Workspace);
+      await vscode.workspace.getConfiguration('hydra').update('codexPath', process.env.HYDRA_TEST_CODEX_PROVIDER, vscode.ConfigurationTarget.Global);
       await waitFor(async () => (await vscode.commands.executeCommand<QuotaState>('hydra.getQuotaState'))?.status === 'unchecked');
       console.log('PASS: native quota view is passive/reused, explicitly refreshes reported windows, strips identities/reset tokens, preserves head records, starts no provider terminal and clears observations on provider configuration changes.');
     } else {
