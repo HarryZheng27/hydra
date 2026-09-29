@@ -15,11 +15,11 @@ import type { LimitEvent } from '../src/core/limitEvents';
 import type { ReviewerSpec } from '../src/core/gates';
 import { dependencyBrief, maxDependencyBrief } from '../src/core/headStart';
 import type { ProviderWait } from '../src/core/providerWait';
-import type { HeadActivity } from '../src/core/headSilence';
+import { StreamActivity, type HeadActivity } from '../src/core/headSilence';
 import type { AuditEvent } from '../src/core/audit';
 
 /** A scripted stand-in for a helper process. It talks to Hydra only through the real endpoint, with its own token. */
-type Script = (helper: { spec: HelperRunSpec; activity: (value: HeadActivity | undefined) => void; call: (tool: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; providerWait: (wait: ProviderWait | undefined, waitedMs?: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
+type Script = (helper: { spec: HelperRunSpec; activity: (value: HeadActivity | (() => HeadActivity) | undefined) => void; onNudge: (handler: () => void) => void; call: (tool: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; providerWait: (wait: ProviderWait | undefined, waitedMs?: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
 async function fixture(options: { script: Script; questionWaitMs?: number; silence?: HelperServiceOptions['silence']; audit?: HelperServiceOptions['audit']; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
@@ -51,7 +51,7 @@ async function fixture(options: { script: Script; questionWaitMs?: number; silen
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
       const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
-      let exit!: (code: number) => void; let stopped = false; let limit: HeadLimit | undefined; let activity: HeadActivity | undefined;
+      let exit!: (code: number) => void; let stopped = false; let limit: HeadLimit | undefined; let activity: HeadActivity | (() => HeadActivity) | undefined; let onNudge: (() => void) | undefined;
       const exited = new Promise<{ code: number | null }>(resolve => { exit = code => { if (!stopped) { stopped = true; resolve({ code }); } }; });
       const run: HelperRun = {
         onTurnEnd: listener => { listeners.push(listener); }, exited,
@@ -59,14 +59,14 @@ async function fixture(options: { script: Script; questionWaitMs?: number; silen
         stop: async () => exit(137),
         limitHit: () => limit,
         onProviderWait: listener => { waitListeners.push(listener); },
-        activity: () => activity,
-        stalled: () => { stalls++; for (const listener of waitListeners) listener({ since: new Date(activity?.lastLineAt ?? 0).toISOString(), retries: 0, silent: true }, 0); },
-        nudge: async message => { if (stopped) return false; nudges.push(message); return true; },
+        activity: () => typeof activity === 'function' ? activity() : activity,
+        stalled: since => { stalls++; for (const listener of waitListeners) listener({ since: new Date(since ?? 0).toISOString(), retries: 0, silent: true }, 0); },
+        nudge: async message => { if (stopped) return false; nudges.push(message); onNudge?.(); return true; },
       };
       const token = spec.bridge.env.HYDRA_HELPER_TOKEN!;
       // A real helper takes seconds to start; the fake one starts on the next tick.
       setTimeout(() => void options.script({
-        spec, exit, limit: hit => { limit = hit; }, activity: value => { activity = value; },
+        spec, exit, limit: hit => { limit = hit; }, activity: value => { activity = value; }, onNudge: handler => { onNudge = handler; },
         providerWait: (wait, waitedMs = 0) => { for (const listener of waitListeners) listener(wait, waitedMs); },
         call: (tool, args = {}, signal) => callHelperEndpoint(Number(spec.bridge.env.HYDRA_HELPER_PORT), token, tool, args, signal),
         endTurn: () => { for (const listener of listeners) listener(); },
@@ -1452,7 +1452,7 @@ test('a head in an unattended plan gets an automatic answer at once, recorded on
 test('a silent head is recorded as waiting on its provider, nudged once, then failed', async () => {
   let clock = 1_000_000;
   const f = await fixture({ now: () => clock, script: async helper => {
-    helper.activity({ lastLineAt: 1_000_000, toolsInFlight: 0, turnOpen: true });
+    helper.activity({ lastOutputAt: 1_000_000, toolsInFlight: 0, turnOpen: true });
   } });
   try {
     const { job_id } = await f.start('silent');
@@ -1483,7 +1483,7 @@ test('a tool call in flight, or a turn that ended, is not silence; a new line st
   let set: ((value: HeadActivity) => void) | undefined;
   const f = await fixture({ now: () => clock, script: async helper => {
     set = value => helper.activity(value);
-    set({ lastLineAt: 1_000_000, toolsInFlight: 1, turnOpen: true });
+    set({ lastOutputAt: 1_000_000, toolsInFlight: 1, turnOpen: true });
   } });
   try {
     const { job_id } = await f.start('long-tool');
@@ -1492,18 +1492,89 @@ test('a tool call in flight, or a turn that ended, is not silence; a new line st
     await pause(150);
     assert.equal(f.store.get(job_id)?.state, 'running', 'a long npm test is not silence');
     assert.equal(f.stalls(), 0); assert.equal(f.nudges.length, 0);
-    set!({ lastLineAt: 1_000_000, toolsInFlight: 0, turnOpen: false });
+    set!({ lastOutputAt: 1_000_000, toolsInFlight: 0, turnOpen: false });
     await pause(150);
     assert.equal(f.store.get(job_id)?.state, 'running', 'a head between turns is turnEnded\'s to handle');
     assert.equal(f.stalls(), 0);
     // The tool finished 4 minutes ago, and nothing since: recorded, not yet nudged.
-    set!({ lastLineAt: clock - 4 * 60_000, toolsInFlight: 0, turnOpen: true });
+    set!({ lastOutputAt: clock - 4 * 60_000, toolsInFlight: 0, turnOpen: true });
     await until(() => f.stalls() === 1, 'the silence is recorded');
     // A new line arrives: the count starts over, so no nudge at what would have been 5 minutes.
-    set!({ lastLineAt: clock, toolsInFlight: 0, turnOpen: true });
+    set!({ lastOutputAt: clock, toolsInFlight: 0, turnOpen: true });
     clock += 60_000;
     await pause(150);
     assert.equal(f.nudges.length, 0);
     assert.equal(f.store.get(job_id)?.state, 'running');
+  } finally { await f.close(); }
+});
+
+test('a nudge whose own lines arrive (the interrupted turn\'s result) neither restarts the count nor earns a second nudge: the attempt still fails', async () => {
+  let clock = 1_000_000;
+  const f = await fixture({ now: () => clock, script: async helper => {
+    // The real stream bookkeeping, on the test's clock: the head goes quiet mid-turn.
+    const stream = new StreamActivity(() => clock);
+    stream.turnStarted();
+    helper.activity(() => stream.snapshot());
+    // What a real nudge produces: Claude's interrupted turn ends with a `result` (and a control_response,
+    // which the runner never passes on), then the "continue" turn starts without being a fresh one.
+    helper.onNudge(() => {
+      stream.observeClaude({ type: 'result', subtype: 'error_during_execution', is_error: true });
+      stream.observeClaude({ type: 'system', subtype: 'init' });
+      stream.turnStarted(false);
+    });
+  } });
+  try {
+    const { job_id } = await f.start('hung-after-nudge');
+    await until(() => f.store.get(job_id)?.state === 'running' && f.runs.length === 1, 'head process started');
+    await pause(50);
+    clock += 5 * 60_000;
+    await until(() => f.nudges.length === 1, 'the head is nudged');
+    clock += 4 * 60_000;
+    await pause(150);
+    assert.equal(f.nudges.length, 1, 'no second nudge: its own lines are not output');
+    assert.equal(f.store.get(job_id)?.state, 'running');
+    clock += 60_000;
+    await until(() => f.store.get(job_id)?.state === 'failed', 'the attempt fails at 10 minutes from the last output');
+    assert.match(f.store.get(job_id)!.reason ?? '', /^No response from Claude for 10m: .*a nudge didn't help/);
+    assert.equal(f.nudges.length, 1);
+  } finally { await f.close(); }
+});
+
+test('a lead\'s reply that races the question\'s timeout is the answer the head gets', async () => {
+  let asked: any;
+  const f = await fixture({ questionWaitMs: 3000, script: async helper => {
+    asked = await helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?' });
+  } });
+  // Saving the reply is slow here (a busy disk): the timer fires while it's being saved.
+  const update = f.store.update.bind(f.store);
+  f.store.update = async (id, patch) => { if (patch.replies) await pause(5000); return update(id, patch); };
+  try {
+    const { job_id } = await f.start('reply-race');
+    await until(() => f.store.get(job_id)?.state === 'blocked', 'the head is blocked');
+    assert.deepEqual((await f.call('hydra_reply_to_head', { job_id, message: 'v2' })).result, { job_id, delivered: true });
+    await until(() => asked !== undefined, 'the head heard back');
+    assert.deepEqual(asked.result, { answered: true, answer: 'v2' });
+    const job = f.store.get(job_id)!;
+    assert.equal(job.state, 'running');
+    assert.deepEqual(job.replies.map(reply => [reply.message, reply.auto]), [['v2', undefined]]);
+  } finally { await f.close(); }
+});
+
+test('a head whose process exits while it waits for an answer is failed, and its question never carries on', async () => {
+  let asked: any;
+  const f = await fixture({ script: async helper => {
+    const call = helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?' });
+    await until(() => f.store.list('window')[0]?.state === 'blocked', 'the head is blocked');
+    helper.exit(1);
+    asked = await call;
+  } });
+  try {
+    const { job_id } = await f.start('exit-while-blocked');
+    await until(() => asked !== undefined, 'the head heard back');
+    assert.equal(asked.result.answered, false);
+    const job = f.store.get(job_id)!;
+    assert.equal(job.state, 'failed'); assert.match(job.reason ?? '', /exited \(code 1\)/);
+    assert.equal(job.replies.length, 0, 'no automatic answer for a head that is gone');
+    assert.ok(!job.history.some(event => event.from === 'blocked' && event.to === 'running'), JSON.stringify(job.history));
   } finally { await f.close(); }
 });

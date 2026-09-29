@@ -8,7 +8,7 @@ import { claudeHeadTools } from './confine';
 import { redactText } from './redact';
 import type { RunUsage } from './jobs';
 import { claudeProviderWaitSignal, codexProviderWaitSignal, ProviderWaitTracker, type ProviderWait } from './providerWait';
-import { StreamActivity, type HeadActivity } from './headSilence';
+import { ClaudeNudge, StreamActivity, type HeadActivity } from './headSilence';
 
 /**
  * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
@@ -91,8 +91,8 @@ export interface HelperRun {
   // ---- A silent head (docs/Heads.md, headSilence.ts) ----
   /** The stream's last line, tools in flight and whether a turn is open, for Hydra's silence watchdog. */
   activity?(): HeadActivity | undefined;
-  /** The watchdog saw the stream go silent: report it as a wait on the provider (onProviderWait), until the next line. */
-  stalled?(): void;
+  /** The watchdog saw the stream go silent since `since`: report it as a wait on the provider (onProviderWait), until the model's next output. */
+  stalled?(since?: number): void;
   /**
    * Nudge a head whose stream went silent mid-turn: Claude's turn is interrupted (a stream-json
    * `interrupt` control request) and `message` sent, without the interrupted turn counting as a turn
@@ -121,7 +121,9 @@ export function claudeHelperArguments(spec: HelperRunSpec): string[] {
   const mcp = JSON.stringify({ mcpServers: { hydra: { type: 'stdio', command: spec.bridge.command, args: spec.bridge.args, env: bridgeEnv, timeout: 3_600_000 } } });
   const role = spec.role;
   const { tools, allowed } = claudeHeadTools(confine.shell, role?.allowedTools ?? []);
-  return ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+  // --include-partial-messages: a response being written streams a `stream_event` line per chunk, so a long
+  // one (a large Write) isn't mistaken for a silent head (headSilence.ts). Those lines stay out of the log.
+  return ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     '--permission-mode', 'dontAsk', '--setting-sources', 'user', '--settings', confine.settingsFile,
     '--tools', tools.join(','), '--allowedTools', allowed.join(','),
     '--max-turns', String(spec.maxTurns), '--max-budget-usd', String(spec.maxBudgetUsd),
@@ -156,21 +158,29 @@ export function logger(file: string, secret?: string) {
   return (kind: string, data: unknown) => { queue = queue.then(() => appendFile(file, redact(JSON.stringify({ at: Date.now(), kind, data })) + '\n')).catch(() => undefined); };
 }
 
+/** A Claude partial-message chunk: counted, not logged line by line (there can be thousands per turn). */
+const partialLine = (message: Record<string, unknown>) => message.type === 'stream_event';
 function spawnLogged(spec: HelperRunSpec, args: string[], log: (kind: string, data: unknown) => void, onLine: (message: Record<string, unknown>) => void): ChildProcess {
   const launch = processLaunch(spec.executable, args);
   // Step 2: the head's own allowlisted environment (headEnvironment), never Hydra's whole one. A role's
   // Codex servers read some variables by name (R4): they're in it, never on the command line.
   const child = spawn(launch.executable, launch.args, { cwd: spec.worktree, env: spec.confine.env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
   if (child.pid) spec.spawned?.(child.pid);
-  let buffer = '';
+  let buffer = '', partials = 0;
   child.stdout!.setEncoding('utf8');
   child.stdout!.on('data', (chunk: string) => {
     buffer += chunk; let index;
     while ((index = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, index).trim(); buffer = buffer.slice(index + 1);
       if (!line) continue;
-      log('stdout', line.length > 20_000 ? line.slice(0, 20_000) : line);
-      try { onLine(JSON.parse(line)); } catch { /* non-JSON noise is logged only */ }
+      let message: Record<string, unknown> | undefined;
+      try { message = JSON.parse(line); } catch { /* non-JSON noise is logged only */ }
+      if (message && partialLine(message)) partials++;
+      else {
+        if (partials) { log('partial', { lines: partials }); partials = 0; }
+        log('stdout', line.length > 20_000 ? line.slice(0, 20_000) : line);
+      }
+      if (message) { try { onLine(message); } catch { /* a handler's problem never stops the stream */ } }
     }
   });
   child.stderr!.setEncoding('utf8');
@@ -194,18 +204,19 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   const waiting = new ProviderWaitTracker((wait, waitedMs) => { for (const listener of waitListeners) listener(wait, waitedMs); });
   waiting.quiet();
   const activity = new StreamActivity();
-  // A turn Hydra interrupted to nudge a silent head: its `result` isn't the head stopping, and the nudge's message is already queued.
-  let interrupted = 0, nudges = 0;
+  // A nudge (headSilence.ts): the "continue" message goes once the interrupted turn has ended, and that turn's `result` isn't reported.
+  const nudging = new ClaudeNudge(text => { void say(text, false); });
+  let nudges = 0;
   const child = spawnLogged(spec, claudeHelperArguments(spec), log, message => {
     // The CLI's answer to Hydra's own control requests (initialize, a nudge's interrupt) isn't the model producing anything.
-    if (message.type === 'control_response') return;
+    if (message.type === 'control_response') { nudging.controlResponse(message); return; }
     waiting.observe(claudeProviderWaitSignal(message));
-    activity.observeClaude(message);
+    if (activity.observeClaude(message)) waiting.output();
     // A limit counts for the turn it ends; a later good turn clears it.
     if (message.type === 'assistant' || message.type === 'result') limit = claudeHeadLimit(message) ?? (message.type === 'result' && message.is_error !== true ? undefined : limit);
     // O9: each turn's result reports the session's cost so far; the run's cost is the largest seen.
     if (message.type === 'result') costUsd = claudeRunCost(message, costUsd);
-    if (message.type === 'result' && interrupted > 0) { interrupted--; activity.turnStarted(); return; }
+    if (message.type === 'result' && nudging.result()) return;
     if (message.type === 'result') for (const listener of listeners) listener();
   });
   const exited = new Promise<{ code: number | null }>(resolve => child.on('close', code => { log('exit', { code }); waiting.end(); resolve({ code }); }));
@@ -217,15 +228,16 @@ function startClaude(spec: HelperRunSpec): HelperRun {
   const say = (text: string, fresh = true) => { activity.turnStarted(fresh); return write({ type: 'user', message: { role: 'user', content: text } }); };
   void write({ type: 'control_request', request_id: 'hydra-helper-init', request: { subtype: 'initialize' } }).then(() => say(spec.prompt));
   const nudge = async (text: string) => {
-    if (!await write({ type: 'control_request', request_id: `hydra-helper-nudge-${++nudges}`, request: { subtype: 'interrupt' } })) return false;
+    if (nudging.waiting) return false;
+    const id = `hydra-helper-nudge-${++nudges}`;
+    nudging.started(id, text);
+    if (!await write({ type: 'control_request', request_id: id, request: { subtype: 'interrupt' } })) { nudging.cancel(); return false; }
     log('nudge', { reason: 'silent stream' });
-    interrupted++;
-    // Not a fresh turn: the silence it answers keeps counting until a line arrives.
-    return say(text, false);
+    return true;
   };
   return { onTurnEnd: listener => { listeners.push(listener); }, exited, send: async text => { limit = undefined; waiting.quiet(); return say(text); }, stop: stopper(() => child), limitHit: () => limit, usage: () => costUsd === undefined ? undefined : { costUsd },
     onProviderWait: listener => { waitListeners.push(listener); },
-    activity: () => activity.snapshot(), stalled: () => waiting.stall(), nudge };
+    activity: () => activity.snapshot(), stalled: since => waiting.stall(since), nudge };
 }
 /** O9: a Claude Code result line's session cost (`total_cost_usd`), kept as the largest seen for the run. */
 export function claudeRunCost(message: Record<string, unknown>, current: number | undefined): number | undefined {
@@ -259,7 +271,7 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     activity.turnStarted(fresh);
     const child = spawnLogged(spec, args, log, message => {
       waiting.observe(codexProviderWaitSignal(message));
-      activity.observeCodex(message);
+      if (activity.observeCodex(message)) waiting.output();
       if (message.type === 'thread.started' && typeof message.thread_id === 'string') thread = message.thread_id;
       usage = codexRunUsage(message, usage);
       // An error line can be a retry notice; a completed turn clears it.
@@ -289,7 +301,7 @@ function startCodex(spec: HelperRunSpec): HelperRun {
     usage: () => usage,
     onProviderWait: listener => { waitListeners.push(listener); },
     activity: () => activity.snapshot(),
-    stalled: () => waiting.stall(),
+    stalled: since => waiting.stall(since),
     nudge: async text => {
       if (finished || !thread || !current || current.exitCode !== null || resumeWith !== undefined) return false;
       resumeWith = text;

@@ -212,6 +212,8 @@ test('Claude head arguments: user settings only, its settings file, its tool lis
   assert.ok(!off.join(' ').includes('Bash') && !off.join(' ').includes('PowerShell'));
   assert.ok(!off.join(' ').includes('HYDRA_SHELL_DIRECT'), 'no wrapper, no marker');
   assert.ok(!off.includes('--add-dir'));
+  // A silent head (headSilence.ts): a response being written streams, so it isn't mistaken for silence.
+  assert.ok(off.includes('--include-partial-messages') && off.includes('--verbose') && flag(off, '--output-format') === 'stream-json');
 
   const sandboxed = claudeHelperArguments(spec({ confine: { settingsFile: 'C:\\logs\\aaa-1.settings.json', addDirs: [], shell: true, env: { CLAUDE_CODE_SHELL_PREFIX: 'C:\\h\\hydra-shell.sh' } } }));
   assert.equal(flag(sandboxed, '--tools'), 'Read,Edit,Write,NotebookEdit,Glob,Grep,Bash');

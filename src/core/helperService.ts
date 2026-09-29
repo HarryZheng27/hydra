@@ -134,7 +134,7 @@ export interface HelperServiceOptions {
   watchdogMs?: number;
   /** How long an attended head's hydra_stuck waits for an answer before it carries on without one. Defaults to headQuestionWaitMs. */
   questionWaitMs?: number;
-  /** A silent head's thresholds (headSilence.ts). Defaults to headSilenceLimits. */
+  /** A silent head's thresholds (headSilence.ts), for every provider. Defaults to headSilenceLimits(provider). */
   silence?: HeadSilenceLimits;
   /** O2: how often running heads are checked against each other for a predicted merge conflict. Defaults to headSyncIntervalMs (headSync.ts). */
   headSyncIntervalMs?: number;
@@ -200,7 +200,11 @@ interface Active {
   temp?: string;
   /** Step 2: why a Claude head had no shell, for its result. */
   shellNote?: string;
-  /** A silent head (headSilence.ts): the silence the watchdog is acting on (from its last line) and what it did about it. */
+  /**
+   * A silent head (headSilence.ts): the silence the watchdog is acting on (from the model's last output) and
+   * what it did about it. Only new model output starts a new one: the lines a nudge itself causes don't, so a
+   * head nudged once and still hung is failed, not nudged again.
+   */
   silence?: { from: number; recorded: boolean; nudged: boolean };
 }
 const clip = (value: string, max: number) => value.length > max ? `${value.slice(0, max)}…` : value;
@@ -580,8 +584,11 @@ export class HelperService {
       const carried = last?.auto ? ` It stopped waiting at ${last.at} and carried on without an answer (${last.auto === 'unattended' ? 'its plan runs unattended' : 'none came in time'}).` : '';
       throw new Error(`Head ${job.id} is not waiting for an answer (it is ${job.state}).${carried}`);
     }
-    await this.options.store.update(job.id, { replies: [...job.replies, { at: new Date(this.now()).toISOString(), message: args.message }] });
+    // Delivered before anything is awaited: settling the wait also clears its 20-minute timer at once,
+    // so the timer can't give the head an automatic answer while this reply is being saved.
+    const at = new Date(this.now()).toISOString();
     active.answer(args.message);
+    await this.options.store.update(job.id, { replies: [...job.replies, { at, message: args.message }] }).catch(error => this.options.log?.(`[heads] ${job.id}: couldn't save the lead's reply: ${error instanceof Error ? error.message : String(error)}`));
     return { job_id: job.id, delivered: true };
   }
 
@@ -744,15 +751,18 @@ export class HelperService {
     active.blockedSince = this.now();
     this.changed();
     const waitMs = this.options.questionWaitMs ?? headQuestionWaitMs;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const answer = await new Promise<{ reply: string } | { none: 'timeout' | 'ended' }>(resolve => {
-      active.answer = reply => resolve(typeof reply === 'string' ? { reply } : { none: 'ended' });
-      signal.addEventListener('abort', () => resolve({ none: 'ended' }), { once: true });
-      timer = setTimeout(() => resolve({ none: 'timeout' }), waitMs);
+      // Whichever comes first settles it, synchronously: the answer is taken away and the timer cleared in the same step.
+      const settle = (value: { reply: string } | { none: 'timeout' | 'ended' }) => {
+        if (active.answer !== answerWith) return;
+        active.answer = undefined; clearTimeout(timer); resolve(value);
+      };
+      const answerWith = (reply: string) => settle(typeof reply === 'string' ? { reply } : { none: 'ended' });
+      active.answer = answerWith;
+      const timer = setTimeout(() => settle({ none: 'timeout' }), waitMs);
       timer.unref?.();
+      signal.addEventListener('abort', () => settle({ none: 'ended' }), { once: true });
     });
-    clearTimeout(timer);
-    active.answer = undefined;
     if (active.blockedSince !== undefined) { active.blockedTotal += this.now() - active.blockedSince; active.blockedSince = undefined; }
     const current = this.options.store.get(jobId)!;
     if (current.state !== 'blocked') return { answered: false, message: 'No answer is coming: this head was stopped. Stop now.' };
@@ -947,13 +957,14 @@ export class HelperService {
     if (!active) return;
     try {
       if (await this.limitReached(id)) { this.active.delete(id); this.changed(); void this.dispatch(); return; }
-      active.answer?.(undefined as unknown as string);
       this.active.delete(id);
       this.options.endpoint.revokeJob(id);
       const job = this.options.store.get(id);
       if (job && !finalJobStates.has(job.state)) {
         await this.options.store.transition(id, 'failed', `The head process exited${code === null ? '' : ` (code ${code})`} without finishing.`).catch(() => undefined);
       }
+      // After the state is final, as in finish(): a question it was waiting on then ends as "stopped", never as carrying on.
+      active.answer?.(undefined as unknown as string);
       this.changed();
       void this.dispatch();
     } finally {
@@ -997,22 +1008,22 @@ export class HelperService {
     const activity = job.state === 'running' ? active.run.activity?.() : undefined;
     const silentMs = headSilentMs(activity, this.now());
     if (!activity || silentMs === undefined) { active.silence = undefined; return; }
-    if (active.silence?.from !== activity.lastLineAt) active.silence = { from: activity.lastLineAt, recorded: false, nudged: false };
+    if (active.silence?.from !== activity.lastOutputAt) active.silence = { from: activity.lastOutputAt, recorded: false, nudged: false };
     const silence = active.silence;
-    const step = headSilenceStep(silentMs, silence, this.options.silence ?? headSilenceLimits);
+    const step = headSilenceStep(silentMs, silence, this.options.silence ?? headSilenceLimits(job.provider));
     if (!step) return;
     const name = job.provider === 'codex' ? 'Codex' : 'Claude';
     if (step === 'fail') {
       const nudged = silence.nudged;
       silence.recorded = silence.nudged = true;
       this.options.log?.(`[heads] ${id}: no response from ${name} for ${waitDuration(silentMs)}; failing this attempt`);
-      await this.finish(id, 'failed', `No response from ${name} for ${waitDuration(silentMs)}: its stream went silent with no tool running${nudged ? ', and a nudge didn\'t help' : ''}. Hydra stopped this attempt so the plan can go on.`);
+      await this.finish(id, 'failed', `No response from ${name} for ${waitDuration(silentMs)}: its stream went silent with no tool running${nudged ? ', and a nudge didn\'t help' : ''}. Hydra stopped this attempt rather than let it hang.`);
       return;
     }
     if (!silence.recorded) {
       silence.recorded = true;
       this.options.log?.(`[heads] ${id}: no response from ${name} for ${waitDuration(silentMs)} (no tool running)`);
-      active.run.stalled?.();
+      active.run.stalled?.(activity.lastOutputAt);
     }
     if (step === 'nudge') {
       silence.nudged = true;

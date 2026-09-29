@@ -104,15 +104,21 @@ Time spent blocked still doesn't count toward the head's work time.
 
 A head's CLI can go quiet with a turn still open: a response stream the provider stopped sending, with no retry notice for [Waiting on the provider](#waiting-on-the-provider) to see. One benchmark head wrote "I'll finish up now" and then produced nothing for 25 minutes, until its CLI gave up on the stream by itself. Hydra's watchdog, checked every few seconds, now handles this:
 
-| Silent for | What Hydra does |
+"Silent" means no **model output**: for Claude Code, an assistant message, a partial-message chunk or a tool's result; for Codex, any item event. Retry notices count too, since the CLI is still working and [Waiting on the provider](#waiting-on-the-provider) shows that wait.
+
+| Silent for (Claude Code / Codex) | What Hydra does |
 | --- | --- |
-| 3 minutes | Records it as a wait on the provider: "No response from Claude for 3m" on the card, in the heads list and in `hydra_get_head` (`provider_wait.silent: true`). It ends at the next line, and its time adds to `providerWaitMs` and the plan report like any other wait. |
-| 5 minutes | Nudges the head once. For Claude Code, Hydra interrupts the stalled turn with a stream-json `interrupt` control request and sends a "continue where you left off" message on the same input (the interrupted turn doesn't count as the head stopping). For Codex, Hydra stops the stalled `codex exec` and resumes its thread with the same message. |
-| 10 minutes | Fails the attempt ("No response from Claude for 10m: its stream went silent with no tool running…"), so the plan's next steps or a retry go ahead instead of hanging. |
+| 3 minutes / 3 minutes | Records it as a wait on the provider: "No response from Claude for 3m" on the card, in the heads list and in `hydra_get_head` (`provider_wait.silent: true`). The wait ends at the model's next output. Its time adds to `providerWaitMs` and the plan report like any other wait. |
+| 5 minutes / 10 minutes | Nudges the head, once per silence. **Claude Code:** Hydra sends a stream-json `interrupt` control request, and sends a "continue where you left off" message only after the interrupted turn has ended. That turn's `result` isn't counted as the head stopping. If the CLI answers the interrupt with an error because there was nothing to interrupt, the message goes at once. **Codex:** Hydra stops the stalled `codex exec` and resumes its thread with the same message. |
+| 10 minutes / 15 minutes | Fails the attempt ("No response from Claude for 10m: its stream went silent with no tool running…") instead of letting it hang. Nothing retries it on its own. Like any failed job, a plan's job shows in `hydra_plan_wait`'s `needs_attention`, the jobs that don't depend on it carry on, and the lead or you can retry it (`hydra_plan_amend`'s `retry`, or **Retry failed jobs**). |
 
-Silence counts only while a turn is open and **no tool call is in flight**. A `tool_use` without its `tool_result` yet (Claude Code), or an item started and not completed (Codex), is work: a long `npm test` or a head's own `hydra_stuck`/`hydra_done` never counts. The gap after a turn ends isn't silence either; a head that stops without reporting is still nudged once and then failed, as before. Any new line starts the count over. Hydra's own control messages (the CLI's answer to `initialize` or an interrupt) don't count as a line. The thresholds are `headSilenceLimits` in `src/core/headSilence.ts`.
+- **What never counts as silence:**
+  - a tool call in flight: a `tool_use` without its `tool_result` yet (Claude Code), or an item started and not completed (Codex). A long `npm test`, or a head's own `hydra_stuck` or `hydra_done`, is work;
+  - the gap after a turn ends. A head that stops without reporting is still nudged once and then failed, as before.
+- **What doesn't reset the count:** the lines a nudge itself causes. These are the CLI's answer to Hydra's control requests, the interrupted turn's `result`, and a resumed Codex exec's `thread.started` and `turn.started`. So a head nudged once and still hung is failed, not interrupted again every few minutes. Only new model output starts a new silence.
+- **Where the thresholds live:** `claudeSilenceLimits` and `codexSilenceLimits` in `src/core/headSilence.ts`.
 
-The trade-off: without partial messages, Claude Code writes an assistant message only when it's complete, so a very long single response (a huge file written in one tool call) looks silent until it lands. The 5-minute nudge leaves room for that; the 3-minute record only labels it.
+**Long responses.** Claude heads run with `--include-partial-messages`, so a response being written, such as a large file in one Write, streams a line per chunk and is never taken for silence. The head's log keeps a count of those chunks (`partial`), not the chunks themselves. `codex exec --json` has no partial output: a long message or a large file change arrives only when it's complete, and a nudge stops the exec, which throws that work away. That's why Codex waits 10 minutes before a nudge.
 
 ### Waiting on the provider
 

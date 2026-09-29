@@ -118,9 +118,10 @@ export class ProviderWaitTracker {
   quiet(): void { this.lastLineAt = this.now(); }
   observe(signal: ProviderWaitSignal | undefined): void {
     const at = this.now();
-    // A silent wait ends at any line; a retry notice turns it into an ordinary wait, dated from the same silence.
-    if (this.wait?.silent && (!signal || signal.kind === 'note')) this.close(at);
-    else if (this.wait?.silent && signal && (signal.kind === 'retry' || signal.kind === 'limited')) { const { silent: _silent, ...rest } = this.wait; this.wait = rest; }
+    // A silent wait ends only at model output (output()): the lines a nudge itself produces (an interrupted
+    // turn's result, say) don't end it. A retry notice turns it into an ordinary wait, dated from the same silence.
+    if (this.wait?.silent && (!signal || signal.kind === 'note' || signal.kind === 'resume')) { this.lastLineAt = at; return; }
+    if (this.wait?.silent && signal && (signal.kind === 'retry' || signal.kind === 'limited')) { const { silent: _silent, ...rest } = this.wait; this.wait = rest; }
     if (!signal) { this.lastLineAt = at; return; }
     if (signal.kind === 'resume') { this.close(at); this.lastLineAt = at; return; }
     if (signal.kind === 'note') {
@@ -144,14 +145,16 @@ export class ProviderWaitTracker {
     this.onChange(this.current, 0);
   }
   /**
-   * Hydra's watchdog saw the stream go silent (headSilence.ts): open a wait dated from the last line,
-   * unless one is already open (a retry wait already says the head is waiting).
+   * Hydra's watchdog saw the stream go silent (headSilence.ts): open a wait dated from the model's last
+   * output (`since`, else the last line), unless one is already open (a retry wait already says the head is waiting).
    */
-  stall(): void {
+  stall(since?: number): void {
     if (this.wait) return;
-    this.wait = { since: new Date(this.lastLineAt ?? this.now()).toISOString(), retries: 0, silent: true };
+    this.wait = { since: new Date(since ?? this.lastLineAt ?? this.now()).toISOString(), retries: 0, silent: true };
     this.onChange(this.current, 0);
   }
+  /** The model produced output (StreamActivity): a silent wait is over. */
+  output(): void { if (this.wait?.silent) this.close(this.now()); }
   /** The run ended: a wait still open ends with it. */
   end(): void { this.close(this.now()); }
   private close(at: number): void {
