@@ -153,15 +153,26 @@ node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup hydra  --out .bench/
 
 For each instance it:
 1. **Selects** (once per folder): fetches the 500 instances, draws `--n` with `--seed` (mulberry32 over the sorted ids, so the dataset's order doesn't matter), and caches them with only `instance_id`, `repo`, `base_commit`, `problem_statement` and `version` in `<out>/instances.json`; the gold patch, test patch and hints never reach the folder. A resumed run reads the cache and needs no network.
-2. **Clones** `<out>/<instance_id>/repo` at `base_commit` from one bare mirror per repository (`.bench/swebench-mirrors/<owner>__<name>.git`, or `--mirrors <dir>`; cloned once, fetched only when a commit is missing). The clone borrows the mirror's objects (`git clone --shared`), then every ref and the remote are removed and `main` is made at the base commit, so `git log --all` can't show the later history and its fix.
+2. **Clones** `<out>/<instance_id>/repo` at `base_commit` from one bare mirror per repository (`.bench/swebench-mirrors/<owner>__<name>.git`, or `--mirrors <dir>`; cloned once, fetched only when a commit is missing). The repository is a new one that fetches a single temporary ref at the base commit from the mirror, so it holds only the base commit and its history: no remote, no tags, no alternates, and none of the later commits (the fix among them), not even by hash. Writing that pack costs a little CPU per instance; a clone, shared or not, would bring the whole history.
 3. **Runs the setup** with the issue as the brief (`prompt.md` beside the repository):
    - `single`: `benchmark.mjs single --prompt <instance>/prompt.md --gate none`, the isolated `claude -p` described above (`--agent`, `--claude`, `--command` and `--gate` pass through);
-   - `hydra`: writes the one-job plan (`.hydra/plans/swebench.json`, write scope `['.']`, standard rigor), opens the folder with `scripts/bench-open.ps1 -WaitSeconds 180` (`--open none` if you open it yourself), then `benchmark.mjs hydra --fixture none --task swebench` (`--usd`, 10 by default, `--hydra`, `--plan-store`, `--poll` pass through). Each instance opens its own window; they stay open, so close them between batches.
+   - `hydra`: writes the one-job plan (`.hydra/plans/swebench.json`, write scope `['.']`, standard rigor), opens the folder with `scripts/bench-open.ps1 -WaitSeconds 180` (`--open none` if you open it yourself), then `benchmark.mjs hydra --fixture none --task swebench` (`--usd`, 10 by default, `--hydra`, `--plan-store`, `--poll` pass through). **Each instance opens its own window, and the runner can't close it**: the `hydra` command has no command that closes a window, and killing the process would take every Hydra window with it. So run the hydra setup in batches (below).
    - `--minutes` is the time limit per instance (60 by default).
 4. **Captures the patch**: `git diff <base_commit>` to the working tree, new files included (`single`), or to the plan's integration tip (`hydra`), leaving out `.hydra`, into `<instance>/model.patch`.
 5. **Records** `<instance>/instance.json`: `status` (`done` or `error`), the error, seconds in all and for the agent, the reported cost in USD, and the patch size; the setup's own `single-results.json` or `hydra-results.json` sits beside it. Then it rewrites `<out>/predictions.jsonl`, one line per instance run (`instance_id`, `model_name_or_path`, `model_patch`; `--model` names it, `hydra-benchmark-<setup>` by default). A failed instance is still a prediction, with whatever patch it left (maybe empty), so it counts as unresolved.
 
-**Resuming**: run the same command again. Instances with a record are skipped; `--retry-errors yes` runs the failed ones again, and an instance that was interrupted (no record) starts again from a fresh folder. `--only <id,id>` runs just those. A folder refuses a different `--seed`, `--n` or `--setup`. When an error reads like a usage limit, the run stops and exits 3. `node scripts/benchmark.mjs swebench predictions --out <dir>` rewrites the predictions file from the records.
+**Resuming**: run the same command again. Instances with a record are skipped; `--retry-errors yes` runs the failed ones again, and an instance that was interrupted (no record) starts again from a fresh folder. `--only <id,id>` runs just those, and `--limit <k>` at most k of the ones left. A folder refuses a different `--seed`, `--n` or `--setup`.
+
+**Usage limits**: the run stops and exits 3 when a limit stopped an instance: the error says so, Claude Code's own result is an error that says so, Hydra's final review didn't run for one, or Hydra's plan didn't finish and its report names one. That instance gets no record and no prediction (only `usage-limit.txt` in its folder), so the same command, run again once the limit resets, starts it over. A plan that finished after waiting out a rate limit isn't stopped.
+
+**Batches and cleanup for the hydra setup**:
+1. `node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup hydra --out <dir> --limit 5`: five instances, five windows.
+2. Close the windows that batch opened (their folders are `<dir>/<instance_id>/repo`). Leave your own windows open.
+3. Run the same command again for the next five, until its last line shows 0 not run.
+
+With `--open none` the runner opens no window: open each instance's `repo` yourself with `bench-open.ps1`, run it with `--only <id>`, and close it before the next. When the slice is graded, the instance folders and `.bench/swebench-mirrors` can be deleted; keep `instances.json`, `predictions.jsonl`, `resolved.json` and the `sb-cli-reports` folder.
+
+`node scripts/benchmark.mjs swebench predictions --out <dir>` rewrites the predictions file from the records.
 
 **Grade**:
 

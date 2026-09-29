@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +10,7 @@ import { planFileArguments } from '../src/core/hydraCli';
 import {
   sampleIds, seededRandom, selectInstances, datasetRowsUrl, instancesFromRowsPage, swebenchPrompt, swebenchPlan, predictionLine, predictionsJsonl,
   instanceFolder, mirrorFolder, pendingInstances, checkRunMatches, submitArguments, reportArguments, reportFile, parseReport, submitProblems,
-  renderSwebenchSummary, defaultRunId, usageLimitText, listInstancesPython, swebench, swebenchSubmit,
+  renderSwebenchSummary, defaultRunId, usageLimitText, limitStopped, listInstancesPython, swebench, swebenchSubmit,
 // @ts-expect-error: a plain .mjs module with no type declarations.
 } from '../scripts/benchmark-swebench.mjs';
 // @ts-expect-error: a plain .mjs module with no type declarations.
@@ -155,10 +156,11 @@ async function upstream(dir: string) {
   const base = gitSync(origin, 'rev-parse', 'HEAD');
   await writeFile(path.join(origin, 'a.py'), 'x = 42  # the fix\n');
   gitSync(origin, 'commit', '-qam', 'the upstream fix'); gitSync(origin, 'tag', 'v2');
+  const fix = gitSync(origin, 'rev-parse', 'HEAD'), fixBlob = gitSync(origin, 'rev-parse', 'HEAD:a.py');
   const one = { ...instance, base_commit: base };
   let fetched = 0;
   const fetchImpl = async () => { fetched++; return { ok: true, json: async () => ({ num_rows_total: 1, rows: [{ row_idx: 0, row: { ...one, patch: 'gold' } }] }) }; };
-  return { base, one, remote: (name: string) => path.join(dir, 'upstream', ...name.split('/')), fetchImpl, fetches: () => fetched };
+  return { base, fix, fixBlob, one, remote: (name: string) => path.join(dir, 'upstream', ...name.split('/')), fetchImpl, fetches: () => fetched };
 }
 
 test('swebench single: selects, clones at the base commit without the later history, runs the agent, and resumes', async () => {
@@ -171,6 +173,11 @@ test('swebench single: selects, clones at the base commit without the later hist
       calls.push(flags);
       assert.equal(gitSync(flags.repo, 'log', '--all', '--format=%s'), 'base', 'the fix is out of reach');
       assert.equal(gitSync(flags.repo, 'tag'), '');
+      assert.equal(gitSync(flags.repo, 'remote'), '');
+      // Not only unreachable: the later commit and its file aren't in the repository at all, not even by hash.
+      for (const object of [up.fix, up.fixBlob]) assert.notEqual(spawnSync('git', ['cat-file', '-e', object], { cwd: flags.repo, windowsHide: true }).status, 0, `${object} is present`);
+      assert.equal(existsSync(path.join(flags.repo, '.git', 'objects', 'info', 'alternates')), false, 'no borrowed objects');
+      assert.equal(gitSync(flags.repo, 'rev-parse', 'HEAD'), up.base);
       await writeFile(path.join(flags.repo, 'a.py'), 'x = 2\n');
       await writeFile(path.join(flags.repo, 'b.py'), 'y = 1\n');
       return { kind: 'single', cost: { usd: 1.25 }, agentResult: { isError: false } };
@@ -178,7 +185,7 @@ test('swebench single: selects, clones at the base commit without the later hist
     const deps = { root: dir, run, git, runSingle, runHydra: () => assert.fail('no Hydra'), openHydra: () => assert.fail('no window'), remote: up.remote, fetchImpl: up.fetchImpl };
     const flags = { n: '1', seed: '1', setup: 'single', out, mirrors: path.join(dir, 'mirrors') };
     await quiet(() => swebench(flags, [], deps));
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 1, await readFile(path.join(out, instance.instance_id, 'instance.json'), 'utf8').catch(() => 'no record'));
     assert.equal(calls[0]!.gate, 'none');
     assert.equal(await readFile(calls[0]!.prompt, 'utf8'), swebenchPrompt(up.one));
     const [line, ...others] = (await readFile(path.join(out, 'predictions.jsonl'), 'utf8')).trim().split('\n');
@@ -198,19 +205,57 @@ test('swebench single: selects, clones at the base commit without the later hist
   } finally { await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
-test('swebench stops at a usage limit with exit code 3, recording the instance as an error', async () => {
+test('a usage limit is found in an error, in Claude Code\'s result, or in an unfinished Hydra plan\'s report', () => {
+  assert.match(limitStopped({ error: 'claude exited with 1: Claude AI usage limit reached' }), /usage limit/);
+  assert.match(limitStopped({ results: { kind: 'single', agentResult: { isError: true, subtype: 'success', message: 'Claude AI usage limit reached|1760000000' } } }), /usage limit/);
+  assert.equal(limitStopped({ results: { kind: 'single', agentResult: { isError: true, subtype: 'error_max_turns' } } }), undefined);
+  assert.equal(limitStopped({ error: 'git clone failed' }), undefined);
+  const unfinished = { kind: 'hydra', jobs: [{ key: 'fix', status: 'failed' }] };
+  assert.match(limitStopped({ results: unfinished, report: 'The head stopped: usage limit reached.' }), /didn't finish/);
+  assert.equal(limitStopped({ results: unfinished, report: 'The head failed its tests.' }), undefined);
+  const finished = { kind: 'hydra', integrationTip: 'abc', jobs: [{ key: 'fix', status: 'done' }] };
+  assert.equal(limitStopped({ results: finished, report: 'Waited 40s on a rate limit, then went on.' }), undefined, 'a plan that finished after waiting isn\'t stopped');
+  assert.match(limitStopped({ results: { ...finished, review: { usageLimit: true } } }), /review/);
+});
+
+async function stopsThenResumes(setup: 'single' | 'hydra', stop: (repo: string) => Promise<unknown>) {
   const dir = await mkdtemp(path.join(tmpdir(), 'hydra-swebench-'));
   try {
     const up = await upstream(dir);
     const out = path.join(dir, 'slice');
-    const deps = { root: dir, run, git, runSingle: async () => { throw new Error('claude exited with 1: Claude AI usage limit reached'); }, remote: up.remote, fetchImpl: up.fetchImpl };
-    const error = await quiet<(Error & { exitCode?: number }) | undefined>(() => swebench({ n: '1', seed: '1', setup: 'single', out, mirrors: path.join(dir, 'mirrors') }, [], deps).then(() => undefined, (thrown: Error & { exitCode?: number }) => thrown));
+    let limited = true, calls = 0;
+    const fixed = async (flags: RunFlags) => {
+      calls++;
+      if (limited) return stop(flags.repo);
+      await writeFile(path.join(flags.repo, 'a.py'), 'x = 2\n');
+      if (setup === 'single') return { kind: 'single', agentResult: { isError: false } };
+      gitSync(flags.repo, 'checkout', '-q', '-b', 'integration'); gitSync(flags.repo, 'commit', '-qam', 'fix');
+      return { kind: 'hydra', integrationTip: gitSync(flags.repo, 'rev-parse', 'HEAD'), jobs: [{ key: 'fix', status: 'done' }] };
+    };
+    const deps = { root: dir, run, git, runSingle: fixed, runHydra: fixed, openHydra: async () => undefined, remote: up.remote, fetchImpl: up.fetchImpl };
+    const flags = { n: '1', seed: '1', setup, out, mirrors: path.join(dir, 'mirrors') };
+    const error = await quiet<(Error & { exitCode?: number }) | undefined>(() => swebench(flags, [], deps).then(() => undefined, (thrown: Error & { exitCode?: number }) => thrown));
     assert.equal(error?.exitCode, 3);
-    const record = JSON.parse(await readFile(path.join(out, instance.instance_id, 'instance.json'), 'utf8'));
-    assert.equal(record.status, 'error');
-    assert.match(record.error, /usage limit/);
+    assert.match(error!.message, /Run the same command again/);
+    assert.equal(existsSync(path.join(out, instance.instance_id, 'instance.json')), false, 'a limit leaves no record');
+    assert.equal((await readFile(path.join(out, 'predictions.jsonl'), 'utf8').catch(() => '')).trim(), '', 'nor a prediction');
+    limited = false;
+    await quiet(() => swebench(flags, [], deps));
+    assert.equal(calls, 2, 'the same command runs it again, without --retry-errors');
+    assert.equal(JSON.parse(await readFile(path.join(out, instance.instance_id, 'instance.json'), 'utf8')).status, 'done');
+    assert.match(JSON.parse((await readFile(path.join(out, 'predictions.jsonl'), 'utf8')).trim()).model_patch, /\+x = 2/);
   } finally { await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
-});
+}
+
+test('a usage limit thrown by the single agent stops with exit code 3, and the same command resumes that instance', () =>
+  stopsThenResumes('single', async () => { throw new Error('claude exited with 1: Claude AI usage limit reached'); }));
+test('a usage limit in Claude Code\'s own result stops and resumes too', () =>
+  stopsThenResumes('single', async () => ({ kind: 'single', agentResult: { isError: true, subtype: 'success', message: 'Claude AI usage limit reached' } })));
+test('a Hydra plan a usage limit stopped (its report says so) stops and resumes too', () =>
+  stopsThenResumes('hydra', async repo => {
+    await writeFile(path.join(path.dirname(repo), 'hydra-report.md'), '# Report\n\nJob fix: the head stopped, usage limit reached.\n');
+    return { kind: 'hydra', jobs: [{ key: 'fix', status: 'failed' }] };
+  }));
 
 test('swebench hydra: opens the window, runs the one-job plan, and takes the patch from the integration tip', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hydra-swebench-'));

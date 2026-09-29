@@ -206,6 +206,24 @@ export function renderSwebenchSummary(rows) {
 /** Whether an error means a usage limit, so the run stops instead of burning through the rest (pure). */
 export const usageLimitText = text => /usage limit|limit reached|rate limit|\b429\b/i.test(String(text ?? ''));
 
+/**
+ * Why a usage limit stopped this instance, or undefined (pure). `error` is what the setup threw; `results` what it
+ * returned; `report` Hydra's plan report. A limit counts when the error says so, when Claude Code's result is an
+ * error that says so, when Hydra's final review didn't run for one, or when Hydra's plan didn't finish and its
+ * report mentions one (a plan that finished after waiting out a rate limit isn't stopped by it).
+ */
+export function limitStopped({ error, results, report }) {
+  if (error && usageLimitText(error)) return String(error).split('\n')[0].slice(0, 300);
+  const agent = results?.agentResult;
+  if (agent?.isError && usageLimitText(`${agent.subtype ?? ''} ${agent.message ?? ''}`)) return `The agent stopped: ${agent.message ?? agent.subtype}`.slice(0, 300);
+  if (results?.kind === 'hydra') {
+    if (results.review?.usageLimit) return 'Hydra\'s final review didn\'t run: a usage limit.';
+    const unfinished = !results.integrationTip || (results.jobs ?? []).some(job => job.status !== 'done');
+    if (unfinished && usageLimitText(report)) return 'Hydra\'s plan didn\'t finish, and its report names a usage limit.';
+  }
+  return undefined;
+}
+
 // ---- the effectful shell ----
 
 const readJson = async file => JSON.parse(await fs.readFile(file, 'utf8'));
@@ -241,9 +259,10 @@ async function loadDataset({ source, python, run, root, fetchImpl = globalThis.f
 
 /**
  * The instance's repository at its base commit, in `repo`, from one bare mirror per source repository (cloned once,
- * fetched only when the commit is missing). The clone borrows the mirror's objects (--shared) so it costs little,
- * and every ref is then removed but a `main` branch at the base commit, so the model can't read the later history
- * (the fix among it) with `git log --all`.
+ * fetched only when the commit is missing). The repository gets only the base commit and its history: a new empty
+ * repository fetches one temporary ref at the base commit from the mirror, so git sends only the objects reachable
+ * from it. No alternates, no remote, no other refs: the later history (the fix among it) isn't there at all, not
+ * even by hash. (A clone, shared or not, would bring every object of the mirror.)
  */
 export async function checkoutInstance({ instance, repo, mirrors, git, run, remote = name => `https://github.com/${name}.git` }) {
   const mirror = path.join(mirrors, mirrorFolder(instance.repo));
@@ -253,16 +272,14 @@ export async function checkoutInstance({ instance, repo, mirrors, git, run, remo
   if (!await has()) { await git(['fetch', '-q', '--prune', 'origin'], mirror); if (!await has()) throw new Error(`${instance.repo} has no commit ${instance.base_commit}.`); }
   await fs.rm(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await fs.mkdir(path.dirname(repo), { recursive: true });
-  await git(['clone', '-q', '--shared', '--no-checkout', mirror, repo], path.dirname(repo));
-  await git(['checkout', '-q', '--detach', instance.base_commit], repo);
-  await git(['remote', 'remove', 'origin'], repo);
-  const refs = (await git(['for-each-ref', '--format=%(refname)'], repo)).split('\n').map(line => line.trim()).filter(Boolean);
-  if (refs.length) {
-    const deleted = await run('git', ['update-ref', '--stdin'], { cwd: repo, input: refs.map(ref => `delete ${ref}\n`).join(''), shell: false });
-    if (deleted.code !== 0) throw new Error(`git update-ref failed in ${repo}: ${deleted.stderr.trim()}`);
-  }
-  await git(['checkout', '-q', '-b', 'main'], repo);
-  for (const step of [['config', 'user.name', 'Hydra benchmark'], ['config', 'user.email', 'benchmark@hydra.invalid'], ['reflog', 'expire', '--expire=now', '--all']]) await git(step, repo);
+  await fs.mkdir(repo, { recursive: true });
+  await git(['init', '-q', '-b', 'main'], repo);
+  const temporary = `refs/swebench/${instanceFolder(instance.instance_id)}`;
+  await git(['update-ref', temporary, instance.base_commit], mirror);
+  try { await git(['fetch', '-q', '--no-tags', '--update-head-ok', mirror, `+${temporary}:refs/heads/main`], repo); }
+  finally { await git(['update-ref', '-d', temporary], mirror).catch(() => ''); }
+  await git(['reset', '-q', '--hard', 'main'], repo);
+  for (const step of [['config', 'user.name', 'Hydra benchmark'], ['config', 'user.email', 'benchmark@hydra.invalid']]) await git(step, repo);
 }
 
 /** The model patch: the diff from the base commit to `ref` (Hydra's integration tip), else to the working tree, new files included. */
@@ -336,7 +353,12 @@ export async function swebench(flags, rest, deps) {
   const instances = await sampleFor(out, wanted, { ...deps, python: flags.python ?? (process.platform === 'win32' ? 'python' : 'python3') });
   const only = flags.only ? new Set(flags.only.split(',').map(id => id.trim())) : undefined;
   const { records } = await readRecords(out, instances);
-  const { todo, skipped } = pendingInstances(instances.filter(instance => !only || only.has(instance.instance_id)), records, { retryErrors: flags['retry-errors'] === 'yes' });
+  const { todo: pending, skipped } = pendingInstances(instances.filter(instance => !only || only.has(instance.instance_id)), records, { retryErrors: flags['retry-errors'] === 'yes' });
+  // --limit <k>: at most k instances this time. Hydra can't close a window from the command line, so each hydra
+  // instance leaves one open: run a batch, close the windows, run the same command again.
+  const limit = flags.limit === undefined ? Infinity : Number(flags.limit);
+  if (!(limit >= 1)) throw new Error('--limit must be a number of at least 1.');
+  const todo = pending.slice(0, limit);
   if (skipped.length) console.log(`Skipping ${skipped.length} instance(s) already run (--retry-errors yes runs the failed ones again).`);
   const mirrors = path.resolve(flags.mirrors ?? path.join(root, '.bench', 'swebench-mirrors'));
   const minutes = Number(flags.minutes ?? 60);
@@ -350,7 +372,7 @@ export async function swebench(flags, rest, deps) {
     await fs.mkdir(folder, { recursive: true });
     const started = Date.now();
     const record = { version: recordVersion, instance_id: id, setup, startedAt: new Date(started).toISOString() };
-    let results, ref;
+    let results, ref, caught;
     try {
       await checkoutInstance({ instance, repo, mirrors, git, run, remote: deps.remote });
       await fs.writeFile(path.join(folder, 'prompt.md'), swebenchPrompt(instance));
@@ -370,11 +392,21 @@ export async function swebench(flags, rest, deps) {
     } catch (error) {
       record.status = 'error';
       record.error = errorText(error).slice(0, 4000);
+      caught = record.error;
     }
     let patch = '';
     if (setup === 'single' || ref) {
       try { patch = await capturePatch({ repo, baseCommit: instance.base_commit, ref, git }); }
       catch (error) { record.status = 'error'; record.error = [record.error, `Capturing the patch failed: ${errorText(error)}`].filter(Boolean).join('\n'); }
+    }
+    // A usage limit isn't the instance's result: no record, so the next run starts it again from a fresh folder.
+    const report = setup === 'hydra' ? await fs.readFile(path.join(folder, 'hydra-report.md'), 'utf8').catch(() => '') : '';
+    const limit = limitStopped({ error: caught, results, report });
+    if (limit) {
+      await fs.writeFile(path.join(folder, 'usage-limit.txt'), `${limit}\n`);
+      console.log(`${id}: stopped by a usage limit (${limit}); not recorded, so it runs again next time.`);
+      stopped = id;
+      break;
     }
     record.seconds = Math.round((Date.now() - started) / 1000);
     if (typeof results?.cost?.usd === 'number' && (results.kind !== 'hydra' || results.cost.usdJobs)) record.usd = results.cost.usd;
@@ -386,7 +418,6 @@ export async function swebench(flags, rest, deps) {
     await fs.writeFile(path.join(folder, 'instance.json'), JSON.stringify(record, null, 2) + '\n');
     await writePredictions(out, runInfo, instances);
     console.log(`${id}: ${record.status} in ${record.seconds}s, ${record.patchBytes} bytes of patch${record.usd !== undefined ? `, $${record.usd.toFixed(2)}` : ''}${record.error ? `\n  ${record.error.split('\n')[0]}` : ''}`);
-    if (record.error && usageLimitText(record.error)) { stopped = id; break; }
   }
   const { count, records: after } = await writePredictions(out, runInfo, instances);
   const done = Object.values(after).filter(record => record.status === 'done').length;
