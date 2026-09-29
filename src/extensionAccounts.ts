@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { machineSetting } from './core/machineSetting';
 import { mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { accountRpc, CodexAccountFlow, supportedAccountVersion, publicClaudeAccount, type AccountState } from './core/accountSetup';
@@ -65,7 +66,7 @@ export class ProviderAccounts implements vscode.Disposable {
     if(this.probes.has(provider)||this.states[provider].status==='pending'||this.states[provider].status==='working')return;
     const controller=new AbortController();this.probes.set(provider,controller);this.update(provider,{status:'working',text:'Checking the installed provider version…'});
     try{
-      const configured=vscode.workspace.getConfiguration('hydra').get<string>(`${provider}Path`);
+      const configured=machineSetting<string>(vscode.workspace.getConfiguration('hydra'), `${provider}Path`);
       const found=await findProvider(provider,configured);if(controller.signal.aborted)return;
       if(!found.executable)throw new Error(`Install ${supportedCliDescription(provider)} using its official guide, or set its executable path in Hydra editor settings.`);
       const cwd=this.context.globalStorageUri.fsPath;await mkdir(cwd,{recursive:true});

@@ -354,21 +354,25 @@
         "hydra.claudePath": {
           "type": "string",
           "default": "",
-          "description": "Absolute Claude CLI executable path. Empty searches PATH."
+          "scope": "machine",
+          "description": "Absolute Claude CLI executable path. Empty searches PATH. User settings only; a repository's own settings can't set it."
         },
         "hydra.codexPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute Codex CLI executable path. Empty searches PATH."
+          "scope": "machine",
+          "description": "Absolute Codex CLI executable path. Empty searches PATH. User settings only; a repository's own settings can't set it."
         },
         "hydra.worktreeRoot": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Absolute directory for Hydra head worktrees, outside the repository. Empty uses a sibling <repository>.worktrees folder."
         },
         "hydra.packs.folder": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Absolute folder that holds your packs, one folder per pack. Empty uses ~/.hydra/packs."
         },
         "hydra.maxConcurrentHelpers": {
@@ -438,6 +442,7 @@
         "hydra.updates.check": {
           "type": "boolean",
           "default": true,
+          "scope": "machine",
           "description": "Check GitHub for a newer Hydra once a day and offer to install it. Nothing is downloaded or installed until you choose Update."
         },
         "hydra.lanes.onLimit": {
@@ -456,6 +461,7 @@
         "hydra.claudeMem.enabled": {
           "type": "boolean",
           "default": false,
+          "scope": "machine",
           "description": "Also set up claude-mem, a third-party memory plugin for Claude Code. Installs Bun and the claude-mem plugin. Off by default."
         },
         "hydra.plans.leadPlansNeedApproval": {

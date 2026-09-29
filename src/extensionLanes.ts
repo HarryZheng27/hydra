@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
 import path from 'node:path';
 import { git, gitMetaChanges, gitMetaFingerprint } from './core/git';
@@ -155,10 +156,10 @@ export class LanesController implements vscode.Disposable {
     const config = () => vscode.workspace.getConfiguration('hydra');
     this.service = new LaneService({
       store, repository,
-      worktreeRoot: () => config().get<string>('worktreeRoot') || undefined,
+      worktreeRoot: () => machineSetting<string>(config(), 'worktreeRoot') || undefined,
       pty: this.ptyModule(),
       executable: async provider => {
-        const info = await findProvider(provider, config().get<string>(`${provider}Path`) || undefined);
+        const info = await findProvider(provider, machineSetting<string>(config(), `${provider}Path`) || undefined);
         if (!info.executable) throw new Error(`${providerLabel(provider)} CLI not found. Install it or set Hydra's ${provider} path.`);
         return info.executable;
       },
@@ -480,7 +481,7 @@ export class LanesController implements vscode.Disposable {
       if (!pickedRole) return;
       role = pickedRole.role;
     }
-    const providers = await Promise.all((['claude', 'codex'] as const).map(async provider => ({ provider, available: (await findProvider(provider, config.get<string>(`${provider}Path`) || undefined).catch(() => ({ available: false }))).available })));
+    const providers = await Promise.all((['claude', 'codex'] as const).map(async provider => ({ provider, available: (await findProvider(provider, machineSetting<string>(config, `${provider}Path`) || undefined).catch(() => ({ available: false }))).available })));
     const defaultProvider = role?.provider ?? preferred;
     const items = providers.sort((a, b) => Number(b.provider === defaultProvider) - Number(a.provider === defaultProvider))
       .map(({ provider, available }) => ({ label: providerLabel(provider), description: available ? (provider === defaultProvider ? 'Default' : '') : 'Not installed', provider }));
