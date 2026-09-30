@@ -10,8 +10,9 @@ import { terminateProcessTree } from '../src/core/process';
 import { applyRigor, findBrowser, gateCommandsBrief, gateFailureMessage, gateOrder, hasCommandGate, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
 import { browserCandidates, connectWithRetry } from '../src/core/gates/browser';
 import { resolveCommand } from '../src/core/gates/command';
-import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewFails, reviewPrompt } from '../src/core/gates/review';
+import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewerSettings, reviewFails, reviewPrompt } from '../src/core/gates/review';
 import { substitutePort } from '../src/core/gates/screenshots';
+import type { AgentIsolation } from '../src/core/agentHome';
 
 /** A main checkout with one commit, and a worktree whose branch adds src/feature.ts on top: the work under test. */
 async function repository() {
@@ -75,8 +76,12 @@ function fakeReviewer(reply: (spec: ReviewerSpec) => Partial<ProbeOutput>) {
 const claudeEnvelope = (text: string) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text });
 const verdict = (value: unknown) => JSON.stringify(value);
 
+/** HSEC-71: a reviewer's isolation, faked so no test reads your own Claude or Codex folders. */
+const fakeIsolation: GateRuntime['isolation'] = async (provider): Promise<AgentIsolation> => provider === 'codex'
+  ? { env: { CODEX_HOME: 'H:\\codex-home' }, codexArgs: ['--ignore-user-config', '-c', 'features.apps=false'], claudePlugins: [] }
+  : { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' }, codexArgs: [], claudePlugins: ['claude-mem@thedotmack'] };
 function context(root: string, runtime: Partial<GateRuntime>, extra: Partial<GateContext> = {}): GateContext {
-  return { author: 'claude', logDirectory: path.join(root, 'logs', `run-${Math.random().toString(16).slice(2)}`), title: 'Add the feature', brief: 'Add src/feature.ts.', writeScope: ['src/'], executable: async provider => `fake-${provider}`, runtime: { pollMs: 25, ...runtime }, ...extra };
+  return { author: 'claude', logDirectory: path.join(root, 'logs', `run-${Math.random().toString(16).slice(2)}`), title: 'Add the feature', brief: 'Add src/feature.ts.', writeScope: ['src/'], executable: async provider => `fake-${provider}`, runtime: { pollMs: 25, isolation: fakeIsolation, ...runtime }, ...extra };
 }
 const exists = (file: string) => access(file).then(() => true, () => false);
 async function until(check: () => boolean | Promise<boolean>, what: string, ms = 10_000): Promise<void> {
@@ -195,7 +200,8 @@ test('gates run in order (commands, screenshots, review), and required: false is
     const pictures = outcome.results[2]!.evidence!.filter(file => file.endsWith('.png'));
     assert.equal(pictures.length, 2);
     for (const picture of pictures) assert.ok(await exists(picture), picture);
-    assert.deepEqual(spec!.args, ['exec', '--json', '-c', "web_search='disabled'", '-i', pictures[0]!, '-i', pictures[1]!, '--sandbox', 'read-only', '-']);
+    assert.deepEqual(spec!.args, ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', "web_search='disabled'", '-i', pictures[0]!, '-i', pictures[1]!, '--sandbox', 'read-only', '-']);
+    assert.deepEqual(spec!.env, { CODEX_HOME: 'H:\\codex-home' }, 'HSEC-71: Hydra\'s own Codex home');
     // 1.2: the command's own output is fenced with the prompt's nonce.
     const nonce = /<<<untrusted-([0-9a-f]{16})/.exec(spec!.input)?.[1];
     assert.ok(nonce, 'the prompt carries a nonce');
@@ -234,13 +240,19 @@ test('once a required gate fails, the later gates are skipped; the failure messa
 // ---- The review gate ----
 
 test('review: the exact read-only arguments, and the prompt with the diff cap, the task, earlier results, screenshots and focus', () => {
-  assert.deepEqual(reviewArguments('claude'), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config']);
-  assert.deepEqual(reviewArguments('claude', ['a.png']), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config'], 'Claude reads screenshots by path');
+  const claudeBase = ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--settings', 'S.json', '--strict-mcp-config', '--disable-slash-commands'];
+  const settings = { settingsFile: 'S.json' };
+  assert.deepEqual(reviewArguments('claude', [], false, settings), claudeBase);
+  assert.deepEqual(reviewArguments('claude', ['a.png'], false, settings), claudeBase, 'Claude reads screenshots by path');
   // `codex exec` searches the web by default (research R7): a review has it off unless its pack role has "web" (R9).
-  assert.deepEqual(reviewArguments('codex'), ['exec', '--json', '-c', 'web_search=\'disabled\'', '--sandbox', 'read-only', '-']);
-  assert.deepEqual(reviewArguments('codex', ['a.png', 'b.png']), ['exec', '--json', '-c', 'web_search=\'disabled\'', '-i', 'a.png', '-i', 'b.png', '--sandbox', 'read-only', '-']);
+  // HSEC-71: the isolation flags come right after `exec --json`.
+  const isolation = { codexArgs: ['--ignore-user-config', '-c', 'features.apps=false'] };
+  assert.deepEqual(reviewArguments('codex', [], false, isolation), ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', 'web_search=\'disabled\'', '--sandbox', 'read-only', '-']);
+  assert.deepEqual(reviewArguments('codex', ['a.png', 'b.png'], false, isolation), ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', 'web_search=\'disabled\'', '-i', 'a.png', '-i', 'b.png', '--sandbox', 'read-only', '-']);
   assert.deepEqual(reviewArguments('codex', [], true), ['exec', '--json', '-c', 'web_search=\'live\'', '--sandbox', 'read-only', '-']);
-  assert.deepEqual(reviewArguments('claude', [], true), ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config', '--allowedTools', 'WebFetch,WebSearch'], 'still plan mode, with the web tools allowed');
+  assert.deepEqual(reviewArguments('claude', [], true, settings), [...claudeBase, '--allowedTools', 'WebFetch,WebSearch'], 'still plan mode, with the web tools allowed');
+  assert.deepEqual(reviewerSettings([]), { disableAllHooks: true });
+  assert.deepEqual(reviewerSettings(['b@m', 'a@m', 'a@m', 'not a plugin']), { disableAllHooks: true, enabledPlugins: { 'a@m': false, 'b@m': false } }, 'sorted, deduplicated, odd ids left out');
 
   assert.deepEqual(capDiff('small\n'), { text: 'small\n', cut: false });
   const line = `+${'é'.repeat(99)}\n`;
@@ -320,7 +332,11 @@ test('review: the other agent reviews; the same one stands in when the other is 
     const gate: Gate = { id: 'review', type: 'review', required: true, reviewer: 'other', focus: '' };
     const [result] = await runGateList([gate], f.worktree, f.base, context(f.root, { runReviewer: reviewer.runReviewer }, { limited: provider => provider === 'codex' }));
     assert.equal(reviewer.specs[0]!.provider, 'claude');
-    assert.deepEqual(reviewer.specs[0]!.args, ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config']);
+    const settingsFile = path.join(path.dirname(result!.evidence![0]!), 'review-settings.json');
+    assert.deepEqual(reviewer.specs[0]!.args, ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--settings', settingsFile, '--strict-mcp-config', '--disable-slash-commands']);
+    // HSEC-71: every hook and your plugins off, and no CLAUDE.md.
+    assert.deepEqual(JSON.parse(await readFile(settingsFile, 'utf8')), { disableAllHooks: true, enabledPlugins: { 'claude-mem@thedotmack': false } });
+    assert.deepEqual(reviewer.specs[0]!.env, { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' });
     assert.equal(reviewer.specs[0]!.executable, 'fake-claude'); assert.equal(reviewer.specs[0]!.timeoutMs, 5 * 60_000);
     assert.equal(result!.state, 'failed'); assert.equal(result!.reviewer, 'claude');
     assert.equal(result!.summary, 'Codex is at its usage limit, so a fresh read-only Claude Code session reviewed this instead. It never sets the flag.');

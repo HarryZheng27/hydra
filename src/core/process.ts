@@ -24,6 +24,8 @@ export function processLaunch(executable: string, args: string[]): { executable:
 }
 /** Whether a CLI is a Windows `.cmd`/`.bat` shim, whose arguments cmd.exe reads again (see processLaunch). */
 export const isWindowsShim = (executable: string, platform: NodeJS.Platform = process.platform): boolean => platform === 'win32' && /\.(cmd|bat)$/i.test(executable);
+/** Characters cmd.exe reads as syntax: a path containing one can't go through a `.cmd` shim. */
+export const cmdUnsafe = /["%^&|<>!\u0000-\u001f\u007f]/;
 /**
  * Text passed through a Windows `.cmd` shim is read by cmd.exe, which expands
  * `%` and treats `& | < > ^ !` as syntax. The prompt keeps to characters cmd
@@ -73,10 +75,10 @@ export async function terminateProcessTree(pid: number): Promise<void> {
  * written to stdin (a review's prompt is too long for a command line), and
  * `spawned` hears the process id, so Hydra can refuse it as a lead.
  */
-export function runProbe(executable: string, args: string[], cwd: string, options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; input?: string; spawned?: (pid: number) => void } = {}): Promise<ProbeOutput> {
+export function runProbe(executable: string, args: string[], cwd: string, options: { timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; input?: string; spawned?: (pid: number) => void; env?: NodeJS.ProcessEnv } = {}): Promise<ProbeOutput> {
   return new Promise(resolve => {
     const launch = processLaunch(executable, args);
-    const child = spawn(launch.executable, launch.args, { cwd, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(launch.executable, launch.args, { cwd, windowsHide: true, ...(options.env ? { env: options.env } : {}), detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     if (child.pid) options.spawned?.(child.pid);
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
     let bytes = 0, failure: string | undefined, settled = false, timedOut = false;

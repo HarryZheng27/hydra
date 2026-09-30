@@ -7,6 +7,7 @@ import type { CheckCommandResult } from '../checkCommand';
 import type { Gate } from './config';
 import type { ScreenshotBrowser } from './browser';
 import type { CommandSandbox } from '../headSandbox';
+import type { AgentIsolation } from '../agentHome';
 import { redactText } from '../redact';
 
 /**
@@ -51,6 +52,11 @@ export interface GateContext {
    */
   tempRoot?: string;
   /**
+   * HSEC-71: Hydra's storage folder, which holds the Codex reviewer's own CODEX_HOME (agentHome.ts).
+   * Without it, a Codex reviewer uses your home, with Hydra's flags keeping your config.toml out.
+   */
+  agentStorage?: string;
+  /**
    * 5.1: masks secrets in gate evidence (command logs, review
    * prompts and replies) and in a JobCheckResult's own text. Defaults to `redactText` with no
    * live secrets besides the environment; a caller that knows about live secrets (Hydra's own
@@ -75,12 +81,16 @@ export interface ReviewerSpec {
   timeoutMs: number;
   signal?: AbortSignal;
   spawned?: (pid: number) => void;
+  /** HSEC-71: set on top of Hydra's environment (AgentIsolation.env): Claude's switches, or Codex's CODEX_HOME. */
+  env?: Record<string, string>;
 }
 
 /** Everything a gate does to the outside world, so tests can replace any of it. */
 export interface GateRuntime {
   runCommand(command: { executable: string; args: string[]; env?: Record<string, string>; environment?: Record<string, string> }, cwd: string, logFile: string, timeoutMs: number, signal?: AbortSignal, spawned?: (pid: number) => void): Promise<CheckCommandResult>;
   runReviewer(spec: ReviewerSpec): Promise<ProbeOutput>;
+  /** HSEC-71: what a reviewer runs with so none of your own configuration reaches it (agentIsolation). */
+  isolation(provider: Provider, storage: string | undefined): Promise<AgentIsolation>;
   browser: ScreenshotBrowser;
   freePort(): Promise<number>;
   fetch: typeof fetch;

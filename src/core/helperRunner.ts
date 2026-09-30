@@ -52,6 +52,8 @@ export interface HeadConfinement {
   shell: boolean;
   /** Its whole environment (headEnvironment): the allowlist, its sign-in and role variables, and what Hydra sets. */
   env: Record<string, string>;
+  /** Codex: the flags that keep your own config out (codexIsolationArguments, HSEC-71). */
+  codexArgs?: string[];
 }
 /**
  * A role's pieces on a head's command line (roleLaunch, placed here). The role's
@@ -106,8 +108,9 @@ export type StartHelperRun = (spec: HelperRunSpec) => HelperRun;
  * A Claude head's command line. Step 2 (design 1):
  * - `--setting-sources user`: a head can write `.claude/settings.local.json` in its worktree, and
  *   with project or local settings loaded, a hook it planted there ran unsandboxed (R5);
- * - `--settings <file>`: its read block and deny rules, and your plugins turned off (headSettings):
- *   user settings would load them, and their hooks all run through the shell wrapper;
+ * - `--settings <file>`: its read block and deny rules, every hook off, and your plugins turned off
+ *   (headSettings): user settings would load them, and their hooks all run through the shell wrapper;
+ * - no CLAUDE.md or auto memory (claudeIsolationVariables, in its environment: HSEC-71);
  * - `--tools` and a scoped `--allowedTools` (claudeHeadTools): no PowerShell, Bash only with a shell;
  * - `--add-dir` for its role's pack copy, which the read block would otherwise hide.
  * A role's servers come in a second file, beside Hydra's token-bearing entry, which stays inline;
@@ -134,9 +137,14 @@ export function claudeHelperArguments(spec: HelperRunSpec): string[] {
 
 /** A TOML literal string. Paths and tokens never contain a single quote; refuse rather than mis-quote. */
 const toml = (value: string) => { if (value.includes("'") || /[\r\n]/.test(value)) throw new Error('A Codex head setting contains a quote or line break.'); return `'${value}'`; };
+/**
+ * A Codex head's command line: first the flags that keep your own config.toml, plugins, hooks,
+ * memories and connected apps out (HSEC-71; its CODEX_HOME is Hydra's own, so your AGENTS.md
+ * isn't there), then Hydra's server and its role's servers, the only ones it gets, and the sandbox.
+ */
 export function codexHelperArguments(spec: HelperRunSpec, resumeThread?: string): string[] {
   const env = Object.entries(spec.bridge.env).map(([key, value]) => `${key} = ${toml(value)}`).join(', ');
-  const config = ['-c', `mcp_servers.hydra.command=${toml(spec.bridge.command)}`, '-c', `mcp_servers.hydra.args=[${spec.bridge.args.map(toml).join(', ')}]`,
+  const config = [...spec.confine.codexArgs ?? [], '-c', `mcp_servers.hydra.command=${toml(spec.bridge.command)}`, '-c', `mcp_servers.hydra.args=[${spec.bridge.args.map(toml).join(', ')}]`,
     '-c', `mcp_servers.hydra.env={ ${env} }`, '-c', "mcp_servers.hydra.default_tools_approval_mode='approve'", '-c', 'mcp_servers.hydra.tool_timeout_sec=3600',
     // Packs: the role's servers, then web search, which `codex exec` has on by default: only a web role keeps it (R7).
     ...spec.role?.codexConfig ?? [], '-c', `web_search='${spec.role?.webSearch ?? 'disabled'}'`,

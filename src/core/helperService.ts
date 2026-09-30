@@ -2,9 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, readOnlyStatus, type GitMetaFingerprint } from './git';
-import { isWindowsShim } from './process';
+import { cmdUnsafe, isWindowsShim } from './process';
 import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
 import { otherWorktrees, storageListing, userClaudePlugins } from './confineFiles';
+import { agentIsolation } from './agentHome';
 import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
@@ -176,6 +177,8 @@ export interface HelperServiceOptions {
   sandbox?: { shell(): Promise<HeadShell> } & CommandSandbox;
   /** Hydra's global storage: a Claude head writes none of it and reads none of it but its role's pack copy. Defaults to the log directory, which holds its settings file. */
   hydraStorage?: string;
+  /** HSEC-71: what a Codex head runs with (Hydra's own CODEX_HOME and flags). A test seam; defaults to agentIsolation. */
+  agentIsolation?: typeof agentIsolation;
   /** Where each head's own TEMP folder goes. Defaults to `temp` beside the log directory. */
   tempDirectory?: string;
   // ---- 5.3: Stop All Agents ----
@@ -726,6 +729,7 @@ export class HelperService {
       ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
       // Step 2 (design 5): command gates and the screenshots gate's app run in Codex's sandbox when it's available.
       ...(this.options.sandbox ? { sandbox: this.options.sandbox, tempRoot: this.tempRoot } : {}),
+      ...(this.options.hydraStorage ? { agentStorage: this.options.hydraStorage } : {}),
       spawned: pid => { this.helperPids.add(pid); },
       ...(signal ? { signal } : {}),
       ...(this.options.log ? { log: this.options.log } : {}),
@@ -1096,10 +1100,14 @@ export class HelperService {
    */
   private async confine(job: Job, worktree: string, executable: string, role: RoleLaunch | undefined, shell: HeadShell | undefined, temp: string): Promise<{ spec: HeadConfinement; settingsFile?: string }> {
     const platform = process.platform;
-    const env = headEnvironment({ base: process.env, platform, provider: job.provider, temp, worktree, ...(shell ? { shell } : {}), roleNames: role?.variables ?? [], roleValues: role?.env ?? {} });
-    if (job.provider !== 'claude') return { spec: { addDirs: [], shell: false, env } };
-    const shim = isWindowsShim(executable);
     const storage = this.options.hydraStorage ?? this.options.logDirectory;
+    // HSEC-71: a Codex head gets Hydra's own CODEX_HOME and flags, so none of your Codex config, AGENTS.md or MCP servers reach it.
+    // Only in a window with its own storage folder: without one (tests), Codex keeps your home, with the same flags.
+    const codex = job.provider === 'codex' ? await (this.options.agentIsolation ?? agentIsolation)('codex', this.options.hydraStorage, process.env) : undefined;
+    if (codex?.note) this.options.log?.(`[heads] ${job.id}: Codex runs with your own Codex home: ${codex.note}.`);
+    const env = headEnvironment({ base: process.env, platform, provider: job.provider, temp, worktree, ...(shell ? { shell } : {}), roleNames: role?.variables ?? [], roleValues: role?.env ?? {}, ...(codex?.env.CODEX_HOME ? { codexHome: codex.env.CODEX_HOME } : {}) });
+    if (codex) return { spec: { addDirs: [], shell: false, env, codexArgs: codex.codexArgs } };
+    const shim = isWindowsShim(executable);
     // One name per launch: a continued head's new file is never the one its old run's cleanup removes.
     const settingsFile = path.join(this.options.logDirectory, `${job.id}-${randomBytes(4).toString('hex')}.settings.json`);
     // A `.cmd` launcher's command line passes through cmd.exe: a path it would misread can't be given.
@@ -1428,6 +1436,7 @@ export class HelperService {
       executable: provider => this.options.executable(provider),
       ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
       ...(this.options.sandbox ? { sandbox: this.options.sandbox, tempRoot: this.tempRoot } : {}),
+      ...(this.options.hydraStorage ? { agentStorage: this.options.hydraStorage } : {}),
       spawned: pid => { this.helperPids.add(pid); },
       ...(input.signal ? { signal: input.signal } : {}),
       ...(this.options.log ? { log: this.options.log } : {}),
@@ -1485,9 +1494,6 @@ async function hydraFileHashes(folder: string): Promise<TamperSnapshot> {
   ]);
   return { gatesJson, checksJson, packsJson };
 }
-
-/** What cmd.exe reads as syntax in a path on a `.cmd` launcher's command line (as in packs/launch.ts). */
-const cmdUnsafe = /["%^&|<>!\u0000-\u001f\u007f]/;
 
 /**
  * Git's hooks off (Step 2): `core.hooksPath` pointed at an empty folder
