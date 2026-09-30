@@ -204,7 +204,8 @@ export function renderSwebenchSummary(rows) {
 }
 
 /** Whether an error means a usage limit, so the run stops instead of burning through the rest (pure). */
-export const usageLimitText = text => /usage limit|limit reached|rate limit|\b429\b/i.test(String(text ?? ''));
+/** Real limit messages only: a bare 429 ("duration_ms: 1.1429", a count) never matches. */
+export const usageLimitText = text => /usage limit|limit reached|rate[ _-]?limit|\bHTTP[ \/]?429\b|\b(?:status|code|error)[ :=]+429\b|\b429 too many requests/i.test(String(text ?? ''));
 
 /**
  * Why a usage limit stopped this instance, or undefined (pure). `error` is what the setup threw; `results` what it
@@ -362,7 +363,7 @@ export async function swebench(flags, rest, deps) {
   if (skipped.length) console.log(`Skipping ${skipped.length} instance(s) already run (--retry-errors yes runs the failed ones again).`);
   const mirrors = path.resolve(flags.mirrors ?? path.join(root, '.bench', 'swebench-mirrors'));
   const minutes = Number(flags.minutes ?? 60);
-  let stopped;
+  let stopped, stoppedVoid;
   for (const [index, instance] of todo.entries()) {
     const id = instance.instance_id;
     const folder = path.join(out, instanceFolder(id)), repo = path.join(folder, 'repo');
@@ -372,7 +373,7 @@ export async function swebench(flags, rest, deps) {
     await fs.mkdir(folder, { recursive: true });
     const started = Date.now();
     const record = { version: recordVersion, instance_id: id, setup, startedAt: new Date(started).toISOString() };
-    let results, ref, caught;
+    let results, ref, caught, voided;
     try {
       await checkoutInstance({ instance, repo, mirrors, git, run, remote: deps.remote });
       await fs.writeFile(path.join(folder, 'prompt.md'), swebenchPrompt(instance));
@@ -393,6 +394,14 @@ export async function swebench(flags, rest, deps) {
       record.status = 'error';
       record.error = errorText(error).slice(0, 4000);
       caught = record.error;
+      if (error?.exitCode === 4) voided = error;
+    }
+    // A run that slept isn't a result: no record, so the next run starts it again from a fresh folder.
+    if (voided) {
+      await fs.writeFile(path.join(folder, 'void.txt'), `${voided.message}\n${JSON.stringify(voided.suspended ?? [])}\n`);
+      console.log(`${id}: void, the machine slept; not recorded, so it runs again next time.`);
+      stopped = id; stoppedVoid = voided;
+      break;
     }
     let patch = '';
     if (setup === 'single' || ref) {
@@ -423,6 +432,7 @@ export async function swebench(flags, rest, deps) {
   const done = Object.values(after).filter(record => record.status === 'done').length;
   const errors = Object.values(after).filter(record => record.status === 'error').length;
   console.log(`\n${done} done, ${errors} with errors, ${instances.length - done - errors} not run, of ${instances.length}. ${count} predictions in ${path.join(out, 'predictions.jsonl')}.\nNext: node scripts/benchmark.mjs swebench-submit --out "${out}"`);
+  if (stoppedVoid) { const error = new Error(`VOID at ${stopped}: the machine slept. Run the same command again to go on.`); error.exitCode = 4; throw error; }
   if (stopped) { const error = new Error(`USAGE LIMIT at ${stopped}: stopped. Run the same command again later to go on.`); error.exitCode = 3; throw error; }
 }
 const pick = (flags, keys) => Object.fromEntries(keys.filter(key => flags[key] !== undefined).map(key => [key, flags[key]]));

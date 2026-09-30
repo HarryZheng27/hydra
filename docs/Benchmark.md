@@ -143,6 +143,17 @@ For each group it gives the median and the range (min–max) of time to working 
 node scripts/benchmark.mjs summarize --runs ".bench/overnight/bench-p1-*"
 ```
 
+### Runs the machine slept through (void runs)
+
+A laptop that sleeps mid-run charges the sleep to the run as "work", and can stall an agent for hours. `single`, `hydra`, `review` (fix rounds included) and `swebench` therefore watch for it:
+- A heartbeat every 5 s compares the wall clock with the last beat; a gap over 60 s means the machine slept or was starved. On Windows, at the end of the run, the System event log is also asked for Kernel-Power sleep/wake events (42, 107, 506, 507) in the run's window (a failure to read it is logged, and the heartbeat stands).
+- The run's results file gets `void: "suspended"`, a `voidReason` and `suspended: [{from, to, seconds}]`, and the command **exits 4**, so a driver can run it again. (`swebench` records nothing for that instance, writes `void.txt` and exits 4; running it again starts the instance over.)
+- Agent and command timeouts are wall-clock deadlines checked by the heartbeat as well as a timer, since `setTimeout` may not advance across a sleep; past one, the process tree is killed.
+- `summarize` leaves void runs out of every median and lists them under "Void runs (machine slept)", with their windows and a count per setup.
+- `prepare --out <folder> --replace-void` moves a folder whose results say `void` aside to `<folder>.void-<timestamp>` and prepares a fresh one. A folder that isn't void is still refused.
+
+Exit codes: 0 done, 1 failed or a review didn't run, 2 usage, 3 usage limit, 4 void (machine slept). The usage-limit detector matches real limit messages (`usage limit`, `rate limit`, `rate_limit`, `HTTP 429`, `status: 429`), never a bare `429`.
+
 ### SWE-bench Verified (`benchmark.mjs swebench`; not run end to end yet)
 
 `scripts/benchmark-swebench.mjs` runs a seeded slice of SWE-bench Verified with one setup, end to end and resumable, and grades it in the cloud with `sb-cli`, so nothing is graded locally and no Docker is needed. Hydra's parallelism helps little on one issue; this measures whether its brief, gates and final review keep or improve quality.
