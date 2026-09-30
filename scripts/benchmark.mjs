@@ -25,6 +25,7 @@ import {
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
 import { run } from './benchmark-run.mjs';
 import { guardSuspend, renderVoidRuns, replaceVoidFolder } from './benchmark-suspend.mjs';
+import { closeCli, closeLeftovers, closeOwnWindow, markerFile, ownMarkerMaxAgeMs, readMarker, readWindowRecords } from './benchmark-windows.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -131,9 +132,33 @@ async function hydra(flags) {
   // --hydra is a command line; a found tool is one command (its path may hold spaces).
   const hydraTool = toolFor('hydra', flags.hydra);
   const [command, ...prefix] = flags.hydra ? commandLine(flags.hydra) : [hydraTool.command];
+  const cliIn = (cwd, ...argv) => run(command, [...prefix, ...argv], { cwd, timeoutMs: 5 * 60_000 });
   const cli = (...argv) => run(command, [...prefix, ...argv], { cwd: repo });
+  const runStarted = now();
+  const windows = await windowDeps(flags.hydra ? undefined : hydraTool, cliIn);
   const status = await cli('status', '--json');
   if (status.code !== 0) throw new Error(`hydra status answered ${status.code}: ${status.stderr.trim() || status.stdout.trim()}\nOpen ${repo} in Hydra (and trust it) first.`);
+  // Leftover benchmark windows from earlier runs: closed when the harness opened them, else named loudly.
+  await closeLeftovers(repo, windows);
+  // This run's own window is closed once its results are written (or the run failed), if the harness opened it.
+  try { return await hydraRun({ flags, repo, out, fixture, cli }); }
+  finally { await closeOwnWindow(repo, windows, { notBefore: runStarted - ownMarkerMaxAgeMs }).catch(error => console.error(`WARNING: closing the Hydra window for ${repo} failed: ${error instanceof Error ? error.message : String(error)}`)); }
+}
+
+/** What closing the harness's windows needs (scripts/benchmark-windows.mjs), wired to this machine. */
+async function windowDeps(tool, cliIn) {
+  // A launcher built before `hydra close` would open a window on a folder named "close": check it lists the command.
+  const file = tool?.path ?? (tool && !tool.missing && path.isAbsolute(tool.command) ? tool.command : undefined);
+  const text = file ? await fs.readFile(file, 'utf8').catch(() => undefined) : undefined;
+  // With an old launcher, Hydra.exe runs the installed hydra-cli.cjs directly, as the launcher would, if it has close.
+  const { cli, canClose, via } = await closeCli({ launcherFile: file, launcherText: text, cliIn, run, exists: existsSync, log: line => console.log(line) });
+  return {
+    cli, readMarker, records: () => readWindowRecords(process.env), canClose, via,
+    removeMarker: folder => fs.rm(markerFile(folder), { force: true }), log: line => console.log(line), warn: line => console.error(line),
+  };
+}
+
+async function hydraRun({ flags, repo, out, fixture, cli }) {
   const minutes = Number(flags.minutes ?? 120), usd = Number(flags.usd ?? defaultUsd), poll = Number(flags.poll ?? defaultPollSeconds) * 1000;
   // Every plan show makes Hydra check its process table (2 to 6 seconds of PowerShell on Windows): 10 seconds is the floor for a real run.
   if (poll < defaultPollSeconds * 1000) console.log(`Polling every ${poll / 1000}s: under ${defaultPollSeconds}s makes Hydra check its process table on every look, which slows it.`);

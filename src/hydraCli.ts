@@ -1,4 +1,4 @@
-// Entry point for dist/hydra-cli.cjs, the `hydra` command's plan, heads, status, stop and resume commands
+// Entry point for dist/hydra-cli.cjs, the `hydra` command's plan, heads, status, stop, resume and close commands
 // (run by Hydra's own executable with ELECTRON_RUN_AS_NODE=1, from the launcher in the app's bin folder).
 import { randomBytes } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';

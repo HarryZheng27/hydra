@@ -72,6 +72,7 @@ import { detectTestScript, noGatesFile, starterTestGatesFile } from './core/star
 import { StopSwitch } from './core/stopSwitch';
 // ---- Audit log (5.2). Its own line. ----
 import { AuditLog, type AuditEvent } from './core/audit';
+import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from './core/windowClose';
 // ---- Updates (README, "Updating"). Its own line. ----
 import { registerUpdates } from './extensionUpdates';
 
@@ -560,6 +561,9 @@ class Manager {
       control: {
         stopAll: reason => this.stopAllAgents(reason, 'Stop all agents (from a script)'),
         resume: () => this.resumeAgents('Resume agents (from a script)'),
+        // HSEC-72: `hydra close`.
+        activity: () => this.windowActivityNow(),
+        closeWindow: request => this.closeFromScript(request),
       },
       // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
       plans: this.createPlanLeadBridge(),
@@ -1004,6 +1008,30 @@ class Manager {
     this.audit.record({ kind: 'stop', what, detail: parts.join(', ') || undefined });
     void notices.info(`Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
     return { heads, lanes };
+  }
+  /**
+   * HSEC-72: `hydra close` (the user role's hydra_close), after HelperService has checked that nothing is still working
+   * here or the caller forced it. Logged and audited now; the window closes closeDelayMs later, so the caller gets its reply, after checking again (unless forced) that no work started meanwhile.
+   */
+  private closeFromScript(request: { force: boolean; activity: WindowActivity; reason?: string }): void {
+    const working = describeActivity(request.activity);
+    const detail = [request.reason, request.force && working ? `forced, cutting short ${working}` : ''].filter(Boolean).join('; ');
+    this.output.appendLine(`[close] Closing this window, as a script asked (hydra close)${detail ? `: ${detail}` : ''}.`);
+    this.audit.record({ kind: 'close', what: 'Close window (from a script)', ...(detail ? { detail } : {}) });
+    scheduleClose({
+      force: request.force,
+      activity: () => this.windowActivityNow(),
+      close: () => { void Promise.resolve(vscode.commands.executeCommand('workbench.action.closeWindow')).catch(error => this.output.appendLine(`[close] ${this.describe(error)}`)); },
+      aborted: refusal => {
+        // Work started between the reply and the close: the window stays open.
+        this.output.appendLine(`[close] Not closing after all: ${refusal}`);
+        this.audit.record({ kind: 'denial', what: 'Close window (from a script) stopped: work started before it closed', detail: refusal, role: 'user' });
+      },
+    });
+  }
+  /** What in this window is still working (HSEC-72). */
+  private windowActivityNow(): WindowActivity {
+    return windowActivity({ heads: this.helpers?.service.list() ?? [], lanes: this.lanes.state().lanes, plans: this.plans?.store.list() ?? [] });
   }
   /** Resume Agents (5.3), shared by the command and the user role's hydra_resume (O8a). */
   private async resumeAgents(what: string): Promise<void> {

@@ -974,7 +974,7 @@ export function brandedNativeThemeStartup(text) {
 // O8b (docs/Heads.md, "Scripts and CI"): the app's bin/hydra launcher (the editor's own `code`-style launcher, named
 // after applicationName) also carries the `hydra` command. These first words go to the built-in extension's
 // dist/hydra-cli.cjs; anything else opens the editor exactly as before (`hydra .`, `hydra file.ts`).
-export const hydraCliCommands = Object.freeze(['status', 'plan', 'heads', 'stop', 'resume', 'report']);
+export const hydraCliCommands = Object.freeze(['status', 'plan', 'heads', 'stop', 'resume', 'report', 'close']);
 const hydraCliScript = ['resources', 'app', 'extensions', 'hydra-agent-manager', 'dist', 'hydra-cli.cjs'];
 /** resources/win32/bin/code.cmd, which the build renames to bin\hydra.cmd. */
 export function brandedLauncherCmd(text) {

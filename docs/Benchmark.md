@@ -91,7 +91,8 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
    - watches the plan until its integration gate has a result: every 10 seconds (`--poll`), less often while nothing changes (15 seconds after 3 quiet looks, 20 after 6, 30 after 9), because each `hydra plan show` makes Hydra check its process table, which takes 2 to 6 seconds on Windows. An interval under 10 seconds is only for tests, and says so;
    - reads when each job landed from Hydra's plan store (`%APPDATA%\Hydra\User\globalStorage\…\plans\plans.json`, or `--plan-store <file>`);
    - runs the fixture's hidden check on the integration branch's tip;
-   - writes `hydra-results.json` and the plan's report.
+   - writes `hydra-results.json` and the plan's report;
+   - closes the window, if `bench-open.ps1` opened it (below, "Closing the windows").
 4. `node scripts/benchmark.mjs single --repo .bench/run-<time>/single`: runs one agent (`--agent claude` by default, or `codex`) on the same task's brief, then `npm test` and the hidden check, and writes `single-results.json`. The agent, `npm test` and the check each have a time limit (`--minutes`, 10 minutes, 5 minutes); past it the whole process tree is killed, and something a finished command left running can't hold the run open.
 5. `node scripts/benchmark.mjs review --results .bench/run-<time>`: the single agent's review (below).
 6. `node scripts/benchmark.mjs publish --results .bench/run-<time> --label "<what changed>"`: adds the run to `bench/results.json` and to the results below. Review the diff and commit it, with a link to the recording in `--notes` if there is one.
@@ -118,7 +119,19 @@ A window opened from a shell inside a Hydra window inherits that shell's `ELECTR
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bench-open.ps1 -Folder .bench/run-<time>/hydra -WaitSeconds 120
 ```
 
-With `-WaitSeconds`, it then runs `hydra status` in the folder (from the same clean environment) until a Hydra window owns it, and fails if none does in time. A `hydra status` that hangs is killed after 30 seconds, and the next try starts. `-Hydra <path>` points at another `hydra.cmd`.
+With `-WaitSeconds`, it then runs `hydra status` in the folder (from the same clean environment) until a Hydra window owns it (the folder's own window, not a parent folder's), and fails if none does in time. A `hydra status` that hangs is killed after 30 seconds, and the next try starts. `-Hydra <path>` points at another `hydra.cmd`.
+
+Before opening the folder, it asks whether a window already has it open, and records the answer in the folder's `.git/hydra-bench-window.json`, with the window that owns the folder once it opens. The harness closes only a window this script opened; a window that already had the folder open (one you opened yourself) is left alone.
+
+### Closing the windows
+
+Each Hydra window takes 400 to 600 MB, so a benchmark that leaves one open per run fills a 16 GB laptop. The harness closes the windows it opened itself (`scripts/benchmark-windows.mjs`):
+
+- **After each Hydra run**: once the plan's integration gate has settled and the results are written (or the run failed), `benchmark.mjs hydra` runs `hydra close` in the run's repository. It does so only when `bench-open.ps1`'s marker is for that folder, says it opened the window (no window had the folder before), and names the pid of the window it opened, and that same window owns the folder now. A marker without a pid (a wait that failed, or `-WaitSeconds 0`) closes nothing, and neither does one older than the run: written more than 12 hours before the run started, or 48 hours for a leftover (below). The marker is removed once its window closes. Otherwise it says why and leaves the window open. SWE-bench's per-instance windows close the same way.
+- **Before each Hydra run**: it counts the open benchmark windows, meaning the Hydra windows (their discovery records) whose folder is under a `.bench` folder. If more than one is open, it closes each leftover the harness opened, and prints a `WARNING` naming every one it left open (one you opened, or one still working).
+- `hydra close` is never forced: a window with heads or lanes running, or a plan in progress or landing, refuses, and the harness prints a `WARNING` with the reason. Close that one yourself.
+- A `hydra` launcher built before `hydra close` existed would open a window on a folder named "close" instead, so the harness reads the launcher first. With an old one, it runs what the new launcher would: `<install>\Hydra.exe <install>\resources\app\extensions\hydra-agent-manager\dist\hydra-cli.cjs close` with `ELECTRON_RUN_AS_NODE=1`, in the run's folder. So refreshing the extension's files (its `dist`) is enough, with no desktop rebuild. It does this only when that script's `--help` lists `close`; otherwise it closes nothing and says so. The run logs which way it closes windows.
+- Run one harness at a time: a leftover check could otherwise close another harness's window between its `bench-open.ps1` and its `plan run`.
 
 ### The single agent's review: `benchmark.mjs review`
 
@@ -176,7 +189,7 @@ For each instance it:
 2. **Clones** `<out>/<instance_id>/repo` at `base_commit` from one bare mirror per repository (`.bench/swebench-mirrors/<owner>__<name>.git`, or `--mirrors <dir>`; cloned once, fetched only when a commit is missing). The repository is a new one that fetches a single temporary ref at the base commit from the mirror, so it holds only the base commit and its history: no remote, no tags, no alternates, and none of the later commits (the fix among them), not even by hash. Writing that pack costs a little CPU per instance; a clone, shared or not, would bring the whole history.
 3. **Runs the setup** with the issue as the brief (`prompt.md` beside the repository):
    - `single`: `benchmark.mjs single --prompt <instance>/prompt.md --gate none`, the isolated `claude -p` described above (`--agent`, `--claude`, `--command` and `--gate` pass through);
-   - `hydra`: writes the one-job plan (`.hydra/plans/swebench.json`, write scope `['.']`, standard rigor), opens the folder with `scripts/bench-open.ps1 -WaitSeconds 180` (`--open none` if you open it yourself), then `benchmark.mjs hydra --fixture none --task swebench` (`--usd`, 10 by default, `--hydra`, `--plan-store`, `--poll` pass through). **Each instance opens its own window, and the runner can't close it**: the `hydra` command has no command that closes a window, and killing the process would take every Hydra window with it. So run the hydra setup in batches (below).
+   - `hydra`: writes the one-job plan (`.hydra/plans/swebench.json`, write scope `['.']`, standard rigor), opens the folder with `scripts/bench-open.ps1 -WaitSeconds 180` (`--open none` if you open it yourself), then `benchmark.mjs hydra --fixture none --task swebench` (`--usd`, 10 by default, `--hydra`, `--plan-store`, `--poll` pass through). Each instance opens its own window, and closes it with `hydra close` once its results are written (above, "Closing the windows").
    - `--minutes` is the time limit per instance (60 by default).
 4. **Captures the patch**: `git diff <base_commit>` to the working tree, new files included (`single`), or to the plan's integration tip (`hydra`), leaving out `.hydra`, into `<instance>/model.patch`.
 5. **Records** `<instance>/instance.json`: `status` (`done` or `error`), the error, seconds in all and for the agent, the reported cost in USD, and the patch size; the setup's own `single-results.json` or `hydra-results.json` sits beside it. Then it rewrites `<out>/predictions.jsonl`, one line per instance run (`instance_id`, `model_name_or_path`, `model_patch`; `--model` names it, `hydra-benchmark-<setup>` by default). A failed instance is still a prediction, with whatever patch it left (maybe empty), so it counts as unresolved.
@@ -185,12 +198,9 @@ For each instance it:
 
 **Usage limits**: the run stops and exits 3 when a limit stopped an instance: the error says so, Claude Code's own result is an error that says so, Hydra's final review didn't run for one, or Hydra's plan didn't finish and its report names one. That instance gets no record and no prediction (only `usage-limit.txt` in its folder), so the same command, run again once the limit resets, starts it over. A plan that finished after waiting out a rate limit isn't stopped.
 
-**Batches and cleanup for the hydra setup**:
-1. `node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup hydra --out <dir> --limit 5`: five instances, five windows.
-2. Close the windows that batch opened (their folders are `<dir>/<instance_id>/repo`). Leave your own windows open.
-3. Run the same command again for the next five, until its last line shows 0 not run.
+**Batches for the hydra setup**: `--limit <k>` still runs at most k instances at a time. A window that didn't close (the run printed a `WARNING` saying why) is closed before the next run if the harness opened it, or named again; close any it names yourself.
 
-With `--open none` the runner opens no window: open each instance's `repo` yourself with `bench-open.ps1`, run it with `--only <id>`, and close it before the next. When the slice is graded, the instance folders and `.bench/swebench-mirrors` can be deleted; keep `instances.json`, `predictions.jsonl`, `resolved.json` and the `sb-cli-reports` folder.
+With `--open none` the runner opens no window: open each instance's `repo` yourself with `bench-open.ps1` (the harness then closes it after the run), run it with `--only <id>`, and check it closed before the next. When the slice is graded, the instance folders and `.bench/swebench-mirrors` can be deleted; keep `instances.json`, `predictions.jsonl`, `resolved.json` and the `sb-cli-reports` folder.
 
 `node scripts/benchmark.mjs swebench predictions --out <dir>` rewrites the predictions file from the records.
 
