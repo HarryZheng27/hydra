@@ -20,7 +20,9 @@ const script = path.join(root, 'scripts', 'benchmark.mjs');
 
 function node(args: string[], cwd = root): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, { cwd, windowsHide: true });
+    // A child `node --test` (the fixtures' gate) that inherits the runner's context only reports to it and exits 0: it must run on its own.
+    const { NODE_TEST_CONTEXT: _context, ...clean } = process.env;
+    const child = spawn(process.execPath, args, { cwd, windowsHide: true, env: clean });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', reject); child.on('close', code => resolve({ code, stdout, stderr }));

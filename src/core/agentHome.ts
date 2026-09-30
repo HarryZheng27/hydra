@@ -7,7 +7,7 @@ import { claudeIsolationVariables, codexCarry, codexIsolationArguments, envValue
 import { userClaudePlugins } from './confineFiles';
 
 /**
- * Heads and reviewers run with your sign-in only (HSEC-70): none of your own instructions,
+ * Heads and reviewers run with your sign-in only (HSEC-71): none of your own instructions,
  * memories, plugins, hooks or MCP servers. Hydra's own lead entry in your Codex config.toml is one
  * of those servers, and a head or reviewer that loaded it could start heads of its own.
  *

@@ -80,7 +80,7 @@ test('a Claude head\'s settings: exactly the read block and the deny pairs, and 
   ] } });
   // What goes into the file is what Claude reads back: only known keys, each rule in the form R1 showed works.
   const written = JSON.parse(JSON.stringify(settings, null, 2));
-  assert.deepEqual(Object.keys(written), ['disableAllHooks', 'permissions'], 'HSEC-70: every hook off');
+  assert.deepEqual(Object.keys(written), ['disableAllHooks', 'permissions'], 'HSEC-71: every hook off');
   assert.deepEqual(Object.keys(written.permissions).sort(), ['blockReadsOutsideWorkingDirectories', 'deny']);
   for (const rule of written.permissions.deny) assert.match(rule, /^(Read|Edit)\(\/\/c\/[^\\[\]*]+(\/\*\*)?\)$/);
   assert.deepEqual(settingsProblems(written, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
@@ -90,7 +90,7 @@ test('the settings checker refuses anything Claude might reject or that would hi
   const good = { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: ['Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)'] } };
   const check = (value: unknown, readable: string[] = []) => settingsProblems(value, { platform: 'win32', blockReads: true, readable });
   assert.deepEqual(check(good), []);
-  // HSEC-70: a head's hooks are off, exactly; a lane keeps yours.
+  // HSEC-71: a head's hooks are off, exactly; a lane keeps yours.
   assert.match(check({ permissions: good.permissions })[0]!, /a head's hooks must be off/);
   assert.match(check({ ...good, disableAllHooks: false })[0]!, /a head's hooks must be off/);
   assert.match(settingsProblems({ disableAllHooks: true, permissions: { deny: ['Read(//home/me/.ssh/**)'] } }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own hooks/);
@@ -216,6 +216,8 @@ test('Claude head arguments: user settings only, its settings file, its tool lis
   assert.ok(!off.join(' ').includes('Bash') && !off.join(' ').includes('PowerShell'));
   assert.ok(!off.join(' ').includes('HYDRA_SHELL_DIRECT'), 'no wrapper, no marker');
   assert.ok(!off.includes('--add-dir'));
+  // A silent head (headSilence.ts): a response being written streams, so it isn't mistaken for silence.
+  assert.ok(off.includes('--include-partial-messages') && off.includes('--verbose') && flag(off, '--output-format') === 'stream-json');
 
   const sandboxed = claudeHelperArguments(spec({ confine: { settingsFile: 'C:\\logs\\aaa-1.settings.json', addDirs: [], shell: true, env: { CLAUDE_CODE_SHELL_PREFIX: 'C:\\h\\hydra-shell.sh' } } }));
   assert.equal(flag(sandboxed, '--tools'), 'Read,Edit,Write,NotebookEdit,Glob,Grep,Bash');
@@ -238,7 +240,7 @@ test('Codex head arguments are as before: workspace-write, approval never; the e
   const codex = codexHelperArguments(spec({ provider: 'codex' }));
   assert.ok(codex.includes('workspace-write') && codex.includes("approval_policy='never'"));
   assert.ok(!codex.some(arg => /--settings|--tools|deny/.test(arg)), 'no read-deny profiles for Codex heads (R4)');
-  // HSEC-70: the isolation flags come first, then Hydra's server, the only one; on a resume too.
+  // HSEC-71: the isolation flags come first, then Hydra's server, the only one; on a resume too.
   const isolation = codexIsolationArguments({ model: 'gpt-x', windowsSandbox: 'elevated' });
   const isolated = codexHelperArguments(spec({ provider: 'codex', confine: { addDirs: [], shell: false, env: {}, codexArgs: isolation } }));
   assert.deepEqual(isolated.slice(0, 2 + isolation.length), ['exec', '--json', ...isolation]);
@@ -248,7 +250,7 @@ test('Codex head arguments are as before: workspace-write, approval never; the e
   assert.deepEqual(resumed.slice(0, 3 + isolation.length), ['exec', 'resume', '--json', ...isolation]);
 });
 
-test('HSEC-70: Codex heads and reviewers keep only your model, effort, tier and Windows sandbox; everything else of your config stays out', () => {
+test('HSEC-71: Codex heads and reviewers keep only your model, effort, tier and Windows sandbox; everything else of your config stays out', () => {
   const config = [
     '\uFEFFmodel = "gpt-main"', 'model_reasoning_effort = "medium"', "service_tier = 'default'", 'personality = "pragmatic"',
     'developer_instructions = "Call me Sam"', 'notify = ["x.exe"]', 'model_provider = "evil provider"',
@@ -314,7 +316,7 @@ test('a head\'s environment: its own TEMP and TMP, background tasks off, and the
   const codex = headEnvironment({ base: hydraEnv, platform: 'win32', provider: 'codex', temp: 'C:\\h\\temp\\bbb-1', worktree: 'W', shell: sandboxed, roleValues: { KIT_TOKEN: 'v' } });
   assert.equal(codex.CLAUDE_CODE_SHELL_PREFIX, undefined, 'Codex heads keep Codex\'s own sandbox');
   assert.deepEqual([codex.TEMP, codex.TMP, codex.KIT_TOKEN], ['C:\\h\\temp\\bbb-1', 'C:\\h\\temp\\bbb-1', 'v']);
-  // HSEC-70: a Claude head loads no CLAUDE.md and no auto memory; a Codex head gets Hydra's own CODEX_HOME when there is one.
+  // HSEC-71: a Claude head loads no CLAUDE.md and no auto memory; a Codex head gets Hydra's own CODEX_HOME when there is one.
   assert.deepEqual([claude.CLAUDE_CODE_DISABLE_CLAUDE_MDS, claude.CLAUDE_CODE_DISABLE_AUTO_MEMORY], ['1', '1']);
   assert.equal(codex.CLAUDE_CODE_DISABLE_CLAUDE_MDS, undefined);
   assert.equal(codex.CODEX_HOME, 'C:\\codex', 'without its own home, your CODEX_HOME as before');

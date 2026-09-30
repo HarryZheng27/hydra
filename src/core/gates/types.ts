@@ -52,7 +52,7 @@ export interface GateContext {
    */
   tempRoot?: string;
   /**
-   * HSEC-70: Hydra's storage folder, which holds the Codex reviewer's own CODEX_HOME (agentHome.ts).
+   * HSEC-71: Hydra's storage folder, which holds the Codex reviewer's own CODEX_HOME (agentHome.ts).
    * Without it, a Codex reviewer uses your home, with Hydra's flags keeping your config.toml out.
    */
   agentStorage?: string;
@@ -81,7 +81,7 @@ export interface ReviewerSpec {
   timeoutMs: number;
   signal?: AbortSignal;
   spawned?: (pid: number) => void;
-  /** HSEC-70: set on top of Hydra's environment (AgentIsolation.env): Claude's switches, or Codex's CODEX_HOME. */
+  /** HSEC-71: set on top of Hydra's environment (AgentIsolation.env): Claude's switches, or Codex's CODEX_HOME. */
   env?: Record<string, string>;
 }
 
@@ -89,7 +89,7 @@ export interface ReviewerSpec {
 export interface GateRuntime {
   runCommand(command: { executable: string; args: string[]; env?: Record<string, string>; environment?: Record<string, string> }, cwd: string, logFile: string, timeoutMs: number, signal?: AbortSignal, spawned?: (pid: number) => void): Promise<CheckCommandResult>;
   runReviewer(spec: ReviewerSpec): Promise<ProbeOutput>;
-  /** HSEC-70: what a reviewer runs with so none of your own configuration reaches it (agentIsolation). */
+  /** HSEC-71: what a reviewer runs with so none of your own configuration reaches it (agentIsolation). */
   isolation(provider: Provider, storage: string | undefined): Promise<AgentIsolation>;
   browser: ScreenshotBrowser;
   freePort(): Promise<number>;

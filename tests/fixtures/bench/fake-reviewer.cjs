@@ -14,7 +14,15 @@ process.stdin.on('end', () => {
   say({ type: 'thread.started', thread_id: 't' });
   if (mode === 'limit') { say({ type: 'error', message: "You've hit your usage limit. Try again later." }); process.exitCode = 1; return; }
   if (mode === 'crash') { process.stderr.write('something broke'); process.exitCode = 2; return; }
-  const verdict = mode === 'fail'
+  // "fail-first" fails the first review it is asked for and passes every later one (a fix round worked); "fail-twice" fails two.
+  let failing = mode === 'fail';
+  if (mode === 'fail-first' || mode === 'fail-twice') {
+    const counter = path.join(process.cwd(), '..', 'fake-reviewer-count');
+    const seen = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+    fs.writeFileSync(counter, String(seen + 1));
+    failing = seen < (mode === 'fail-twice' ? 2 : 1);
+  }
+  const verdict = failing
     ? { verdict: 'fail', summary: 'The total ignores the discount.', findings: [{ file: 'src/total.js', line: 3, severity: 'major', note: 'The discount is never applied.' }, { severity: 'minor', note: 'A name could be clearer.' }] }
     : { verdict: 'pass', summary: 'It does what the task asks.', findings: [] };
   say({ type: 'item.completed', item: { id: 'i', type: 'agent_message', text: JSON.stringify(verdict) } });

@@ -47,7 +47,7 @@ const other = (provider: Provider): Provider => provider === 'claude' ? 'codex' 
  * that folder's `.claude/settings.json` hooks and connects its `.mcp.json` servers, both of which a
  * head can write: plan mode doesn't stop a hook, which would run as you, outside any sandbox.
  *
- * HSEC-70: nor does any of your own configuration reach a reviewer, only your sign-in. Claude gets a
+ * HSEC-71: nor does any of your own configuration reach a reviewer, only your sign-in. Claude gets a
  * `--settings` file with every hook and your plugins off (reviewerSettings), no skills
  * (`--disable-slash-commands`), and, in its environment, no CLAUDE.md or auto memory. Codex gets
  * the flags that keep your config.toml, plugins, hooks, memories and apps out (`codexArgs`, from
@@ -61,7 +61,7 @@ export function reviewArguments(provider: Provider, images: readonly string[] = 
       '--strict-mcp-config', '--disable-slash-commands', ...(web ? ['--allowedTools', 'WebFetch,WebSearch'] : [])];
 }
 
-/** A Claude reviewer's settings file (HSEC-70): every hook off, and each of your plugins. */
+/** A Claude reviewer's settings file (HSEC-71): every hook off, and each of your plugins. */
 export function reviewerSettings(plugins: readonly string[]): { disableAllHooks: true; enabledPlugins?: Record<string, false> } {
   const ids = [...new Set(plugins)].filter(id => pluginIdForm.test(id)).sort();
   return { disableAllHooks: true, ...(ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false] as const)) } : {}) };
@@ -277,7 +277,7 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
   // actually sent, are both redacted the same way.
   const redactedPrompt = redact(prompt);
   await writeFile(promptFile, redactedPrompt, 'utf8');
-  // HSEC-70: the reviewer runs with your sign-in only.
+  // HSEC-71: the reviewer runs with your sign-in only.
   const isolation = await run.runtime.isolation(pick.provider, run.agentStorage);
   if (isolation.note) run.log?.(`[gates] ${gate.id}: Codex reviews with your own Codex home: ${isolation.note}.`);
   let settingsFile: string | undefined;

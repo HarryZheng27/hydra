@@ -1330,6 +1330,8 @@ class Manager {
   private createPlanBoardBridge(): PlanBoardBridge {
     return {
       jobPlan: jobId => this.jobPlanFor(jobId),
+      // O7: an unattended plan's heads get an automatic answer to hydra_stuck (docs/Heads.md, "When nobody answers").
+      unattended: planId => !!this.plans?.store.get(planId)?.unattended,
       // O3: what a plan's head is checked against while it runs: its plan's integration branch, until the plan is merged.
       integrationTarget: jobId => {
         const found = this.jobPlanFor(jobId);
@@ -1646,6 +1648,7 @@ class Manager {
         ...(head?.usage?.inputTokens !== undefined ? { inputTokens: head.usage.inputTokens } : {}),
         ...(head?.usage?.outputTokens !== undefined ? { outputTokens: head.usage.outputTokens } : {}),
         ...(head?.providerWaitMs ? { providerWaitMs: head.providerWaitMs } : {}),
+        ...(head?.replies.some(reply => reply.auto) ? { autoAnswered: head.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto!, ...(reply.question ? { question: reply.question } : {}) })) } : {}),
       };
     });
     return buildPlanReport(plan, details, defaultHeadBudgetUsd);

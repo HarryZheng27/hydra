@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { registerFunctions } from '../../../scripts/benchmark-lib.mjs';
 
 const repo = path.resolve(process.argv[2] ?? '.');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -441,7 +442,8 @@ await check('client: every method against the real server', async () => {
   } finally { await app.close(); }
 });
 await check('the plan\'s other files exist: routes index, bin/serve.js, the end-to-end test, client/README.md', () => {
-  assert.equal(require('./src/routes/index.js').length, 7);
+  // SPEC section 17 says only that the index exports the register functions: an array, an object of functions or a nested array all provide them.
+  assert.equal(registerFunctions(require('./src/routes/index.js')).length, 7, 'src/routes/index.js provides 7 register functions');
   for (const file of ['bin/serve.js', 'test/e2e.test.js', 'client/README.md', 'test/api.test.js']) assert.ok(existsSync(path.join(repo, file)), file);
 });
 

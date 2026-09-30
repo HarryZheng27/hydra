@@ -74,5 +74,5 @@ Each module moves onto the core, keeping its exports and behaviour. These privat
 ## 7. Finishing
 
 - `src/core/index.js` re-exports every function of the four core modules.
-- `test/structure.test.js` reads each module's source and fails if any helper from section 6 is still defined in it, or if it doesn't require `./core/…`.
+- `test/structure.test.js` is already in the repository, and nobody edits it. It reads each module's source and, for a module that requires `./core/…` (one that has been moved), fails if any helper from section 6 is still defined in it. A module not moved yet is skipped, so the test passes on the starting code and each move's own `npm test` catches a helper left behind.
 - `README.md` gets a section on the core: what each core module offers, with its options.

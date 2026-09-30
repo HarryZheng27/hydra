@@ -14,6 +14,6 @@ Move the modules onto one shared core, as [SPEC.md](SPEC.md) describes exactly:
 
 - a core in `src/core/` (`money.js`, `dates.js`, `csv.js`, `validate.js`), each with its own tests in `test/core/`;
 - each of the six modules rewritten on the core, with its private helpers gone and its behaviour unchanged: the existing tests pass without being changed;
-- then `src/core/index.js`, a test that no private helper is left, and a section of this README on the core.
+- then `src/core/index.js` and a section of this README on the core. `test/structure.test.js`, which fails when a moved module still has a private helper, is already here.
 
 `npm test` must pass at the end.

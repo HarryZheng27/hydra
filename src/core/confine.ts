@@ -177,7 +177,7 @@ export interface HeadSettingsInput {
  * Your plugins are turned off (`enabledPlugins`, which beats your user settings): a head can't use
  * their tools, and each of their hooks would run through the shell sandbox's wrapper, which made
  * every head command take a minute or more.
- * Every hook is off (`disableAllHooks`, HSEC-70): your settings' own hooks don't run for a head.
+ * Every hook is off (`disableAllHooks`, HSEC-71): your settings' own hooks don't run for a head.
  * A role's `--plugin-dir` plugin isn't listed, so it still loads.
  * Throws when the result isn't a file Claude Code would accept, or when a Read rule would cover the
  * head's own worktree or its `--add-dir` folders: then the head doesn't start.
@@ -391,7 +391,7 @@ export interface HeadEnvironmentInput {
   /** A role's variables (RoleLaunch.variables) and its values for Codex servers (RoleLaunch.env). */
   roleNames?: readonly string[];
   roleValues?: Readonly<Record<string, string>>;
-  /** A Codex head's own CODEX_HOME (agentHome.ts), when Hydra could make one (HSEC-70). */
+  /** A Codex head's own CODEX_HOME (agentHome.ts), when Hydra could make one (HSEC-71). */
   codexHome?: string;
 }
 
@@ -413,7 +413,7 @@ export function headEnvironment(input: HeadEnvironmentInput): Record<string, str
   return confinedEnvironment({ base: input.base, platform: input.platform, provider: input.provider, roleNames: input.roleNames ?? [], set });
 }
 
-// ---- Your own agent configuration stays out of heads and reviewers (HSEC-70) ----
+// ---- Your own agent configuration stays out of heads and reviewers (HSEC-71) ----
 
 /**
  * What a Claude head or reviewer gets so none of your own instructions reach it: no CLAUDE.md

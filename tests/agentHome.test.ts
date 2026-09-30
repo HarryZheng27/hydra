@@ -6,7 +6,7 @@ import path from 'node:path';
 import { agentIsolation, codexHomeFolder, newerSignIn, prepareCodexHome } from '../src/core/agentHome';
 
 /**
- * HSEC-70: heads and reviewers run with your sign-in only. These tests use a made-up Codex home
+ * HSEC-71: heads and reviewers run with your sign-in only. These tests use a made-up Codex home
  * (CODEX_HOME in a temporary folder) and Claude folder (CLAUDE_CONFIG_DIR), never your own.
  */
 

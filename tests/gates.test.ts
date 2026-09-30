@@ -76,7 +76,7 @@ function fakeReviewer(reply: (spec: ReviewerSpec) => Partial<ProbeOutput>) {
 const claudeEnvelope = (text: string) => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text });
 const verdict = (value: unknown) => JSON.stringify(value);
 
-/** HSEC-70: a reviewer's isolation, faked so no test reads your own Claude or Codex folders. */
+/** HSEC-71: a reviewer's isolation, faked so no test reads your own Claude or Codex folders. */
 const fakeIsolation: GateRuntime['isolation'] = async (provider): Promise<AgentIsolation> => provider === 'codex'
   ? { env: { CODEX_HOME: 'H:\\codex-home' }, codexArgs: ['--ignore-user-config', '-c', 'features.apps=false'], claudePlugins: [] }
   : { env: { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' }, codexArgs: [], claudePlugins: ['claude-mem@thedotmack'] };
@@ -201,7 +201,7 @@ test('gates run in order (commands, screenshots, review), and required: false is
     assert.equal(pictures.length, 2);
     for (const picture of pictures) assert.ok(await exists(picture), picture);
     assert.deepEqual(spec!.args, ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', "web_search='disabled'", '-i', pictures[0]!, '-i', pictures[1]!, '--sandbox', 'read-only', '-']);
-    assert.deepEqual(spec!.env, { CODEX_HOME: 'H:\\codex-home' }, 'HSEC-70: Hydra\'s own Codex home');
+    assert.deepEqual(spec!.env, { CODEX_HOME: 'H:\\codex-home' }, 'HSEC-71: Hydra\'s own Codex home');
     // 1.2: the command's own output is fenced with the prompt's nonce.
     const nonce = /<<<untrusted-([0-9a-f]{16})/.exec(spec!.input)?.[1];
     assert.ok(nonce, 'the prompt carries a nonce');
@@ -245,7 +245,7 @@ test('review: the exact read-only arguments, and the prompt with the diff cap, t
   assert.deepEqual(reviewArguments('claude', [], false, settings), claudeBase);
   assert.deepEqual(reviewArguments('claude', ['a.png'], false, settings), claudeBase, 'Claude reads screenshots by path');
   // `codex exec` searches the web by default (research R7): a review has it off unless its pack role has "web" (R9).
-  // HSEC-70: the isolation flags come right after `exec --json`.
+  // HSEC-71: the isolation flags come right after `exec --json`.
   const isolation = { codexArgs: ['--ignore-user-config', '-c', 'features.apps=false'] };
   assert.deepEqual(reviewArguments('codex', [], false, isolation), ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', 'web_search=\'disabled\'', '--sandbox', 'read-only', '-']);
   assert.deepEqual(reviewArguments('codex', ['a.png', 'b.png'], false, isolation), ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', 'web_search=\'disabled\'', '-i', 'a.png', '-i', 'b.png', '--sandbox', 'read-only', '-']);
@@ -334,7 +334,7 @@ test('review: the other agent reviews; the same one stands in when the other is 
     assert.equal(reviewer.specs[0]!.provider, 'claude');
     const settingsFile = path.join(path.dirname(result!.evidence![0]!), 'review-settings.json');
     assert.deepEqual(reviewer.specs[0]!.args, ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--settings', settingsFile, '--strict-mcp-config', '--disable-slash-commands']);
-    // HSEC-70: every hook and your plugins off, and no CLAUDE.md.
+    // HSEC-71: every hook and your plugins off, and no CLAUDE.md.
     assert.deepEqual(JSON.parse(await readFile(settingsFile, 'utf8')), { disableAllHooks: true, enabledPlugins: { 'claude-mem@thedotmack': false } });
     assert.deepEqual(reviewer.specs[0]!.env, { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' });
     assert.equal(reviewer.specs[0]!.executable, 'fake-claude'); assert.equal(reviewer.specs[0]!.timeoutMs, 5 * 60_000);
