@@ -25,7 +25,7 @@ import {
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
 import { run } from './benchmark-run.mjs';
 import { guardSuspend, renderVoidRuns, replaceVoidFolder } from './benchmark-suspend.mjs';
-import { closeLeftovers, closeOwnWindow, launcherLacksClose, markerFile, readMarker, readWindowRecords } from './benchmark-windows.mjs';
+import { closeCli, closeLeftovers, closeOwnWindow, markerFile, readMarker, readWindowRecords } from './benchmark-windows.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -149,8 +149,10 @@ async function windowDeps(tool, cliIn) {
   // A launcher built before `hydra close` would open a window on a folder named "close": check it lists the command.
   const file = tool?.path ?? (tool && !tool.missing && path.isAbsolute(tool.command) ? tool.command : undefined);
   const text = file ? await fs.readFile(file, 'utf8').catch(() => undefined) : undefined;
+  // With an old launcher, Hydra.exe runs the installed hydra-cli.cjs directly, as the launcher would, if it has close.
+  const { cli, canClose, via } = await closeCli({ launcherFile: file, launcherText: text, cliIn, run, exists: existsSync, log: line => console.log(line) });
   return {
-    cli: cliIn, readMarker, records: () => readWindowRecords(process.env), canClose: !launcherLacksClose(text),
+    cli, readMarker, records: () => readWindowRecords(process.env), canClose, via,
     removeMarker: folder => fs.rm(markerFile(folder), { force: true }), log: line => console.log(line), warn: line => console.error(line),
   };
 }

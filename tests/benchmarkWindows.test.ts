@@ -6,9 +6,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  benchWindows, closeDecision, closeLeftovers, closeOwnWindow, launcherLacksClose, markerFile, underBench, windowsDirectory,
+  benchWindows, closeCli, closeDecision, closeLeftovers, closeOwnWindow, directCliPaths, helpListsClose, launcherLacksClose, markerFile, underBench, windowsDirectory,
 // @ts-expect-error: a plain .mjs module with no type declarations.
 } from '../scripts/benchmark-windows.mjs';
+import { runCli } from '../src/core/hydraCli';
 
 /**
  * docs/Benchmark.md, "Closing the windows": the harness closes the Hydra windows it opened (bench-open.ps1's marker
@@ -61,6 +62,44 @@ test('a launcher built before `hydra close` is spotted, so the harness never ask
   assert.equal(launcherLacksClose(sh(before)), true);
   assert.equal(launcherLacksClose(`@"node" "fake-hydra.cjs" %*`), false, 'not Hydra\'s launcher');
   assert.equal(launcherLacksClose(undefined), false);
+});
+
+test('an old launcher: the harness runs Hydra.exe on the installed hydra-cli.cjs directly, only when that script has close', async () => {
+  // The real usage text lists close; an older one doesn't.
+  let usage = '';
+  await runCli(['--help'], { stdout: (text: string) => { usage += text; } } as never);
+  assert.equal(helpListsClose(usage), true);
+  assert.equal(helpListsClose(usage.replace(/^\s*close\b.*$/m, '')), false);
+
+  const install = path.resolve('/Programs/Hydra'), launcherFile = path.join(install, 'bin', 'hydra.cmd');
+  const oldLauncher = `set ELECTRON_RUN_AS_NODE=1\r\nfor %%C in (status plan heads stop resume report) do if /I "%~1"=="%%C" goto hydracli\r\n:hydracli\r\n"%~dp0..\\Hydra.exe" "%~dp0..\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-cli.cjs" %*\r\n`;
+  const { exe, script } = directCliPaths(launcherFile, oldLauncher);
+  assert.equal(exe, path.join(install, 'Hydra.exe'));
+  assert.equal(script, path.join(install, 'resources', 'app', 'extensions', 'hydra-agent-manager', 'dist', 'hydra-cli.cjs'));
+
+  const calls: { command: string; argv: string[]; cwd: string; env: Record<string, string> }[] = [];
+  let help = usage;
+  const run = async (command: string, argv: string[], options: { cwd: string; env: Record<string, string> }) => {
+    calls.push({ command, argv, cwd: options.cwd, env: options.env });
+    return argv[1] === '--help' ? { code: 0, stdout: help, stderr: '' } : { code: 0, stdout: '{"closing":true}', stderr: '' };
+  };
+  const logs: string[] = [];
+  const launcherCli = async () => { throw new Error('the old launcher must not be asked to close'); };
+  const deps = { launcherFile, launcherText: oldLauncher, cliIn: launcherCli, run, exists: () => true, log: (line: string) => { logs.push(line); } };
+  const chosen = await closeCli(deps);
+  assert.deepEqual([chosen.canClose, chosen.via], [true, 'hydra-cli.cjs directly']);
+  assert.match(logs[0]!, /Closing windows with .*Hydra\.exe .*hydra-cli\.cjs \(ELECTRON_RUN_AS_NODE=1\)/);
+  const repo = path.resolve('/r/.bench/a/hydra');
+  await chosen.cli(repo, 'close', '--json');
+  assert.deepEqual(calls.at(-1), { command: exe, argv: [script, 'close', '--json'], cwd: repo, env: { ELECTRON_RUN_AS_NODE: '1' } });
+
+  // The installed script predates close too, or isn't there: nothing closes, and that is logged.
+  help = usage.replace(/^\s*close\b.*$/m, '');
+  assert.deepEqual([(await closeCli(deps)).canClose, (await closeCli({ ...deps, exists: () => false })).canClose], [false, false]);
+  assert.match(logs.at(-1)!, /both predate `hydra close`/);
+  // A launcher that has close is used as it is.
+  const current = await closeCli({ ...deps, launcherText: oldLauncher.replace('report)', 'report close)') });
+  assert.deepEqual([current.cli, current.via], [launcherCli, 'the hydra command']);
 });
 
 test('leftover detection: live discovery records whose folder is under .bench', () => {

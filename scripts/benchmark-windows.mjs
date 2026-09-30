@@ -54,6 +54,42 @@ export function launcherLacksClose(text) {
   return !dispatch.some(line => /\bclose\b/.test(line));
 }
 
+/**
+ * The launcher's own target, for when it predates `close` (pure): the app's executable beside its `bin` folder (the
+ * name the launcher calls, `"%~dp0..\Hydra.exe"`) and the built-in extension's dist/hydra-cli.cjs, which a light
+ * refresh of the extension's files updates without a desktop rebuild. brandedLauncherCmd (scripts/desktop.mjs) runs
+ * exactly this, with ELECTRON_RUN_AS_NODE=1.
+ */
+export function directCliPaths(launcherFile, launcherText) {
+  const install = path.dirname(path.dirname(launcherFile));
+  const named = /%~dp0\.\.\\([^"\\]+\.exe)"/i.exec(launcherText ?? '')?.[1];
+  return { exe: path.join(install, named ?? 'Hydra.exe'), script: path.join(install, 'resources', 'app', 'extensions', 'hydra-agent-manager', 'dist', 'hydra-cli.cjs') };
+}
+/** Whether `hydra --help` (the usage text) lists the close command (pure). */
+export const helpListsClose = text => /^\s*close\b/m.test(String(text ?? ''));
+
+/**
+ * How the harness runs `hydra` for closing windows: the launcher, when it dispatches `close`; else, when the launcher
+ * predates it, Hydra.exe running the installed hydra-cli.cjs directly, but only if that script's --help lists close;
+ * else nothing (canClose false). `via` says which, and is logged. deps: launcherFile, launcherText, cliIn(cwd, ...argv),
+ * run(command, argv, options), exists(file), log.
+ */
+export async function closeCli({ launcherFile, launcherText, cliIn, run, exists, log }) {
+  if (!launcherLacksClose(launcherText)) return { cli: cliIn, canClose: true, via: 'the hydra command' };
+  const { exe, script } = directCliPaths(launcherFile, launcherText);
+  const env = { ELECTRON_RUN_AS_NODE: '1' };
+  const direct = (cwd, ...argv) => run(exe, [script, ...argv], { cwd, env, shell: false, timeoutMs: 5 * 60_000 });
+  if (exists(exe) && exists(script)) {
+    const help = await direct(path.dirname(script), '--help').catch(() => undefined);
+    if (help?.code === 0 && helpListsClose(help.stdout)) {
+      log(`Closing windows with ${exe} ${script} (ELECTRON_RUN_AS_NODE=1): the hydra launcher predates \`hydra close\`, the installed hydra-cli.cjs has it.`);
+      return { cli: direct, canClose: true, via: 'hydra-cli.cjs directly' };
+    }
+  }
+  log('The hydra launcher and its hydra-cli.cjs both predate `hydra close`: the harness will close no windows.');
+  return { cli: cliIn, canClose: false, via: 'none' };
+}
+
 /** The live benchmark windows among discovery records (pure apart from `alive`): a folder under .bench, its process alive. */
 export function benchWindows(records, alive) {
   const windows = [];
@@ -91,7 +127,7 @@ export async function closeOwnWindow(folder, deps) {
   const marker = await deps.readMarker(folder);
   if (!marker) return { closed: false, reason: 'the harness didn\'t open it (no marker from bench-open.ps1)' };
   if (deps.canClose === false) {
-    deps.warn(`Not closing the Hydra window for ${folder}: the installed hydra command predates \`hydra close\`. Rebuild Hydra, or close the window yourself.`);
+    deps.warn(`Not closing the Hydra window for ${folder}: the installed hydra command predates \`hydra close\`, and so does its hydra-cli.cjs. Refresh Hydra's extension files, or close the window yourself.`);
     return { closed: false, reason: 'the hydra command has no close' };
   }
   const status = await deps.cli(folder, 'status', '--json');
@@ -104,7 +140,7 @@ export async function closeOwnWindow(folder, deps) {
     return { closed: false, reason };
   }
   await deps.removeMarker(folder);
-  deps.log(`Closed the Hydra window the harness opened for ${folder}.`);
+  deps.log(`Closed the Hydra window the harness opened for ${folder}${deps.via ? ` (via ${deps.via})` : ''}.`);
   return { closed: true };
 }
 

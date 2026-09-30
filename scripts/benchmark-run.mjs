@@ -26,13 +26,14 @@ export function killTree(pid) {
 
 /**
  * Runs a command without a window, optionally feeding stdin; resolves with its exit code and output.
+ * - `env`: variables added to this process's own for the command.
  * - `timeoutMs`: past it (a wall-clock deadline a heartbeat checks, as well as a timer), the whole process tree is killed and `timedOut` is true.
  * - It resolves once the command exits and its output has ended, or `exitGraceMs` after it exits when something it
  *   started still holds its output open (a server a test left running), so a lingering grandchild can't hang a run.
  */
-export function run(command, argv, { cwd, input, timeoutMs, shell = process.platform === 'win32', graceMs = exitGraceMs, now = Date.now, setInterval: every = setInterval, clearInterval: clear = clearInterval, heartbeatMs = 5000 } = {}) {
+export function run(command, argv, { cwd, env, input, timeoutMs, shell = process.platform === 'win32', graceMs = exitGraceMs, now = Date.now, setInterval: every = setInterval, clearInterval: clear = clearInterval, heartbeatMs = 5000 } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(shell ? [command, ...argv].map(quote).join(' ') : command, shell ? [] : argv, { cwd, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(shell ? [command, ...argv].map(quote).join(' ') : command, shell ? [] : argv, { cwd, ...(env ? { env: { ...process.env, ...env } } : {}), shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timedOut = false, settled = false, exitCode = null, grace;
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     const finish = code => {
