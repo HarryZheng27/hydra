@@ -26,11 +26,11 @@ export function killTree(pid) {
 
 /**
  * Runs a command without a window, optionally feeding stdin; resolves with its exit code and output.
- * - `timeoutMs`: past it, the whole process tree is killed and `timedOut` is true.
+ * - `timeoutMs`: past it (a wall-clock deadline a heartbeat checks, as well as a timer), the whole process tree is killed and `timedOut` is true.
  * - It resolves once the command exits and its output has ended, or `exitGraceMs` after it exits when something it
  *   started still holds its output open (a server a test left running), so a lingering grandchild can't hang a run.
  */
-export function run(command, argv, { cwd, input, timeoutMs, shell = process.platform === 'win32', graceMs = exitGraceMs } = {}) {
+export function run(command, argv, { cwd, input, timeoutMs, shell = process.platform === 'win32', graceMs = exitGraceMs, now = Date.now, setInterval: every = setInterval, clearInterval: clear = clearInterval, heartbeatMs = 5000 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(shell ? [command, ...argv].map(quote).join(' ') : command, shell ? [] : argv, { cwd, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timedOut = false, settled = false, exitCode = null, grace;
@@ -38,12 +38,17 @@ export function run(command, argv, { cwd, input, timeoutMs, shell = process.plat
     const finish = code => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer); clearTimeout(grace);
+      clearTimeout(timer); clearTimeout(grace); clear(beat);
       child.stdout.destroy(); child.stderr.destroy();
       resolve({ code, stdout, stderr, timedOut });
     };
-    const timer = timeoutMs ? setTimeout(() => { timedOut = true; void killTree(child.pid); }, timeoutMs) : undefined;
-    child.on('error', error => { if (!settled) { settled = true; clearTimeout(timer); reject(error); } });
+    const expire = () => { if (timedOut) return; timedOut = true; void killTree(child.pid); };
+    const timer = timeoutMs ? setTimeout(expire, timeoutMs) : undefined;
+    // A wall-clock deadline, checked by a heartbeat: setTimeout doesn't always advance across a machine sleep.
+    const deadline = timeoutMs ? now() + timeoutMs : undefined;
+    const beat = deadline ? every(() => { if (now() >= deadline) expire(); }, heartbeatMs) : undefined;
+    beat?.unref?.();
+    child.on('error', error => { if (!settled) { settled = true; clearTimeout(timer); clear(beat); reject(error); } });
     child.on('exit', code => { exitCode = code; grace = setTimeout(() => finish(exitCode), graceMs); });
     child.on('close', code => finish(code ?? exitCode));
     // A command that exits without reading its input (git, say) closes the pipe first: that's not an error here.

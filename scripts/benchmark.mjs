@@ -2,7 +2,8 @@
 // O9 (docs/Benchmark.md): Hydra's public benchmark. Nico runs it: it spends real subscription usage, and the Hydra run
 // needs a Hydra window open on its repository (the recording is made there). Nothing here opens a window itself.
 //
-//   node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>]
+//   node scripts/benchmark.mjs prepare [--fixture <name>] [--out <dir>] [--replace-void]
+//     (single, hydra, review and swebench exit 4 when the machine slept during the run: it is marked void, run it again)
 //   node scripts/benchmark.mjs hydra  --repo <dir>/hydra  [--fixture <name>] [--task <plan>] [--minutes 120] [--usd 80] [--hydra "<command>"] [--plan-store <plans.json>]
 //   node scripts/benchmark.mjs single --repo <dir>/single [--fixture <name>] [--task <plan>] [--agent claude|codex] [--minutes 120] [--claude <path>] [--command "<agent command>"] [--prompt <file>] [--gate "<command>"|none]
 //   node scripts/benchmark.mjs review --results <dir> [--fix-rounds 2] [--codex <path>] [--claude <path>] [--base <commit>] [--reviewer-command "<command>"] [--fix-command "<agent command>"]
@@ -23,13 +24,16 @@ import {
 } from './benchmark-lib.mjs';
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
 import { run } from './benchmark-run.mjs';
+import { guardSuspend, renderVoidRuns, replaceVoidFolder } from './benchmark-suspend.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+const booleanFlags = new Set(['--replace-void']);
 function args(argv) {
   const flags = {}, rest = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith('--')) { const name = argv[i].slice(2); const value = argv[i + 1]; if (value === undefined || value.startsWith('--')) throw new Error(`--${name} needs a value.`); flags[name] = value; i++; }
+    if (booleanFlags.has(argv[i])) flags[argv[i].slice(2)] = 'yes';
+    else if (argv[i].startsWith('--')) { const name = argv[i].slice(2); const value = argv[i + 1]; if (value === undefined || value.startsWith('--')) throw new Error(`--${name} needs a value.`); flags[name] = value; i++; }
     else rest.push(argv[i]);
   }
   return { command: rest[0], flags, rest: rest.slice(1) };
@@ -76,6 +80,8 @@ async function fixtureOf(flags, runFolder) {
 async function prepare(flags) {
   const out = path.resolve(flags.out ?? path.join(root, '.bench', `run-${new Date().toISOString().replace(/[:.]/g, '-')}`));
   const fixture = await fixtureOf(flags);
+  // --replace-void: a run whose results say void (the machine slept) moves aside, and this one is prepared fresh.
+  if (flags['replace-void']) { const aside = await replaceVoidFolder(out); if (aside) console.log(`Moved the void run ${out} to ${aside}.`); }
   if (!fixture.dir) throw new Error('prepare needs a fixture (SWE-bench instances are run with benchmark.mjs swebench).');
   for (const name of ['hydra', 'single']) {
     const repo = path.join(out, name);
@@ -431,7 +437,7 @@ async function summarize(flags, rest) {
   if (!patterns.length) throw new Error('--runs needs run folders or globs, comma-separated.');
   const folders = [...new Set((await Promise.all(patterns.map(expandGlob))).flat())].sort();
   const parent = folders.length === 1 ? path.dirname(folders[0]) : folders.reduce((common, folder) => { while (!(folder + path.sep).toLowerCase().startsWith(common.toLowerCase() + path.sep) && common !== path.dirname(common)) common = path.dirname(common); return common; }, folders[0]);
-  const rows = [], skipped = [], swebenchRows = [];
+  const rows = [], skipped = [], swebenchRows = [], voids = [];
   for (const folder of folders) {
     const entries = await fs.readdir(folder).catch(() => []);
     // A SWE-bench slice's folder: its resolved rate, once swebench-submit has written resolved.json.
@@ -442,12 +448,14 @@ async function summarize(flags, rest) {
     if (!files.length) { if (!entries.includes('resolved.json')) skipped.push(folder); continue; }
     for (const name of files) {
       const result = await readJson(path.join(folder, name));
+      // A run the machine slept through is listed on its own, never in a median.
+      if (result.void) { voids.push({ folder: path.relative(parent, folder) || path.basename(folder), task: result.task ?? result.fixture ?? '–', setup: result.kind === 'hydra' ? 'hydra' : 'single', suspended: result.suspended }); continue; }
       const stored = result.kind === 'hydra' && (result.timeToWorkingCodeSeconds === undefined || !result.wallClockFrom || result.wallClockFrom === 'polling' || (result.firstReview === undefined && result.fixRounds > 0)) && result.planId ? await storedPlan(result.planId, flags['plan-store']) : undefined;
       rows.push(...runRows(result, path.relative(parent, folder) || path.basename(folder), stored ? { ...landingFromStore(stored, Date.parse(result.startedAt) || undefined), fixBrief: stored.jobs?.find(job => job.key === 'integration-fix-1')?.brief } : undefined));
     }
   }
-  if (!rows.length && !swebenchRows.length) throw new Error(`No *-results.json or resolved.json in ${patterns.join(', ')}.`);
-  const sections = [rows.length ? renderSummary(rows) : '', renderSwebenchSummary(swebenchRows)].filter(Boolean).join('\n');
+  if (!rows.length && !swebenchRows.length && !voids.length) throw new Error(`No *-results.json or resolved.json in ${patterns.join(', ')}.`);
+  const sections = [rows.length ? renderSummary(rows) : '', renderSwebenchSummary(swebenchRows), renderVoidRuns(voids)].filter(Boolean).join('\n');
   const markdown = `# Benchmark summary\n\n${folders.length - skipped.length} run folder(s) under ${parent}, summarized ${new Date().toISOString()}.${skipped.length ? ` No results in: ${skipped.map(folder => path.relative(parent, folder)).join(', ')}.` : ''}\n\n${sections}`;
   const file = path.resolve(flags.out ?? path.join(parent, 'summary.md'));
   await fs.writeFile(file, markdown);
@@ -469,9 +477,16 @@ async function publish(flags) {
 }
 
 const { command, flags, rest } = args(process.argv.slice(2));
+// Every command that runs an agent or waits on Hydra is watched for a machine sleep (benchmark-suspend.mjs): a run
+// that slept is marked void in its results and the command exits 4.
+const resultsOf = (flags, ...names) => () => { const dir = path.resolve(flags.results ?? path.dirname(path.resolve(flags.repo ?? ''))); return names.map(name => path.join(dir, name)); };
+const guardedSingle = flags => guardSuspend(() => single(flags), { files: resultsOf(flags, 'single-results.json') });
+const guardedHydra = flags => guardSuspend(() => hydra(flags), { files: resultsOf(flags, 'hydra-results.json') });
 const commands = {
-  prepare, hydra, single, review, summarize, publish,
-  swebench: (options, extra) => swebench(options, extra, { root, run, git, runSingle: single, runHydra: hydra, openHydra }),
+  prepare, summarize, publish,
+  hydra: guardedHydra, single: guardedSingle,
+  review: flags => guardSuspend(() => review(flags), { files: resultsOf(flags, 'single-results.json', 'single-review.json') }),
+  swebench: (options, extra) => swebench(options, extra, { root, run, git, runSingle: guardedSingle, runHydra: guardedHydra, openHydra }),
   'swebench-submit': (options, extra) => swebenchSubmit(options, extra, { run }),
 };
 if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish|swebench|swebench-submit [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
