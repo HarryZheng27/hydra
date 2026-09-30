@@ -25,7 +25,7 @@ import {
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
 import { run } from './benchmark-run.mjs';
 import { guardSuspend, renderVoidRuns, replaceVoidFolder } from './benchmark-suspend.mjs';
-import { closeCli, closeLeftovers, closeOwnWindow, markerFile, readMarker, readWindowRecords } from './benchmark-windows.mjs';
+import { closeCli, closeLeftovers, closeOwnWindow, markerFile, ownMarkerMaxAgeMs, readMarker, readWindowRecords } from './benchmark-windows.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -134,6 +134,7 @@ async function hydra(flags) {
   const [command, ...prefix] = flags.hydra ? commandLine(flags.hydra) : [hydraTool.command];
   const cliIn = (cwd, ...argv) => run(command, [...prefix, ...argv], { cwd, timeoutMs: 5 * 60_000 });
   const cli = (...argv) => run(command, [...prefix, ...argv], { cwd: repo });
+  const runStarted = now();
   const windows = await windowDeps(flags.hydra ? undefined : hydraTool, cliIn);
   const status = await cli('status', '--json');
   if (status.code !== 0) throw new Error(`hydra status answered ${status.code}: ${status.stderr.trim() || status.stdout.trim()}\nOpen ${repo} in Hydra (and trust it) first.`);
@@ -141,7 +142,7 @@ async function hydra(flags) {
   await closeLeftovers(repo, windows);
   // This run's own window is closed once its results are written (or the run failed), if the harness opened it.
   try { return await hydraRun({ flags, repo, out, fixture, cli }); }
-  finally { await closeOwnWindow(repo, windows).catch(error => console.error(`WARNING: closing the Hydra window for ${repo} failed: ${error instanceof Error ? error.message : String(error)}`)); }
+  finally { await closeOwnWindow(repo, windows, { notBefore: runStarted - ownMarkerMaxAgeMs }).catch(error => console.error(`WARNING: closing the Hydra window for ${repo} failed: ${error instanceof Error ? error.message : String(error)}`)); }
 }
 
 /** What closing the harness's windows needs (scripts/benchmark-windows.mjs), wired to this machine. */

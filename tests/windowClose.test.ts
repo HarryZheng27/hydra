@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { HelperEndpoint, type HelperCaller } from '../src/core/helperEndpoint';
+import { HelperEndpoint, callHelperEndpoint, type HelperCaller } from '../src/core/helperEndpoint';
+import { createUserVerifier, evaluateUserChain, type ProcessLink } from '../src/core/leadVerification';
 import { HelperService, userPlanSession, type UserControl } from '../src/core/helperService';
 import { JobStore } from '../src/core/jobs';
 import type { AuditEvent } from '../src/core/audit';
-import { closeRefusal, describeActivity, windowActivity, type WindowActivity } from '../src/core/windowClose';
+import { closeRefusal, describeActivity, scheduleClose, windowActivity, type WindowActivity } from '../src/core/windowClose';
 
 /** HSEC-72 (docs/THREAT_MODEL.md; docs/Heads.md, "Scripts and CI"): `hydra close`'s refusal, in the window. */
 
@@ -81,6 +82,61 @@ test('hydra_close in the window: refused and audited while work runs, closes onc
     await bare.dispose(); await half.dispose();
   } finally {
     await service.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test('scheduleClose checks again just before closing, unless forced: work that started meanwhile keeps the window open', () => {
+  const timers: { run: () => void; ms: number }[] = [];
+  const setTimer = (run: () => void, ms: number) => { timers.push({ run, ms }); };
+  let activity: WindowActivity = { ...idle };
+  const events: string[] = [];
+  const schedule = (force: boolean) => scheduleClose({ force, activity: () => activity, close: () => events.push('closed'), aborted: refusal => events.push(`aborted: ${refusal}`), setTimer });
+
+  schedule(false);
+  assert.equal(timers[0]!.ms, 1500, 'the caller gets its reply first');
+  assert.deepEqual(events, [], 'nothing happens before the timer');
+  activity = { ...idle, plans: 1 };
+  timers[0]!.run();
+  assert.match(events[0]!, /^aborted: .*still working \(1 plan in progress\)/);
+
+  schedule(false);
+  activity = { ...idle };
+  timers[1]!.run();
+  assert.equal(events[1], 'closed');
+
+  schedule(true);
+  activity = { ...idle, heads: 3 };
+  timers[2]!.run();
+  assert.equal(events[2], 'closed', 'forced: no second check');
+});
+
+test('hydra_close with force is refused from inside a head, by the same process check as every user-role call (HSEC-63)', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hydra-close-head-'));
+  const store = new JobStore(path.join(root, 'storage')); await store.load();
+  const closes: unknown[] = [];
+  const link = (pid: number, ppid: number, created: number): ProcessLink => ({ pid, ppid, created });
+  // The caller's process chain passes through pid 7, a process Hydra started for a head.
+  const chain = [link(50, 40, 5), link(40, 7, 4), link(7, 1, 3)];
+  let service!: HelperService;
+  const endpoint = new HelperEndpoint((caller, tool, args, signal) => service.handle(caller, tool, args, signal), {
+    leadKey: 'window', verifyUser: createUserVerifier(() => ({ deniedAncestors: new Set([7]) }), async () => chain, 'win32'),
+  });
+  const port = await endpoint.start();
+  service = new HelperService({
+    store, endpoint, leadFolder: root, leadKey: 'window', executable: async provider => `fake-${provider}`, bridge: { command: 'x', args: [] },
+    logDirectory: path.join(root, 'logs'), maxConcurrent: () => 1, startRun: () => { throw new Error('no heads in this test'); },
+    control: { stopAll: async () => ({ heads: 0, lanes: 0 }), resume: async () => undefined, activity: () => ({ ...idle, heads: 2 }), closeWindow: request => { closes.push(request); } },
+  });
+  try {
+    const refused = await callHelperEndpoint(port, endpoint.issue({ role: 'user', leadKey: 'window', leadSessionId: userPlanSession }), 'hydra_close', { force: true });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error!, /inside a Hydra head/);
+    assert.deepEqual(closes, []);
+    // A script outside any head passes the same check (evaluateUserChain), and its forced close goes through.
+    assert.deepEqual(evaluateUserChain([link(60, 40, 5), link(40, 1, 4)], { deniedAncestors: new Set([7]) }), { ok: true });
+  } finally {
+    await service.dispose(); await endpoint.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

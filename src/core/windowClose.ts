@@ -61,3 +61,24 @@ export function closeRefusal(activity: WindowActivity, force: boolean): string |
   if (force || !isBusy(activity)) return undefined;
   return `This Hydra window is still working (${describeActivity(activity)}), so it won't close: that would cut the work short. Wait for it to finish, or force it (hydra close --force).`;
 }
+
+/**
+ * Closes the window closeDelayMs from now, after the caller has its reply. Unless forced, what is working is checked
+ * again just before closing: work that started in between (a plan advancing, a head starting) stops the close, and
+ * `aborted` gets the refusal instead.
+ */
+export function scheduleClose(options: {
+  force: boolean;
+  activity: () => WindowActivity;
+  close: () => void;
+  aborted: (refusal: string) => void;
+  delayMs?: number;
+  setTimer?: (run: () => void, ms: number) => unknown;
+}): void {
+  const setTimer = options.setTimer ?? ((run: () => void, ms: number) => setTimeout(run, ms));
+  setTimer(() => {
+    const refusal = options.force ? undefined : closeRefusal(options.activity(), false);
+    if (refusal) options.aborted(refusal);
+    else options.close();
+  }, options.delayMs ?? closeDelayMs);
+}

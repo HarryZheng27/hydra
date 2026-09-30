@@ -30,16 +30,30 @@ export function windowsDirectory(env = process.env) {
 }
 
 /**
- * Whether to close the window that owns `folder` (pure): only when bench-open.ps1's marker says it opened the window
- * (no window had the folder before), and the window that owns it now is that folder's own (not a parent folder's)
- * and the one it opened. `status` is `hydra status --json`'s answer, or undefined when no window owns the folder.
+ * How old a marker may be. The run's own window: its marker comes from the bench-open.ps1 that set up this run, so
+ * it is written at most this long before the run started. A leftover's: at most this long before now. Anything older
+ * is ignored, so a marker left behind can't close a window that opens on the folder later.
  */
-export function closeDecision({ folder, marker, status, platform = process.platform }) {
+export const ownMarkerMaxAgeMs = 12 * 60 * 60_000;
+export const leftoverMarkerMaxAgeMs = 48 * 60 * 60_000;
+
+/**
+ * Whether to close the window that owns `folder` (pure). The marker bench-open.ps1 wrote must be for this folder,
+ * written no earlier than `notBefore`, say no window had the folder before, and name the pid of the window it opened.
+ * The window that owns the folder now must be the folder's own (not a parent folder's) and have exactly that pid. A
+ * marker without a pid (the wait never saw the window) never closes anything. `status` is `hydra status --json`'s
+ * answer, or undefined when no window owns the folder.
+ */
+export function closeDecision({ folder, marker, status, notBefore, now = Date.now(), platform = process.platform }) {
   if (!marker || typeof marker !== 'object') return { close: false, reason: 'the harness didn\'t open it (no marker from bench-open.ps1)' };
   if (marker.preexisting !== false) return { close: false, reason: 'a window already had this folder open before bench-open.ps1 ran' };
+  if (typeof marker.folder !== 'string' || !samePath(marker.folder, folder, platform)) return { close: false, reason: 'its marker was written for another folder' };
+  if (!Number.isInteger(marker.pid) || marker.pid <= 0) return { close: false, reason: 'its marker names no window (bench-open.ps1 never saw the window open)' };
+  const at = typeof marker.at === 'string' ? Date.parse(marker.at) : NaN;
+  if (!Number.isFinite(at) || at > now + 60_000 || (typeof notBefore === 'number' && at < notBefore)) return { close: false, reason: 'its marker is from an earlier run' };
   if (!status) return { close: false, reason: 'no Hydra window owns it now' };
   if (!status.repository || !samePath(status.repository, folder, platform)) return { close: false, reason: `the window that owns it is for ${status.repository ?? 'another folder'}` };
-  if (typeof marker.pid === 'number' && status.window?.pid !== marker.pid) return { close: false, reason: `a different window (${status.window?.pid ?? 'unknown'}) owns it than the one bench-open.ps1 opened (${marker.pid})` };
+  if (status.window?.pid !== marker.pid) return { close: false, reason: `a different window (${status.window?.pid ?? 'unknown'}) owns it than the one bench-open.ps1 opened (${marker.pid})` };
   return { close: true };
 }
 
@@ -123,7 +137,7 @@ const parse = text => { try { return JSON.parse(text); } catch { return undefine
  * Never forces: a window still working refuses, and that is said loudly. deps: cli(folder, ...argv) → { code, stdout,
  * stderr }, readMarker, removeMarker, log, warn, and canClose (false when the launcher predates `hydra close`).
  */
-export async function closeOwnWindow(folder, deps) {
+export async function closeOwnWindow(folder, deps, { notBefore } = {}) {
   const marker = await deps.readMarker(folder);
   if (!marker) return { closed: false, reason: 'the harness didn\'t open it (no marker from bench-open.ps1)' };
   if (deps.canClose === false) {
@@ -131,7 +145,7 @@ export async function closeOwnWindow(folder, deps) {
     return { closed: false, reason: 'the hydra command has no close' };
   }
   const status = await deps.cli(folder, 'status', '--json');
-  const decision = closeDecision({ folder, marker, status: status.code === 0 ? parse(status.stdout) : undefined });
+  const decision = closeDecision({ folder, marker, status: status.code === 0 ? parse(status.stdout) : undefined, notBefore, now: (deps.now ?? Date.now)() });
   if (!decision.close) { deps.log(`Leaving the Hydra window for ${folder} open: ${decision.reason}.`); return { closed: false, reason: decision.reason }; }
   const closed = await deps.cli(folder, 'close', '--json', '--reason', 'benchmark run finished');
   if (closed.code !== 0) {
@@ -155,7 +169,7 @@ export async function closeLeftovers(repo, deps) {
   const others = windows.filter(window => !samePath(window.folder, repo));
   const closed = [], left = [];
   for (const window of others) {
-    const result = await closeOwnWindow(window.folder, deps);
+    const result = await closeOwnWindow(window.folder, deps, { notBefore: (deps.now ?? Date.now)() - leftoverMarkerMaxAgeMs });
     (result.closed ? closed : left).push({ ...window, ...(result.reason ? { reason: result.reason } : {}) });
   }
   if (left.length) {

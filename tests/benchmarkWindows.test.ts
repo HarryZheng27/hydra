@@ -36,19 +36,56 @@ async function marker(folder: string, value: Record<string, unknown>) {
   await writeFile(markerFile(folder), JSON.stringify(value));
 }
 
+const now = Date.parse('2026-09-30T12:00:00Z');
+/** A marker as bench-open.ps1 writes it, `minutesAgo` before `now`. */
+const opened = (folder: string, pid: unknown, minutesAgo = 5, extra: Record<string, unknown> = {}) =>
+  ({ version: 1, folder, preexisting: false, pid, at: new Date(now - minutesAgo * 60_000).toISOString(), ...extra });
+
 test('closeDecision: only a window bench-open.ps1 opened, for this very folder, and the same window it opened', () => {
   const folder = path.resolve('/runs/.bench/a/hydra');
   const status = { repository: folder, window: { pid: 7, port: 1 } };
-  assert.deepEqual(closeDecision({ folder, marker: { preexisting: false, pid: 7 }, status }), { close: true });
-  assert.deepEqual(closeDecision({ folder, marker: { preexisting: false, pid: null }, status }), { close: true }, 'opened without waiting: no pid to check');
-  assert.equal(closeDecision({ folder, marker: { preexisting: false, pid: 7 }, status: { ...status, repository: folder.toUpperCase() }, platform: 'win32' }).close, true, 'Windows paths ignore case');
-  const refused = (input: Record<string, unknown>) => closeDecision({ folder, marker: { preexisting: false, pid: 7 }, status, ...input });
-  assert.match(refused({ marker: undefined }).reason, /didn't open it/);
-  assert.match(refused({ marker: { preexisting: true, pid: 7 } }).reason, /already had this folder open/);
-  assert.match(refused({ marker: { pid: 7 } }).reason, /already had this folder open/, 'an unclear marker never closes');
-  assert.match(refused({ status: undefined }).reason, /no Hydra window owns it/);
-  assert.match(refused({ status: { repository: path.dirname(folder), window: { pid: 7 } } }).reason, /the window that owns it is for/, 'a parent folder\'s window is never closed');
-  assert.match(refused({ status: { ...status, window: { pid: 8 } } }).reason, /a different window \(8\)/);
+  const decide = (input: Record<string, unknown>) => closeDecision({ folder, marker: opened(folder, 7), status, now, notBefore: now - 60 * 60_000, ...input });
+  assert.deepEqual(decide({}), { close: true });
+  assert.equal(decide({ status: { ...status, repository: folder.toUpperCase() }, platform: 'win32' }).close, true, 'Windows paths ignore case');
+  assert.match(decide({ marker: undefined }).reason, /didn't open it/);
+  assert.match(decide({ marker: opened(folder, 7, 5, { preexisting: true }) }).reason, /already had this folder open/);
+  assert.match(decide({ marker: opened(folder, 7, 5, { preexisting: undefined }) }).reason, /already had this folder open/, 'an unclear marker never closes');
+  assert.match(decide({ status: undefined }).reason, /no Hydra window owns it/);
+  assert.match(decide({ status: { repository: path.dirname(folder), window: { pid: 7 } } }).reason, /the window that owns it is for/, 'a parent folder\'s window is never closed');
+  assert.match(decide({ status: { ...status, window: { pid: 8 } } }).reason, /a different window \(8\)/);
+});
+
+test('a stale marker never closes a window: no pid, another folder\'s, from an earlier run, or undated', () => {
+  const folder = path.resolve('/runs/.bench/a/hydra');
+  // Nico's own window now owns the folder, as window 7.
+  const status = { repository: folder, window: { pid: 7, port: 1 } };
+  const decide = (marker: unknown, notBefore = now - 60 * 60_000) => closeDecision({ folder, marker, status, now, notBefore });
+  // A failed wait, or -WaitSeconds 0: the marker names no window, so it closes nothing, whatever owns the folder later.
+  for (const pid of [null, undefined, '7', 0, -1, 7.5]) assert.match(decide(opened(folder, pid)).reason, /names no window/, String(pid));
+  // Copied into another repository's .git: written for another folder.
+  assert.match(decide(opened(path.resolve('/elsewhere/repo'), 7)).reason, /another folder/);
+  assert.match(decide(opened(folder, 7, 5, { folder: undefined })).reason, /another folder/);
+  // Older than this run, undated, or dated in the future.
+  assert.match(decide(opened(folder, 7, 120)).reason, /from an earlier run/);
+  assert.match(decide(opened(folder, 7, 5, { at: undefined })).reason, /from an earlier run/);
+  assert.match(decide(opened(folder, 7, 5, { at: 'yesterday' })).reason, /from an earlier run/);
+  assert.match(decide(opened(folder, 7, -10)).reason, /from an earlier run/);
+  // The same marker, fresh, for the same window: closes.
+  assert.deepEqual(decide(opened(folder, 7, 30)), { close: true });
+});
+
+test('closeOwnWindow and closeLeftovers pass the run\'s cutoff: an old marker leaves the window open, and is kept', async () => {
+  const folder = path.resolve('/r/.bench/old');
+  const deps = fakeDeps({ [folder]: opened(folder, 7, 60 * 13) }, { [folder]: 7 }, { now: () => now });
+  assert.deepEqual(await closeOwnWindow(folder, deps, { notBefore: now - 12 * 60 * 60_000 }), { closed: false, reason: 'its marker is from an earlier run' });
+  assert.deepEqual(deps.closes, []);
+  // A leftover may be older (up to 48 hours), but not older still.
+  const repo = path.resolve('/r/.bench/now'), dayOld = path.resolve('/r/.bench/day'), weekOld = path.resolve('/r/.bench/week');
+  const records = [repo, dayOld, weekOld].map((item, index) => ({ version: 2, pid: 10 + index, port: 1, folders: [item] }));
+  const left = fakeDeps({ [dayOld]: opened(dayOld, 11, 60 * 24), [weekOld]: opened(weekOld, 12, 60 * 24 * 7) }, { [dayOld]: 11, [weekOld]: 12 }, { now: () => now, records: async () => records, alive: () => true });
+  await closeLeftovers(repo, left);
+  assert.deepEqual(left.closes, [dayOld]);
+  assert.match(left.warnings.join('\n'), /week \(window 12\): its marker is from an earlier run/);
 });
 
 test('a launcher built before `hydra close` is spotted, so the harness never asks it to open a folder named "close"', () => {
@@ -134,7 +171,7 @@ function fakeDeps(markers: Record<string, unknown>, owners: Record<string, numbe
       if (argv[0] === 'close') { closes.push(folder); return { code: 0, stdout: '{"closing":true}', stderr: '' }; }
       throw new Error(`unexpected ${argv.join(' ')}`);
     },
-    log: (text: string) => { logs.push(text); }, warn: (text: string) => { warnings.push(text); },
+    log: (text: string) => { logs.push(text); }, warn: (text: string) => { warnings.push(text); }, now: () => now,
     ...extra,
   };
 }
@@ -142,14 +179,14 @@ function fakeDeps(markers: Record<string, unknown>, owners: Record<string, numbe
 test('the harness closes only windows it opened: never one already open, one without a marker, or a different window', async () => {
   const mine = path.resolve('/r/.bench/mine'), nicos = path.resolve('/r/.bench/nicos'), unmarked = path.resolve('/r/.bench/unmarked'), swapped = path.resolve('/r/.bench/swapped');
   const deps = fakeDeps(
-    { [mine]: { preexisting: false, pid: 7 }, [nicos]: { preexisting: true, pid: 8 }, [swapped]: { preexisting: false, pid: 9 } },
+    { [mine]: opened(mine, 7), [nicos]: opened(nicos, 8, 5, { preexisting: true }), [swapped]: opened(swapped, 9) },
     { [mine]: 7, [nicos]: 8, [unmarked]: 10, [swapped]: 11 },
   );
   for (const folder of [mine, nicos, unmarked, swapped]) await closeOwnWindow(folder, deps);
   assert.deepEqual(deps.closes, [mine]);
   assert.deepEqual(deps.removed, [mine], 'its marker goes once it closed');
   // A window that refuses (still working) stays open, and says so loudly; the harness never forces.
-  const busy = fakeDeps({ [mine]: { preexisting: false, pid: 7 } }, { [mine]: 7 });
+  const busy = fakeDeps({ [mine]: opened(mine, 7) }, { [mine]: 7 });
   busy.cli = async (_folder: string, ...argv: string[]) => argv[0] === 'status'
     ? { code: 0, stdout: JSON.stringify({ repository: mine, window: { pid: 7 } }), stderr: '' }
     : { code: 1, stdout: JSON.stringify({ ok: false, error: 'This Hydra window is still working (1 head)' }), stderr: '' };
@@ -157,7 +194,7 @@ test('the harness closes only windows it opened: never one already open, one wit
   assert.match(busy.warnings.join('\n'), /WARNING: .* didn't close: This Hydra window is still working/);
   assert.deepEqual(busy.removed, []);
   // An old launcher: nothing is run at all, and it says why.
-  const old = fakeDeps({ [mine]: { preexisting: false, pid: 7 } }, { [mine]: 7 }, { canClose: false });
+  const old = fakeDeps({ [mine]: opened(mine, 7) }, { [mine]: 7 }, { canClose: false });
   assert.equal((await closeOwnWindow(mine, old)).closed, false);
   assert.deepEqual(old.closes, []);
   assert.match(old.warnings[0]!, /predates `hydra close`/);
@@ -167,7 +204,7 @@ test('before a run: leftover benchmark windows the harness opened are closed, ot
   const repo = path.resolve('/r/.bench/now/hydra'), left = path.resolve('/r/.bench/old/hydra'), nicos = path.resolve('/r/.bench/looking');
   const records = [repo, left, nicos, path.resolve('/r')].map((folder, index) => ({ version: 2, pid: 100 + index, port: 1, folders: [folder] }));
   const deps = fakeDeps(
-    { [repo]: { preexisting: false, pid: 100 }, [left]: { preexisting: false, pid: 101 }, [nicos]: { preexisting: true, pid: 102 } },
+    { [repo]: opened(repo, 100), [left]: opened(left, 101), [nicos]: opened(nicos, 102, 5, { preexisting: true }) },
     { [repo]: 100, [left]: 101, [nicos]: 102 },
     { records: async () => records, alive: () => true },
   );
@@ -186,23 +223,23 @@ test('benchmark.mjs hydra closes the window it opened once the results are writt
   const out = await mkdtemp(path.join(tmpdir(), 'hydra-bench-windows-'));
   try {
     const bench = path.join(out, '.bench');
-    const opened = path.join(bench, 'opened', 'hydra'), manual = path.join(bench, 'manual', 'hydra'), leftover = path.join(bench, 'leftover', 'hydra');
-    for (const folder of [opened, manual, leftover]) await mkdir(path.join(folder, '.git'), { recursive: true });
-    await marker(opened, { version: 1, preexisting: false, pid: 4242 });
-    await marker(leftover, { version: 1, preexisting: false, pid: 4242 });
+    const openedRepo = path.join(bench, 'opened', 'hydra'), manual = path.join(bench, 'manual', 'hydra'), leftover = path.join(bench, 'leftover', 'hydra');
+    for (const folder of [openedRepo, manual, leftover]) await mkdir(path.join(folder, '.git'), { recursive: true });
+    await marker(openedRepo, { version: 1, folder: openedRepo, preexisting: false, pid: 4242, at: new Date().toISOString() });
+    await marker(leftover, { version: 1, folder: leftover, preexisting: false, pid: 4242, at: new Date().toISOString() });
     // Discovery records a Hydra window would write: this run's window and a leftover, both under .bench.
     const helpers = path.join(out, 'helpers');
     await mkdir(path.join(helpers, 'windows'), { recursive: true });
-    await writeFile(path.join(helpers, 'windows', 'a.json'), JSON.stringify({ version: 2, port: 1, pid: process.pid, folders: [opened], writtenAt: '' }));
+    await writeFile(path.join(helpers, 'windows', 'a.json'), JSON.stringify({ version: 2, port: 1, pid: process.pid, folders: [openedRepo], writtenAt: '' }));
     await writeFile(path.join(helpers, 'windows', 'b.json'), JSON.stringify({ version: 2, port: 2, pid: process.pid, folders: [leftover], writtenAt: '' }));
     const env = { ...process.env, HYDRA_HELPERS_DIR: helpers };
     const hydra = ['--hydra', `"${process.execPath}" "${fakeHydra}"`];
 
-    const ran = await spawnText(process.execPath, [script, 'hydra', '--repo', opened, '--poll', '0.01', '--plan-store', path.join(out, 'no-plans.json'), ...hydra], env);
+    const ran = await spawnText(process.execPath, [script, 'hydra', '--repo', openedRepo, '--poll', '0.01', '--plan-store', path.join(out, 'no-plans.json'), ...hydra], env);
     assert.equal(ran.code, 0, ran.stderr);
     assert.ok(existsSync(path.join(bench, 'opened', 'hydra-results.json')), 'results first');
-    assert.equal((await readFile(path.join(opened, '.fake-hydra-closed'), 'utf8')).trim(), 'close --json --reason benchmark run finished');
-    assert.equal(existsSync(markerFile(opened)), false, 'its marker is gone once it closed');
+    assert.equal((await readFile(path.join(openedRepo, '.fake-hydra-closed'), 'utf8')).trim(), 'close --json --reason benchmark run finished');
+    assert.equal(existsSync(markerFile(openedRepo)), false, 'its marker is gone once it closed');
     assert.equal((await readFile(path.join(leftover, '.fake-hydra-closed'), 'utf8')).trim(), 'close --json --reason benchmark run finished', 'the leftover the harness opened was closed before the run');
     assert.match(ran.stdout, /Closed the Hydra window the harness opened for .*leftover/);
 
