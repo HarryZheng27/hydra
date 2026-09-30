@@ -90,7 +90,7 @@ export function resolveTool(name, { flag, env = process.env, platform = process.
   for (const directory of String(env.PATH ?? env.Path ?? '').split(separator).filter(Boolean)) {
     for (const extension of extensions) {
       const candidate = `${directory.replace(/[\\/]+$/, '')}${platform === 'win32' ? '\\' : '/'}${name}${extension}`;
-      if (exists(candidate)) return { command: name, source: `PATH (${candidate})`, onPath: true };
+      if (exists(candidate)) return { command: name, source: `PATH (${candidate})`, onPath: true, path: candidate };
     }
   }
   for (const candidate of defaultToolLocations(name, env, platform)) if (exists(candidate)) return { command: candidate, source: `default install location (${name} is not on PATH)` };

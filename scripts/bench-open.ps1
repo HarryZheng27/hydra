@@ -9,6 +9,10 @@
 #
 # With -WaitSeconds, it then runs `hydra status` in the folder (from the same clean environment) until a Hydra
 # window owns it, or the time runs out (exit 1).
+#
+# It records in the folder's .git (hydra-bench-window.json) whether a window already had the folder open before it
+# ran, and which window owns it after. The harness closes only a window this opened (scripts/benchmark-windows.mjs),
+# never one that was already open.
 param(
   [Parameter(Mandatory = $true)][string]$Folder,
   [int]$WaitSeconds = 0,
@@ -43,6 +47,47 @@ function Start-Clean([string]$arguments, [bool]$capture) {
   return [System.Diagnostics.Process]::Start($psi)
 }
 
+function Get-Normal([string]$value) { return [IO.Path]::GetFullPath($value).TrimEnd('\', '/').ToLowerInvariant() }
+
+# The window that owns this folder itself (not a parent folder's), from `hydra status --json`, or $null.
+function Get-Owner {
+  $status = Start-Clean 'status --json' $true
+  # Read both streams without blocking, so a `hydra status` that hangs can't hang this: it gets 30 seconds, then
+  # it and anything it started are killed and the next try comes.
+  $stdoutTask = $status.StandardOutput.ReadToEndAsync()
+  $stderrTask = $status.StandardError.ReadToEndAsync()
+  if (-not $status.WaitForExit(30000)) {
+    & "$env:SystemRoot\System32\taskkill.exe" /PID $status.Id /T /F 2>&1 | Out-Null
+    return $null
+  }
+  $text = ''
+  if ($stdoutTask.Wait(5000)) { $text = $stdoutTask.Result }
+  [void]$stderrTask.Wait(5000)
+  if ($status.ExitCode -ne 0 -or -not $text) { return $null }
+  try { $answer = $text | ConvertFrom-Json } catch { return $null }
+  if (-not $answer.repository -or -not $answer.window) { return $null }
+  if ((Get-Normal $answer.repository) -ne (Get-Normal $Folder)) { return $null }
+  return $answer
+}
+
+# Whether a window already had this folder open, recorded before opening it (hydra-bench-window.json in its .git).
+$gitDir = Join-Path $Folder '.git'
+$marker = Join-Path $gitDir 'hydra-bench-window.json'
+$before = Get-Owner
+$preexisting = $null -ne $before
+if ($preexisting -and (Test-Path -LiteralPath $marker)) {
+  # A window this script opened earlier and that is still open stays the harness's own.
+  try { $old = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json } catch { $old = $null }
+  if ($old -and $old.preexisting -eq $false -and $old.pid -eq $before.window.pid) { $preexisting = $false }
+}
+function Write-Marker($ownerPid) {
+  if (-not (Test-Path -LiteralPath $gitDir -PathType Container)) { return }
+  $record = [ordered]@{ version = 1; folder = $Folder; preexisting = $preexisting; pid = $ownerPid; at = (Get-Date).ToUniversalTime().ToString('o') }
+  [IO.File]::WriteAllText($marker, ($record | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding $false))
+}
+if ($before) { Write-Marker ([int]$before.window.pid) } else { Write-Marker $null }
+if ($preexisting) { Write-Output "A Hydra window ($($before.window.pid)) already had $Folder open: the harness will leave it open." }
+
 $open = Start-Clean ('"' + $Folder + '"') $false
 [void]$open.WaitForExit(60000)
 Write-Output "Asked Hydra to open $Folder (exit $($open.ExitCode))."
@@ -51,19 +96,12 @@ if ($WaitSeconds -le 0) { exit 0 }
 $deadline = (Get-Date).AddSeconds($WaitSeconds)
 while ((Get-Date) -lt $deadline) {
   Start-Sleep -Seconds 3
-  $status = Start-Clean 'status' $true
-  # Read both streams without blocking, so a `hydra status` that hangs can't hang this: it gets 30 seconds, then
-  # it and anything it started are killed and the next try comes.
-  $stdoutTask = $status.StandardOutput.ReadToEndAsync()
-  $stderrTask = $status.StandardError.ReadToEndAsync()
-  if (-not $status.WaitForExit(30000)) {
-    & "$env:SystemRoot\System32\taskkill.exe" /PID $status.Id /T /F 2>&1 | Out-Null
-    continue
+  $owner = Get-Owner
+  if ($owner) {
+    Write-Marker ([int]$owner.window.pid)
+    Write-Output "Hydra window $($owner.window.pid) owns $($owner.repository)"
+    exit 0
   }
-  $text = ''
-  if ($stdoutTask.Wait(5000)) { $text += $stdoutTask.Result }
-  if ($stderrTask.Wait(5000)) { $text += $stderrTask.Result }
-  if ($status.ExitCode -eq 0 -and $text -match 'Hydra window \d+ owns') { Write-Output $text.Trim(); exit 0 }
 }
 Write-Error "No Hydra window owns $Folder after $WaitSeconds seconds. Is the folder trusted?"
 exit 1

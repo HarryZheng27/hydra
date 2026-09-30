@@ -416,7 +416,7 @@ A script or CI job on this machine can act as you against the Hydra window that 
 
 ### The `hydra` command
 
-The app's `bin` folder already has `hydra` (and `hydra.cmd`), the launcher that opens the editor (`hydra .`). The installer's **Add to PATH** option, on by default, puts it on your `PATH`. Its first word decides what it does: `status`, `plan`, `heads`, `stop`, `resume` and `report` run the commands below; anything else opens the editor, as before. (To open a file literally named `status`, use `hydra ./status`.)
+The app's `bin` folder already has `hydra` (and `hydra.cmd`), the launcher that opens the editor (`hydra .`). The installer's **Add to PATH** option, on by default, puts it on your `PATH`. Its first word decides what it does: `status`, `plan`, `heads`, `stop`, `resume`, `report` and `close` run the commands below; anything else opens the editor, as before. (To open a file literally named `status`, use `hydra ./status`.)
 
 | Command | What it does |
 | --- | --- |
@@ -429,6 +429,7 @@ The app's `bin` folder already has `hydra` (and `hydra.cmd`), the launcher that 
 | `hydra plan cancel <id>` | Stops the plan's unfinished jobs (`--reason`). |
 | `hydra stop` / `hydra resume` | **Stop All Agents** (`--reason`) and **Resume Agents**, without the confirmation. |
 | `hydra report <id>` | The plan's report as Markdown: the same report an unattended plan writes when it ends. |
+| `hydra close` | Closes the window that owns this folder. It refuses (exit 1, saying what is still working) while heads or lanes are running, or a plan is in progress or still landing (its integration queue or gate); `--force` closes it anyway, cutting that work short. The window answers first, then closes about a second and a half later. `--reason` goes in the window's log and its audit log, which records every close. The benchmark closes the windows it opened with it ([Benchmark.md](Benchmark.md), "Closing the windows"). |
 
 - **For scripts:** `--json` prints the raw result; a refusal prints `{"ok": false, "exit_code": <n>, "error": "…"}` as well as the message on stderr.
 - **Exit codes:** 0 ok, 1 Hydra refused (including `plan wait` on a plan whose integration gate didn't pass, or a timeout), 2 usage (bad arguments, a missing or invalid plan file), 3 no Hydra window owns this folder (or it stopped answering).
@@ -456,7 +457,7 @@ A plan can live in the repository as `.hydra/plans/<name>.json`, reviewed in a p
 - **Which window answers:** the one whose folder holds the script's current folder, found through the same discovery file a lead's bridge uses (one window per repository).
 - **The handshake file:** each window writes `<globalStorage>/helpers/handshakes/<pid>-<port>.json` when its heads start: the window's process id and endpoint port, the repository, and a `user` token Hydra mints for this file only (no endpoint hands one out). On Windows, Hydra cuts the file's access list to you alone with `icacls` (no inherited entries, not even SYSTEM or Administrators) before the token goes in. The file goes when the window closes; the token dies with the window either way.
 - **What a reader refuses:** a file whose access list isn't owner-only, a malformed one, one whose Hydra process is gone (it's also removed), and one that doesn't match the live window it was looked up for.
-- **What the `user` role may do:** the plan tools (`hydra_plan_create`, `_get`, `_wait`, `_amend`, `_cancel`, `_message`, `_run`, `_report`), but never `hydra_plan_merge` or `hydra_plan_integrate`, read heads (`hydra_list_heads`, `hydra_get_head`) and lanes (`hydra_lanes`), and stop and resume (`hydra_stop_all`, `hydra_resume`, the same as **Hydra: Stop All Agents** and **Resume Agents**, without the confirmation). Nothing a head or a lane does (`hydra_done`, `hydra_stuck`, `hydra_job_ready`), and none of a chat's own head actions.
+- **What the `user` role may do:** the plan tools (`hydra_plan_create`, `_get`, `_wait`, `_amend`, `_cancel`, `_message`, `_run`, `_report`), but never `hydra_plan_merge` or `hydra_plan_integrate`, read heads (`hydra_list_heads`, `hydra_get_head`) and lanes (`hydra_lanes`), and stop and resume (`hydra_stop_all`, `hydra_resume`, the same as **Hydra: Stop All Agents** and **Resume Agents**, without the confirmation), and close the window (`hydra_close`, refused while work runs unless forced). Nothing a head or a lane does (`hydra_done`, `hydra_stuck`, `hydra_job_ready`), and none of a chat's own head actions.
 - **Plans a script makes** belong to the `user` role as a whole: any script can read and change them, and no chat can. A chat's plans stay its own.
 - **Refused from inside a head:** like a lead's token, the user token is refused when the calling process descends from one Hydra started for a head.
 

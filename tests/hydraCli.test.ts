@@ -12,6 +12,7 @@ import { createUserVerifier } from '../src/core/leadVerification';
 import { findUserHandshake, writeUserHandshake } from '../src/core/userHandshake';
 import { exitCodes, helpersRootCandidates, parseArgs, planFileArguments, planFileSchema, runCli, type CliDeps } from '../src/core/hydraCli';
 import { toolAllowed } from '../src/core/helperTools';
+import type { WindowActivity } from '../src/core/windowClose';
 
 /**
  * O8b: the `hydra` command (docs/Heads.md, "Scripts and CI"; docs/THREAT_MODEL.md). Every command below runs against
@@ -27,6 +28,8 @@ const planId = 'aaaaaaaa0001';
 interface World {
   root: string; repo: string; helpers: string; port: number; token: string;
   control: string[]; created: Record<string, unknown>[]; plan: PlanLeadPlan;
+  /** HSEC-72: what the window reports as still working, and the closes it was asked for. */
+  activity: WindowActivity; closes: { force: boolean; reason?: string }[];
   cli(argv: string[], cwd?: string): Promise<{ code: number; stdout: string; stderr: string }>;
   close(): Promise<void>;
 }
@@ -39,6 +42,8 @@ async function world(): Promise<World> {
   const plan: PlanLeadPlan = { planId, title: 'Checkout', state: 'running', jobs: [{ key: 'api', title: 'API', status: 'active' }], board: [], amendments: [] };
   const created: Record<string, unknown>[] = [];
   const control: string[] = [];
+  const activity: WindowActivity = { heads: 0, lanes: 0, plans: 0, landing: 0 };
+  const closes: { force: boolean; reason?: string }[] = [];
   const own = (id: string, session: string) => { if (session !== userPlanSession || id !== planId) throw new Error(`No plan ${id} in this window.`); return plan; };
   const plans = {
     create: async (input: Record<string, unknown>, session: string) => { created.push({ ...input, session }); return { plan, created: true }; },
@@ -62,7 +67,10 @@ async function world(): Promise<World> {
     store, endpoint, leadFolder: repo, leadKey: 'window', executable: async provider => `fake-${provider}`, bridge: { command: 'x', args: [] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => 1, startRun: () => { throw new Error('no heads in this test'); }, plans,
     lanes: { describe: async () => ({ lanes: [{ id: 'l1' }] }), name: () => undefined },
-    control: { stopAll: async reason => { control.push(`stop: ${reason}`); return { heads: 2, lanes: 1 }; }, resume: async () => { control.push('resume'); } },
+    control: {
+      stopAll: async reason => { control.push(`stop: ${reason}`); return { heads: 2, lanes: 1 }; }, resume: async () => { control.push('resume'); },
+      activity: () => ({ ...activity }), closeWindow: request => { closes.push({ force: request.force, ...(request.reason ? { reason: request.reason } : {}) }); },
+    },
   });
   // What a Hydra window does when its heads start: one user token, written only to its handshake file.
   const token = endpoint.issue({ role: 'user', leadKey: 'window', leadSessionId: userPlanSession });
@@ -80,7 +88,7 @@ async function world(): Promise<World> {
     return { code, stdout, stderr };
   };
   return {
-    root, repo, helpers, port, token, control, created, plan, cli,
+    root, repo, helpers, port, token, control, created, plan, cli, activity, closes,
     close: async () => { await endpoint.close(); await rm(record, { force: true }); await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); },
   };
 }
@@ -101,6 +109,38 @@ test('hydra status, heads, stop and resume run against the window that owns this
     assert.equal((await w.cli(['stop', '--reason', 'nightly'])).code, exitCodes.ok);
     assert.equal((await w.cli(['resume'])).code, exitCodes.ok);
     assert.deepEqual(w.control, ['stop: Stopped from a script: nightly', 'resume']);
+  } finally { await w.close(); }
+});
+
+test('hydra close asks the window that owns this folder to close, and is refused while work runs unless --force', async () => {
+  const w = await world();
+  try {
+    // Work still running: refused (exit 1) with the reason, and nothing closes.
+    Object.assign(w.activity, { heads: 1, plans: 1 });
+    const refused = await w.cli(['close', '--json']);
+    assert.equal(refused.code, exitCodes.refused);
+    assert.match(JSON.parse(refused.stdout).error, /still working \(1 head, 1 plan in progress\).*hydra close --force/);
+    assert.deepEqual(w.closes, []);
+    // --force closes anyway, and says it cut the work short.
+    const forced = await w.cli(['close', '--force', '--reason', 'bench done']);
+    assert.equal(forced.code, exitCodes.ok, forced.stderr);
+    assert.match(forced.stdout, /is closing, cutting its running work short/);
+    assert.deepEqual(w.closes, [{ force: true, reason: 'bench done' }]);
+    // Idle: it closes without --force, and --json names the window that is closing.
+    Object.assign(w.activity, { heads: 0, plans: 0 });
+    const idle = await w.cli(['close', '--json']);
+    assert.equal(idle.code, exitCodes.ok, idle.stderr);
+    const answer = JSON.parse(idle.stdout);
+    assert.equal(answer.closing, true); assert.equal(answer.forced, false); assert.equal(answer.in_ms, 1500);
+    assert.deepEqual(answer.window, { pid: process.pid, port: w.port });
+    assert.equal(answer.repository, w.repo);
+    assert.deepEqual(w.closes.at(-1), { force: false });
+    // Usage: no arguments, only --force and --reason.
+    assert.equal((await w.cli(['close', 'now'])).code, exitCodes.usage);
+    assert.equal((await w.cli(['close', '--unattended'])).code, exitCodes.usage);
+    // A folder no window owns: exit 3, nothing asked.
+    assert.equal((await w.cli(['close'], w.root)).code, exitCodes.noHydra);
+    assert.equal(w.closes.length, 2);
   } finally { await w.close(); }
 });
 

@@ -67,6 +67,8 @@ Commands:
   plan cancel <id> [--reason <text>]  Stop a plan's unfinished jobs.
   stop [--reason <text>]              Stop All Agents.
   resume                              Resume Agents.
+  close [--force] [--reason <text>]   Close the window. Refused while heads, lanes or plans are still working,
+                                      unless --force.
   report <id>                         A plan's report, as Markdown.
 
 Options: --json (raw results), --help, --version.
@@ -77,7 +79,7 @@ const usageError = (message: string) => new CliError(exitCodes.usage, `${message
 
 interface Parsed { command: string[]; flags: Map<string, string | true>; positionals: string[] }
 const valueFlags = new Set(['usd', 'minutes', 'max-jobs', 'key', 'timeout', 'reason']);
-const boolFlags = new Set(['json', 'unattended', 'help', 'version']);
+const boolFlags = new Set(['json', 'unattended', 'help', 'version', 'force']);
 
 export function parseArgs(argv: readonly string[]): Parsed {
   const flags = new Map<string, string | true>(), positionals: string[] = [];
@@ -268,6 +270,18 @@ async function dispatch(parsed: Parsed, deps: CliDeps, json: boolean): Promise<E
     const session = await connect(deps);
     const result = await call(deps, session, 'hydra_resume');
     print(result, () => 'Agents may start again.');
+    return exitCodes.ok;
+  }
+  if (first === 'close') {
+    // HSEC-72: the window answers, then closes itself a moment later; it refuses while work runs, unless --force.
+    allowed(['force', 'reason']); noPositionals(parsed.positionals, name);
+    const reason = parsed.flags.get('reason');
+    const session = await connect(deps);
+    const result = await call<{ closing: boolean; forced?: boolean; in_ms?: number }>(deps, session, 'hydra_close', {
+      ...(parsed.flags.has('force') ? { force: true } : {}), ...(typeof reason === 'string' ? { reason } : {}),
+    });
+    print({ ...result, repository: session.repository, window: { pid: session.pid, port: session.port } },
+      () => `Hydra window ${session.pid} (${session.repository}) is closing${result.forced ? ', cutting its running work short' : ''}.`);
     return exitCodes.ok;
   }
   if (first === 'report') {

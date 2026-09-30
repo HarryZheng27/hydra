@@ -43,9 +43,9 @@ function postRaw(port: number, url: string): Promise<number> {
 
 // ---- The role ----
 
-test('the user role: the plan tools, reading heads and lanes, stop and resume; never a head\'s or a lane\'s tool', () => {
+test('the user role: the plan tools, reading heads and lanes, stop, resume and close; never a head\'s or a lane\'s tool', () => {
   assert.deepEqual(toolsFor('user').map(tool => tool.name).sort(), [
-    'hydra_get_head', 'hydra_lanes', 'hydra_list_heads',
+    'hydra_close', 'hydra_get_head', 'hydra_lanes', 'hydra_list_heads',
     'hydra_plan_amend', 'hydra_plan_cancel', 'hydra_plan_create', 'hydra_plan_get', 'hydra_plan_message', 'hydra_plan_report', 'hydra_plan_run', 'hydra_plan_wait',
     'hydra_resume', 'hydra_stop_all',
   ]);
@@ -54,8 +54,9 @@ test('the user role: the plan tools, reading heads and lanes, stop and resume; n
   for (const name of ['hydra_done', 'hydra_stuck', 'hydra_progress', 'hydra_share', 'hydra_board', 'hydra_job_ready', 'hydra_start_head', 'hydra_reply_to_head', 'hydra_cancel_head', 'hydra_active_roles', 'hydra_wait_for_heads', 'hydra_plan_merge', 'hydra_plan_integrate']) {
     assert.equal(toolAllowed('user', name), false, name);
   }
-  // Stop and resume are the user's alone.
+  // Stop, resume and closing the window are the user's alone.
   for (const role of ['lead', 'helper'] as const) {
+    assert.equal(toolAllowed(role, 'hydra_close'), false, role);
     assert.equal(toolAllowed(role, 'hydra_stop_all'), false, role);
     assert.equal(toolAllowed(role, 'hydra_resume'), false, role);
   }

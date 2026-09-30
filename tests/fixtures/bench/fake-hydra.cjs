@@ -1,6 +1,6 @@
 // A stand-in for the `hydra` command in tests/benchmark.test.ts: it walks a plan through a run (a conflict predicted
 // against the integration branch, one caught at landing, then done with the integration gate passed), one step per
-// `plan show`, keeping its place in a file in the current folder.
+// `plan show`, keeping its place in a file in the current folder. It answers `status` as window 4242.
 'use strict';
 const fs = require('node:fs');
 const args = process.argv.slice(2);
@@ -21,7 +21,9 @@ const views = [
 ];
 const say = value => process.stdout.write(JSON.stringify(value));
 const [first, second] = args;
-if (first === 'status') say({ repository: process.cwd() });
+if (first === 'status') say({ repository: process.cwd(), window: { pid: 4242, port: 1 } });
+// `hydra close`: noted in a file in the current folder, so a test can see which windows the harness closed.
+else if (first === 'close') { fs.appendFileSync('.fake-hydra-closed', args.join(' ') + '\n'); say({ closing: true, forced: false, in_ms: 1500 }); }
 else if (first === 'plan' && second === 'run') say({ ...views[0], created: true });
 else if (first === 'plan' && second === 'show') { say(views[Math.min(step, views.length - 1)]); fs.writeFileSync(stateFile, String(step + 1)); }
 else if (first === 'plan' && second === 'wait') say({ ...views[views.length - 1], passed: true, timed_out: false });

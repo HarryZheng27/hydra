@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import ts from 'typescript';
 import { openVsxGallery, brandedSidebarTitleBar, brandedSidebarCss, brandedProduct, brandedElectronMain, brandedElectronApp, brandedInstaller, installerIncludes, brandedThemeStartup, brandedNativeThemeStartup, installerVersionSource, windowsExecutableVersion, installedUpdateTrust, isolatedEditorTypes, stageHydra, stageHydraLook, stageHydraMainUpdatePrimitives, brandedTitlebarIcon, classicCodicons, stageClassicCodicons, lockedAgentExtensions, lockedAgentViewsCommon, lockedAgentViewsExtensionPoint, lockedAgentCompositeBar, lockedAgentViewDescriptorService, lockedAgentViewPaneContainer, vscodeIcons, hydraMainUpdateModules, root, brandedLauncherCmd, brandedLauncherSh, verifyLaunchers, hydraCliCommands, brandedTitlebarHeight, hydraTitlebarHeight, brandedWalkthroughAutoOpen, brandedWatermarkLayout, hydraChromeCss } from '../scripts/desktop.mjs';
 import { spawnSync } from 'node:child_process';
+import { launcherLacksClose } from '../scripts/benchmark-windows.mjs';
 import { tmpdir } from 'node:os';
 
 test('pinned Electron app uses only Hydra update service on Windows and refuses source drift', () => {
@@ -435,8 +436,11 @@ const ran = result => { try { return JSON.parse(result.stdout.toString()); } cat
 test('the pinned launchers patch once, and the built pair is checked for the dispatch', async () => {
   const upstream = path.join(root, 'tests', 'fixtures', 'upstream-launcher');
   const cmd = lf(await fs.readFile(path.join(upstream, 'code.cmd'), 'utf8')), sh = lf(await fs.readFile(path.join(upstream, 'code.sh'), 'utf8'));
-  assert.deepEqual([...hydraCliCommands], ['status', 'plan', 'heads', 'stop', 'resume', 'report']);
+  assert.deepEqual([...hydraCliCommands], ['status', 'plan', 'heads', 'stop', 'resume', 'report', 'close']);
   assert.doesNotThrow(() => verifyLaunchers(brandedLauncherCmd(cmd), brandedLauncherSh(sh)));
+  // The benchmark harness reads the launcher to see it dispatches `hydra close` (scripts/benchmark-windows.mjs).
+  assert.equal(launcherLacksClose(brandedLauncherCmd(cmd)), false);
+  assert.equal(launcherLacksClose(brandedLauncherSh(sh)), false);
   assert.throws(() => verifyLaunchers(cmd, brandedLauncherSh(sh)), /hydra\.cmd does not dispatch/);
   assert.throws(() => verifyLaunchers(brandedLauncherCmd(cmd), sh), /bin\/hydra does not dispatch/);
   assert.throws(() => brandedLauncherCmd(cmd.replace('set ELECTRON_RUN_AS_NODE=1', 'set X=1')), /Pinned Windows launcher changed/);

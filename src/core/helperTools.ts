@@ -183,6 +183,8 @@ export const helperTools: readonly HelperToolDefinition[] = [
 /** Stop All Agents and Resume Agents, for a user-role caller only: a lead or a head never sees them. */
 export const stopAllTool = 'hydra_stop_all';
 export const resumeTool = 'hydra_resume';
+/** HSEC-72: `hydra close`, for a user-role caller only (src/core/windowClose.ts). */
+export const closeWindowTool = 'hydra_close';
 /**
  * What the user role reaches from the lead's list: the plan tools and reading heads and lanes.
  * Nothing only a head does (hydra_done, hydra_stuck, hydra_progress, hydra_share, hydra_board) and
@@ -205,6 +207,15 @@ export const userTools: readonly HelperToolDefinition[] = [
     inputSchema: { type: 'object', additionalProperties: false, properties: { reason: string('Why, for the record and the audit log. Under 500 characters.') } },
   },
   { name: resumeTool, description: 'Hydra: Resume Agents: heads, lanes and plans may start again.', inputSchema: { type: 'object', additionalProperties: false, properties: {} } },
+  // HSEC-72: `hydra close`.
+  {
+    name: closeWindowTool,
+    description: 'Hydra: close this window. Refused while heads or lanes are running, or plans are in progress or landing, unless force is true. Answers first, then closes a moment later.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: {
+      force: { type: 'boolean', description: 'Close even while work is running, cutting it short.' },
+      reason: string('Why, for the log and the audit log. Under 500 characters.'),
+    } },
+  },
 ];
 
 export const toolsFor = (role: HelperRole): readonly HelperToolDefinition[] => role === 'lead' ? leadTools : role === 'user' ? userTools : helperTools;

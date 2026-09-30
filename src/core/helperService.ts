@@ -24,6 +24,7 @@ import type { LimitEvent } from './limitEvents';
 import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
+import { closeDelayMs, closeRefusal, closeWindowTool, isBusy, type WindowActivity } from './windowClose';
 import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost, type PlanAmendment } from './plans';
 import { HeadSync, headSyncIntervalMs, type HeadConflict, type IntegrationConflict } from './headSync';
 export type { HeadConflict, IntegrationConflict } from './headSync';
@@ -86,6 +87,11 @@ export const userPlanSession = 'user';
 export interface UserControl {
   stopAll(reason: string): Promise<{ heads: number; lanes: number }>;
   resume(): Promise<void>;
+  // ---- hydra close (HSEC-72): both, or hydra_close is refused ----
+  /** What in this window is still working (windowActivity). */
+  activity?(): WindowActivity | Promise<WindowActivity>;
+  /** Log and audit the close, then close the window closeDelayMs later, after the caller has its reply. */
+  closeWindow?(request: { force: boolean; activity: WindowActivity; reason?: string }): void;
 }
 
 // ---- O4: the plan board (docs/Heads.md, "The plan board") ----
@@ -357,6 +363,23 @@ export class HelperService {
           if (!this.options.control) throw new Error('Resume Agents is not available in this Hydra window.');
           await this.options.control.resume();
           return { stopped: false };
+        }
+        // HSEC-72: `hydra close`. Refused while anything still works here, unless forced; the window answers, then closes.
+        case closeWindowTool: {
+          const control = this.options.control;
+          if (!control?.activity || !control.closeWindow) throw new Error('Closing the window is not available in this Hydra window.');
+          if (args.force !== undefined && typeof args.force !== 'boolean') throw new Error('force must be true or false.');
+          if (args.reason !== undefined && typeof args.reason !== 'string') throw new Error('reason must be text.');
+          const force = args.force === true;
+          const reason = typeof args.reason === 'string' && args.reason.trim() ? clip(args.reason.trim(), 500) : undefined;
+          const activity = await control.activity();
+          const refusal = closeRefusal(activity, force);
+          if (refusal) {
+            this.options.audit?.({ kind: 'denial', what: 'Close window (from a script) refused: work is running', detail: refusal, role: 'user' });
+            throw new Error(refusal);
+          }
+          control.closeWindow({ force, activity, ...(reason ? { reason } : {}) });
+          return { closing: true, in_ms: closeDelayMs, forced: force && isBusy(activity), activity };
         }
       }
     } else if (caller.role === 'helper' && caller.jobId) {

@@ -355,8 +355,8 @@ export async function swebench(flags, rest, deps) {
   const only = flags.only ? new Set(flags.only.split(',').map(id => id.trim())) : undefined;
   const { records } = await readRecords(out, instances);
   const { todo: pending, skipped } = pendingInstances(instances.filter(instance => !only || only.has(instance.instance_id)), records, { retryErrors: flags['retry-errors'] === 'yes' });
-  // --limit <k>: at most k instances this time. Hydra can't close a window from the command line, so each hydra
-  // instance leaves one open: run a batch, close the windows, run the same command again.
+  // --limit <k>: at most k instances this time. Each hydra instance's window is closed once its results are written
+  // (`hydra close`, scripts/benchmark-windows.mjs), so a long slice no longer piles windows up.
   const limit = flags.limit === undefined ? Infinity : Number(flags.limit);
   if (!(limit >= 1)) throw new Error('--limit must be a number of at least 1.');
   const todo = pending.slice(0, limit);
