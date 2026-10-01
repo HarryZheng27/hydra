@@ -4,7 +4,7 @@ import { handleConnectionsMessage, type ProviderConnectionView } from '../../hel
 import type { SettingsContext, SettingsPage } from '../types';
 
 /**
- * Connectors (Settings_And_Connectors_Plan.md, "Connectors"): one card per
+ * Connectors (docs/internal/Settings_And_Connectors_Plan.md, "Connectors"): one card per
  * agent with its state, the Connect/Disconnect/Sign in actions (unchanged
  * behaviour, reused from helperConnectionsView.handleConnectionsMessage —
  * onboarding keeps its own simpler section built on the same helper), the
