@@ -30,7 +30,7 @@ Before launching workers:
 5. Keep `src/core/model.ts`, `src/core/store.ts`, `src/extension.ts`, and `src/core/scheduler.ts` under coordinator ownership unless the feature explicitly owns one.
 6. After each merge, rebase or recreate dependent worktrees from the new `origin/main`. Never resolve shared-schema conflicts independently in multiple branches.
 7. Run tests locally and use `[skip ci]` when the local release gate passes. Do not use live provider turns, API-key billing, or authenticated account tests unless Nico explicitly authorizes that later.
-8. Give each worker a feature-specific document. Only the coordinator edits `docs/Adaptive_Delegation.md`, `docs/Agent_Workflow_Roadmap.md`, or `docs/Implementation_Status.md`.
+8. Give each worker a feature-specific document. Only the coordinator edits `docs/Adaptive_Delegation.md`, `docs/internal/Agent_Workflow_Roadmap.md`, or `docs/internal/Implementation_Status.md`.
 9. Three implementation workers consume every non-coordinator slot. Release those workers before spawning fresh verification and review agents.
 
 Allowed existing APIs and patterns:
@@ -183,7 +183,7 @@ This schedule uses all three available worker slots in A1/A2 while keeping share
 - Dependencies: features 01, 02, and 07–09 merged.
 - Owned paths: new `src/core/delegationIntegrationGate.ts`, focused changes to `src/core/integration.ts`, `tests/integration.test.ts`, and fixtures under `tests/fixtures/delegation-combined-acceptance/`.
 - Forbidden: weakening existing target cleanliness/stale-review checks, treating a child’s pass as combined acceptance, automatic conflict resolution.
-- References: `assertDelegatedVerificationGate()`, integration candidate lifecycle, `docs/Integration.md`, Phase 3 delivery gate in `docs/Adaptive_Delegation.md`.
+- References: `assertDelegatedVerificationGate()`, integration candidate lifecycle, `docs/internal/Integration.md`, Phase 3 delivery gate in `docs/Adaptive_Delegation.md`.
 - Acceptance: missing/stale/failed/interrupted child evidence blocks before promotion, passing children can still fail combined acceptance, failed prerequisites block, conflict work remains recoverable, target changes force revalidation, and successful promotion matches the reviewed candidate exactly.
 - Commands: `npm.cmd run check`; `npm.cmd run build`; `npm.cmd test`; `node --test .test-build/integration.test.cjs`.
 

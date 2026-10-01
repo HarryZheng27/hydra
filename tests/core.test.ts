@@ -121,7 +121,7 @@ test('webview messages reject unknown actions, malformed providers, and invalid 
   assert.deepEqual(parseMessage({ type: 'checkProvider', provider: 'codex' }), { type: 'checkProvider', provider: 'codex' });
   assert.deepEqual(parseMessage({ type: 'copyHandoffPrompt' }), { type: 'copyHandoffPrompt' });
 });
-test('the walkthrough and tray-clear webview messages are validated (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up")', () => {
+test('the walkthrough and tray-clear webview messages are validated (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up")', () => {
   assert.deepEqual(parseMessage({ type: 'learn' }), { type: 'learn' });
   assert.deepEqual(parseMessage({ type: 'trayClear', ids: ['111111111111', '222222222222'] }), { type: 'trayClear', ids: ['111111111111', '222222222222'] });
   assert.deepEqual(parseMessage({ type: 'trayClear', ids: [] }), { type: 'trayClear', ids: [] });
@@ -129,7 +129,7 @@ test('the walkthrough and tray-clear webview messages are validated (docs/Lanes_
   assert.throws(() => parseMessage({ type: 'trayClear', ids: 'nope' }), /Invalid tray ids/);
   assert.throws(() => parseMessage({ type: 'trayClear', ids: Array.from({ length: 201 }, () => '111111111111') }), /Invalid tray ids/);
 });
-test('Planner webview messages are validated (docs/Lanes_And_Planner_Plan.md, section 4)', () => {
+test('Planner webview messages are validated (docs/internal/Lanes_And_Planner_Plan.md, section 4)', () => {
   const id = 'abcdefabcdef', key = 'api', other = 'ui';
   assert.deepEqual(parseMessage({ type: 'planCreate', title: 'A plan', brief: 'Do the thing' }), { type: 'planCreate', title: 'A plan', brief: 'Do the thing' });
   assert.deepEqual(parseMessage({ type: 'planCreateEmpty', title: 'A plan' }), { type: 'planCreateEmpty', title: 'A plan' });

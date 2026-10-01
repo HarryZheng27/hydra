@@ -8,7 +8,7 @@ import { processLaunch } from './process';
 import { addClaudeLimitHook, readClaudeLimitHooks, removeClaudeLimitHook, type LimitHookGroup } from './claudeLimitHook';
 
 /**
- * Connecting Claude Code and Codex to Hydra (docs/Official_Extensions_Plan.md,
+ * Connecting Claude Code and Codex to Hydra (docs/internal/Official_Extensions_Plan.md,
  * Phase 5). The connection is between Hydra and the user's Claude Code / Codex
  * install, never a project: Hydra adds itself as a user-level tool server named
  * "hydra" and nothing is written inside any repository.

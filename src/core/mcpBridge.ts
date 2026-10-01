@@ -30,9 +30,9 @@ export function laneFromEnv(env: Record<string, string | undefined>): { id: stri
 export function createBridge(options: BridgeOptions) {
   const role: HelperRole = options.env.HYDRA_HELPER_TOKEN ? 'helper' : 'lead';
   const lane = role === 'lead' ? laneFromEnv(options.env) : undefined;
-  // hydra_job_ready is listed only in a lane that runs a plan job (docs/Plan_Lanes_Plan.md, decision 6).
+  // hydra_job_ready is listed only in a lane that runs a plan job (docs/internal/Plan_Lanes_Plan.md, decision 6).
   const listed = (roles: readonly LeadRole[]) => (role === 'lead' ? leadToolsWithRoles(roles) : toolsFor(role)).filter(tool => tool.name !== jobReadyTool || !!lane?.planJob);
-  // Packs (docs/Packs_Plan.md, decision 6): a lead hears of the active roles in its instructions and in
+  // Packs (docs/internal/Packs_Plan.md, decision 6): a lead hears of the active roles in its instructions and in
   // hydra_start_head's `role`. They are asked for once, when the CLI starts the bridge; none if the window can't say.
   let roles: LeadRole[] = [];
   let tools = listed(roles);

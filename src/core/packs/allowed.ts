@@ -5,7 +5,7 @@ import { replaceAtomic } from '../atomicFile';
 import type { InstalledPack, PackSource } from './registry';
 
 /**
- * What you allowed on this machine (docs/Packs_Plan.md, section 4):
+ * What you allowed on this machine (docs/internal/Packs_Plan.md, section 4):
  * `globalStorage/packs/allowed.json`, one entry per project and pack.
  *
  * `.hydra/packs.json` says what a project wants; this record says what you

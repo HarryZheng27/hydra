@@ -7,7 +7,7 @@ import { isLaneBranch, isSafeBranchName, laneFolder, type Lane, type LaneCloseMo
 import { evidenceLabel, gateKind, gateState } from './jobs';
 
 /**
- * Finishing a lane (docs/Lanes_And_Planner_Plan.md, "Finishing a lane"): commit,
+ * Finishing a lane (docs/internal/Lanes_And_Planner_Plan.md, "Finishing a lane"): commit,
  * merge into its target, update from its target, push for a pull request, and
  * close. Every git write here runs only on an explicit user action; the caller
  * asks for confirmation where it matters. Refs and paths come only from a

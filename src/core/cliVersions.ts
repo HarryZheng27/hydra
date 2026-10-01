@@ -1,5 +1,5 @@
 /**
- * Which provider CLI versions Hydra runs (docs/Official_Extensions_Plan.md,
+ * Which provider CLI versions Hydra runs (docs/internal/Official_Extensions_Plan.md,
  * decision 5). Hydra accepts the tested release or any newer one with the same
  * major version: Claude Code 2.1.270 and up within 2.x, Codex 0.154.0 and up
  * within 0.x. Providers ship often, so pinning a patch line broke sign-in and

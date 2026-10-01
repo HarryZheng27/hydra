@@ -4,7 +4,7 @@ You chat with Claude in the Claude Code extension, or with Codex in the Codex ex
 
 You don't have to ask for heads. Hydra tells the lead to decide by itself: before a code change, it checks whether the work splits into independent pieces with separate files (a feature and its tests, frontend and backend, several unrelated fixes). If there are two or more pieces worth a few minutes each, it starts one head per piece without asking or announcing it; the heads appear on Hydra's Agents view. Small, tightly coupled or question-only tasks stay with the lead. You can still ask for heads, or ask it not to use them.
 
-This replaces the old Auto delegation, which read a `HYDRA_DELEGATION_V1` line out of chat text. How it was designed and verified is in [Official_Extensions_Plan.md](Official_Extensions_Plan.md).
+This replaces the old Auto delegation, which read a `HYDRA_DELEGATION_V1` line out of chat text. How it was designed and verified is in [Official_Extensions_Plan.md](internal/Official_Extensions_Plan.md).
 
 ## Connecting Claude Code and Codex
 
@@ -161,7 +161,7 @@ For a head, **Continue in** switches its provider and restarts it **in the same 
 
 ## Gates
 
-No agent grades its own work. When a head calls `hydra_done`, its changes pass the scope check and then this project's **gates** before they're accepted ([Gates_Plan.md](Gates_Plan.md)).
+No agent grades its own work. When a head calls `hydra_done`, its changes pass the scope check and then this project's **gates** before they're accepted ([Gates_Plan.md](internal/Gates_Plan.md)).
 
 **Where gates come from:** the **lead's** folder, never a head's worktree, so a head can't edit them away. Put them in `.hydra/gates.json`, or edit them in **Hydra Settings → Gates**:
 
@@ -212,7 +212,7 @@ It's stored with the commit it describes, on the head's result, the lane's last 
 
 ## The Agents view
 
-Also called the **Agent Manager**. It takes the whole window: only the title bar stays, and the side bars, panel, status bar and tabs step aside until you switch back to the Editor, which comes back exactly as you left it. Opening a diff, a log or a lane preview from it switches to the Editor. Open it with **Alt+Shift+A**, the **Agent Manager / Editor** switch in the title bar, or the status bar item. (Alt+Shift+A replaces the editor's own Toggle Block Comment shortcut.) In the Editor, the button next to the switch shows or hides the agent side bar on the right, where Claude Code and Codex chat (Ctrl+Alt+B does the same). It's a live canvas of your heads ([Agents_View_Plan.md](Agents_View_Plan.md)):
+Also called the **Agent Manager**. It takes the whole window: only the title bar stays, and the side bars, panel, status bar and tabs step aside until you switch back to the Editor, which comes back exactly as you left it. Opening a diff, a log or a lane preview from it switches to the Editor. Open it with **Alt+Shift+A**, the **Agent Manager / Editor** switch in the title bar, or the status bar item. (Alt+Shift+A replaces the editor's own Toggle Block Comment shortcut.) In the Editor, the button next to the switch shows or hides the agent side bar on the right, where Claude Code and Codex chat (Ctrl+Alt+B does the same). It's a live canvas of your heads ([Agents_View_Plan.md](internal/Agents_View_Plan.md)):
 
 - **Blank until a chat starts heads.** Each head grows out of the chat that started it: the **lead**, labelled with its provider, and a name if the chat gave one (`lead_label`).
 - **What each head is doing:** state (Queued, Working, Needs an answer, Checking, Done, Failed), its latest progress note or question, branch and elapsed time. When it finishes: checks passed and files changed.
@@ -279,7 +279,7 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
 - **Conflicts are predicted against it too.** While a plan's head runs, Hydra also checks its work against the integration branch's tip, which moves as other jobs land (see **Conflict prediction between heads**).
 - Plans that were already running before Hydra had integration branches carry on without one, as they started.
 
-**New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 4):
+**New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](internal/Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.
 - **Edit the draft on the canvas:**
@@ -290,7 +290,7 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
 - **Cycles are refused.** A plan whose dependencies loop shows the loop, draws it in red, and can't run until you break it.
 - **Run plan** starts one head per job in dependency order, grouped under the plan on the canvas. Running it again after adding jobs starts only the new ones.
 
-**Jobs you drive yourself** ([Plan_Lanes_Plan.md](Plan_Lanes_Plan.md)):
+**Jobs you drive yourself** ([Plan_Lanes_Plan.md](internal/Plan_Lanes_Plan.md)):
 - **Run as:** a job's popover has **Head** (Hydra drives it) or **Lane** (you drive it in a terminal). A lane job's card says "Draft job · Lane".
 - **Starting:** a lane job opens as a lane as soon as the jobs it depends on are done, named after the job, with its brief as the goal.
   - The lane starts from their work.
@@ -333,7 +333,7 @@ A loose `hydra_start_head` call never refuses for scope: instead, if the new hea
 
 ### Lanes
 
-Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `codex` terminal, signed in with your own account, working in its own git worktree and branch ([Lanes_And_Planner_Plan.md](Lanes_And_Planner_Plan.md), section 1). The Agents tab has two views, **Canvas | Lanes**.
+Heads are Hydra's agents. **Lanes** are yours: each lane is a real `claude` or `codex` terminal, signed in with your own account, working in its own git worktree and branch ([Lanes_And_Planner_Plan.md](internal/Lanes_And_Planner_Plan.md), section 1). The Agents tab has two views, **Canvas | Lanes**.
 
 - **New lane** (in the Lanes view, the Hydra panel's **+**, or **Hydra: New Lane**):
   - Give it a name, pick Claude Code or Codex, and optionally a goal.
@@ -386,7 +386,7 @@ In the Hydra app, Hydra's own messages (a lane is ready, a job failed its gates,
 Hydra runs agents and commands in your folder, so it switches itself off in a folder you haven't trusted yet (Restricted Mode): no heads, lanes or plans, and no Agent Manager / Editor switch, until you choose **Trust**. Hydra's look (its themes and default layout) stays on in the meantime, so the trust prompt and the folder behind it already look like Hydra.
 ## Packs
 
-A **pack** bundles what one kind of work needs: **roles** for lanes, heads and plan jobs, **gates**, **MCP servers** and **skills** ([Packs_Plan.md](Packs_Plan.md)).
+A **pack** bundles what one kind of work needs: **roles** for lanes, heads and plan jobs, **gates**, **MCP servers** and **skills** ([Packs_Plan.md](internal/Packs_Plan.md)).
 
 - **Which packs exist:**
   - Hydra ships **Coding** (Builder, UI builder and Reviewer roles, a `code-review` gate, and Playwright for the UI builder) and **Research** (Researcher and Fact-checker, and a `fact-check` gate).

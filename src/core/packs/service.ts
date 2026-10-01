@@ -16,7 +16,7 @@ import { mkdir } from 'node:fs/promises';
 import type { AuditEvent } from '../audit';
 
 /**
- * Packs for one Hydra window (docs/Packs_Plan.md): where they live, each
+ * Packs for one Hydra window (docs/internal/Packs_Plan.md): where they live, each
  * project's state, the gates loader for heads and lanes, and the few writes
  * the Packs page makes. No editor API here, so it is tested directly;
  * src/extensionPacks.ts builds it from the extension's paths and settings.
@@ -83,7 +83,7 @@ export class PackService implements RoleSource {
 
   /**
    * Whether a pack is already allowed for this project, by its current
-   * installed copy (docs/Packs_Plan.md, section 3): used only to let
+   * installed copy (docs/internal/Packs_Plan.md, section 3): used only to let
    * `hydra.packs.setEnabled` turn a pack back on without going through the
    * review panel again — it must never allow one itself.
    */
@@ -131,7 +131,7 @@ export class PackService implements RoleSource {
     await revokePack(this.places().allowedFile, await canonicalProject(folder), id);
   }
 
-  // ---- Roles (docs/Packs_Plan.md, section 5) ----
+  // ---- Roles (docs/internal/Packs_Plan.md, section 5) ----
 
   /** The active packs' roles, in packs.json order: the lead's instructions, hydra_start_head's `role`, and the pickers. */
   async roles(folder: string): Promise<RoleSummary[]> {

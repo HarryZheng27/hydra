@@ -23,7 +23,7 @@ import { fakePtyModule } from './lanePtyFake';
 
 // ---- Fixtures ----
 
-/** The plan's SEO example (docs/Packs_Plan.md, section 2), with a {node} gate and a review gate that names a role. */
+/** The plan's SEO example (docs/internal/Packs_Plan.md, section 2), with a {node} gate and a review gate that names a role. */
 const seo = (): any => ({
   version: 1, id: 'seo', title: 'SEO', description: 'Pages that rank: titles, structure and links.', publisher: 'Acme web team',
   roles: [{ id: 'seo-writer', title: 'SEO writer', description: 'Writes and fixes page metadata.', provider: 'claude', instructions: 'roles/seo-writer.md', skills: ['meta-tags'], mcpServers: ['lighthouse'] }],

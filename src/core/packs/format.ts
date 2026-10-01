@@ -5,7 +5,7 @@ import { looksLikeSecret, validateServerName, validateServerSpec, type McpServer
 import { integrityPattern, npxPackageArg, npxRunner, parsePackageSpec, pinLabel, requireExactVersion, type PackageSpec } from './npxPin';
 
 /**
- * The pack format (docs/Packs_Plan.md, section 2): pack.json, each skill's
+ * The pack format (docs/internal/Packs_Plan.md, section 2): pack.json, each skill's
  * SKILL.md front matter, the project's .hydra/packs.json, and the rules every
  * pack keeps. Pure: the registry reads the folder and hands its bytes over.
  *

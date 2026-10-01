@@ -1,4 +1,4 @@
-// Creates a new Ed25519 key pair for signing Hydra's update records (docs/Desktop_Signed_Update.md).
+// Creates a new Ed25519 key pair for signing Hydra's update records (docs/internal/Desktop_Signed_Update.md).
 // The release owner runs it once, locally. The private key is written only to the file named by
 // --out, which must be outside every git working tree; it is never printed.
 import { createHash, generateKeyPairSync } from 'node:crypto';

@@ -1,6 +1,6 @@
 # Task resources and explicit setup
 
-> **Removed (2026-09-24).** This described part of Hydra's managed-task system, which was removed once the Agents view became a live canvas of Hydra heads (see [Agents_View_Plan.md](Agents_View_Plan.md), "As built", and [Heads.md](Heads.md)). Kept for history; none of it is in the product any more.
+> **Removed (2026-09-24).** This described part of Hydra's managed-task system, which was removed once the Agents view became a live canvas of Hydra heads (see [Agents_View_Plan.md](Agents_View_Plan.md), "As built", and [Heads.md](../Heads.md)). Kept for history; none of it is in the product any more.
 
 Shared managed/terminal/setup reservations are a separate 0.18.0 candidate; see [Profile_Capacity.md](Profile_Capacity.md).
 

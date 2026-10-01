@@ -5,7 +5,7 @@ import { packCaps, resolvePlaceholders } from './format';
 import { projectPacks, type PackPlaces, type ProjectPack } from './project';
 
 /**
- * A project's gates with its packs' (docs/Packs_Plan.md, section 1, "Gates"):
+ * A project's gates with its packs' (docs/internal/Packs_Plan.md, section 1, "Gates"):
  *
  * 1. `.hydra/gates.json` (or checks.json) comes first.
  * 2. Then each active pack's gates, in the order packs.json lists the packs.

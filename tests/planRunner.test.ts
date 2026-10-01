@@ -9,7 +9,7 @@ import { parseJobInput } from '../src/core/jobs';
 import type { DependencyResult } from '../src/core/headStart';
 
 /**
- * The plan runner (docs/Plan_Lanes_Plan.md, section 2) with fake starters: heads and lanes are
+ * The plan runner (docs/internal/Plan_Lanes_Plan.md, section 2) with fake starters: heads and lanes are
  * entries in a fake world that each test moves along by hand.
  */
 const job = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], ...extra });

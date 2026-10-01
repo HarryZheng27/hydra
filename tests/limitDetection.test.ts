@@ -155,7 +155,7 @@ test('event files are validated like untrusted input', () => {
   assert.equal(parse('not json'), undefined); assert.equal(parse('[]'), undefined);
   assert.equal(parse(JSON.stringify({ ...event, message: 'x'.repeat(70_000) })), undefined, 'oversized');
   assert.equal(parse({ ...event, resetsAt: 'soon' })?.resetsAt, undefined);
-  // Lanes (docs/Gates_Plan.md, section 2): a valid laneId keeps source "lane"; a malformed one is ignored, not rejected.
+  // Lanes (docs/internal/Gates_Plan.md, section 2): a valid laneId keeps source "lane"; a malformed one is ignored, not rejected.
   const lane = parse({ ...event, source: 'lane', laneId: 'abcdef012345' });
   assert.equal(lane?.source, 'lane'); assert.equal(lane?.laneId, 'abcdef012345');
   for (const bad of ['ABCDEF012345', 'nope', '', undefined]) {
@@ -176,7 +176,7 @@ test('the built hook script writes one event file and never fails', { skip: !exi
     for (const input of ['', 'garbage', JSON.stringify({ ...stopFailure, error: 'overloaded' }), 'x'.repeat(400_000)]) assert.equal(run(input).status, 0);
     assert.equal(run(JSON.stringify(stopFailure), []).status, 0, 'no folder given');
     assert.equal((await readdir(events)).length, 1, 'nothing else was written');
-    // Run inside a Hydra lane (docs/Gates_Plan.md, section 2): HYDRA_LANE_ID in the hook's own
+    // Run inside a Hydra lane (docs/internal/Gates_Plan.md, section 2): HYDRA_LANE_ID in the hook's own
     // environment, inherited the way a lane's child process inherits it, tags the event.
     const laneEvents = path.join(directory, 'lane-events');
     assert.equal(run(JSON.stringify(stopFailure), [laneEvents], { HYDRA_LANE_ID: 'abcdef012345' }).status, 0);

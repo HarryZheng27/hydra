@@ -4,7 +4,7 @@ import type { LimitEvent } from './limitEvents';
 import type { QuotaSnapshot } from './quota';
 
 /**
- * Recognising a usage limit (docs/Hydra_Agent_Plan.md, "Detect the limit"). Pure
+ * Recognising a usage limit (docs/internal/Hydra_Agent_Plan.md, "Detect the limit"). Pure
  * functions over what each provider reports; nothing here reads or writes files.
  */
 

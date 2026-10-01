@@ -2,7 +2,7 @@ import path from 'node:path';
 import { terminateProcessTree } from './process';
 
 /**
- * Lane terminals (docs/Lanes_And_Planner_Plan.md, "Terminals"). node-pty comes
+ * Lane terminals (docs/internal/Lanes_And_Planner_Plan.md, "Terminals"). node-pty comes
  * from the host application, never bundled: the Hydra desktop build and VS Code
  * both ship it. If it doesn't load, lanes can't start and nothing else breaks.
  */

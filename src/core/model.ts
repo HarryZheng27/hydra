@@ -16,7 +16,7 @@ export interface ProviderDiagnostic {
 export interface HandoffTask { id: string; title: string; prompt: string; repository: string; worktree: string; branch: string; baseCommit: string; provider: Provider }
 export interface Handoff { version: 1; task: HandoffTask }
 export interface OfficialExtensionInfo { provider: Provider; extensionId: string; installed: boolean; version?: string; commandAvailable: boolean; commandTitle: string }
-/** One Hydra helper as the dashboard shows it (docs/Official_Extensions_Plan.md, Phase 6). */
+/** One Hydra helper as the dashboard shows it (docs/internal/Official_Extensions_Plan.md, Phase 6). */
 export interface HelperJobView {
   id: string; title: string; state: string; provider: Provider; createdAt: string; finishedAt?: string;
   progress?: string; question?: string; reason?: string; branch?: string; commit?: string; summary?: string;
@@ -31,7 +31,7 @@ export interface HelperJobView {
   merged?: boolean;
   startedAt?: string;
   writeScope?: string[];
-  /** Packs (docs/Packs_Plan.md): the role it works in, "coding/builder", with the titles it started with. */
+  /** Packs (docs/internal/Packs_Plan.md): the role it works in, "coding/builder", with the titles it started with. */
   role?: { ref: string; title: string; packTitle: string };
   /** Step A: the truthful evidence status at `commit`, when one was recorded. */
   status?: EvidenceStatus;
@@ -45,7 +45,7 @@ export interface HelperJobView {
   providerWaitMs?: number;
 }
 /**
- * Packs (docs/Packs_Plan.md, "Picking a role"): one active role, for the New
+ * Packs (docs/internal/Packs_Plan.md, "Picking a role"): one active role, for the New
  * lane card, `hydra.newLane`, and the plan job popover's Role select.
  */
 export interface SnapshotRole { ref: string; pack: string; packTitle: string; id: string; title: string; description: string; provider: Provider }
@@ -53,14 +53,14 @@ export interface Snapshot {
   mode: 'editor' | 'agents'; busy: boolean; error?: string;
   helpers?: HelperJobView[];
   handoff?: Handoff; officialExtensions?: OfficialExtensionInfo[];
-  /** The Planner (docs/Lanes_And_Planner_Plan.md, section 4). hydra.defaultProvider, so the New plan card and status text can name it. */
+  /** The Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4). hydra.defaultProvider, so the New plan card and status text can name it. */
   plans?: Plan[];
   defaultProvider?: Provider;
-  /** Finished-head ids the tray's Clear button has dismissed (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"); a new finished head still shows up. */
+  /** Finished-head ids the tray's Clear button has dismissed (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"); a new finished head still shows up. */
   dismissedTray?: string[];
-  /** Plan lanes (docs/Plan_Lanes_Plan.md): each plan's job statuses, by plan id, for plans that have run. Also sent with every `plans` message. */
+  /** Plan lanes (docs/internal/Plan_Lanes_Plan.md): each plan's job statuses, by plan id, for plans that have run. Also sent with every `plans` message. */
   planJobs?: Record<string, PlanJobView[]>;
-  /** Packs (docs/Packs_Plan.md): the active packs' roles, in packs.json order, refreshed whenever packs change. */
+  /** Packs (docs/internal/Packs_Plan.md): the active packs' roles, in packs.json order, refreshed whenever packs change. */
   roles?: SnapshotRole[];
 }
 export type ClientMessage =
@@ -70,21 +70,21 @@ export type ClientMessage =
   | { type: 'openOfficial' | 'showOfficial' | 'copyHandoffPrompt' }
   | { type: 'helperReview' | 'helperLog' | 'helperCancel' | 'helperAnswer' | 'helperEvidence'; jobId: string }
   | { type: 'helperStopAll' }
-  /** "Learn how" (docs/Lanes_And_Planner_Plan.md, "A walkthrough"): opens hydra.learn from an empty state. */
+  /** "Learn how" (docs/internal/Lanes_And_Planner_Plan.md, "A walkthrough"): opens hydra.learn from an empty state. */
   | { type: 'learn' }
-  /** The Finished tray's Clear button: dismiss these heads from the tray (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
+  /** The Finished tray's Clear button: dismiss these heads from the tray (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
   | { type: 'trayClear'; ids: string[] }
-  // ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4). Kept as its own block: ----
+  // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4). Kept as its own block: ----
   // ---- Phase 1 (Lanes) adds its own lane messages to this union separately.        ----
   | { type: 'planCreate'; title: string; brief: string }
   | { type: 'planCreateEmpty'; title: string }
   | { type: 'planRetry' | 'planCancel' | 'planDelete' | 'planAddJob' | 'planRun' | 'planStartEmpty'; id: string }
-  /** `role` is "pack/role" (docs/Packs_Plan.md, "Picking a role"), or "" to clear it; missing keeps the job's current role. */
+  /** `role` is "pack/role" (docs/internal/Packs_Plan.md, "Picking a role"), or "" to clear it; missing keeps the job's current role. */
   | { type: 'planSaveJob'; id: string; key: string; title: string; brief: string; provider?: Provider; runAs?: PlanJobRunAs; role?: string }
   | { type: 'planDeleteJob'; id: string; key: string }
   | { type: 'planDependsOn'; id: string; key: string }
   | { type: 'planAddDependency' | 'planRemoveDependency'; id: string; key: string; dependsOn: string }
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md): Retry failed jobs on an incomplete plan; Cancel job and Start lane on a job's node ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): Retry failed jobs on an incomplete plan; Cancel job and Start lane on a job's node ----
   | { type: 'planRetryJobs'; id: string }
   | { type: 'planCancelJob' | 'planStartJob'; id: string; key: string }
   // ---- Auto-dispatch (Step C): null turns it off ----
@@ -165,7 +165,7 @@ export function parseMessage(value: unknown): ClientMessage {
   throw new Error('Unknown command.');
 }
 
-// ---- Lanes (docs/Lanes_And_Planner_Plan.md, "Extension-webview protocol") ----
+// ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md, "Extension-webview protocol") ----
 
 /** What a lane's coordination pass found (src/core/laneSync.ts). */
 export interface LaneSyncView {
@@ -181,7 +181,7 @@ export interface LaneSyncView {
   head?: string;
 }
 /**
- * The plan job a lane runs, as the tile shows it (docs/Plan_Lanes_Plan.md, section 5): the chip
+ * The plan job a lane runs, as the tile shows it (docs/internal/Plan_Lanes_Plan.md, section 5): the chip
  * "Plan · Checkout › Build API", and "Job done · a1b2c3d" once `state` is done. `dependents` jobs
  * wait for it; `dependentsStarted` have started from its result, which then can't move.
  */
@@ -194,7 +194,7 @@ export interface LanePlanJobView {
 /** A lane as the webview shows it: the record, its last sync, whether its terminal is alive and, for a plan lane, its job. */
 export type LaneView = Lane & {
   sync?: LaneSyncView; running: boolean; planJob?: LanePlanJobView;
-  /** Packs (docs/Packs_Plan.md, "Lanes"): why its role wasn't available at its last start, for the tile. `role` itself is the record's. */
+  /** Packs (docs/internal/Packs_Plan.md, "Lanes"): why its role wasn't available at its last start, for the tile. `role` itself is the record's. */
   roleNote?: string;
   /** Restarting Hydra (docs/Heads.md): set when Resume found no earlier conversation and started fresh instead. */
   resumeNote?: string;
@@ -206,20 +206,20 @@ export type LaneView = Lane & {
   previewNote?: string;
 };
 export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resume' | 'restart' | 'diff' | 'openWindow' | 'refresh' | 'switchProvider' | 'runGates' | 'evidence'
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 5) ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 5) ----
   | 'markJobDone' | 'cancelJob' | 'showPlan'
   // ---- Step E: a preview for each lane ----
   | 'preview' | 'stopPreview';
 export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan', 'preview', 'stopPreview'];
 export type AgentsView = 'canvas' | 'lanes';
 
-/** The lane tile's usage-limit banner (docs/Gates_Plan.md, section 2). Buttons match src/core/limitOffer.ts's LaneOfferButtonId. */
+/** The lane tile's usage-limit banner (docs/internal/Gates_Plan.md, section 2). Buttons match src/core/limitOffer.ts's LaneOfferButtonId. */
 export type LaneOfferButtonId = 'continueOther' | 'viewHandoff' | 'wait';
 export interface LaneLimitOfferView { provider: Provider; message: string; buttons: LaneOfferButtonId[] }
 
 /** Webview to extension. */
 export type LaneClientMessage =
-  /** `role` is "pack/role" (docs/Packs_Plan.md, "Lanes"); `provider` is still the form's choice. */
+  /** `role` is "pack/role" (docs/internal/Packs_Plan.md, "Lanes"); `provider` is still the form's choice. */
   | { type: 'laneNew'; name: string; provider: Provider; goal?: string; role?: string }
   /** After the Lanes view mounts: the extension replays every terminal's buffer. */
   | { type: 'laneAttach' }
@@ -248,7 +248,7 @@ export type LaneServerMessage =
   /** The countdown ended (cancelled, or the switch happened — a fresh `lanes`/`laneLimit` message follows). */
   | { type: 'laneSwitchCancelled'; id: string }
   /**
-   * Gates running on a lane (docs/Gates_Plan.md, "Lanes"): as each gate starts
+   * Gates running on a lane (docs/internal/Gates_Plan.md, "Lanes"): as each gate starts
    * and finishes, for the tile header's "Gates: unit ✓ · review …". `running`
    * undefined means the run just finished; the lane's own `lastGates` (in the
    * next `lanes` message) then has the final chips.

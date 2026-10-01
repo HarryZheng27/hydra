@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 /**
- * "Connect Claude Code and Codex to Hydra" (docs/Official_Extensions_Plan.md,
+ * "Connect Claude Code and Codex to Hydra" (docs/internal/Official_Extensions_Plan.md,
  * Phase 5), shared by onboarding and Settings. Modelled on Zed's external-agent
  * setup: one row per agent with its install state and one action, and a plain
  * note that each agent keeps its own sign-in and billing.

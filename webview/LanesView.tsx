@@ -9,7 +9,7 @@ import '@xterm/xterm/css/xterm.css';
 import './lanes.css';
 
 /**
- * The Lanes view (docs/Lanes_And_Planner_Plan.md, "Lanes view"): a fixed grid of
+ * The Lanes view (docs/internal/Lanes_And_Planner_Plan.md, "Lanes view"): a fixed grid of
  * tiles, each a real terminal (xterm.js) over a lane's `claude` or `codex`
  * process, plus the chips and actions that finish a lane. xterm is only ever
  * created in the browser (inside an effect), so this renders safely under SSR.
@@ -90,7 +90,7 @@ const laneOfferButtonLabel: Record<LaneOfferButtonId, (other: string) => string>
   continueOther: other => `Continue in ${other}`, viewHandoff: () => 'View handoff', wait: () => 'Wait',
 };
 
-/** The lane tile's usage-limit banner (docs/Gates_Plan.md, section 2). Never a notification: it lives on the tile it's about. */
+/** The lane tile's usage-limit banner (docs/internal/Gates_Plan.md, section 2). Never a notification: it lives on the tile it's about. */
 function LaneLimitBanner({ offer, onAction }: { offer: LaneLimitOfferView; onAction: (action: LaneOfferButtonId) => void }) {
   const other = providerLabel(otherProvider(offer.provider));
   return <div className="lane-limit-banner" role="alert">
@@ -113,7 +113,7 @@ function LaneSwitchCountdownBanner({ countdown, onCancel }: { countdown: LaneSwi
 }
 
 interface NewLaneForm { name: string; provider: Provider; goal: string; role?: string }
-/** "Reviewer" from an active pack's roles, grouped by pack (docs/Packs_Plan.md, "Picking a role"). */
+/** "Reviewer" from an active pack's roles, grouped by pack (docs/internal/Packs_Plan.md, "Picking a role"). */
 export const groupRolesByPack = (roles: readonly SnapshotRole[]): { packTitle: string; roles: readonly SnapshotRole[] }[] => {
   const groups: { packTitle: string; roles: SnapshotRole[] }[] = [];
   for (const role of roles) {
@@ -170,7 +170,7 @@ function Chip({ tone, title, children }: { tone: 'warning' | 'info' | 'good' | '
 }
 
 /**
- * A plan lane's chip (docs/Plan_Lanes_Plan.md, section 5): "Plan · Checkout ›
+ * A plan lane's chip (docs/internal/Plan_Lanes_Plan.md, section 5): "Plan · Checkout ›
  * Build API", and once the job is done, a second green "Job done · a1b2c3d"
  * chip. Shown on both the tile header and the exited-lane row.
  */
@@ -183,7 +183,7 @@ function PlanChip({ planJob }: { planJob: LanePlanJobView }) {
   </>;
 }
 
-/** Gate chips (docs/Gates_Plan.md, "Lanes"): "Gates: ✓ unit · … review" while running, or the last run's chips once it's done. */
+/** Gate chips (docs/internal/Gates_Plan.md, "Lanes"): "Gates: ✓ unit · … review" while running, or the last run's chips once it's done. */
 function GateChips({ results, running }: { results: readonly JobCheckResult[]; running?: string }) {
   if (!results.length && !running) return null;
   return <div className="lane-gate-chips" aria-label="Gate results">
@@ -209,7 +209,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
   const merges = !!sync && !sync.dirty && sync.targetConflicts.length === 0 && sync.changedFiles.length > 0 && lane.state !== 'merged';
   const lastSwitch = lane.switches?.at(-1);
   const other = otherProvider(lane.provider);
-  // Packs (docs/Packs_Plan.md, "How roles show"): the role chip, "Reviewer", tooltip "Coding pack · Codex by default".
+  // Packs (docs/internal/Packs_Plan.md, "How roles show"): the role chip, "Reviewer", tooltip "Coding pack · Codex by default".
   const role = lane.role ? roles.find(candidate => candidate.pack === lane.role!.pack && candidate.id === lane.role!.role) : undefined;
 
   useEffect(() => {
@@ -266,7 +266,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
       <button className="text-button" disabled={!sync?.changedFiles.length} onClick={() => act('diff')}>{plural(sync?.changedFiles.length ?? 0, 'file')} changed</button>
       <div className="lane-tile-actions">
         <button onClick={() => act('diff')}>Diff</button>
-        {/* Mark job done (docs/Plan_Lanes_Plan.md, section 5): only while no dependent has started from its result. */}
+        {/* Mark job done (docs/internal/Plan_Lanes_Plan.md, section 5): only while no dependent has started from its result. */}
         {lane.planJob && lane.planJob.dependentsStarted === 0 && lane.state !== 'merged' && <button onClick={() => act('markJobDone')}>{lane.planJob.state === 'done' ? 'Mark job done again' : 'Mark job done'}</button>}
         <button className="primary" disabled={lane.state === 'merged' || !sync?.changedFiles.length} title={!sync?.changedFiles.length ? 'Nothing to merge yet' : undefined} onClick={() => act('merge')}>Merge</button>
         <div className="lane-menu-wrap">
@@ -303,7 +303,7 @@ function EvidenceChip({ lane }: { lane: LaneView }) {
   </Chip>;
 }
 
-/** An exited lane's compact row (docs/Lanes_And_Planner_Plan.md, "Lanes view"): name, provider, branch, chips and its actions, instead of a full terminal tile. "Show terminal" expands it into the ordinary tile. */
+/** An exited lane's compact row (docs/internal/Lanes_And_Planner_Plan.md, "Lanes view"): name, provider, branch, chips and its actions, instead of a full terminal tile. "Show terminal" expands it into the ordinary tile. */
 function ExitedLaneRow({ lane, laneName, expanded, onToggle, onSend }: {
   lane: LaneView; laneName: (id: string) => string | undefined; expanded: boolean; onToggle: () => void; onSend: (message: ClientMessage) => void;
 }) {
@@ -335,7 +335,7 @@ export function LanesView({ lanes, terminals, defaultProvider, laneError, focus,
   lanes: readonly LaneView[]; terminals: boolean; defaultProvider?: Provider; laneError?: string; focus?: string;
   laneLimits?: Readonly<Record<string, LaneLimitOfferView>>; laneSwitchCountdowns?: Readonly<Record<string, LaneSwitchCountdown>>;
   laneGates?: Readonly<Record<string, { done: JobCheckResult[]; running?: string }>>;
-  /** The active packs' roles (docs/Packs_Plan.md, "Picking a role"), for the New lane card's Role select. */
+  /** The active packs' roles (docs/internal/Packs_Plan.md, "Picking a role"), for the New lane card's Role select. */
   roles?: readonly SnapshotRole[];
   onSend: (message: ClientMessage) => void; onFocused: () => void;
 }) {

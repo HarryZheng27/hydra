@@ -3,7 +3,7 @@ import { parsePlannerOutput, type PlanJob } from './plans';
 import type { Provider } from './model';
 
 /**
- * Drafting a plan from a brief (docs/Lanes_And_Planner_Plan.md, "Planning a
+ * Drafting a plan from a brief (docs/internal/Lanes_And_Planner_Plan.md, "Planning a
  * brief"). Claude or Codex reads the repository read-only and replies with
  * JSON; Hydra never lets it write anything. Runs through processLaunch (via
  * runProbe, which already spawns that way, applies the timeout, and cancels
@@ -14,7 +14,7 @@ export const plannerTimeoutMs = 4 * 60_000;
 const maxPlannerOutputBytes = 4 * 1024 * 1024;
 const clip = (value: string, max = 4000) => value.length > max ? `${value.slice(0, max)}…` : value;
 
-/** A role the planner may assign a job (docs/Packs_Plan.md, "Plans and the planner"): its ref, title and a one-line description. */
+/** A role the planner may assign a job (docs/internal/Packs_Plan.md, "Plans and the planner"): its ref, title and a one-line description. */
 export interface PlannerRole { ref: string; title: string; description: string }
 const clipLine = (text: string, max = 160) => text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
@@ -85,7 +85,7 @@ export interface PlanBriefSpec {
   repository: string;
   brief: string;
   signal?: AbortSignal;
-  /** The active packs' roles (docs/Packs_Plan.md, "Plans and the planner"); none when packs aren't available. */
+  /** The active packs' roles (docs/internal/Packs_Plan.md, "Plans and the planner"); none when packs aren't available. */
   roles?: readonly PlannerRole[];
 }
 export type PlanBriefResult = { ok: true; jobs: PlanJob[] } | { ok: false; error: string };

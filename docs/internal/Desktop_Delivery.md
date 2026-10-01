@@ -1,6 +1,6 @@
 # Desktop delivery and onboarding
 
-Hydra is its own Windows IDE, as clarified by Nico on 17 September 2026. Its workflow module is built into a branded Code - OSS desktop build; users do not need to install VS Code. A `.vsix` remains a core development artifact. Standalone acceptance passed in PR #11. Replayable onboarding, settings import, provider account setup and the final combined Windows installer have merged after Linux and native checks; see the [acceptance record](Implementation_Status.md#acceptance-record), [standalone build](Standalone_Build.md), [settings import](Settings_Import.md), [onboarding](Onboarding.md), [provider accounts](Provider_Account_Setup.md) and [Windows installer](Windows_Installer.md).
+Hydra is its own Windows IDE, as clarified by Nico on 17 September 2026. Its workflow module is built into a branded Code - OSS desktop build; users do not need to install VS Code. A `.vsix` remains a core development artifact. Standalone acceptance passed in PR #11. Replayable onboarding, settings import, provider account setup and the final combined Windows installer have merged after Linux and native checks; see the [acceptance record](Implementation_Status.md#acceptance-record), [standalone build](../Standalone_Build.md), [settings import](../Settings_Import.md), [onboarding](../Onboarding.md), [provider accounts](Provider_Account_Setup.md) and [Windows installer](../Windows_Installer.md).
 
 ## Installation
 

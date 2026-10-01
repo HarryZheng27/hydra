@@ -429,7 +429,7 @@ test('a head records the chat that started it, and is seen as merged once its br
   } finally { await f.close(); }
 });
 
-// ---- Gates (docs/Gates_Plan.md, section 1) ----
+// ---- Gates (docs/internal/Gates_Plan.md, section 1) ----
 
 /** A stand-in reviewer: each review gets the next scripted reply, in the reviewing CLI's own output format. */
 function scriptedReviewer(replies: (Record<string, unknown> | { timedOut: true })[]) {
@@ -529,7 +529,7 @@ test('maxAttempts comes from gates.json; a review that can\'t run never fails th
   } finally { await broken.close(); }
 });
 
-// ---- What a head starts from (docs/Gates_Plan.md, section 3) ----
+// ---- What a head starts from (docs/internal/Gates_Plan.md, section 3) ----
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
 
@@ -632,7 +632,7 @@ test('the dependency summaries for a dependent\'s brief are capped at 4 KB', () 
   assert.match(brief, /^What the heads you depend on did \(your worktree already has their work\):\n- Parser \(branch agent\/parser-aaaaaaaaaaaa, commit cccccccccccc\): Added the parser\.\n  Changed files: src\/parser\.ts, tests\/parser\.test\.ts\n- Huge \(commit dddddddddddd\): x+…$/);
 });
 
-// ---- Plan lanes (docs/Plan_Lanes_Plan.md, "Heads that depend on a lane job", decision 7) ----
+// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, "Heads that depend on a lane job", decision 7) ----
 
 test('a plan head starts from a lane job\'s result, sees its file, and is told what "the jobs it depends on" did', async () => {
   const f = await fixture({ script: async helper => {

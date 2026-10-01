@@ -18,7 +18,7 @@ One development environment for writing code yourself, delegating tasks, watchin
 
 ### Recommended starting point
 
-The product is its own Hydra IDE, built as a maintained desktop editor distribution and installed through a Windows setup executable. The existing extension implementation becomes a built-in Hydra module; `.vsix` files and VS Code hosts are development tools, not the final delivery or a runtime dependency. Prioritize the standalone build foundation before extending the remaining agent milestones. See [Standalone build](Standalone_Build.md) and [Desktop delivery and onboarding](Desktop_Delivery.md). Use native editing and terminal surfaces alongside a custom agent interface. A perfect workbench rearrangement remains an acceptance gate rather than an extension API guarantee. [1]
+The product is its own Hydra IDE, built as a maintained desktop editor distribution and installed through a Windows setup executable. The existing extension implementation becomes a built-in Hydra module; `.vsix` files and VS Code hosts are development tools, not the final delivery or a runtime dependency. Prioritize the standalone build foundation before extending the remaining agent milestones. See [Standalone build](../Standalone_Build.md) and [Desktop delivery and onboarding](Desktop_Delivery.md). Use native editing and terminal surfaces alongside a custom agent interface. A perfect workbench rearrangement remains an acceptance gate rather than an extension API guarantee. [1]
 
 ### Scope for the first release
 
@@ -163,7 +163,7 @@ The interface does not make model tokens cheaper. It can reduce avoidable reques
 
 Planned feature: in **Auto**, the main agent assesses whether a prompt warrants independent subagents or should stay solo. Provide a persistent **Solo** override. Auto becomes the default only after provider, recovery, and efficiency acceptance; development starts opt-in. Give children only focused goals, necessary user/repository constraints, relevant source references, agreed interfaces, and completion checks. Start fresh child sessions without automatically copying the parent conversation; allow authorized retrieval of missing context.
 
-Use isolated worktrees for writing children, one delegation level, a default two-child total per parent run, and the existing shared capacity including the active parent. Children return compact evidence-linked results. The parent reviews actual changes and validates the integrated result. Persist real assignments and handoffs for the agent map, and account for planning, retries, children, and integration without double-counting provider usage. Parallel speed is not proof of token savings. Full behavior, provider limits, budgets, phases, and release gates are specified in [Hydra helpers](Heads.md) (which replaced adaptive delegation).
+Use isolated worktrees for writing children, one delegation level, a default two-child total per parent run, and the existing shared capacity including the active parent. Children return compact evidence-linked results. The parent reviews actual changes and validates the integrated result. Persist real assignments and handoffs for the agent map, and account for planning, retries, children, and integration without double-counting provider usage. Parallel speed is not proof of token savings. Full behavior, provider limits, budgets, phases, and release gates are specified in [Hydra helpers](../Heads.md) (which replaced adaptive delegation).
 
 ### Keep optimization outside the hidden agent loop
 

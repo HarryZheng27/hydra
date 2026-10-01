@@ -5,7 +5,7 @@ import type { Plan } from './core/plans';
 import type { PlanJobView } from './core/planRunner';
 
 /**
- * The Hydra activity-bar panel (docs/Lanes_And_Planner_Plan.md, section 3): one
+ * The Hydra activity-bar panel (docs/internal/Lanes_And_Planner_Plan.md, section 3): one
  * TreeView, `hydra.overview`, grouping open lanes, running heads and live plans.
  * The grouping itself is the pure `buildHydraTree` (src/core/hydraTree.ts); this
  * class only turns that into vscode.TreeItems and refreshes on change.
@@ -22,7 +22,7 @@ export class HydraTreeProvider implements vscode.TreeDataProvider<Row>, vscode.D
   private heads: readonly HelperJobView[] = [];
   private plans: readonly Plan[] = [];
   private planJobs: Readonly<Record<string, readonly PlanJobView[]>> = {};
-  /** The active packs' roles (docs/Packs_Plan.md, "How roles show"), for a lane's description. */
+  /** The active packs' roles (docs/internal/Packs_Plan.md, "How roles show"), for a lane's description. */
   private roles: readonly SnapshotRole[] = [];
 
   update(next: { lanes?: readonly LaneView[]; heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>>; roles?: readonly SnapshotRole[] }): void {

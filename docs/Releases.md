@@ -59,10 +59,10 @@ This section is about a separate, stricter mechanism. Hydra's update service run
 - asks you before downloading;
 - keeps the installer only if its size and SHA-256 match the signed record.
 
-Installing from inside Hydra isn't built yet. The native helper that would check the installer's code signature and run it refuses every request (see [Desktop_Native_Update_Helper_Preflight.md](Desktop_Native_Update_Helper_Preflight.md)). So after a download, Hydra says installation is unavailable.
+Installing from inside Hydra isn't built yet. The native helper that would check the installer's code signature and run it refuses every request (see [Desktop_Native_Update_Helper_Preflight.md](internal/Desktop_Native_Update_Helper_Preflight.md)). So after a download, Hydra says installation is unavailable.
 
 1. **A code-signing certificate**, such as an OV certificate or Azure Trusted Signing.
-   - Sign `Hydra.exe` and `HydraSetup.exe` in the desktop build; the prerequisites are in [Desktop_Signing_Preflight.md](Desktop_Signing_Preflight.md).
+   - Sign `Hydra.exe` and `HydraSetup.exe` in the desktop build; the prerequisites are in [Desktop_Signing_Preflight.md](internal/Desktop_Signing_Preflight.md).
    - The certificate's subject and thumbprint go into `authenticodeSigners` in the app's update trust.
    - The update service refuses to turn on without at least one signer, and the signing script refuses to sign metadata for an installer that isn't validly signed.
 2. **An update-signing key** (Ed25519).

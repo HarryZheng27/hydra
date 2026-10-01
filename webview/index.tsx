@@ -41,10 +41,10 @@ function HandoffView({ handoff, info, busy }: { handoff: Handoff; info?: Officia
 
 /**
  * The Agents view: a live canvas of the heads your Claude Code and Codex chats
- * start (docs/Agents_View_Plan.md). Heads arrive with each snapshot, and at once
+ * start (docs/internal/Agents_View_Plan.md). Heads arrive with each snapshot, and at once
  * through "heads" events when a job changes.
  */
-/** The Canvas | Lanes view, remembered across reloads (docs/Lanes_And_Planner_Plan.md, section 2). */
+/** The Canvas | Lanes view, remembered across reloads (docs/internal/Lanes_And_Planner_Plan.md, section 2). */
 function initialView(): AgentsViewName {
   try { const state = api.getState() as { view?: string } | undefined; return state?.view === 'lanes' ? 'lanes' : 'canvas'; } catch { return 'canvas'; }
 }
@@ -52,22 +52,22 @@ function initialView(): AgentsViewName {
 function App() {
   const [snapshot, setSnapshot] = useState(initial);
   const [heads, setHeads] = useState<HelperJobView[]>([]);
-  // ---- Canvas tidy-up (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): the Finished tray's Clear button. ----
+  // ---- Canvas tidy-up (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): the Finished tray's Clear button. ----
   const [dismissedTray, setDismissedTray] = useState<string[]>([]);
-  // ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4): its own block. ----
+  // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
   const [plans, setPlans] = useState<Plan[]>([]);
   const [planJobs, setPlanJobs] = useState<Record<string, PlanJobView[]>>({});
   const [newPlanSignal, setNewPlanSignal] = useState(0);
-  // ---- Lanes (docs/Lanes_And_Planner_Plan.md, sections 1-2): its own block. ----
+  // ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md, sections 1-2): its own block. ----
   const [view, setView] = useState<AgentsViewName>(initialView);
   const [lanes, setLanes] = useState<LaneView[]>([]);
   const [terminals, setTerminals] = useState(true);
   const [laneError, setLaneError] = useState<string>();
   const [laneFocus, setLaneFocus] = useState<string>();
-  // ---- The usage-limit banner and the onLimit:"switch" countdown (docs/Gates_Plan.md, section 2), by lane id ----
+  // ---- The usage-limit banner and the onLimit:"switch" countdown (docs/internal/Gates_Plan.md, section 2), by lane id ----
   const [laneLimits, setLaneLimits] = useState<Record<string, LaneLimitOfferView>>({});
   const [laneSwitchCountdowns, setLaneSwitchCountdowns] = useState<Record<string, LaneSwitchCountdown>>({});
-  // ---- A gates run in progress on a lane (docs/Gates_Plan.md, "Lanes"): the tile header's "Gates: unit ✓ · review …" ----
+  // ---- A gates run in progress on a lane (docs/internal/Gates_Plan.md, "Lanes"): the tile header's "Gates: unit ✓ · review …" ----
   const [laneGates, setLaneGates] = useState<Record<string, { done: JobCheckResult[]; running?: string }>>({});
   const [headFocus, setHeadFocus] = useState<{ id: string; at: number }>();
   const changeView = (next: AgentsViewName, focus?: string) => {

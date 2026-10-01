@@ -12,7 +12,7 @@ import { resolveCommand } from './command';
 import { clip, gateTemp, notRun, tail, type GateRun, type GateRuntime } from './types';
 
 /**
- * The screenshots gate (docs/Gates_Plan.md). Hydra picks a free local port,
+ * The screenshots gate (docs/internal/Gates_Plan.md). Hydra picks a free local port,
  * starts the app in the worktree with that port (as `{port}` and `PORT`), waits
  * until its URL answers below HTTP 400, and captures the page at each width in
  * a headless browser. It fails when the app never gets ready, answers HTTP 400

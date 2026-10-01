@@ -6,7 +6,7 @@ import { redactText } from '../redact';
 import { gateTemp, type GateRun } from './types';
 
 /**
- * The command gate: today's head check, moved here unchanged (docs/Gates_Plan.md).
+ * The command gate: today's head check, moved here unchanged (docs/internal/Gates_Plan.md).
  * It runs in the worktree with its timeout, keeps the output's tail, and saves the
  * whole log. The one addition: on Windows a bare name like "npm" is looked up on
  * PATH with its extension (npm.cmd), which a direct spawn can't find by itself.

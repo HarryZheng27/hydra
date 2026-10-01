@@ -7,7 +7,7 @@ export const preferenceOnlySettings: ReadonlySet<string> = new Set([
   'hydra.maxConcurrentHelpers', 'hydra.chatLocation',
   'hydra.heads.defaultMinutes', 'hydra.heads.defaultMaxTurns', 'hydra.heads.defaultBudgetUsd',
   'hydra.startupLayout', 'hydra.limits.offerHandoff', 'hydra.updates.check',
-  // Read at each use by the packs service (docs/Packs_Plan.md).
+  // Read at each use by the packs service (docs/internal/Packs_Plan.md).
   'hydra.packs.folder',
   // Only changes what Connect/Repair do next; nothing about the current provider connection.
   'hydra.claudeMem.enabled',

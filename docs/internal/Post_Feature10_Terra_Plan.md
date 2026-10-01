@@ -23,11 +23,11 @@ Read these before implementation, then copy their contracts rather than inventin
 | Area | Required source | Allowed pattern |
 | --- | --- | --- |
 | Delegation lifecycle and benchmark gate | `docs/Adaptive_Delegation.md` — “Budgets, model choice, and visible flow”, “Verification evidence and focused agent workspace”, “Delivery and acceptance” | Persisted facts, one-level work, partial/unavailable labels, explicit release gates |
-| Architecture and efficiency | `docs/Agentic_Workflow_Architecture.md` — “Parallelism without runaway spend”, “Minimal task contract”, “Implementation order and measurement” | Separate context, execution, and verification; compare matching base/provider/model/effort |
-| Current delivered limits | `docs/Implementation_Status.md` — M5, M6, Planned adaptive delegation, Layout decision | Keep fixture proof distinct from live/release/manual proof |
-| Scheduling and capacity | `docs/Task_Scheduling.md`, `docs/Profile_Capacity.md`, `src/core/scheduler.ts` | Reuse durable request state and profile leases; never add a second scheduler |
-| Evidence and integration | `docs/Integration.md`, `src/core/delegationEvidence.ts`, `src/core/delegationOrchestrationJournal.ts` | Evidence and journal facts are immutable; required gates fail closed |
-| Desktop readiness | `docs/Desktop_Delivery.md`, `docs/Windows_Installer.md`, `docs/Onboarding.md`, `docs/Settings_Import.md` | Local preflight/checklist evidence only; human/release gates remain explicit |
+| Architecture and efficiency | `docs/internal/Agentic_Workflow_Architecture.md` — “Parallelism without runaway spend”, “Minimal task contract”, “Implementation order and measurement” | Separate context, execution, and verification; compare matching base/provider/model/effort |
+| Current delivered limits | `docs/internal/Implementation_Status.md` — M5, M6, Planned adaptive delegation, Layout decision | Keep fixture proof distinct from live/release/manual proof |
+| Scheduling and capacity | `docs/internal/Task_Scheduling.md`, `docs/internal/Profile_Capacity.md`, `src/core/scheduler.ts` | Reuse durable request state and profile leases; never add a second scheduler |
+| Evidence and integration | `docs/internal/Integration.md`, `src/core/delegationEvidence.ts`, `src/core/delegationOrchestrationJournal.ts` | Evidence and journal facts are immutable; required gates fail closed |
+| Desktop readiness | `docs/internal/Desktop_Delivery.md`, `docs/Windows_Installer.md`, `docs/Onboarding.md`, `docs/Settings_Import.md` | Local preflight/checklist evidence only; human/release gates remain explicit |
 
 ## Parallelism model
 
@@ -64,7 +64,7 @@ There are at most three Terra implementation workers beside the coordinator. Run
 
 - **Branch/worktree:** `feat/desktop-release-evidence-preflight` / `.preview/worktrees/desktop-release-evidence-preflight`.
 - **Goal:** produce a local, read-only manifest checker for installer provenance, runtime hashes, chosen shortcut behavior, prior-version baseline, and outstanding manual/release gates.
-- **Owned paths:** new `scripts/verify-release-evidence.ps1`, `tests/releaseEvidencePreflight.test.ts`, `docs/Release_Evidence_Protocol.md`.
+- **Owned paths:** new `scripts/verify-release-evidence.ps1`, `tests/releaseEvidencePreflight.test.ts`, `docs/internal/Release_Evidence_Protocol.md`.
 - **Must prove:** incomplete/signing-missing/manual-pending evidence stays blocked; selected/unselected shortcut claims bind to artifact hashes; no installer, registry, shortcut, or user-data mutation occurs.
 - **Do not:** sign, distribute, install, uninstall, update, or claim a disposable Windows run happened.
 - **Commands:** `npm.cmd run check`; `npm.cmd run build`; `npm.cmd test`; focused Node test plus `powershell -File scripts/verify-release-evidence.ps1 -WhatIf`.
@@ -94,7 +94,7 @@ There are at most three Terra implementation workers beside the coordinator. Run
 - **Branch/worktree:** `feat/native-acceptance-artifacts` / `.preview/worktrees/native-acceptance-artifacts`.
 - **Depends on:** Feature 18.
 - **Goal:** ship reusable, non-mutating acceptance checklists and artifact schemas for onboarding, appearance/settings import, focused workspace navigation, installer wizard, and integration/discard flows.
-- **Owned paths:** `docs/Native_Acceptance_Kit.md`, new validation schema/parser and focused tests.
+- **Owned paths:** `docs/internal/Native_Acceptance_Kit.md`, new validation schema/parser and focused tests.
 - **Must prove:** all manual gates are clearly marked pending until an operator attaches a valid artifact; artifact schema rejects screenshots/logs without provenance; no click automation triggers account login, installer execution, or provider work.
 - **Do not:** convert manual acceptance into a false automated pass.
 - **Commands:** `npm.cmd run check`; `npm.cmd run build`; `npm.cmd test`; focused artifact-schema test.
@@ -124,7 +124,7 @@ There are at most three Terra implementation workers beside the coordinator. Run
 - **Branch/worktree:** `feat/provider-readiness-preflight` / `.preview/worktrees/provider-readiness-preflight`.
 - **Depends on:** Feature 19.
 - **Goal:** add a passive, local readiness report for documented live-acceptance prerequisites: installed adapter version, selected supported controls, bounded task/evidence template, and explicit authorization requirement.
-- **Owned paths:** new `src/core/providerReadiness.ts`, `tests/providerReadiness.test.ts`, `docs/Provider_Live_Acceptance_Protocol.md`.
+- **Owned paths:** new `src/core/providerReadiness.ts`, `tests/providerReadiness.test.ts`, `docs/internal/Provider_Live_Acceptance_Protocol.md`.
 - **Must prove:** no account identity/token/callback is persisted; unsupported/unknown capabilities are unavailable; readiness does not launch a login, process, or turn; report includes the user-approved budget/operator fields as missing until supplied.
 - **Do not:** invoke provider auth, use API billing, scrape accounts, or claim subscription eligibility.
 - **Commands:** `npm.cmd run check`; `npm.cmd run build`; `npm.cmd test`; `node --test .test-build/providerReadiness.test.cjs`.

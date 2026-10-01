@@ -10,7 +10,7 @@ import type { PackState, ProjectPack } from '../src/core/packs/project';
 import type { LaneView } from '../src/core/model';
 
 /**
- * Settings -> Packs (docs/Packs_Plan.md, section 6): packsHelpers.ts is the
+ * Settings -> Packs (docs/internal/Packs_Plan.md, section 6): packsHelpers.ts is the
  * page's pure logic (commands shown exactly, secrets masked, the right button
  * per state), so it's tested directly here, without vscode.
  */
@@ -103,7 +103,7 @@ test('sortPackCards: built-in packs first, order otherwise unchanged', () => {
   assert.deepEqual(sortPackCards(packs).map(pack => pack.id), ['coding', 'research']);
 });
 
-// ---- SSR: role pickers and role labels (docs/Packs_Plan.md, "Picking a role" / "How roles show") ----
+// ---- SSR: role pickers and role labels (docs/internal/Packs_Plan.md, "Picking a role" / "How roles show") ----
 
 const roles = [
   { ref: 'coding/builder', pack: 'coding', packTitle: 'Coding', id: 'builder', title: 'Builder', description: 'Builds it.', provider: 'claude' as const },

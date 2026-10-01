@@ -11,7 +11,7 @@ import type { Provider } from './core/model';
 import { openOfficialExtension } from './extensionBridge';
 
 /**
- * Phase 3 (docs/Hydra_Agent_Plan.md, "Offer where to continue"): on each limit
+ * Phase 3 (docs/internal/Hydra_Agent_Plan.md, "Offer where to continue"): on each limit
  * event, save the handoff to global storage and show one notification with
  * "Continue in <Other>" (or "Set up <Other>"), "View handoff" and "Wait". The
  * decision logic (message, buttons, dedupe) is in src/core/limitOffer.ts; this

@@ -12,7 +12,7 @@ import { applyLaneId, normaliseStopFailure } from './core/limitDetection';
  *
  * Inside a Hydra lane, the lane's own process (laneService.ts) sets HYDRA_LANE_ID
  * in its environment; the hook, a child of that process, inherits it and tags the
- * event as `source: "lane"` (docs/Gates_Plan.md, section 2).
+ * event as `source: "lane"` (docs/internal/Gates_Plan.md, section 2).
  */
 const maxInput = 256 * 1024;
 const quit = () => process.exit(0);

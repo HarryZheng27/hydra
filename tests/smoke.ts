@@ -33,17 +33,17 @@ export async function run(): Promise<void> {
     assert.equal(path.relative(await realpath(bundled), await realpath(extension.extensionPath)), '', 'Hydra features load from the app bundle rather than the source checkout');
   }
   await extension.activate();
-  // The Hydra panel (docs/Lanes_And_Planner_Plan.md, section 3): the activity-bar container and its one tree view are
+  // The Hydra panel (docs/internal/Lanes_And_Planner_Plan.md, section 3): the activity-bar container and its one tree view are
   // contributed. (hydra.openLanes resolving is exercised below, in laneSmoke, alongside a real lane.)
   const contributes = extension.packageJSON?.contributes as { viewsContainers?: { activitybar?: { id: string }[] }; views?: Record<string, { id: string }[]>; configuration?: { properties?: Record<string, { enum?: string[]; default?: unknown }> } } | undefined;
   assert.ok(contributes?.viewsContainers?.activitybar?.some(container => container.id === 'hydra'), 'The Hydra activity-bar container is contributed');
   assert.ok(contributes?.views?.hydra?.some(view => view.id === 'hydra.overview'), 'The hydra.overview tree view is contributed');
   console.log('PASS: the Hydra activity-bar container and its overview tree view are contributed.');
-  // Packs (docs/Packs_Plan.md, section 6): Settings -> Packs is contributed, after Gates.
+  // Packs (docs/internal/Packs_Plan.md, section 6): Settings -> Packs is contributed, after Gates.
   const { pageOrder } = await import('../src/settings/pageOrder');
   assert.ok(pageOrder.includes('packs') && pageOrder.indexOf('gates') < pageOrder.indexOf('packs'), 'Settings -> Packs is contributed, after Gates');
   console.log('PASS: Settings -> Packs is contributed, after Gates.');
-  // The lane-aware usage-limit setting (docs/Gates_Plan.md, section 2).
+  // The lane-aware usage-limit setting (docs/internal/Gates_Plan.md, section 2).
   const onLimit = contributes?.configuration?.properties?.['hydra.lanes.onLimit'];
   assert.deepEqual(onLimit?.enum, ['ask', 'switch']);
   assert.equal(onLimit?.default, 'ask');
@@ -173,7 +173,7 @@ export async function run(): Promise<void> {
     } finally { await hydraConfig.update('chatLocation', previousChatLocation, vscode.ConfigurationTarget.Global); }
   } finally { terminal.dispose(); }
   {
-    // Planner (docs/Lanes_And_Planner_Plan.md, section 4): a plan with a dependency
+    // Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): a plan with a dependency
     // cycle is refused, with the cycle named, before anything is started.
     const cyclic: Plan = { ...createPlan({ title: 'Cyclic plan' }), jobs: [
       { key: 'api', title: 'API', brief: 'Build the API.', dependsOn: ['ui'] },
@@ -215,7 +215,7 @@ export async function run(): Promise<void> {
     assert.ok(!(await listNotices()).some(notice => notice.id === routed!.id), 'An answered notice closes');
     await assert.rejects(async () => await vscode.commands.executeCommand('hydra.desktop.notice.show', { id: 'not valid!', kind: 'info', message: 'x' }), /needs an id/);
     console.log('PASS: Hydra messages show as Hydra toasts, the pressed button answers the caller, and a malformed notice is refused.');
-    // The walkthrough (docs/Lanes_And_Planner_Plan.md, "A walkthrough"): hydra.learn is registered, and never opens itself in a test host.
+    // The walkthrough (docs/internal/Lanes_And_Planner_Plan.md, "A walkthrough"): hydra.learn is registered, and never opens itself in a test host.
     assert.ok((await vscode.commands.getCommands(true)).includes('hydra.learn'), 'hydra.learn is registered');
     assert.ok(vscode.extensions.getExtension('nico-dunlap.hydra-agent-manager')?.packageJSON?.contributes?.walkthroughs?.some((walkthrough: { id: string }) => walkthrough.id === 'hydra.workWithHydra'), 'the walkthrough is contributed');
     const setupBefore = await vscode.commands.executeCommand('hydra.getOnboardingState');
@@ -313,7 +313,7 @@ export async function run(): Promise<void> {
 }
 
 /**
- * Packs (docs/Packs_Plan.md, "Acceptance -> Smoke"). `hydra.packs.state` lists the built-in
+ * Packs (docs/internal/Packs_Plan.md, "Acceptance -> Smoke"). `hydra.packs.state` lists the built-in
  * packs; `hydra.packs.setEnabled` writing packs.json plus the effective gates including
  * "code-review" needs a pack already allowed for this project, and allowing one is
  * deliberately reachable only from the review panel's own button in the Settings webview
@@ -336,7 +336,7 @@ async function packsSmoke(repository: string): Promise<void> {
 }
 
 /**
- * Plan lanes (docs/Plan_Lanes_Plan.md, "Smoke"): lane job A runs the harmless lane command, and head job B
+ * Plan lanes (docs/internal/Plan_Lanes_Plan.md, "Smoke"): lane job A runs the harmless lane command, and head job B
  * depends on it. Run plan starts A's lane and not B; after a commit in A, Mark job done creates B, which
  * starts from A's HEAD. (Refusing a plan with a lane job without terminals is unit-tested: this host has them.)
  */
@@ -375,7 +375,7 @@ async function planLaneSmoke(fixture: string): Promise<void> {
 }
 
 /**
- * Lanes (docs/Lanes_And_Planner_Plan.md): a lane runs a harmless command in place
+ * Lanes (docs/internal/Lanes_And_Planner_Plan.md): a lane runs a harmless command in place
  * of the CLI (HYDRA_TEST_LANE_COMMAND) in a real terminal from the host's node-pty;
  * its output reaches the replay buffer, and closing it removes the worktree and branch.
  */

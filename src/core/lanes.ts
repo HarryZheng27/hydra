@@ -7,7 +7,7 @@ import type { EvidenceStatus, JobCheckResult } from './jobs';
 import type { GitMetaFingerprint } from './git';
 
 /**
- * Hydra lanes (docs/Lanes_And_Planner_Plan.md, section 1). A lane is a git
+ * Hydra lanes (docs/internal/Lanes_And_Planner_Plan.md, section 1). A lane is a git
  * worktree and branch with an interactive `claude` or `codex` running in a real
  * terminal, driven by you rather than by a lead. This module is the record: its
  * validation, the per-window store, the restart transition and the first prompt.
@@ -28,25 +28,25 @@ export interface Lane {
   state: LaneState;
   exitCode?: number; mergedAt?: string;
   /**
-   * When this lane last became exited (docs/Lanes_And_Planner_Plan.md,
+   * When this lane last became exited (docs/internal/Lanes_And_Planner_Plan.md,
    * "Canvas tidy-up"): drives the 10-minute "Parked lanes" chip. Set whenever
    * the lane's state becomes exited; cleared on resume or restart.
    */
   exitedAt?: string;
   /** Why Hydra stopped the lane's terminal, when it did (for example "Hydra restarted"). */
   reason?: string;
-  /** Provider switches this lane has made (docs/Gates_Plan.md, section 2: "Continue in <Other>" and the manual "Switch to <Other>"). Oldest first. */
+  /** Provider switches this lane has made (docs/internal/Gates_Plan.md, section 2: "Continue in <Other>" and the manual "Switch to <Other>"). Oldest first. */
   switches?: LaneSwitch[];
-  /** The last gates run on this lane (docs/Gates_Plan.md, "Lanes"): Run gates, or Merge when gates.json says "onMerge". Kept for the tile's chips and View evidence; only the most recent run. */
+  /** The last gates run on this lane (docs/internal/Gates_Plan.md, "Lanes"): Run gates, or Merge when gates.json says "onMerge". Kept for the tile's chips and View evidence; only the most recent run. */
   lastGates?: LaneGatesRecord;
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md, "Starting a lane job") ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job") ----
   /** The plan job this lane runs. Cancel job removes it; the lane then carries on as an ordinary lane. */
   plan?: LanePlanLink;
   /** The lane HEAD that Merge merged: a plan job's result when it is done by merging. */
   mergedHead?: string;
   /** How the lane was closed, so a plan can say whether its branch was kept. */
   closedAs?: LaneCloseMode;
-  // ---- Packs (docs/Packs_Plan.md, "Lanes") ----
+  // ---- Packs (docs/internal/Packs_Plan.md, "Lanes") ----
   /** The role it was started with. Resolved again at every launch; when it is gone, the lane runs without it and its tile says why. */
   role?: LaneRole;
   /** 1.4: the git metadata fingerprint (gitMetaFingerprint) of the shared .git when this lane started. Compared again at Merge and at Mark job done; a change is a warning (interactive) or a refusal (hydra.lanes.action). */
@@ -74,7 +74,7 @@ export interface LaneGatesRecord {
   results: JobCheckResult[];
   /**
    * The lane HEAD the gates ran on, recorded only when the lane was clean before and after
-   * (docs/Plan_Lanes_Plan.md, section 3), so Merge can reuse a passing run on the same commit.
+   * (docs/internal/Plan_Lanes_Plan.md, section 3), so Merge can reuse a passing run on the same commit.
    */
   commit?: string;
   /** A fingerprint of the gates that ran: a passing run is reused only while the gates file says the same. */
@@ -88,7 +88,7 @@ export interface LaneGatesRecord {
 }
 
 /**
- * A lane that runs a plan job (docs/Plan_Lanes_Plan.md): which plan and job, the
+ * A lane that runs a plan job (docs/internal/Plan_Lanes_Plan.md): which plan and job, the
  * titles its first prompt names, what it started from, and its advised write scope.
  * `attempt` is the job's retry count, so a lane from an earlier try is never adopted.
  */
@@ -133,7 +133,7 @@ export const laneGoalMax = 2000;
 const laneNamePattern = /^[\p{L}\p{N} _.()#-]+$/u;
 export const laneNameRule = 'A lane name can use letters, numbers, spaces and - _ . ( ) #, up to 40 characters.';
 
-/** `provider` is the form's choice: a role only sets the form's default (docs/Packs_Plan.md, "Lanes"). */
+/** `provider` is the form's choice: a role only sets the form's default (docs/internal/Packs_Plan.md, "Lanes"). */
 export interface LaneInput { name: string; provider: Provider; goal?: string; role?: LaneRole }
 
 export function parseLaneName(value: unknown): string {
@@ -163,7 +163,7 @@ export function parseLaneInput(value: unknown): LaneInput {
 export const newLaneId = (): string => randomBytes(6).toString('hex');
 
 /**
- * A plan job's title as a lane name (docs/Plan_Lanes_Plan.md, "Starting a lane job"):
+ * A plan job's title as a lane name (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job"):
  * characters a lane name can't have become spaces, then it is cut to 40 characters,
  * falling back to "Plan job" when nothing is left. Always passes parseLaneName.
  */
@@ -256,7 +256,7 @@ function validateGitMeta(value: unknown, where: string): GitMetaFingerprint | un
   return result;
 }
 
-/** `lane.plan`, field by field (docs/Plan_Lanes_Plan.md): ids and keys by pattern, titles and scope by length. */
+/** `lane.plan`, field by field (docs/internal/Plan_Lanes_Plan.md): ids and keys by pattern, titles and scope by length. */
 function validatePlanLink(value: unknown, where: string): LanePlanLink | undefined {
   if (value === undefined) return undefined;
   const link = value as Partial<LanePlanLink> | undefined;
@@ -424,7 +424,7 @@ export class LaneStore {
 // ---- The first prompt ----
 
 /**
- * The role a lane's first prompt names (docs/Packs_Plan.md, "Lanes"): its label and, for a
+ * The role a lane's first prompt names (docs/internal/Packs_Plan.md, "Lanes"): its label and, for a
  * Codex lane whose developer instructions can't carry the role, its text within `max`
  * characters (roleFirstPrompt in src/core/packs/launch.ts).
  */
@@ -442,7 +442,7 @@ const clip = (text: string, max: number) => text.length > max ? `${text.slice(0,
 const providerName = (provider: Provider) => provider === 'codex' ? 'Codex' : 'Claude Code';
 
 /**
- * The sentence a plan lane's first prompt adds (docs/Plan_Lanes_Plan.md, "The first prompt"):
+ * The sentence a plan lane's first prompt adds (docs/internal/Plan_Lanes_Plan.md, "The first prompt"):
  * which job of which plan, what it starts from, the advised scope, where the full brief is,
  * and how the job ends. One line, at most 1500 characters.
  */
@@ -492,7 +492,7 @@ export function lanePreamble(lane: Pick<Lane, 'name' | 'branch' | 'goal'> & { pl
 }
 
 /**
- * The first prompt after a provider switch (docs/Gates_Plan.md, section 2: "Continue
+ * The first prompt after a provider switch (docs/internal/Gates_Plan.md, section 2: "Continue
  * in <Other>" and the manual switch): the lane's usual preamble, plus the handoff
  * flattened to one line (it is passed as a command-line argument, like the preamble).
  */

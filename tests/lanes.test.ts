@@ -47,7 +47,7 @@ test('lane input and stored records are validated field by field', () => {
   assert.throws(() => validateLane(sample({ baseCommit: 'HEAD' })), /base commit/);
   assert.throws(() => validateLane(sample({ state: 'paused' as never })), /malformed/);
   assert.throws(() => validateLane(sample({ repository: 'relative' })), /invalid path/);
-  // Provider switches (docs/Gates_Plan.md, section 2).
+  // Provider switches (docs/internal/Gates_Plan.md, section 2).
   const switches = [{ from: 'claude' as const, to: 'codex' as const, at: '2026-09-25T10:00:00.000Z', reason: 'limit' as const }];
   assert.deepEqual(validateLane(sample({ switches })).switches, switches);
   assert.equal(validateLane(sample({ switches: undefined })).switches, undefined);
@@ -98,7 +98,7 @@ test('lane states change only along the table, and a restart turns running lanes
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('exitedAt is set when a lane becomes exited, and cleared on resume/restart (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up")', async () => {
+test('exitedAt is set when a lane becomes exited, and cleared on resume/restart (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up")', async () => {
   const restarted = restartedLanes([sample()], Date.parse('2026-09-25T10:00:00.000Z'));
   assert.equal(restarted.lanes[0]!.exitedAt, '2026-09-25T10:00:00.000Z');
   assert.throws(() => validateLane(sample({ exitedAt: 'not a date' })), /invalid exited time/);
@@ -203,7 +203,7 @@ test('parseMessage validates every lane message', () => {
   for (const action of ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider']) assert.deepEqual(parseMessage({ type: 'laneAction', id, action }), { type: 'laneAction', id, action });
   assert.throws(() => parseMessage({ type: 'laneAction', id, action: 'push --force' }), /Unknown lane action/);
   assert.throws(() => parseMessage({ type: 'laneAction', id: 'x', action: 'merge' }), /lane ID/);
-  // The usage-limit banner (docs/Gates_Plan.md, section 2).
+  // The usage-limit banner (docs/internal/Gates_Plan.md, section 2).
   for (const action of ['continueOther', 'viewHandoff', 'wait']) assert.deepEqual(parseMessage({ type: 'laneLimitAction', id, action }), { type: 'laneLimitAction', id, action });
   assert.throws(() => parseMessage({ type: 'laneLimitAction', id, action: 'setupOther' }), /Unknown lane limit action/);
   assert.throws(() => parseMessage({ type: 'laneLimitAction', id: 'x', action: 'wait' }), /lane ID/);

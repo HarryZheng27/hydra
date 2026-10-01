@@ -9,7 +9,7 @@ export { looksLikeSecret } from './redact';
 
 /**
  * The user's own MCP servers for Claude Code and Codex, managed from Hydra
- * Settings (docs/Settings_And_Connectors_Plan.md, "MCP servers").
+ * Settings (docs/internal/Settings_And_Connectors_Plan.md, "MCP servers").
  *
  * Config safety, the rules this module keeps:
  * - Claude: read-only parse of `~/.claude.json` (`mcpServers`, user scope).

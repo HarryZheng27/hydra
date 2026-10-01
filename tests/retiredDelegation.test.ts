@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 
-// docs/Official_Extensions_Plan.md, Phase 7: the marker-line delegation pipeline is gone.
+// docs/internal/Official_Extensions_Plan.md, Phase 7: the marker-line delegation pipeline is gone.
 
 test('no source file carries the retired pipeline or its marker', async () => {
   const files = [...(await readdir('src/core')).map(name => `src/core/${name}`), ...(await readdir('src')).filter(name => name.endsWith('.ts')).map(name => `src/${name}`), ...(await readdir('webview')).map(name => `webview/${name}`)];

@@ -12,7 +12,7 @@ import type { Plan, PlanJob, PlanJobRunAs } from './plans';
 import type { PlanJobView } from './planRunner';
 
 /**
- * What the Agents canvas shows (docs/Agents_View_Plan.md). Pure, so the rules
+ * What the Agents canvas shows (docs/internal/Agents_View_Plan.md). Pure, so the rules
  * are testable: which chats (leads) and heads are on the canvas, where each one
  * sits, and which finished heads have moved to the tray.
  *
@@ -23,21 +23,21 @@ import type { PlanJobView } from './planRunner';
  */
 export const finishedLingerMs = 2 * 60_000;
 export const trayWindowMs = 12 * 3600_000;
-/** How long an exited lane with no running heads sits quietly before it parks (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
+/** How long an exited lane with no running heads sits quietly before it parks (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
 export const laneParkMs = 10 * 60_000;
 export const activeStates: ReadonlySet<string> = new Set(['queued', 'starting', 'running', 'blocked', 'checking']);
 
 /**
  * A lead node. Most are a chat with heads; `kind: 'lane'` is an open lane
- * (docs/Lanes_And_Planner_Plan.md, section 2), shown even with no heads yet,
+ * (docs/internal/Lanes_And_Planner_Plan.md, section 2), shown even with no heads yet,
  * with its own status line instead of a head count.
  */
 export interface CanvasLead { key: string; kind: 'chat' | 'lane'; provider?: Provider; label: string; status?: string; laneId?: string; startedAt: string; heads: string[]; x: number; y: number }
 export interface CanvasHead { id: string; lead: string; depth: number; x: number; y: number; head: HelperJobView }
-/** `plan-lane-head`: a head a plan lane started with hydra_start_head, joined from its lane's job slot (docs/Plan_Lanes_Plan.md, section 4). It isn't a plan job. */
+/** `plan-lane-head`: a head a plan lane started with hydra_start_head, joined from its lane's job slot (docs/internal/Plan_Lanes_Plan.md, section 4). It isn't a plan job. */
 export interface CanvasEdge { id: string; kind: 'lead' | 'dependency' | 'plan-lead' | 'plan-dependency' | 'plan-lane-head' | 'conflict'; from: string; to: string; waiting: boolean; active: boolean; cycle?: boolean }
 /**
- * A plan that hasn't started running yet (docs/Lanes_And_Planner_Plan.md,
+ * A plan that hasn't started running yet (docs/internal/Lanes_And_Planner_Plan.md,
  * "Drafting on the canvas"): the plan itself renders as a lead node
  * ("Plan · title"), and its jobs as dashed draft nodes. Once a plan runs, its
  * jobs become real heads whose lead.sessionId is `plan-<id>`, so they group
@@ -45,7 +45,7 @@ export interface CanvasEdge { id: string; kind: 'lead' | 'dependency' | 'plan-le
  * separate CanvasPlanNode for a running or done plan.
  */
 /**
- * One job's slot in a plan group (docs/Plan_Lanes_Plan.md, section 4). For a
+ * One job's slot in a plan group (docs/internal/Plan_Lanes_Plan.md, section 4). For a
  * plan still being drafted, `view` is undefined and the slot is always the
  * dashed draft node. Once the plan has run, `view` carries its status and:
  * - `head` is set while its head is still drawn on the canvas (the ordinary head card);
@@ -55,7 +55,7 @@ export interface CanvasEdge { id: string; kind: 'lead' | 'dependency' | 'plan-le
 export interface CanvasPlanJob { id: string; planId: string; x: number; y: number; job: PlanJob; view?: PlanJobView; head?: HelperJobView; lane?: LaneView }
 /** cycleMessage is set (and its edges flagged) when the plan's jobs have a dependency cycle; see planCycle below. */
 export interface CanvasPlanNode { plan: Plan; x: number; y: number; jobs: CanvasPlanJob[]; cycleMessage?: string; progress?: string }
-/** A parked lane's chip (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): exited, quiet for a while, no running heads. */
+/** A parked lane's chip (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): exited, quiet for a while, no running heads. */
 export interface CanvasParkedLane { id: string; name: string; conflicts: boolean; exitedAt: string }
 export interface CanvasModel { leads: CanvasLead[]; heads: CanvasHead[]; edges: CanvasEdge[]; tray: HelperJobView[]; plans: CanvasPlanNode[]; parkedLanes: CanvasParkedLane[]; width: number; height: number }
 
@@ -75,7 +75,7 @@ export function onCanvas(head: HelperJobView, now: number): boolean {
 
 /**
  * The lead a head belongs to. A head started from a lane groups under that lane
- * node instead of its chat (docs/Lanes_And_Planner_Plan.md, section 2); heads
+ * node instead of its chat (docs/internal/Lanes_And_Planner_Plan.md, section 2); heads
  * started before chats were tracked share one "this window" lead.
  */
 export const leadKeyOf = (head: HelperJobView): string => head.lead?.lane || head.lead?.sessionId || 'window';
@@ -126,7 +126,7 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
     if (plan.jobs.some(job => planJobRunAs(job) === 'head' && job.jobId && all.some(head => head.id === job.jobId && onCanvas(head, now)))) return true;
     return plan.jobs.some(job => planJobRunAs(job) === 'lane' && job.laneId && (extras.lanes || []).some(item => item.id === job.laneId && (item.state === 'running' || item.state === 'exited')));
   });
-  // Heads a plan lane started with hydra_start_head (docs/Plan_Lanes_Plan.md, section 4): not a job
+  // Heads a plan lane started with hydra_start_head (docs/internal/Plan_Lanes_Plan.md, section 4): not a job
   // themselves, they sit after their lane's job slot instead of grouping under it as a chat/lane lead.
   const subHeadsByLane = new Map<string, HelperJobView[]>();
   for (const head of all) {
@@ -190,12 +190,12 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
     top += groupHeight + layout.groupGap;
   }
 
-  // ---- Lanes (docs/Lanes_And_Planner_Plan.md, section 2). Every open lane (running or ----
+  // ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md, section 2). Every open lane (running or ----
   // ---- exited, not closed or merged) is a lead node, even with no heads. Heads with   ----
   // ---- lead.lane === lane.id already grouped above (leadKeyOf prefers the lane id), so ----
   // ---- their chat lead is patched into a lane node here; a lane with no heads gets one ----
   // ---- of its own. A red dashed conflict edge joins each conflicting pair, once.       ----
-  // A parked lane (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): exited for at least
+  // A parked lane (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): exited for at least
   // laneParkMs, with no running heads. Running lanes, and lanes with running heads, always
   // stay full nodes even past that window. A lane that exited before exitedAt was recorded
   // has no time: it exited long ago, so it parks.
@@ -204,7 +204,7 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
     lane.state === 'exited' && (!lane.exitedAt || now - Date.parse(lane.exitedAt) >= laneParkMs) && !hasRunningHeads(lane.id);
   const parkedLanes: CanvasParkedLane[] = (extras.lanes || []).filter(lane => isParked(lane) && !planLaneIds.has(lane.id))
     .map(lane => ({ id: lane.id, name: lane.name, conflicts: !!lane.sync?.conflicts.length, exitedAt: lane.exitedAt ?? '' }));
-  // A plan lane isn't drawn twice (docs/Plan_Lanes_Plan.md, section 4): its own lane card sits in its job's slot below.
+  // A plan lane isn't drawn twice (docs/internal/Plan_Lanes_Plan.md, section 4): its own lane card sits in its job's slot below.
   const openLanes = (extras.lanes || []).filter(lane => (lane.state === 'running' || lane.state === 'exited') && !isParked(lane) && !planLaneIds.has(lane.id));
   const laneById = new Map(openLanes.map(lane => [lane.id, lane]));
   const laneStatus = (lane: LaneView): string => {
@@ -230,9 +230,9 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
     }
   }
 
-  // ---- Plans still being drafted (docs/Lanes_And_Planner_Plan.md, section 4): planning, draft or ----
+  // ---- Plans still being drafted (docs/internal/Lanes_And_Planner_Plan.md, section 4): planning, draft or ----
   // ---- failed. A running, incomplete or done plan gets its own group below instead (section 4 of ----
-  // ---- docs/Plan_Lanes_Plan.md), with heads and lanes drawn as job slots rather than a chat lead. ----
+  // ---- docs/internal/Plan_Lanes_Plan.md), with heads and lanes drawn as job slots rather than a chat lead. ----
   const plans: CanvasPlanNode[] = [];
   for (const plan of (extras.plans || []).filter(plan => plan.state !== 'running' && plan.state !== 'done' && plan.state !== 'incomplete')) {
     const jobById = new Map(plan.jobs.map(job => [job.key, job]));
@@ -276,7 +276,7 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
     top += Math.max(groupHeight, layout.rowGap) + layout.groupGap;
   }
 
-  // ---- Running plans (docs/Plan_Lanes_Plan.md, section 4). A plan stays grouped while it runs, is ----
+  // ---- Running plans (docs/internal/Plan_Lanes_Plan.md, section 4). A plan stays grouped while it runs, is ----
   // ---- incomplete, or is done (shownPlanIds above): the plan node, with each job's slot a head    ----
   // ---- card, a lane card or a small dashed status node, plus dependency edges between them.       ----
   const byPlanId = new Map((extras.planJobs && Object.entries(extras.planJobs)) || []);
@@ -328,7 +328,7 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
         edges.push({ id: `${planJobId(dependency)}>${planJobId(job.key)}`, kind: 'plan-dependency', from: planJobId(dependency), to: planJobId(job.key), waiting: !!waiting, active: !!active });
       }
     }
-    // Heads a plan lane started (docs/Plan_Lanes_Plan.md, section 4): sit in the column after the lane's job slot.
+    // Heads a plan lane started (docs/internal/Plan_Lanes_Plan.md, section 4): sit in the column after the lane's job slot.
     for (const job of plan.jobs) {
       if (!job.laneId) continue;
       const subHeads = subHeadsByLane.get(job.laneId);
@@ -363,7 +363,7 @@ export function buildCanvas(all: readonly HelperJobView[], now: number, extras: 
   return { leads, heads, edges, tray, plans, parkedLanes, width: widest + 60, height: Math.max(top - layout.groupGap + layout.top, 240) };
 }
 
-/** The plan node's status line while it runs, is incomplete, or is done (docs/Plan_Lanes_Plan.md, section 4). */
+/** The plan node's status line while it runs, is incomplete, or is done (docs/internal/Plan_Lanes_Plan.md, section 4). */
 function planProgress(plan: Plan, views: readonly PlanJobView[]): string {
   const done = views.filter(view => view.status === 'done').length;
   const total = plan.jobs.length;
@@ -380,7 +380,7 @@ function planProgress(plan: Plan, views: readonly PlanJobView[]): string {
 }
 
 /**
- * A gate chip (docs/Gates_Plan.md, "Seeing results"): "✓ unit · ✓ review · ✗
+ * A gate chip (docs/internal/Gates_Plan.md, "Seeing results"): "✓ unit · ✓ review · ✗
  * ui", plus a not-run style with the reason on hover. Text as well as colour,
  * never colour alone. The same reading src/core/jobs.ts's gateChip gives
  * server-side, duplicated here (never imported as a value — see the note atop
@@ -392,7 +392,7 @@ export function gateChip(check: Pick<HeadCheckView, 'id' | 'summary'> & { state?
   const icon = state === 'passed' ? '✓' : state === 'notRun' ? '–' : '✗';
   const tone: GateChipView['tone'] = state === 'passed' ? 'good' : state === 'notRun' ? 'neutral' : 'bad';
   const base = state === 'notRun' ? (check.summary ? `Not run: ${check.summary}` : 'Not run') : (check.summary || (state === 'failed' ? 'Failed' : 'Passed'));
-  // Packs (docs/Packs_Plan.md, "How roles show"): a pack gate's tooltip adds "From the Coding pack".
+  // Packs (docs/internal/Packs_Plan.md, "How roles show"): a pack gate's tooltip adds "From the Coding pack".
   const title = check.pack ? `${base} · From the ${check.packTitle || check.pack} pack` : base;
   return { id: check.id, icon, label: `${icon} ${check.id}`, tone, title };
 }

@@ -1,6 +1,6 @@
 # Task setup recipes
 
-> **Removed (2026-09-24).** This described part of Hydra's managed-task system, which was removed once the Agents view became a live canvas of Hydra heads (see [Agents_View_Plan.md](Agents_View_Plan.md), "As built", and [Heads.md](Heads.md)). Kept for history; none of it is in the product any more.
+> **Removed (2026-09-24).** This described part of Hydra's managed-task system, which was removed once the Agents view became a live canvas of Hydra heads (see [Agents_View_Plan.md](Agents_View_Plan.md), "As built", and [Heads.md](../Heads.md)). Kept for history; none of it is in the product any more.
 
 A setup recipe is a review-only, reproducible description of one task's expected setup. It does not reserve a port, provision a database or service, start a process, read the checkout, or write a file. Existing **Resources and setup** execution remains responsible for those actions.
 

@@ -7,7 +7,7 @@ import { leadFolder } from '../leadFolder';
 import type { SettingsContext, SettingsPage } from '../types';
 
 /**
- * Hydra Settings → Gates (docs/Gates_Plan.md, "Seeing results"): this
+ * Hydra Settings → Gates (docs/internal/Gates_Plan.md, "Seeing results"): this
  * project's `.hydra/gates.json` — what has to pass before a head's work is
  * accepted or a lane is merged. Reads `gates.json`, or `checks.json` shown as
  * command gates with a note that saving converts it; add, edit and remove
@@ -18,7 +18,7 @@ import type { SettingsContext, SettingsPage } from '../types';
  */
 const gatesFile = (root: string) => path.join(root, '.hydra', 'gates.json');
 
-/** "From packs" (docs/Packs_Plan.md, "Settings → Gates"): read-only, from the active packs' gates. */
+/** "From packs" (docs/internal/Packs_Plan.md, "Settings → Gates"): read-only, from the active packs' gates. */
 export async function postFromPacks(ctx: SettingsContext, root: string): Promise<void> {
   try {
     const [effective, state] = await Promise.all([ctx.packs.effectiveGates(root), ctx.packs.state(root)]);

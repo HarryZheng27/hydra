@@ -1,4 +1,4 @@
-// Signs Hydra's stable Windows x64 per-user update record (docs/Desktop_Signed_Update.md).
+// Signs Hydra's stable Windows x64 per-user update record (docs/internal/Desktop_Signed_Update.md).
 // The output is the exact envelope src/core/desktopSignedUpdate.ts verifies, and the
 // script runs that same verifier on it before writing anything.
 import { createHash, createPrivateKey, createPublicKey, sign } from 'node:crypto';
