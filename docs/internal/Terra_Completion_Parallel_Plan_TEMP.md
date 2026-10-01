@@ -16,16 +16,16 @@ Every Terra agent first reads `AGENTS.md`, this plan, and its named references f
 | Queue, capacity, and budgets | `src/core/scheduler.ts`: `TaskScheduler.enqueue`, `configureSchedule`; `src/core/profileCapacity.ts`; `src/core/delegationRunAccounting.ts`: `reserveDelegationBudget`, `releaseDelegationBudget`, `projectDelegationRunUsage` | Persist reservation before launch, count the parent, and leave unknown usage unavailable. Never auto-reclaim an uncertain writer. |
 | Wakeup, results, integration | `src/core/delegationWakeup.ts`: `DelegationWakeup`; `src/core/delegationResults.ts`: `prepareDelegationResult`; `src/core/delegationIntegrationGate.ts`: `delegationIntegrationGate`; `src/core/integration.ts`: `Integrations.prepare`, `promote`, `recover` | Completion text is not accepted integration. Require saved evidence, current parent review, and combined checks. |
 | Provider-owned sessions and accounts | `src/core/managedSessions.ts`: `ManagedSessions`; `src/core/accountSetup.ts`: `CodexAccountFlow`, `publicClaudeAccount`, `accountRpc`; `src/core/quota.ts`: `readCodexQuota`, `publicCodexQuota` | Use only supported pinned CLI/App Server protocols. No credential reads, transcript export, API-key billing substitution, or silent model changes. |
-| Desktop and acceptance | `scripts/desktop.mjs`: `prepare`, `build`, `verify`, `smoke`, `installer`; `scripts/desktop-upgrade-test.ps1`; `desktop/upgrade-baseline.json`; `docs/Native_Workflow_Acceptance.md` | Installer upgrade runs only in a disposable Windows host. Signing keys, distribution, real accounts, and human visual review are external gates. |
+| Desktop and acceptance | `scripts/desktop.mjs`: `prepare`, `build`, `verify`, `smoke`, `installer`; `scripts/desktop-upgrade-test.ps1`; `desktop/upgrade-baseline.json`; `docs/internal/Native_Workflow_Acceptance.md` | Installer upgrade runs only in a disposable Windows host. Signing keys, distribution, real accounts, and human visual review are external gates. |
 
-Read `docs/Adaptive_Delegation.md`, `docs/Agent_Workflow_Roadmap.md`, `docs/Implementation_Status.md`, `docs/Desktop_Delivery.md`, and the relevant focused docs for the assigned task. Copy the established validation, atomic-save, and refusal patterns from these sources. Do not invent provider RPCs, VS Code commands, installer flags, or update endpoints. Documentation discovery is complete only when the agent names the exact signatures and a nearby test pattern in its PR description.
+Read `docs/Adaptive_Delegation.md`, `docs/internal/Agent_Workflow_Roadmap.md`, `docs/internal/Implementation_Status.md`, `docs/internal/Desktop_Delivery.md`, and the relevant focused docs for the assigned task. Copy the established validation, atomic-save, and refusal patterns from these sources. Do not invent provider RPCs, VS Code commands, installer flags, or update endpoints. Documentation discovery is complete only when the agent names the exact signatures and a nearby test pattern in its PR description.
 
 ## How to run the batch
 
 1. Merge this plan first. Give every feature below its own branch and `.preview/worktrees/<slug>` worktree from that merged main. Wave A agents own only the paths listed for their task. They may read all files but must not edit `src/extension.ts`, `src/core/model.ts`, `src/core/store.ts`, `webview/index.tsx`, package manifests, or shared workflow files. They must not import another Wave A module before that module merges. This freezes a usable interface for simultaneous work.
 2. Start all ready Wave A tasks concurrently if the executor has enough slots. On this agent runtime, only the available concurrency slots can actually execute at once; queue the rest without changing the dependency graph. Full native smoke, installer work, and the full test suite must be serialized on one machine to avoid shared host/profile contention. Focused tests, typechecks, and builds can run in the isolated worktrees.
 3. Each Terra agent makes one bounded feature commit and submits its branch/PR. A coordinator checks scope, tests, and exact reviewed head, then merges one PR at a time. Rebase remaining branches on merged main and repeat relevant checks if a dependency or shared contract changed. Use local `npm.cmd run check`, `npm.cmd run build`, focused tests, and full `npm.cmd test` when the feature affects a cross-module path. Prefer local checks to GitHub Actions; the disposable Windows installer gate is the explicit exception.
-4. No worker edits another worker's checkout, force-pushes a reviewed head, marks a live gate passed from fixture evidence, or deletes a worktree with uncommitted changes. The coordinator records base SHA, test result, reviewed head, PR URL, and merge SHA in `docs/Implementation_Status.md` as the waves land. Keep root's existing dirty files untouched.
+4. No worker edits another worker's checkout, force-pushes a reviewed head, marks a live gate passed from fixture evidence, or deletes a worktree with uncommitted changes. The coordinator records base SHA, test result, reviewed head, PR URL, and merge SHA in `docs/internal/Implementation_Status.md` as the waves land. Keep root's existing dirty files untouched.
 
 ## Wave A — 13 independent Terra worktrees
 
@@ -83,43 +83,43 @@ All thirteen tasks can begin from the plan merge. Each task has new, exclusive p
 ### A8. Claude live-acceptance harness
 
 - Branch/worktree: `feat/claude-live-acceptance-harness` / `.preview/worktrees/claude-live-acceptance-harness`.
-- Own: new `scripts/claude-acceptance.mjs`, `tests/claudeAcceptance.test.ts`, `docs/Claude_Live_Acceptance.md`.
+- Own: new `scripts/claude-acceptance.mjs`, `tests/claudeAcceptance.test.ts`, `docs/internal/Claude_Live_Acceptance.md`.
 - Prepare an opt-in local runbook/runner around existing public account status and `ManagedSessions` behavior: subscription-mode status, selected model/effort, command/file approval, interrupt, restart, and resume. Use `src/core/accountSetup.ts`, `managedClaude.ts`, and `tests/managed.test.ts` as examples.
 - Fixture mode proves command ordering, redaction, cancellation, and evidence schema without signing in or submitting a real turn. Live results stay pending until a user drives the provider-owned login and explicitly authorizes a bounded task. Never read credentials or silently use API-key billing.
 
 ### A9. Codex live-acceptance harness
 
 - Branch/worktree: `feat/codex-live-acceptance-harness` / `.preview/worktrees/codex-live-acceptance-harness`.
-- Own: new `scripts/codex-acceptance.mjs`, `tests/codexAcceptance.test.ts`, `docs/Codex_Live_Acceptance.md`.
+- Own: new `scripts/codex-acceptance.mjs`, `tests/codexAcceptance.test.ts`, `docs/internal/Codex_Live_Acceptance.md`.
 - Prepare an opt-in runner/runbook for the existing ChatGPT login flow, model/effort acknowledgement, one scoped approval, interrupt, restart/resume, and explicit quota refresh. Follow `CodexAccountFlow`, `ManagedCodex`, `readCodexQuota`, and `tests/quota.test.ts`.
 - Fixture mode proves only documented RPCs are sent, identity/reset tokens are absent from evidence, cancellation closes the owned channel, and unavailable quota stays unavailable. Browser opening or executable presence is never recorded as sign-in.
 
 ### A10. Distinct-version upgrade evidence
 
 - Branch/worktree: `feat/desktop-upgrade-evidence` / `.preview/worktrees/desktop-upgrade-evidence`.
-- Own: new `scripts/desktop-upgrade-evidence.mjs`, `tests/desktopUpgradeEvidence.test.ts`, `docs/Desktop_Upgrade_Evidence.md`.
+- Own: new `scripts/desktop-upgrade-evidence.mjs`, `tests/desktopUpgradeEvidence.test.ts`, `docs/internal/Desktop_Upgrade_Evidence.md`.
 - Parse the outputs of the existing `scripts/desktop-upgrade-test.ps1` and pinned `desktop/upgrade-baseline.json` into a small provenance record. Copy the manifest/hash/selected-shortcut checks from `docs/Windows_Installer.md`; do not run the installer on a developer profile.
 - Verify mismatched version, missing/expired baseline, wrong artifact hash, or missing selected/unselected cycle refuses a passing record. A local parser pass never marks the disposable Windows run accepted.
 
 ### A11. Signing and distribution preflight
 
 - Branch/worktree: `feat/desktop-signing-preflight` / `.preview/worktrees/desktop-signing-preflight`.
-- Own: new `scripts/desktop-signing-preflight.mjs`, `tests/desktopSigningPreflight.test.ts`, `docs/Desktop_Signing_Preflight.md`.
+- Own: new `scripts/desktop-signing-preflight.mjs`, `tests/desktopSigningPreflight.test.ts`, `docs/internal/Desktop_Signing_Preflight.md`.
 - Define a read-only release-artifact inventory and signature verification result for the app executable and installer, with exact hashes, product/version identity, and expected signer metadata. Follow `scripts/desktop.mjs` staging/verify pattern.
 - Verify unsigned, mismatched, and tampered artifacts fail closed. Do not obtain/store a certificate or claim a signed public release; signing and distribution credentials are a later release-owner gate.
 
 ### A12. Native visual/accessibility record
 
 - Branch/worktree: `feat/native-manual-acceptance-record` / `.preview/worktrees/native-manual-acceptance-record`.
-- Own: new `scripts/native-visual-acceptance.mjs`, `tests/nativeVisualAcceptance.test.ts`, `docs/Native_Visual_Acceptance.md`.
-- Make a local record for a human to review editor/Agents switching, dirty tabs, terminal ownership, keyboard focus, dark/light/high-contrast, reduced motion, onboarding, and installer wizard. Reuse the scope and pending labels in `docs/Native_Workflow_Acceptance.md`.
+- Own: new `scripts/native-visual-acceptance.mjs`, `tests/nativeVisualAcceptance.test.ts`, `docs/internal/Native_Visual_Acceptance.md`.
+- Make a local record for a human to review editor/Agents switching, dirty tabs, terminal ownership, keyboard focus, dark/light/high-contrast, reduced motion, onboarding, and installer wizard. Reuse the scope and pending labels in `docs/internal/Native_Workflow_Acceptance.md`.
 - Verify a missing human observation or failed keyboard/contrast case cannot become a pass. The existing fixture status remains pending until a real native Hydra window is inspected.
 
 ### A13. Update-feed integrity contract
 
 - Branch/worktree: `feat/desktop-update-feed-contract` / `.preview/worktrees/desktop-update-feed-contract`.
-- Own: new `src/core/desktopUpdateFeed.ts`, `tests/desktopUpdateFeed.test.ts`, `docs/Desktop_Update_Feed.md`.
-- Define a versioned, read-only update manifest parser with channel, full artifact hash, monotonic version, and signature/provenance requirements. It may describe an available update but must never install it. Use `desktop/product.json`, `scripts/desktop.mjs`, and `docs/Desktop_Delivery.md` as the version/identity sources.
+- Own: new `src/core/desktopUpdateFeed.ts`, `tests/desktopUpdateFeed.test.ts`, `docs/internal/Desktop_Update_Feed.md`.
+- Define a versioned, read-only update manifest parser with channel, full artifact hash, monotonic version, and signature/provenance requirements. It may describe an available update but must never install it. Use `desktop/product.json`, `scripts/desktop.mjs`, and `docs/internal/Desktop_Delivery.md` as the version/identity sources.
 - Verify rollback, channel crossing, unsigned metadata, wrong product identity, and missing hash refuse. No endpoint, updater daemon, or automatic installation is invented before the later native update-channel decision.
 
 ## Wave B — shared integration, one coordinator writer at a time
@@ -132,7 +132,7 @@ These are separate PRs. The coordinator alone edits shared host/model/webview fi
 | B2 child dispatch and queue | B1, A3, A6 | `src/extension.ts`: reuse `DelegationDispatchStore.materialize`, `createDelegatedChildren`, enrollment transaction and `TaskScheduler.enqueue`. Persist dispatch and task before launch, hold parent capacity only while it writes, and fence cancellation/uncertain writers. | Two independent children start once in separate worktrees under the same capacity; dependency waits; restart during every durable boundary neither duplicates a worktree nor launches an extra writer. |
 | B3 parent wakeup and accepted result | B2, A4, A5 | `src/extension.ts`: wake from saved child results, build bounded continuation, use existing parent-review and `Integrations.prepare/promote` gates. | Concurrent completions coalesce, failure/rejection blocks parent success, stale result blocks integration, combined checks decide acceptance, candidate remains recoverable on conflict. |
 | B4 orchestration and Editor UI | B3 | `src/core/model.ts`, `webview/index.tsx`, `webview/EditorConversation.tsx`, focused panels and graph styles: show the saved decision, child states, result blockers, actual dispatch/result arrows and partial usage. | Selection and mode switching preserve dirty editor/terminal state; graph navigation makes zero provider calls; keyboard and reduced-motion fixtures pass at narrow/wide widths. |
-| B5 combined local acceptance | B4 | New integration fixture(s) plus `docs/Implementation_Status.md`: exercise localized Solo, two independent children, dependent child, blocked result, stop, restart and combined integration in one disposable repository. | `npm.cmd run check`, `npm.cmd run build`, focused tests, full `npm.cmd test`, and supported native smoke pass on the same reviewed head; if native smoke stalls, retain an explicit pending gate. |
+| B5 combined local acceptance | B4 | New integration fixture(s) plus `docs/internal/Implementation_Status.md`: exercise localized Solo, two independent children, dependent child, blocked result, stop, restart and combined integration in one disposable repository. | `npm.cmd run check`, `npm.cmd run build`, focused tests, full `npm.cmd test`, and supported native smoke pass on the same reviewed head; if native smoke stalls, retain an explicit pending gate. |
 
 ## Wave C — real accounts, rollout, and desktop release
 
@@ -142,6 +142,6 @@ These gates can be prepared in parallel after Wave A but cannot be pronounced co
 2. **Paired Auto/Solo evaluation:** freeze representative tasks, base commits, provider/model/effort, acceptance commands, sample size and quality tolerance before runs. Use the existing corpus/import/report code and A7. Include retries, failed candidates, coordination, and human review time. Switch the released default to Auto only in a separate reviewed rollout PR after quality holds and measured usage or time improves within the user's declared budget. If evidence is partial, keep Solo default and Auto opt-in.
 3. **Native desktop acceptance:** build a fresh standalone runtime, run `desktop:verify` and `desktop:smoke`, then use A12 for a human keyboard/visual review. A stalled smoke is inconclusive. Distinct-version installer upgrade uses A10 on a disposable Windows host; the current pinned baseline expires and may need explicit provenance refresh. Preserve developer profiles and unrelated VS Code/Cursor data.
 4. **Signing and updates:** release owner supplies signing identity and distribution destination after A11/A13. Have Astra resolve the consequential Code OSS updater/channel architecture before Terra touches native update services. Then implement one signed update channel, rollback refusal, safe download/install/restart, and a real upgrade/rollback test in separate reviewed PRs. Never claim automatic updates from a manifest parser alone.
-5. **Completion record:** update `docs/Implementation_Status.md` with exact PRs and gates, independently verify `origin/main`, and delete this temporary plan only when the code and applicable external acceptance are complete. If live account, signing, or human gates remain pending, retain the plan and name their owner and next action.
+5. **Completion record:** update `docs/internal/Implementation_Status.md` with exact PRs and gates, independently verify `origin/main`, and delete this temporary plan only when the code and applicable external acceptance are complete. If live account, signing, or human gates remain pending, retain the plan and name their owner and next action.
 
 The first-wave target is simultaneous *independent* progress, not simultaneous mutation of Hydra's host or a claim that thirteen model processes can fit any local capacity. If the executor has fewer slots, fill available slots with ready tasks and launch the next task as one finishes. A feature counts as done only after its own reviewed PR is merged; the IDE counts as complete only after Wave C's real acceptance and release gates are evidenced.

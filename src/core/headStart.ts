@@ -1,7 +1,7 @@
 import { git, gitRun, readOnlyGitTimeoutMs } from './git';
 
 /**
- * What a head starts from (docs/Gates_Plan.md, section 3).
+ * What a head starts from (docs/internal/Gates_Plan.md, section 3).
  *
  * A head that depends on others builds on what they did: its worktree starts
  * from its dependency's result commit, or, with several, from one commit Hydra
@@ -12,7 +12,7 @@ import { git, gitRun, readOnlyGitTimeoutMs } from './git';
  */
 /**
  * What one dependency handed on. `kind` says who did the work: a head, or a lane
- * that runs a plan job (docs/Plan_Lanes_Plan.md, "Starting a lane job"); for a
+ * that runs a plan job (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job"); for a
  * lane, `id` is the lane's id and `summary` its Mark job done note or commit subjects.
  */
 export interface DependencyResult { id: string; kind: 'head' | 'lane'; title: string; summary: string; commit: string; branch?: string; changedFiles: string[] }
@@ -80,7 +80,7 @@ const clip = (value: string, max: number) => value.length > max ? `${value.slice
 
 /**
  * "What the heads you depend on did:" for the brief: each one's title, summary, branch and changed files, 4 KB in all.
- * It says "the jobs" once any of them is a lane (docs/Plan_Lanes_Plan.md, "Heads that depend on a lane job").
+ * It says "the jobs" once any of them is a lane (docs/internal/Plan_Lanes_Plan.md, "Heads that depend on a lane job").
  */
 export function dependencyBrief(dependencies: readonly DependencyResult[]): string {
   const header = `What the ${dependencyNoun(dependencies)} you depend on did (your worktree already has their work):`;

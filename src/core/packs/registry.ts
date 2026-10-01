@@ -5,7 +5,7 @@ import { readPackFolder } from './files';
 import { writeFiles } from './cache';
 
 /**
- * Where packs come from (docs/Packs_Plan.md, section 2, and decision 1):
+ * Where packs come from (docs/internal/Packs_Plan.md, section 2, and decision 1):
  *
  * - **Built in:** `<extensionPath>/packs/<id>/`, shipped with this Hydra.
  * - **Yours:** `~/.hydra/packs/<id>/`, or the folder `hydra.packs.folder` names.
@@ -98,7 +98,7 @@ export async function listPacks(roots: PackRoots, options: { only?: ReadonlySet<
 }
 
 /**
- * **Add pack from folder…** (docs/Packs_Plan.md, section 2, "User packs"): validate
+ * **Add pack from folder…** (docs/internal/Packs_Plan.md, section 2, "User packs"): validate
  * a source folder as a pack, then copy its own checked bytes into your packs
  * folder (never re-read from the source afterwards). Refuses a folder that
  * isn't a valid pack, or a folder your packs already have.

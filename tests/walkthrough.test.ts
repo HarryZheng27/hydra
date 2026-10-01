@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';
 
 /**
- * The "Work with Hydra" walkthrough (docs/Lanes_And_Planner_Plan.md, "A
+ * The "Work with Hydra" walkthrough (docs/internal/Lanes_And_Planner_Plan.md, "A
  * walkthrough"): its package.json contribution, media files, and the
  * commands its steps link to, all checked statically so a broken media path
  * or a renamed command fails a fast test instead of a blank walkthrough step.

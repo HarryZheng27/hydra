@@ -5,7 +5,7 @@ import type { LimitEvent } from './core/limitEvents';
 import type { ProviderQuota } from './extensionQuota';
 
 /**
- * Limit detection for chats in the official extensions (docs/Hydra_Agent_Plan.md,
+ * Limit detection for chats in the official extensions (docs/internal/Hydra_Agent_Plan.md,
  * Phase 1). Heads report their own limits through HelperService.onLimit.
  * - Claude: event files from the StopFailure hook, via LimitWatcher.
  * - Codex: the account's rate-limit snapshot, polled while this window is focused.

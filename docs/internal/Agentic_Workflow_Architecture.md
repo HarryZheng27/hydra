@@ -37,9 +37,9 @@ Snapshot: [c88f9be](https://github.com/ndunl075/hydra/tree/c88f9beea25c6caaa0824
 
 This baseline is historical. Subsequent implementation and exact-revision acceptance gates are recorded in [implementation status](Implementation_Status.md#acceptance-record) and the [agent workflow roadmap](Agent_Workflow_Roadmap.md). The proposals below remain design rationale; implemented foundations do not establish authenticated provider acceptance or measured efficiency.
 
-- [worktrees.ts](../src/core/worktrees.ts): unique branch + sibling checkout, pinned base commit, recorded integration target, canonical-path checks.
+- [worktrees.ts](../../src/core/worktrees.ts): unique branch + sibling checkout, pinned base commit, recorded integration target, canonical-path checks.
 - [Provider_Protocol.md](Provider_Protocol.md): Claude CLI 2.1.270 streaming/resume and Codex App Server 0.154.0 pinned protocol; explicit provider identity, approvals and stop behavior.
-- [model.ts](../src/core/model.ts): task/session identity and per-turn input/output/cache usage. [handoff.ts](../src/core/handoff.ts): official-extension workspace handoff.
+- [model.ts](../../src/core/model.ts): task/session identity and per-turn input/output/cache usage. [handoff.ts](../../src/core/handoff.ts): official-extension workspace handoff.
 - [Implementation_Status.md](Implementation_Status.md): writer exclusion/concurrency and native immutable review foundations exist. Queueing, reviewed-state integration/discard, broader authenticated acceptance, and measured efficiency remain incomplete.
 
 Preserve these foundations. All designs/defaults below are proposals, not claims of shipped functionality.

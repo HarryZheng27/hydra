@@ -74,7 +74,7 @@ test('parsePlannerOutput handles fenced and noisy replies and rejects invalid ou
   assert.throws(() => parsePlannerOutput(JSON.stringify({ jobs: [{ key: 'a', title: 'A', brief: 'b', dependsOn: ['nope'] }, { key: 'b', title: 'B', brief: 'b', dependsOn: [] }] })), /depends on unknown job/);
 });
 
-test('parsePlannerOutput keeps a job\'s "role" only when it names one of the active roles; any other value is dropped (docs/Packs_Plan.md, "Plans and the planner")', () => {
+test('parsePlannerOutput keeps a job\'s "role" only when it names one of the active roles; any other value is dropped (docs/internal/Packs_Plan.md, "Plans and the planner")', () => {
   const withRole = JSON.stringify({ jobs: [
     { key: 'api', title: 'API', brief: 'Build the API.', dependsOn: [], role: 'coding/builder' },
     { key: 'ui', title: 'UI', brief: 'Build the UI.', dependsOn: [] },
@@ -119,7 +119,7 @@ test('a plan store reload fails a plan that was still "planning" when Hydra stop
   });
 });
 
-// ---- Plan jobs that run as lanes (docs/Plan_Lanes_Plan.md, section 1) ----
+// ---- Plan jobs that run as lanes (docs/internal/Plan_Lanes_Plan.md, section 1) ----
 
 const sha = (fill: string) => fill.repeat(40);
 const result = { commit: sha('a'), via: 'marked' as const, at: '2026-09-25T10:00:00.000Z', changedFiles: ['src/a.ts'] };

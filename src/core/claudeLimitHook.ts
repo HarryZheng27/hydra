@@ -2,7 +2,7 @@ import path from 'node:path';
 import { parseCliVersion } from './cliVersions';
 
 /**
- * Hydra's Claude Code `StopFailure` hook (docs/Hydra_Agent_Plan.md, "Detect the
+ * Hydra's Claude Code `StopFailure` hook (docs/internal/Hydra_Agent_Plan.md, "Detect the
  * limit"). One matcher group in the user's ~/.claude/settings.json runs
  * dist/hydra-limit-hook.cjs when a turn ends on `rate_limit`; the script drops an
  * event file that Hydra's windows pick up (limitWatcher.ts).

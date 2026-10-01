@@ -3,7 +3,7 @@ import { otherProvider } from './limitEvents';
 import type { Provider } from './model';
 
 /**
- * Phase 3 (docs/Hydra_Agent_Plan.md, "Offer where to continue"): decide whether to
+ * Phase 3 (docs/internal/Hydra_Agent_Plan.md, "Offer where to continue"): decide whether to
  * show one notification for a limit event, what it says, and which buttons it
  * offers. Pure — no vscode API — so it is unit-testable; src/extensionLimitOffer.ts
  * wires this to the real notification, clipboard and dispatch.
@@ -82,7 +82,7 @@ export function continuedHistoryReason(fromProvider: Provider, toProvider: Provi
   return `Continued in ${shortLabel[toProvider]} after ${shortLabel[fromProvider]}'s usage limit.`;
 }
 
-// ---- Lanes (docs/Gates_Plan.md, section 2): the tile banner, not a notification ----
+// ---- Lanes (docs/internal/Gates_Plan.md, section 2): the tile banner, not a notification ----
 
 export type LaneOfferButtonId = 'continueOther' | 'viewHandoff' | 'wait';
 /** "Claude Code hit its usage limit (resets 3:40 PM)." — the buttons say what to do about it. */

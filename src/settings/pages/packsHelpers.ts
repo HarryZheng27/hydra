@@ -4,7 +4,7 @@ import { sourceLabel, type InstalledPack, type PackSource } from '../../core/pac
 import type { PackState, ProjectPack } from '../../core/packs/project';
 
 /**
- * Pure display logic for Settings → Packs (docs/Packs_Plan.md, section 6): what
+ * Pure display logic for Settings → Packs (docs/internal/Packs_Plan.md, section 6): what
  * each card shows, which one button it gets, and exactly what the "What it
  * contains" disclosure and the review panel list (section 4) — the same
  * content, laid out the same way. No `vscode` import, so this is unit tested
@@ -16,7 +16,7 @@ import type { PackState, ProjectPack } from '../../core/packs/project';
  */
 
 const gateKindLabel: Record<string, string> = { command: 'Command', screenshots: 'Screenshots', review: 'Review' };
-/** Every pack gate runs at the same two points (docs/Packs_Plan.md, section 4). */
+/** Every pack gate runs at the same two points (docs/internal/Packs_Plan.md, section 4). */
 export const gateRunsWhen = "Before a head's work is accepted, and when you merge a lane.";
 
 export interface PackCommandLine { text: string; parts: readonly string[] }
@@ -29,7 +29,7 @@ export interface ReviewGateView {
 }
 export interface ReviewServerView {
   id: string; kind: 'stdio' | 'http' | 'sse';
-  /** The stdio command line, masked (docs/Packs_Plan.md, section 4: "env names ... masked with maskSpec"). */
+  /** The stdio command line, masked (docs/internal/Packs_Plan.md, section 4: "env names ... masked with maskSpec"). */
   command?: PackCommandLine;
   url?: string;
   /** Env or header names Hydra fills in from your environment, and their (masked) values. */
@@ -114,7 +114,7 @@ export const stateLabel: Record<PackState, string> = {
 };
 export type PackButtonId = 'turnOn' | 'turnOff' | 'review' | 'trustAndReview';
 export interface PackButtonView { id: PackButtonId; label: string }
-/** The one button each state gets (docs/Packs_Plan.md, section 3's table and section 6). No button for notInstalled/invalid. */
+/** The one button each state gets (docs/internal/Packs_Plan.md, section 3's table and section 6). No button for notInstalled/invalid. */
 export function packButton(state: PackState): PackButtonView | undefined {
   switch (state) {
     case 'off': return { id: 'turnOn', label: 'Turn on' };
@@ -146,7 +146,7 @@ export interface PackCardView {
   reviewButtonLabel?: string;
   thirdParty?: boolean;
 }
-/** One pack's card, from its project state (docs/Packs_Plan.md, section 3): built-in first is the caller's sort, not this function's. */
+/** One pack's card, from its project state (docs/internal/Packs_Plan.md, section 3): built-in first is the caller's sort, not this function's. */
 export function packCard(pack: ProjectPack, nodeExecutable = 'node'): PackCardView {
   const manifest = pack.pack?.valid?.manifest;
   const contents = pack.pack?.valid

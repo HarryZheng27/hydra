@@ -20,7 +20,7 @@ import { HelperService } from '../src/core/helperService';
 import { laneGuidance, planJobAdvice, toolAllowed } from '../src/core/helperTools';
 import { createBridge, laneFromEnv } from '../src/core/mcpBridge';
 
-/** Plan lanes against real git (docs/Plan_Lanes_Plan.md): where a lane starts, what it hands on, and what it is measured from. */
+/** Plan lanes against real git (docs/internal/Plan_Lanes_Plan.md): where a lane starts, what it hands on, and what it is measured from. */
 async function fixture(gates?: unknown) {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'hydra-plan-lanes-')));
   const repo = path.join(root, 'repo');

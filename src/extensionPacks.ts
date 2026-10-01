@@ -6,7 +6,7 @@ import { PackService, defaultUserPacksFolder } from './core/packs/service';
 import type { AuditEvent } from './core/audit';
 
 /**
- * Packs in the window (docs/Packs_Plan.md): the PackService built from the
+ * Packs in the window (docs/internal/Packs_Plan.md): the PackService built from the
  * extension's paths and the hydra.packs.folder setting. Heads and lanes read
  * their gates through `service.gates` and their roles through `service.resolve`.
  * A role's server named like one of your own servers is left out, so your

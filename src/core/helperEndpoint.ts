@@ -5,7 +5,7 @@ import { toolAllowed, type HelperRole } from './helperTools';
 import type { Provider } from './model';
 
 /**
- * Hydra's local endpoint for helper actions (docs/Official_Extensions_Plan.md,
+ * Hydra's local endpoint for helper actions (docs/internal/Official_Extensions_Plan.md,
  * Phase 3). It listens on 127.0.0.1 only, on a random port. Each call carries a
  * token, and the token alone decides who is calling (a window's lead, or one
  * helper job) and which actions it may use.

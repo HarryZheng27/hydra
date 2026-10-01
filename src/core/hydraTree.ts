@@ -7,7 +7,7 @@ import { providerWaitLabel } from './providerWait';
 import type { PlanJobView } from './planRunner';
 
 /**
- * The Hydra activity-bar panel (docs/Lanes_And_Planner_Plan.md, section 3): one
+ * The Hydra activity-bar panel (docs/internal/Lanes_And_Planner_Plan.md, section 3): one
  * tree with three groups (Lanes, Heads, Plans). Pure, like agentsCanvas.ts, so
  * the grouping and labels are testable without a vscode.TreeDataProvider.
  */
@@ -30,7 +30,7 @@ export function livePlans(plans: readonly Plan[]): Plan[] {
   return plans.filter(plan => plan.state !== 'done').slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-/** A plan's job-progress line (docs/Plan_Lanes_Plan.md, section 5): "Running · 2 of 4 done · 1 lane waiting", or "Incomplete · 1 failed". */
+/** A plan's job-progress line (docs/internal/Plan_Lanes_Plan.md, section 5): "Running · 2 of 4 done · 1 lane waiting", or "Incomplete · 1 failed". */
 // Exported for src/core/projectSummary.ts (Step D): the same line, reused rather than recomputed.
 export function planProgressLine(plan: Plan, views: readonly PlanJobView[] | undefined): string {
   if (plan.state === 'planning') return 'Planning…';
@@ -52,7 +52,7 @@ export function planProgressLine(plan: Plan, views: readonly PlanJobView[] | und
 export function buildHydraTree(lanes: readonly LaneView[], heads: readonly HelperJobView[], plans: readonly Plan[], planJobs: Readonly<Record<string, readonly PlanJobView[]>> = {}, roles: readonly SnapshotRole[] = []): HydraTree {
   const laneItems: TreeLaneItem[] = openLanes(lanes).map(lane => {
     const conflicts = !!lane.sync?.conflicts.length;
-    // Packs (docs/Packs_Plan.md, "How roles show"): "Codex · Reviewer · lane/x".
+    // Packs (docs/internal/Packs_Plan.md, "How roles show"): "Codex · Reviewer · lane/x".
     const roleTitle = lane.role ? roles.find(role => role.pack === lane.role!.pack && role.id === lane.role!.role)?.title : undefined;
     // Step A: the same evidence label everywhere, "Checks are for an older commit" when the lane's HEAD has moved past it.
     const gatesLabel = lane.lastGates?.status ? `${evidenceLabel(lane.lastGates.status)}${lane.gatesStale ? ' (older commit)' : ''}` : undefined;

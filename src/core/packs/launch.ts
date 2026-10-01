@@ -6,7 +6,7 @@ import { resolvePlaceholders, variableNames, type PackRole, type PackServerInfo,
 import type { PackState } from './project';
 
 /**
- * A role at launch (docs/Packs_Plan.md, section 5, "How a role reaches each CLI").
+ * A role at launch (docs/internal/Packs_Plan.md, section 5, "How a role reaches each CLI").
  * Pure: the pack service reads the active pack's checked copy and builds the Claude
  * plugin (a ResolvedRole); roleLaunch turns that into what one launch needs, for one
  * provider and one target, a lane or a head. helperRunner and laneLaunch place the pieces.

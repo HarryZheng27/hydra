@@ -8,7 +8,7 @@ Create a pending local record:
 node scripts/native-visual-acceptance.mjs --fixture --output .\native-visual-acceptance.json
 ```
 
-The generated record is deliberately `human-visual-accessibility-acceptance-pending`. It does not start Hydra, open a window, install an application, modify a profile, authenticate an account, or run a provider turn. It also does not change [native-workflow-acceptance.json](../tests/fixtures/native-workflow-acceptance.json), which remains pending until a real native Hydra window is inspected.
+The generated record is deliberately `human-visual-accessibility-acceptance-pending`. It does not start Hydra, open a window, install an application, modify a profile, authenticate an account, or run a provider turn. It also does not change [native-workflow-acceptance.json](../../tests/fixtures/native-workflow-acceptance.json), which remains pending until a real native Hydra window is inspected.
 
 ## Human review
 

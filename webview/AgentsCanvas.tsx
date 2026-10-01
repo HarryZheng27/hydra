@@ -10,7 +10,7 @@ import { ProviderLogo } from './ProviderLogo';
 import './agents-canvas.css';
 
 /**
- * The Agents view (docs/Agents_View_Plan.md): a live canvas of the heads your
+ * The Agents view (docs/internal/Agents_View_Plan.md): a live canvas of the heads your
  * Claude Code and Codex chats start. Blank until a chat starts heads; each head
  * grows out of its chat, shows what it's doing, and leaves when it's merged.
  * The canvas never starts work itself.
@@ -34,21 +34,21 @@ interface LeadGhost { lead: CanvasLead; until: number }
 /** A chat stays briefly after its last head, so the heads visibly fold back into it. */
 const leadGraceMs = 1200;
 
-/** Planner (docs/Lanes_And_Planner_Plan.md, section 4): a job-edit popover's own form state. */
+/** Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): a job-edit popover's own form state. */
 export interface JobPopoverState { planId: string; job: PlanJob; x: number; y: number }
 interface JobMenuState { planId: string; job: PlanJob; x: number; y: number }
 
 export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = [], planJobs = {}, defaultProvider, roles = [], onAction, onPlan = () => {}, onStopAll, openNewPlanAt, onOpenLane, focusHead }: {
   heads: readonly HelperJobView[];
-  /** Finished heads the tray's Clear button has hidden (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
+  /** Finished heads the tray's Clear button has hidden (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
   dismissedTray?: readonly string[];
   plans?: readonly Plan[];
-  /** Open lanes (docs/Lanes_And_Planner_Plan.md, section 2): every one is a lead node, even with no heads. */
+  /** Open lanes (docs/internal/Lanes_And_Planner_Plan.md, section 2): every one is a lead node, even with no heads. */
   lanes?: readonly LaneView[];
-  /** Each plan's job statuses (docs/Plan_Lanes_Plan.md, section 4), by plan id, once it has run. */
+  /** Each plan's job statuses (docs/internal/Plan_Lanes_Plan.md, section 4), by plan id, once it has run. */
   planJobs?: Readonly<Record<string, readonly PlanJobView[]>>;
   defaultProvider?: Provider;
-  /** The active packs' roles (docs/Packs_Plan.md, "Picking a role"), for the job popover and the role labels below. */
+  /** The active packs' roles (docs/internal/Packs_Plan.md, "Picking a role"), for the job popover and the role labels below. */
   roles?: readonly SnapshotRole[];
   onAction: (action: HeadAction, jobId: string) => void;
   onPlan?: (message: ClientMessage) => void;
@@ -69,11 +69,11 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
   const [filter, setFilter] = useState<'running' | 'today'>('running');
   const [ghosts, setGhosts] = useState<Ghost[]>([]);
   const [leadGhosts, setLeadGhosts] = useState<LeadGhost[]>([]);
-  // ---- Planner UI state (docs/Lanes_And_Planner_Plan.md, section 4): its own block. ----
+  // ---- Planner UI state (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
   const [newPlan, setNewPlan] = useState<{ title: string; brief: string }>();
   const [jobPopover, setJobPopover] = useState<JobPopoverState>();
   const [jobMenu, setJobMenu] = useState<JobMenuState>();
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 4): the ⋯ menu on a running plan's job slot. ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 4): the ⋯ menu on a running plan's job slot. ----
   const [runningJobMenu, setRunningJobMenu] = useState<{ item: CanvasPlanJob; x: number; y: number }>();
   const dragging = useRef<{ planId: string; key: string } | undefined>(undefined);
   const previousLeads = useRef(new Map<string, CanvasLead>());
@@ -185,7 +185,7 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
     return () => window.removeEventListener('keydown', escape);
   }, [jobPopover !== undefined]);
 
-  // A `show` message names a head or a plan id (docs/Plan_Lanes_Plan.md, section 4: "Show plan"); both are
+  // A `show` message names a head or a plan id (docs/internal/Plan_Lanes_Plan.md, section 4: "Show plan"); both are
   // 12-hex ids, so a head is tried first and a plan node second.
   const reveal = (id: string) => {
     setSelected(id);
@@ -412,7 +412,7 @@ function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, o
 }
 
 /**
- * Planner (docs/Lanes_And_Planner_Plan.md, section 4): a plan still being
+ * Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): a plan still being
  * drafted (planning, draft or failed). A running or done plan's heads render
  * through the ordinary lead/head path above instead (see agentsCanvas.ts).
  */
@@ -508,7 +508,7 @@ function PlanJobNode({ item, roles = [], onOpen, onMenu, onHandleDown, onHandleU
 }) {
   const job = item.job;
   const matchedRole = job.role ? roles.find(role => role.ref === job.role) : undefined;
-  // Packs (docs/Packs_Plan.md, "How roles show"): the pill reads "Builder · Claude" — without its own
+  // Packs (docs/internal/Packs_Plan.md, "How roles show"): the pill reads "Builder · Claude" — without its own
   // provider, a job takes its role's, the same precedence runPlanById uses (Provider: job, then role, then default).
   const effectiveProvider = job.provider ?? matchedRole?.provider;
   const providerLabel = effectiveProvider === 'codex' ? 'Codex' : effectiveProvider === 'claude' ? 'Claude' : 'Auto';
@@ -537,7 +537,7 @@ const planJobStatusLabel: Record<PlanJobStatus, string> = {
 };
 
 /**
- * A started plan job's slot that isn't a still-on-canvas head (docs/Plan_Lanes_Plan.md, section 4):
+ * A started plan job's slot that isn't a still-on-canvas head (docs/internal/Plan_Lanes_Plan.md, section 4):
  * a lane card while its lane is open, or a small dashed status node otherwise (not started, or ended).
  */
 function PlanRunningJobSlot({ item, onOpenMenu, onOpenLane, onPlan }: {
@@ -597,7 +597,7 @@ function PlanRunningJobSlot({ item, onOpenMenu, onOpenLane, onPlan }: {
 }
 
 /**
- * The ⋯ menu on a plan job's slot (docs/Plan_Lanes_Plan.md, section 4). A lane
+ * The ⋯ menu on a plan job's slot (docs/internal/Plan_Lanes_Plan.md, section 4). A lane
  * card's menu is Open lane, Mark job done, Cancel job, Diff; a job that hasn't
  * started (or has ended) only gets Start lane (when startable) and Cancel job.
  */
@@ -621,7 +621,7 @@ function RunningJobMenu({ state, onOpenLane, onPlan, onClose }: {
   </div>;
 }
 
-/** A job that has a head, a lane, a result or an outcome has started (docs/Plan_Lanes_Plan.md, section 1): its Run as can't change any more. Duplicated from plans.ts's jobStarted, which this browser bundle can't import (see the note atop this file). */
+/** A job that has a head, a lane, a result or an outcome has started (docs/internal/Plan_Lanes_Plan.md, section 1): its Run as can't change any more. Duplicated from plans.ts's jobStarted, which this browser bundle can't import (see the note atop this file). */
 const jobHasStarted = (job: Pick<PlanJob, 'jobId' | 'laneId' | 'result' | 'outcome'>): boolean => !!(job.jobId || job.laneId || job.result || job.outcome);
 
 /** The job-edit popover: title, brief, provider (Auto/Claude/Codex), Role, and, for a job that hasn't started, Run as (Head/Lane). */

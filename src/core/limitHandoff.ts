@@ -7,7 +7,7 @@ import type { Handoff, LimitEvent } from './limitEvents';
 import type { Job } from './jobs';
 
 /**
- * Phase 2 (docs/Hydra_Agent_Plan.md, "Build the handoff without asking a
+ * Phase 2 (docs/internal/Hydra_Agent_Plan.md, "Build the handoff without asking a
  * model"): assemble a continuation brief mechanically — no model call — from
  * a Claude transcript, a Codex rollout, or a head's own state, plus git.
  * Phase 3 decides where the result is written and offered; this module only

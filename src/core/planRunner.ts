@@ -12,7 +12,7 @@ import {
 } from './plans';
 
 /**
- * Running a plan whose jobs are heads or lanes (docs/Plan_Lanes_Plan.md, section 2).
+ * Running a plan whose jobs are heads or lanes (docs/internal/Plan_Lanes_Plan.md, section 2).
  *
  * `planSteps` is pure: from a plan and a look at its heads and lanes it gives each
  * job's status and what to do next. `PlanRunner` applies those steps on one queue
@@ -91,7 +91,7 @@ const clip = (text: string, max: number) => text.length > max ? `${text.slice(0,
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 /**
- * Each job's status and the next steps (pure; docs/Plan_Lanes_Plan.md, "Job status" and "When a job starts").
+ * Each job's status and the next steps (pure; docs/internal/Plan_Lanes_Plan.md, "Job status" and "When a job starts").
  * - A lane job starts when every job it depends on is done.
  * - A head job starts when every lane job it depends on is done and every head job it depends on has
  *   started (HelperService then holds it until those heads are done). Jobs are walked dependencies
@@ -232,7 +232,7 @@ function landingReason(integration: PlanIntegration, key: string, attempt: numbe
 
 /**
  * Why Run plan must refuse up front, or undefined: a lane job needs a terminal, and this build may have none
- * (docs/Plan_Lanes_Plan.md, "When it can't start yet"). Names the lane jobs to switch to Head.
+ * (docs/internal/Plan_Lanes_Plan.md, "When it can't start yet"). Names the lane jobs to switch to Head.
  */
 export function planRunRefusal(plan: Pick<Plan, 'jobs'>, terminals: boolean): string | undefined {
   if (terminals) return undefined;
@@ -265,7 +265,7 @@ export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'>, 
 
 /**
  * A plan lane's .hydra-job/brief.md: the job's whole brief, then what the jobs it depends on handed on
- * (their notes or commit subjects, and changed files), as a head's brief has them (docs/Plan_Lanes_Plan.md, decision 2).
+ * (their notes or commit subjects, and changed files), as a head's brief has them (docs/internal/Plan_Lanes_Plan.md, decision 2).
  */
 export function planLaneBrief(planTitle: string, job: Pick<PlanJob, 'title' | 'brief' | 'conflict'>, dependencies: readonly DependencyResult[], integrationBranchName?: string): string {
   const handedOn = dependencies.length ? `\n${dependencyBrief(dependencies)}\n` : '';
@@ -345,7 +345,7 @@ export type PlanMergeVia = 'merge' | 'pr';
 /** O3: how long a stopped landing queue waits before a plan event may try it again. */
 export const queueRetryMs = 30_000;
 
-/** What Mark job done records (docs/Plan_Lanes_Plan.md, "What done means for a lane job"). */
+/** What Mark job done records (docs/internal/Plan_Lanes_Plan.md, "What done means for a lane job"). */
 export interface PlanLaneResultInput { commit: string; note?: string; changedFiles: string[]; status?: EvidenceStatus }
 
 export class PlanRunner {
@@ -506,7 +506,7 @@ export class PlanRunner {
   }
 
   /**
-   * Cancel job (docs/Plan_Lanes_Plan.md, "Failures"): a head is stopped (a held one given up on); a lane
+   * Cancel job (docs/internal/Plan_Lanes_Plan.md, "Failures"): a head is stopped (a held one given up on); a lane
    * stays open as an ordinary lane, without its plan link; the jobs that depend on it are skipped.
    */
   cancelJob(planId: string, key: string, reason = 'Cancelled.'): Promise<void> {
@@ -926,7 +926,7 @@ export class PlanRunner {
       return true;
     } catch (error) {
       this.waits.delete(id);
-      // A plan names its dependencies "jobs", whoever did them (docs/Plan_Lanes_Plan.md, "Starting a lane job").
+      // A plan names its dependencies "jobs", whoever did them (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job").
       const reason = error instanceof DependencyConflict ? new DependencyConflict(error.files, 'jobs').message : `Couldn't start: ${describe(error)}`;
       this.options.log?.(`[plans] ${planId} job ${key}: ${reason}`);
       const outcome: PlanJobOutcome = { state: 'failed', reason: clip(reason, planOutcomeReasonMax), at: this.now().toISOString() };

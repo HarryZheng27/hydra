@@ -5,7 +5,7 @@ import path from 'node:path';
 import { processLaunch, terminateProcessTree } from '../process';
 
 /**
- * The headless browser behind the screenshots gate (docs/Gates_Plan.md): Edge on
+ * The headless browser behind the screenshots gate (docs/internal/Gates_Plan.md): Edge on
  * Windows, otherwise Chrome or Chromium from the usual places, driven over the
  * DevTools protocol with Node's own WebSocket. Each session gets a temporary
  * profile folder, which is deleted when it closes, and closing always kills

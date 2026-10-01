@@ -6,7 +6,7 @@ import { packHash, readPackFolder } from './files';
 import type { PackRole } from './format';
 
 /**
- * The copies packs run from (docs/Packs_Plan.md, section 4, "Runs from a copy"):
+ * The copies packs run from (docs/internal/Packs_Plan.md, section 4, "Runs from a copy"):
  * `globalStorage/packs/cache/<id>-<hash12>/`. `{pack}`, role files and skill
  * paths all point into the copy, so editing a pack's folder can't change what a
  * running session uses; the next launch sees the new hash instead.

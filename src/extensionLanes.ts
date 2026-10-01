@@ -17,14 +17,14 @@ import { otherProvider, type LimitEvent } from './core/limitEvents';
 import { buildHandoff } from './core/limitHandoff';
 import { laneOfferButtons, laneOfferMessage, laneSwitchCountdownSeconds, LimitOfferTracker } from './core/limitOffer';
 import { openHandoffPreview, saveHandoff } from './extensionLimitOffer';
-// ---- Plan lanes (docs/Plan_Lanes_Plan.md). Their own block. ----
+// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md). Their own block. ----
 import { laneNameFromTitle, type LanePlanLink } from './core/lanes';
 import type { LanePlanJobView } from './core/model';
 import type { Plan, PlanJob } from './core/plans';
 import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from './core/planRunner';
 // ---- Auto-dispatch (Step C) ----
 import { LaneDispatch, type DispatchCheck, type DispatchRunner } from './core/laneDispatch';
-// ---- Packs (docs/Packs_Plan.md) ----
+// ---- Packs (docs/internal/Packs_Plan.md) ----
 import type { RoleSource } from './core/packs/launch';
 // ---- Stop all (5.3) ----
 import type { StopSwitch } from './core/stopSwitch';
@@ -32,7 +32,7 @@ import type { StopSwitch } from './core/stopSwitch';
 import { laneOverrideEvent, type AuditEvent } from './core/audit';
 
 /**
- * The editor side of Hydra lanes (docs/Lanes_And_Planner_Plan.md): commands,
+ * The editor side of Hydra lanes (docs/internal/Lanes_And_Planner_Plan.md): commands,
  * the Agents webview's lane messages, confirmations before git writes, and the
  * multi-file diff. The lanes themselves live in LaneService.
  */
@@ -50,10 +50,10 @@ export interface LanesHost {
   runningHeads(laneId: string): number;
   /** The open lanes changed (the discovery record lists their worktrees). */
   changed(): void;
-  // ---- Gates (docs/Gates_Plan.md, "Lanes"): the same checked executable and limit awareness as HelperService's ----
+  // ---- Gates (docs/internal/Gates_Plan.md, "Lanes"): the same checked executable and limit awareness as HelperService's ----
   gatesExecutable(provider: Provider): Promise<string>;
   gatesLimited(provider: Provider): boolean;
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md): the plan job a lane runs, and what its plan actions do ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): the plan job a lane runs, and what its plan actions do ----
   /** The plan job this lane runs, with its status; undefined for an ordinary lane. */
   planJob?(laneId: string): LanePlanJobView | undefined;
   /** Mark job done: record what the lane hands on; the jobs after it start. */
@@ -66,7 +66,7 @@ export interface LanesHost {
    * after the integration gate. Undefined for any other lane.
    */
   planLaneMergeRefusal?(laneId: string): string | undefined;
-  // ---- Packs (docs/Packs_Plan.md): gates.json plus the active packs' gates. Undefined reads gates.json only. ----
+  // ---- Packs (docs/internal/Packs_Plan.md): gates.json plus the active packs' gates. Undefined reads gates.json only. ----
   gates?: GatesLoader;
   /** The active packs' roles, resolved at each lane launch. Undefined: a lane's role is never available. */
   roles?: RoleSource;
@@ -115,7 +115,7 @@ export class LanesController implements vscode.Disposable {
   private storageDirectory?: string;
   /** The main checkout lanes branch from: where the active packs are read. */
   private repository?: string;
-  // ---- The usage-limit banner (docs/Gates_Plan.md, section 2), one per lane at most ----
+  // ---- The usage-limit banner (docs/internal/Gates_Plan.md, section 2), one per lane at most ----
   private readonly limitOffers = new Map<string, LaneLimitOfferView & { event: LimitEvent }>();
   private readonly switchTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Lanes whose agent called hydra_job_ready and whose prompt is still showing (decision 6). */
@@ -199,7 +199,7 @@ export class LanesController implements vscode.Disposable {
 
   exists(id: string): boolean { return !!this.service?.exists(id); }
   laneName(id: string): string | undefined { return this.service?.name(id); }
-  /** For View evidence (docs/Gates_Plan.md): the lane's last gates run, or undefined when none has run yet. */
+  /** For View evidence (docs/internal/Gates_Plan.md): the lane's last gates run, or undefined when none has run yet. */
   laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean } | undefined {
     const lane = this.service?.get(id);
     if (!lane?.lastGates?.results.length) return undefined;
@@ -213,7 +213,7 @@ export class LanesController implements vscode.Disposable {
     return this.service.describe(you);
   }
   openWorktrees(): string[] { return this.service?.openWorktrees() ?? []; }
-  /** Packs (docs/Packs_Plan.md): the active roles changed. Tell running lanes right away, instead of only at their next launch. */
+  /** Packs (docs/internal/Packs_Plan.md): the active roles changed. Tell running lanes right away, instead of only at their next launch. */
   async activeRolesChanged(): Promise<void> { await this.service?.activeRolesChanged(); this.changed(); }
   /** For ClaudeChatLimits (src/extensionLimits.ts): this window's open lanes, for owning a chat cwd or a lane id. */
   laneWorktreeEntries(): { id: string; worktree: string }[] { return this.service?.lanes().map(lane => ({ id: lane.id, worktree: lane.worktree })) ?? []; }
@@ -270,7 +270,7 @@ export class LanesController implements vscode.Disposable {
     }
   }
 
-  // ---- The usage-limit banner (docs/Gates_Plan.md, section 2) ----
+  // ---- The usage-limit banner (docs/internal/Gates_Plan.md, section 2) ----
 
   /**
    * A `source: "lane"` limit event for one of this window's lanes: banner it (or
@@ -354,7 +354,7 @@ export class LanesController implements vscode.Disposable {
     this.postState(true);
   }
 
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md) ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md) ----
 
   /** Whether this window has lanes at all (a trusted Git folder, started): without them a plan's lane jobs neither start nor fail. */
   get available(): boolean { return !!this.service; }
@@ -372,7 +372,7 @@ export class LanesController implements vscode.Disposable {
     return (this.service?.lanes() ?? []).filter(lane => lane.plan?.planId === planId).map(lane => ({ laneId: lane.id, jobKey: lane.plan!.jobKey, attempt: lane.plan!.attempt ?? 0 }));
   }
   /**
-   * Start a plan's lane job (docs/Plan_Lanes_Plan.md, "Starting a lane job"): named from the job's title,
+   * Start a plan's lane job (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job"): named from the job's title,
    * with its brief as the goal (the full brief in .hydra-job/brief.md), from the commit its dependencies
    * handed on. With 24 lanes open it waits instead.
    */
@@ -389,7 +389,7 @@ export class LanesController implements vscode.Disposable {
       ...(plan.dispatch ? { dispatched: true as const } : {}),
     };
     const file = planLaneBrief(plan.title, job, start.dependencies, plan.integration?.branch);
-    // Packs (docs/Packs_Plan.md, "Plans"): the job's provider, then its role's, then hydra.defaultProvider. A role
+    // Packs (docs/internal/Packs_Plan.md, "Plans"): the job's provider, then its role's, then hydra.defaultProvider. A role
     // that isn't active now still goes with the lane, which starts without it and says why on its tile.
     const roleProvider = job.role && !job.provider ? (await this.host.roles?.roles(this.repository ?? '').catch(() => []))?.find(role => role.ref === job.role)?.provider : undefined;
     // Step C: an auto-dispatched plan's provider stands in for hydra.defaultProvider; the job's own choice still comes first.
@@ -465,7 +465,7 @@ export class LanesController implements vscode.Disposable {
 
   // ---- Commands ----
 
-  /** `hydra.newLane`: a Role step first when roles are active, then provider, name and goal (docs/Packs_Plan.md, "Picking a role"). */
+  /** `hydra.newLane`: a Role step first when roles are active, then provider, name and goal (docs/internal/Packs_Plan.md, "Picking a role"). */
   private async newLane(): Promise<void> {
     const service = this.requireService();
     if (!service.terminalsAvailable) { void notices.error(`Hydra: ${terminalsUnavailable}`); return; }
@@ -580,7 +580,7 @@ export class LanesController implements vscode.Disposable {
           }
           throw new Error(check.message);
         }
-        // Gates (docs/Gates_Plan.md, "Merge"): after the commit-first refusals, before the merge
+        // Gates (docs/internal/Gates_Plan.md, "Merge"): after the commit-first refusals, before the merge
         // confirmation, when this project's gates.json says lanes: "onMerge" and there are gates.
         // 1.4: planted git config or hooks first, before the gates run anything in the worktree.
         if (!await this.gitMetaBefore(lane, interactive, 'Merge with these changes', 'Merging runs git in your main checkout, which would run them.')) return undefined;
@@ -621,7 +621,7 @@ export class LanesController implements vscode.Disposable {
       }
       case 'close': {
         const kind = await service.closeKind(lane.id);
-        // Plan lanes (docs/Plan_Lanes_Plan.md, "Before you close"): closing before the job is done fails it.
+        // Plan lanes (docs/internal/Plan_Lanes_Plan.md, "Before you close"): closing before the job is done fails it.
         const planJob = this.planJobOf(lane.id);
         const planWarning = planJob?.state === 'active' && lane.state !== 'merged'
           ? `This lane runs job ${planJob.jobTitle} of plan ${planJob.planTitle}. Closing it without marking the job done fails the job${planJob.dependents ? `, and ${plural(planJob.dependents, 'job')} that depend on it won't start` : ''}.\n\n` : '';
@@ -663,7 +663,7 @@ export class LanesController implements vscode.Disposable {
       // ---- Step E: a preview for each lane ----
       case 'preview': return this.previewLane(service, lane, interactive);
       case 'stopPreview': await service.stopPreview(lane.id); this.postState(true); return { stopped: true };
-      // ---- Plan lanes (docs/Plan_Lanes_Plan.md, "What done means for a lane job" and "Failures") ----
+      // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, "What done means for a lane job" and "Failures") ----
       case 'markJobDone': return this.markJobDone(service, lane, interactive, options);
       case 'cancelJob': {
         const job = this.planJobOf(lane.id);
@@ -688,7 +688,7 @@ export class LanesController implements vscode.Disposable {
   }
 
   /**
-   * Mark job done (docs/Plan_Lanes_Plan.md, "What done means for a lane job"): refuse a lane with uncommitted
+   * Mark job done (docs/internal/Plan_Lanes_Plan.md, "What done means for a lane job"): refuse a lane with uncommitted
    * work (offering Commit…) or nothing to hand on; run the gates as Merge does; ask for a note for the next
    * jobs (the commit subjects by default; Esc cancels); then record the lane's HEAD. The lane stays open.
    * Pressing it again moves the result forward while no job after it has started (decision 3).
@@ -750,7 +750,7 @@ export class LanesController implements vscode.Disposable {
   }
 
   /**
-   * The gates before Merge or Mark job done (docs/Gates_Plan.md, "Merge"; docs/Plan_Lanes_Plan.md, section 3), when
+   * The gates before Merge or Mark job done (docs/internal/Gates_Plan.md, "Merge"; docs/internal/Plan_Lanes_Plan.md, section 3), when
    * gates.json says lanes "onMerge" and there are gates. A passing run on the lane's current commit is reused
    * instead of run again. If they fail: Send to lane (the default, so a quick Enter never hands on failing
    * work), `anyway`, or Cancel. Undefined means stop; `note` is what the confirmation adds.
@@ -795,7 +795,7 @@ export class LanesController implements vscode.Disposable {
       return undefined;
     }
   }
-  /** "Send to lane" (docs/Gates_Plan.md, "Merge"): the failures as one line in the lane's terminal input, never pressing Enter. */
+  /** "Send to lane" (docs/internal/Gates_Plan.md, "Merge"): the failures as one line in the lane's terminal input, never pressing Enter. */
   private sendGatesToLane(service: LaneService, lane: Lane, results: readonly JobCheckResult[]): void {
     const text = flattenGateFailureMessage(results);
     // 1.3: this text includes gate output, which the checked agent

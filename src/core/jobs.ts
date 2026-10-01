@@ -9,7 +9,7 @@ import type { GitMetaFingerprint } from './git';
 import { validateProviderWait, type ProviderWait } from './providerWait';
 
 /**
- * Hydra helper jobs (docs/Official_Extensions_Plan.md, Phase 2).
+ * Hydra helper jobs (docs/internal/Official_Extensions_Plan.md, Phase 2).
  *
  * One store per workspace, one writer (this extension host), and one table of
  * allowed state changes. Every change is validated against the table, recorded in
@@ -58,7 +58,7 @@ export function resolveHeadDefaults(input: HeadDefaultsInput): JobLimits {
 }
 /** How many times a head may report done before it fails, unless .hydra/gates.json says otherwise. */
 export const defaultMaxAttempts = 3;
-/** Gates (docs/Gates_Plan.md): what kind of gate a result is from, and how it ended. */
+/** Gates (docs/internal/Gates_Plan.md): what kind of gate a result is from, and how it ended. */
 export type GateKind = 'command' | 'screenshots' | 'review';
 export type GateState = 'passed' | 'failed' | 'notRun';
 export type FindingSeverity = 'blocker' | 'major' | 'minor';
@@ -79,7 +79,7 @@ export interface JobCheckResult {
   summary?: string;
   /** Who reviewed, for a review gate. */
   reviewer?: Provider;
-  /** The pack the gate comes from (docs/Packs_Plan.md), for "From the Coding pack". */
+  /** The pack the gate comes from (docs/internal/Packs_Plan.md), for "From the Coding pack". */
   pack?: string;
   /** That pack's title. */
   packTitle?: string;
@@ -90,7 +90,7 @@ export const gateState = (check: JobCheckResult): GateState => check.state ?? (c
 export const gateBlocks = (check: JobCheckResult): boolean => check.required && gateState(check) === 'failed';
 
 /**
- * One gate's result as the dashboard shows it (docs/Gates_Plan.md, "Seeing
+ * One gate's result as the dashboard shows it (docs/internal/Gates_Plan.md, "Seeing
  * results"): enough to draw a chip and to open View evidence without
  * refetching the whole JobCheckResult. src/core/model.ts's HelperJobView
  * re-exports this type; it lives here so toHeadCheckView (below) and its unit
@@ -110,7 +110,7 @@ export function toHeadCheckView(check: JobCheckResult): HeadCheckView {
 }
 
 /**
- * A gate chip (docs/Gates_Plan.md, "Seeing results"): "✓ unit · ✓ review · ✗
+ * A gate chip (docs/internal/Gates_Plan.md, "Seeing results"): "✓ unit · ✓ review · ✗
  * ui", plus a not-run style with the reason on hover. Text as well as colour,
  * never colour alone — `tone` only ever adds colour on top of `label`'s icon.
  * Pure so both the Agents canvas and the Lanes tiles (and their SSR tests) use
@@ -195,7 +195,7 @@ export interface JobEvent { at: string; from: JobState | null; to: JobState; rea
 /** The chat that started a job: one lead bridge (one Claude Code or Codex conversation). Set by Hydra from the caller's token. */
 export interface JobLead {
   sessionId: string; provider?: Provider; label?: string;
-  /** The Hydra lane that chat runs in, when it does (docs/Lanes_And_Planner_Plan.md). */
+  /** The Hydra lane that chat runs in, when it does (docs/internal/Lanes_And_Planner_Plan.md). */
   lane?: string;
 }
 export interface Job {
@@ -239,7 +239,7 @@ export interface Job {
   progress?: string;
   reason?: string;
   result?: JobResult;
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md, "Heads that depend on a lane job") ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, "Heads that depend on a lane job") ----
   /**
    * Work it starts from besides its `dependsOn` heads: the results of the plan's lane
    * jobs it depends on. Set only by Hydra (HelperService.startForPlan), never from a
@@ -251,7 +251,7 @@ export interface Job {
    * after a conflict on its integration branch). Set only by Hydra (HelperService.startForPlan).
    */
   carry?: string;
-  // ---- Packs (docs/Packs_Plan.md, "Heads") ----
+  // ---- Packs (docs/internal/Packs_Plan.md, "Heads") ----
   /** The role it works in, from an active pack. Resolved again when it starts, from the pack's checked copy. */
   role?: JobRole;
   // ---- Hardening (Step 1) ----
@@ -407,7 +407,7 @@ export function parseWriteScope(value: unknown): string[] {
 export function parseJobInput(value: unknown): JobInput {
   if (!value || typeof value !== 'object') throw new Error('Job input must be an object.');
   const source = value as Record<string, unknown>;
-  // A head without a provider takes its role's (docs/Packs_Plan.md, "Heads"), so "not given" stays missing here.
+  // A head without a provider takes its role's (docs/internal/Packs_Plan.md, "Heads"), so "not given" stays missing here.
   const provider = source.provider;
   if (provider !== undefined && provider !== 'claude' && provider !== 'codex') throw new Error('provider must be "claude" or "codex".');
   const role = source.role;
@@ -569,7 +569,7 @@ export class JobStore {
   }
 
   /**
-   * Give up on a head that failed on a usage limit (docs/Plan_Lanes_Plan.md, decision 7):
+   * Give up on a head that failed on a usage limit (docs/internal/Plan_Lanes_Plan.md, decision 7):
    * heads queued behind it wait while `limitHit` is set, so Continue in can still save
    * them; clearing it lets them fail. The job stays failed, with the reason in its history.
    */

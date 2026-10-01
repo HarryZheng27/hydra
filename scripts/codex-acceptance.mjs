@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const usage = `Usage: node scripts/codex-acceptance.mjs --fixture [--output <evidence.json>]\n\nRuns a local fixture only. It never starts Codex, opens a browser, signs in,\nsubmits a prompt, reads credentials, or uses API billing. See docs/Codex_Live_Acceptance.md.`;
+const usage = `Usage: node scripts/codex-acceptance.mjs --fixture [--output <evidence.json>]\n\nRuns a local fixture only. It never starts Codex, opens a browser, signs in,\nsubmits a prompt, reads credentials, or uses API billing. See docs/internal/Codex_Live_Acceptance.md.`;
 
 const exact = (actual, expected, name) => {
   if (actual.length !== expected.length || actual.some((method, index) => method !== expected[index])) {

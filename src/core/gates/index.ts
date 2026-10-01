@@ -12,7 +12,7 @@ import { freePort, runScreenshotsGate } from './screenshots';
 import { clip, notRun, providerName, redactGateResult, type GateContext, type GateRuntime } from './types';
 
 /**
- * Gates (docs/Gates_Plan.md, section 1): the second pass that has to prove a
+ * Gates (docs/internal/Gates_Plan.md, section 1): the second pass that has to prove a
  * head's work before it is accepted, or a lane's before it is merged.
  *
  * Order is fixed: command gates first (cheap), then screenshots, then the
@@ -50,7 +50,7 @@ export async function runGateList(gates: readonly Gate[], worktree: string, base
   if (!gates.length) return results;
   await mkdir(context.logDirectory, { recursive: true });
   let blocker: JobCheckResult | undefined;
-  // A pack's gate says so on its result, for "From the Coding pack" (docs/Packs_Plan.md).
+  // A pack's gate says so on its result, for "From the Coding pack" (docs/internal/Packs_Plan.md).
   const fromPack = (gate: Gate, result: JobCheckResult): JobCheckResult => gate.pack ? { ...result, pack: gate.pack, ...(gate.packTitle ? { packTitle: gate.packTitle } : {}) } : result;
   for (const gate of gateOrder(gates)) {
     if (context.signal?.aborted) { results.push(fromPack(gate, notRun(gate, 'Stopped before it ran.'))); continue; }
@@ -81,7 +81,7 @@ export async function runGateList(gates: readonly Gate[], worktree: string, base
  * Where a folder's gates come from. `loadGates` reads gates.json only; the packs
  * loader (src/core/packs/gates.ts, effectiveGates) adds the active packs' gates,
  * and `notRun` results for the gates of listed packs that can't run
- * (docs/Packs_Plan.md, "When a pack is active"). Those never block.
+ * (docs/internal/Packs_Plan.md, "When a pack is active"). Those never block.
  */
 export type GatesLoader = (folder: string) => Promise<GatesConfig & { notRun?: JobCheckResult[] }>;
 
@@ -98,7 +98,7 @@ export interface GatesOutcome {
 
 /**
  * Run a folder's gates against a worktree: for a lane's Merge and Run gates
- * (docs/Gates_Plan.md, "Lanes"). `folder` is the main checkout the gates are
+ * (docs/internal/Gates_Plan.md, "Lanes"). `folder` is the main checkout the gates are
  * read from; `worktree` is where they run, never the main checkout itself;
  * `baseCommit` is where the work started (for a lane, merge-base(target, lane)),
  * so the review sees `baseCommit..HEAD`.
@@ -163,7 +163,7 @@ export function summarizeGateFailures(results: readonly JobCheckResult[]): strin
   }).join('\n');
 }
 /**
- * "Send to lane" (docs/Gates_Plan.md, "Merge"): gateFailureMessage flattened to one line, capped at ~1500 characters, so it fits a terminal's input line.
+ * "Send to lane" (docs/internal/Gates_Plan.md, "Merge"): gateFailureMessage flattened to one line, capped at ~1500 characters, so it fits a terminal's input line.
  * A lane has no hydra_done. Auto-dispatch (Step C) sends the same text with its own last line.
  */
 export function flattenGateFailureMessage(results: readonly JobCheckResult[], max = 1500, ending = 'Fix them and commit; the gates run again when the lane is merged.'): string {

@@ -368,7 +368,7 @@ test('the lane service starts, streams, resumes, coordinates and closes lanes ov
   } finally { await service.dispose(); await f.close(); }
 });
 
-test('switchProvider (docs/Gates_Plan.md, section 2) ends the session, relaunches the other CLI in the same worktree with a handoff, and records the switch; uncommitted work survives', async () => {
+test('switchProvider (docs/internal/Gates_Plan.md, section 2) ends the session, relaunches the other CLI in the same worktree with a handoff, and records the switch; uncommitted work survives', async () => {
   const f = await fixture();
   const pty = fakePtyModule();
   const store = new LaneStore(path.join(f.root, 'storage'));

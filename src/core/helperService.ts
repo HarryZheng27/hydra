@@ -115,7 +115,7 @@ export interface PlanBoardBridge {
 }
 
 /**
- * Hydra helpers, end to end (docs/Official_Extensions_Plan.md, Phases 4 and 6).
+ * Hydra helpers, end to end (docs/internal/Official_Extensions_Plan.md, Phases 4 and 6).
  * Every action from the endpoint lands here. Hydra's code, not a model, drives the
  * chain: start the helper, enforce its limits, check its work when it reports, and
  * hand the result back to the lead through hydra_wait_for_heads.
@@ -148,14 +148,14 @@ export interface HelperServiceOptions {
   /** O7: checked on the same watchdog tick — cancels an unattended plan's unfinished jobs once its wall-clock budget elapses. */
   enforceUnattendedBudgets?: () => Promise<void>;
   /**
-   * This window's lanes (docs/Lanes_And_Planner_Plan.md): the hydra_lanes answer,
+   * This window's lanes (docs/internal/Lanes_And_Planner_Plan.md): the hydra_lanes answer,
    * and the name a lane's heads are labelled with.
    */
   lanes?: {
     describe(you?: string): Promise<unknown>; name(id: string): string | undefined;
-    /** An open lane's worktree: a head started from a lane branches from the lane's HEAD (docs/Gates_Plan.md, section 3). */
+    /** An open lane's worktree: a head started from a lane branches from the lane's HEAD (docs/internal/Gates_Plan.md, section 3). */
     worktree?(id: string): string | undefined;
-    /** hydra_job_ready from a lane that runs a plan job (docs/Plan_Lanes_Plan.md, decision 6): ask the user to mark it done. */
+    /** hydra_job_ready from a lane that runs a plan job (docs/internal/Plan_Lanes_Plan.md, decision 6): ask the user to mark it done. */
     jobReady?(laneId: string, note?: string): Promise<unknown>;
   };
   /**
@@ -166,11 +166,11 @@ export interface HelperServiceOptions {
   plans?: PlanLeadBridge;
   /** O4: hydra_share/hydra_board (a job's own view of its plan's board). Without it, both are refused. */
   planBoard?: PlanBoardBridge;
-  /** Gates (docs/Gates_Plan.md): whether a provider is at its usage limit now, so a review uses the other one. */
+  /** Gates (docs/internal/Gates_Plan.md): whether a provider is at its usage limit now, so a review uses the other one. */
   providerLimited?: (provider: Provider) => boolean;
   /** Gates: test seams for the reviewer, the browser and the clock. */
   gateRuntime?: Partial<GateRuntime>;
-  // ---- Packs (docs/Packs_Plan.md) ----
+  // ---- Packs (docs/internal/Packs_Plan.md) ----
   /** Where a folder's gates come from: gates.json plus the active packs' gates (PackService.gates). Defaults to gates.json only. */
   gates?: GatesLoader;
   /** The active packs' roles (PackService). Without it, no head has a role and a head that names one is refused. */
@@ -326,9 +326,9 @@ export class HelperService {
         // ---- O8b: running a waiting plan, and its report ----
         case 'hydra_plan_run': return this.planRun(args, this.requireLeadSession(caller));
         case 'hydra_plan_report': return this.planReport(args, this.requireLeadSession(caller));
-        // Packs (docs/Packs_Plan.md, decision 6): a lead's bridge asks once, for its instructions and hydra_start_head's `role`.
+        // Packs (docs/internal/Packs_Plan.md, decision 6): a lead's bridge asks once, for its instructions and hydra_start_head's `role`.
         case 'hydra_active_roles': return { roles: await this.activeRoles() };
-        // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6): a lane's agent asks the user; it never marks the job itself ----
+        // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, decision 6): a lane's agent asks the user; it never marks the job itself ----
         case 'hydra_job_ready': {
           if (!caller.lane || !this.options.lanes?.jobReady) throw new Error('hydra_job_ready works only in a Hydra lane that runs a plan job.');
           const note = args.note;
@@ -439,7 +439,7 @@ export class HelperService {
 
   // ---- lead actions ----
 
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md, "Heads that depend on a lane job") ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, "Heads that depend on a lane job") ----
   /**
    * Start a plan job's head: the same arguments as a lead's hydra_start_head, under
    * the plan's lead (`plan-<id>`), plus `inputs`, the results of the lane jobs it
@@ -452,7 +452,7 @@ export class HelperService {
   }
 
   /**
-   * Start a head. Its provider is the one asked for, else its role's (docs/Packs_Plan.md, "Heads"),
+   * Start a head. Its provider is the one asked for, else its role's (docs/internal/Packs_Plan.md, "Heads"),
    * else `defaultProvider` (a plan's hydra.defaultProvider), else Claude. A role must be active now;
    * it is resolved again from its pack's checked copy when the head starts.
    */
@@ -465,7 +465,7 @@ export class HelperService {
     const role = parsed.role && !repeat ? await this.pickRole(parsed.role) : undefined;
     const input = { ...parsed, provider: parsed.provider ?? role?.provider ?? defaultProvider ?? 'claude', ...(role ? { jobRole: { ref: role.ref, title: role.title, packTitle: role.packTitle } } : {}) };
     // A head started from a lane is grouped under it, labelled with the lane's name, and
-    // branches from the lane's HEAD rather than the main checkout's (docs/Gates_Plan.md, section 3).
+    // branches from the lane's HEAD rather than the main checkout's (docs/internal/Gates_Plan.md, section 3).
     const laneName = caller?.lane ? this.options.lanes?.name(caller.lane) : undefined;
     const laneWorktree = caller?.lane && laneName ? this.options.lanes?.worktree?.(caller.lane) : undefined;
     const from = laneWorktree ?? this.options.leadFolder;
@@ -570,7 +570,7 @@ export class HelperService {
     return changed ? 'The project\'s gates changed while this head ran; the gates from its start still ran.' : undefined;
   }
 
-  // ---- Packs (docs/Packs_Plan.md, "Heads") ----
+  // ---- Packs (docs/internal/Packs_Plan.md, "Heads") ----
 
   /** The active roles as a lead's bridge hears of them. None without packs, or when packs.json can't be read. */
   private async activeRoles() {
@@ -708,8 +708,8 @@ export class HelperService {
     // O6: rigor is re-applied here, the same way headStartSnapshot applied it at start; the
     // snapshot already has it under the same id, so the floor treats it as known, not new.
     const floor = gateFloor(job.gatesAtStart, { ...gates, gates: applyRigor(gates.gates, job.rigor) });
-    // The scope and git-metadata checks first, then the gates in order (docs/Gates_Plan.md, "Heads").
-    // A listed pack that can't run reports its gates as not run (docs/Packs_Plan.md); those never block.
+    // The scope and git-metadata checks first, then the gates in order (docs/internal/Gates_Plan.md, "Heads").
+    // A listed pack that can't run reports its gates as not run (docs/internal/Packs_Plan.md); those never block.
     const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, await this.gateContext(job, attempts, signal)) : [], ...floor.notRun];
     if (this.options.store.get(jobId)?.state !== 'checking') return { accepted: false, message: 'This head was stopped. Stop now.' };
     if (signal?.aborted) {
@@ -863,7 +863,7 @@ export class HelperService {
         try {
           const dependencies = job.dependsOn.map(id => this.options.store.get(id));
           // A dependency that stopped on a usage limit can still be continued in the other provider
-          // (docs/Plan_Lanes_Plan.md, decision 7), so its dependents wait for it instead of failing.
+          // (docs/internal/Plan_Lanes_Plan.md, decision 7), so its dependents wait for it instead of failing.
           const broken = dependencies.find(dependency => !dependency || dependency.state === 'cancelled' || (dependency.state === 'failed' && !dependency.limitHit));
           if (broken) { await this.options.store.transition(job.id, 'failed', `A job it depends on did not finish (${broken?.id ?? 'missing'}).`); this.changed(); continue; }
           if (dependencies.some(dependency => dependency!.state !== 'done')) continue;
@@ -998,7 +998,7 @@ export class HelperService {
       this.changed();
       void this.dispatch();
     } finally {
-      // The process is gone for good: its role's server file goes with it (docs/Packs_Plan.md, section 4),
+      // The process is gone for good: its role's server file goes with it (docs/internal/Packs_Plan.md, section 4),
       // and so do its settings file and its own TEMP folder (Step 2). After the state is settled, so a
       // slow delete never holds it up; each launch has its own names, so this never hits a relaunch's files.
       for (const file of [active.mcpConfigFile, active.settingsFile, active.temp]) if (file) await rm(file, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => undefined);
@@ -1074,7 +1074,7 @@ export class HelperService {
 
   /**
    * Continue a head with the other provider after its own hit a usage limit
-   * (docs/Hydra_Agent_Plan.md, Phase 3). Same worktree and branch: the brief gets
+   * (docs/internal/Hydra_Agent_Plan.md, Phase 3). Same worktree and branch: the brief gets
    * a "## Handoff" section, attempts and the nudge flag reset, and the job goes
    * back to queued so dispatch restarts it where it left off.
    */
@@ -1101,7 +1101,7 @@ export class HelperService {
     await active.run.stop().catch(() => undefined);
   }
 
-  /** A Claude head's `--mcp-config` file for its role's servers (docs/Packs_Plan.md, section 4). */
+  /** A Claude head's `--mcp-config` file for its role's servers (docs/internal/Packs_Plan.md, section 4). */
   private mcpConfigFile(id: string): string { return path.join(this.options.logDirectory, `${id}.mcp.json`); }
 
   // ---- Step 2: confining heads ----
@@ -1148,7 +1148,7 @@ export class HelperService {
     return { spec: { settingsFile, addDirs, shell: shell?.kind === 'sandboxed' || shell?.kind === 'unconfined', env }, settingsFile };
   }
 
-  /** A head's role for this launch (docs/Packs_Plan.md, section 5), resolved from its pack's checked copy. */
+  /** A head's role for this launch (docs/internal/Packs_Plan.md, section 5), resolved from its pack's checked copy. */
   private async roleFor(job: Job, executable: string): Promise<RoleLaunch> {
     if (!this.options.roles) throw new Error(`the role ${job.role!.ref} isn't available (packs aren't available in this Hydra window).`);
     const resolved = await this.options.roles.resolve(this.options.leadFolder, job.role!.ref);
@@ -1577,7 +1577,7 @@ function describeGate(check: JobCheckResult) {
 /**
  * The head's first message. `dependencies` is "What the heads you depend on did"
  * (dependencyBrief), for a head that starts from their work; `noun` is "jobs" when
- * any of them is a plan's lane job. A head with a role (docs/Packs_Plan.md, "Heads")
+ * any of them is a plan's lane job. A head with a role (docs/internal/Packs_Plan.md, "Heads")
  * hears it first: "Your role: Builder (Coding pack)", its instructions and its skill index.
  * `shellOff` is why a Claude head has no shell (Step 2, design 1), which it hears too.
  * `context` is headBrief.ts's repository listing and gate/test commands (headStartContext):

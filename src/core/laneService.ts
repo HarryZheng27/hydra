@@ -24,7 +24,7 @@ import { otherWorktrees, storageListing } from './confineFiles';
 import type { StopSwitch } from './stopSwitch';
 
 /**
- * Hydra lanes, end to end (docs/Lanes_And_Planner_Plan.md, section 1): this
+ * Hydra lanes, end to end (docs/internal/Lanes_And_Planner_Plan.md, section 1): this
  * window's lanes and their terminals. It starts each lane's `claude` or `codex`
  * in its own worktree, keeps the lanes' coordination fresh, and runs the
  * finishing git operations the user asks for. It has no UI of its own; the
@@ -53,7 +53,7 @@ export interface LaneLaunchInput {
   testCommand?: string;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
-  /** Packs (docs/Packs_Plan.md, section 5): the lane's role for this launch (roleLaunch), passed every time: fresh, Resume, Start fresh and Switch. */
+  /** Packs (docs/internal/Packs_Plan.md, section 5): the lane's role for this launch (roleLaunch), passed every time: fresh, Resume, Start fresh and Switch. */
   role?: RoleLaunch;
   /** Step 2 (design 6): a Claude lane's `--settings` file (laneSettings), which LaneService wrote (0600). */
   settingsFile?: string;
@@ -94,7 +94,7 @@ export function laneLaunch(input: LaneLaunchInput): LaneLaunch {
   // HYDRA_LANE_HELPERS_DIR names this window even when the user-level server's own
   // HYDRA_HELPERS_DIR (which wins over ours) belongs to another Hydra profile.
   const laneEnv: Record<string, string> = { HYDRA_LANE_ID: lane.id, HYDRA_LANE_NAME: lane.name, HYDRA_LANE_BRANCH: lane.branch, HYDRA_LANE_HELPERS_DIR: input.helpersDir };
-  // A plan lane's bridge offers hydra_job_ready and says so in its instructions (docs/Plan_Lanes_Plan.md, decision 6).
+  // A plan lane's bridge offers hydra_job_ready and says so in its instructions (docs/internal/Plan_Lanes_Plan.md, decision 6).
   if (lane.plan) laneEnv.HYDRA_LANE_PLAN_JOB = '1';
   const env: Record<string, string> = {};
   // The host may run as Node, or have been started from inside a Claude Code session;
@@ -141,7 +141,7 @@ export function laneLaunch(input: LaneLaunchInput): LaneLaunch {
 }
 
 /**
- * Whether a Codex lane's role goes in its first prompt (docs/Packs_Plan.md, section 5):
+ * Whether a Codex lane's role goes in its first prompt (docs/internal/Packs_Plan.md, section 5):
  * on a fresh thread, when its text can't pass as developer instructions.
  */
 export const codexRoleInPrompt = (role: RoleLaunch, provider: Provider, resume: boolean, shim: boolean): boolean =>
@@ -177,7 +177,7 @@ export interface LaneServiceOptions {
   now?: () => Date;
   /** For building the "Continue in <Other>" / manual-switch handoff. Defaults to the real filesystem and git. */
   handoffDeps?: HandoffDeps;
-  // ---- Gates (docs/Gates_Plan.md, "Lanes"): Run gates, and Merge when gates.json says "onMerge" ----
+  // ---- Gates (docs/internal/Gates_Plan.md, "Lanes"): Run gates, and Merge when gates.json says "onMerge" ----
   /** The provider CLI, version-checked, for a review gate. Undefined: gates are refused with a plain reason. */
   gatesExecutable?: (provider: Provider) => Promise<string>;
   /** A provider that is at its usage limit now; a review then uses the other one. */
@@ -186,10 +186,10 @@ export interface LaneServiceOptions {
   gatesLogDirectory?: string;
   /** Test seam: replaces runGates entirely (fake results, no real process/browser work). */
   gatesRuntime?: GateContext['runtime'];
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md) ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md) ----
   /** The plan job a lane runs, for the hydra_lanes answer: its plan, its job and how many jobs wait on it. */
   planOf?: (laneId: string) => { title: string; job: string; dependents: number } | undefined;
-  // ---- Packs (docs/Packs_Plan.md) ----
+  // ---- Packs (docs/internal/Packs_Plan.md) ----
   /** Where the repository's gates come from: gates.json plus the active packs' gates (PackService.gates). Defaults to gates.json only. */
   gates?: GatesLoader;
   /** The active packs' roles (PackService). Without it, a lane's role is never available and its tile says so. */
@@ -217,7 +217,7 @@ export interface LaneServiceOptions {
   previewRuntime?: Partial<GateRuntime>;
 }
 
-/** How a plan lane starts (docs/Plan_Lanes_Plan.md, "Starting a lane job"). */
+/** How a plan lane starts (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job"). */
 export interface LaneCreateOptions {
   /** A full commit id to branch from: the work of the jobs it depends on. Missing: the main checkout's HEAD. */
   baseCommit?: string;
@@ -226,7 +226,7 @@ export interface LaneCreateOptions {
   /** The job's full brief, written to .hydra-job/brief.md in the worktree (decision 2). */
   brief?: string;
 }
-/** What Mark job done hands on, or why it can't (docs/Plan_Lanes_Plan.md, "What done means for a lane job"). */
+/** What Mark job done hands on, or why it can't (docs/internal/Plan_Lanes_Plan.md, "What done means for a lane job"). */
 export type LaneHandOn =
   | { ok: true; commit: string; base: string; changedFiles: string[]; subjects: string[] }
   | { ok: false; reason: 'dirty' | 'nothing'; message: string };
@@ -238,7 +238,7 @@ export function gatesFingerprint(config: Pick<GatesConfig, 'source' | 'gates' | 
   return createHash('sha256').update(JSON.stringify({ source: config.source, maxAttempts: config.maxAttempts ?? null, gates: config.gates, ...notRun })).digest('hex').slice(0, 16);
 }
 
-/** The confirmation's note for gates that didn't fail. Packs (docs/Packs_Plan.md): a gate that didn't run is named, never counted as passed. */
+/** The confirmation's note for gates that didn't fail. Packs (docs/internal/Packs_Plan.md): a gate that didn't run is named, never counted as passed. */
 export function gatesPassNote(results: readonly JobCheckResult[], when = ''): string {
   const skipped = results.filter(result => result.state === 'notRun').map(result => result.id);
   if (!skipped.length) return ` Gates passed${when}.`;
@@ -273,7 +273,7 @@ export class LaneService {
   private syncNext?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private disposed = false;
-  /** A gates run in progress per lane (docs/Gates_Plan.md, "Cancel"): closing the lane or starting a new run cancels it. */
+  /** A gates run in progress per lane (docs/internal/Gates_Plan.md, "Cancel"): closing the lane or starting a new run cancels it. */
   private readonly gateRuns = new Map<string, AbortController>();
   /** Packs: why a lane's role wasn't available at its last launch, for its tile: "Role Reviewer isn't available: the Coding pack is off." */
   private readonly roleNotes = new Map<string, string>();
@@ -416,7 +416,7 @@ export class LaneService {
 
   /**
    * "Continue in <Other>" after a usage limit, or the manual "Switch to <Other>"
-   * (docs/Gates_Plan.md, section 2): build the handoff, end the lane's session,
+   * (docs/internal/Gates_Plan.md, section 2): build the handoff, end the lane's session,
    * switch `lane.provider` and record the switch, then relaunch the other CLI in
    * the same worktree and branch, with the lane preamble plus the handoff as its
    * first prompt. Uncommitted work is untouched — the switch never touches git.
@@ -502,7 +502,7 @@ export class LaneService {
   async push(id: unknown): Promise<{ branch: string; compareUrl?: string }> { return this.exclusive(id, lane => pushLane(lane)); }
 
   /**
-   * Run this project's gates against the lane's worktree (docs/Gates_Plan.md,
+   * Run this project's gates against the lane's worktree (docs/internal/Gates_Plan.md,
    * "Lanes"): "⋯ → Run gates" at any time, or Merge when gates.json says
    * "onMerge". The lane need not be committed — gates run on whatever is on
    * disk now, since a command or review gate reads the worktree directly; the
@@ -546,7 +546,7 @@ export class LaneService {
   }
   /**
    * A passing gates run Merge (or Mark job done) can reuse instead of running the gates again
-   * (docs/Plan_Lanes_Plan.md, section 3): recorded on the lane's current HEAD, with the lane
+   * (docs/internal/Plan_Lanes_Plan.md, section 3): recorded on the lane's current HEAD, with the lane
    * clean now and the gates file unchanged since. Undefined when there is none.
    */
   async reusableGates(id: unknown): Promise<LaneGatesRecord | undefined> {
@@ -582,13 +582,13 @@ export class LaneService {
   }
 
   /**
-   * What the gates before Merge or Mark job done have to do (docs/Gates_Plan.md, "Merge"): `none` when this
+   * What the gates before Merge or Mark job done have to do (docs/internal/Gates_Plan.md, "Merge"): `none` when this
    * project doesn't gate lanes (Step A's "which kind of none" is recorded for HEAD then), `reused` for a passing
    * run on the lane's current commit, `run` otherwise. Shared by the dialogs and by Auto-dispatch (Step C).
    */
   async handOnGates(id: unknown): Promise<{ kind: 'none' } | { kind: 'reused'; record: LaneGatesRecord } | { kind: 'run' }> {
     const lane = this.openLane(id);
-    // With packs, a listed pack that can't run still shows its gates as not run (docs/Packs_Plan.md).
+    // With packs, a listed pack that can't run still shows its gates as not run (docs/internal/Packs_Plan.md).
     const load: GatesLoader = this.options.gates ?? loadGates;
     const config = await load(lane.repository).catch(() => undefined);
     if (!config || config.lanes !== 'onMerge' || !(config.gates.length || config.notRun?.length)) {
@@ -604,7 +604,7 @@ export class LaneService {
     return record?.commit ? { kind: 'reused', record } : { kind: 'run' };
   }
 
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md) ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md) ----
 
   /**
    * What Mark job done hands on: the lane's HEAD, the files it changed since laneDiffBase and its
@@ -633,7 +633,7 @@ export class LaneService {
   record(id: string): Lane | undefined { return isLaneId(id) ? this.options.store.get(id) : undefined; }
 
   /**
-   * Packs (docs/Packs_Plan.md, "Not done"): the active roles changed while a lane may still be
+   * Packs (docs/internal/Packs_Plan.md, "Not done"): the active roles changed while a lane may still be
    * running. A **running** lane whose role is no longer active gets a note right away, instead of
    * waiting for its next launch; a running lane whose role became active again has the note
    * cleared. An exited lane is untouched — it still gets the ordinary note (`laneRole`, above) at
@@ -716,9 +716,9 @@ export class LaneService {
           targetConflicts: sync?.targetConflicts ?? [], behind: sync?.behind ?? 0,
           runningHeads: this.options.runningHeads?.(lane.id) ?? 0,
           ...(sync?.error ? { error: sync.error } : {}),
-          // Packs (docs/Packs_Plan.md, "Lanes"): each lane's role, and why it isn't available when it wasn't at its last start.
+          // Packs (docs/internal/Packs_Plan.md, "Lanes"): each lane's role, and why it isn't available when it wasn't at its last start.
           ...(lane.role ? { role: laneRoleRef(lane.role), ...(this.roleNotes.has(lane.id) ? { roleNote: this.roleNotes.get(lane.id) } : {}) } : {}),
-          // Plan lanes (docs/Plan_Lanes_Plan.md, section 5): other lanes' agents see which plan job a lane runs.
+          // Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 5): other lanes' agents see which plan job a lane runs.
           ...this.planOf(lane.id),
         };
       }),
@@ -753,7 +753,7 @@ export class LaneService {
   // ---- internals ----
 
   /**
-   * Start the lane's CLI. `handoff` is a provider switch's (docs/Gates_Plan.md, section 2): the first
+   * Start the lane's CLI. `handoff` is a provider switch's (docs/internal/Gates_Plan.md, section 2): the first
    * prompt is then the preamble plus the handoff. The lane's role is resolved again every time.
    */
   private async launch(lane: Lane, resume: boolean, executable?: string, handoff?: { from: Provider; markdown: string }): Promise<void> {
@@ -766,7 +766,7 @@ export class LaneService {
     const env = this.options.env?.() ?? process.env;
     const role = await this.laneRole(lane, executable, env);
     // A Codex lane whose role can't pass as developer instructions gets it in the first prompt; with no goal,
-    // the role and then "Wait for the user's first request." (docs/Packs_Plan.md, section 5).
+    // the role and then "Wait for the user's first request." (docs/internal/Packs_Plan.md, section 5).
     const inPrompt = role && codexRoleInPrompt(role, lane.provider, resume, isWindowsShim(executable));
     const promptRole: LanePromptRole | undefined = role && { label: role.label, ...(inPrompt ? { text: (max: number) => roleFirstPrompt(role, max) } : {}) };
     const withRole = { ...lane, ...(promptRole ? { promptRole } : {}) };
@@ -796,7 +796,7 @@ export class LaneService {
   }
 
   /**
-   * The lane's role for this launch (docs/Packs_Plan.md, "Lanes"), from its pack's checked copy. When
+   * The lane's role for this launch (docs/internal/Packs_Plan.md, "Lanes"), from its pack's checked copy. When
    * it is gone (the pack is off, changed or uninstalled) the lane starts without it, and its tile says why.
    */
   private async laneRole(lane: Lane, executable: string, env: NodeJS.ProcessEnv): Promise<RoleLaunch | undefined> {

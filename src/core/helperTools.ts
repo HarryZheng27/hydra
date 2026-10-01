@@ -1,5 +1,5 @@
 /**
- * The actions Hydra adds to Claude Code and Codex (docs/Official_Extensions_Plan.md).
+ * The actions Hydra adds to Claude Code and Codex (docs/internal/Official_Extensions_Plan.md).
  * Shared by the stdio bridge (what the model sees) and the extension host (what it
  * accepts). A caller's role comes from its token, never from the call.
  *
@@ -8,7 +8,7 @@
  * so it gets none of their tools.
  */
 export type HelperRole = 'lead' | 'helper' | 'user';
-/** The one lead action only a plan lane's agent sees (docs/Plan_Lanes_Plan.md, decision 6). */
+/** The one lead action only a plan lane's agent sees (docs/internal/Plan_Lanes_Plan.md, decision 6). */
 export const jobReadyTool = 'hydra_job_ready';
 export interface HelperToolDefinition { name: string; description: string; inputSchema: Record<string, unknown> }
 
@@ -155,13 +155,13 @@ export const leadTools: readonly HelperToolDefinition[] = [
     description: 'A plan\'s report, as Markdown: each job\'s status, provider, attempts, time, changed files and gates, the amendments made, the integration gate\'s result, and what still needs you. The same report an unattended plan writes when it ends.',
     inputSchema: { type: 'object', additionalProperties: false, required: ['plan_id'], properties: { plan_id: planId } },
   },
-  // ---- Packs (docs/Packs_Plan.md, decision 6). Never listed to the model: a lead's bridge asks for the roles itself, when it starts. ----
+  // ---- Packs (docs/internal/Packs_Plan.md, decision 6). Never listed to the model: a lead's bridge asks for the roles itself, when it starts. ----
   {
     name: 'hydra_active_roles',
     description: 'The roles of the packs active in this project, for hydra_start_head\'s role.',
     inputSchema: { type: 'object', additionalProperties: false, properties: {} },
   },
-  // ---- Plan lanes (docs/Plan_Lanes_Plan.md, decision 6). Listed only in a lane that runs a plan job (see the bridge). ----
+  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, decision 6). Listed only in a lane that runs a plan job (see the bridge). ----
   {
     name: jobReadyTool,
     description: 'Only in a Hydra lane that runs a job of a Hydra plan: tell the user the job is ready to be marked done. Commit your work first. Hydra shows the user a "Mark job done" prompt; it never marks the job itself, and the user may merge the lane instead. When the plan auto-dispatches its lanes, Hydra runs the gates of the project instead: it marks the job done if they pass, or types the failures into this lane for you to fix and call this again. The jobs that depend on this one start from your last commit once the user marks it done.',
@@ -220,7 +220,7 @@ export const userTools: readonly HelperToolDefinition[] = [
 
 export const toolsFor = (role: HelperRole): readonly HelperToolDefinition[] => role === 'lead' ? leadTools : role === 'user' ? userTools : helperTools;
 
-// ---- Packs (docs/Packs_Plan.md, decision 6: leads learn the active roles from their instructions and hydra_start_head's `role`) ----
+// ---- Packs (docs/internal/Packs_Plan.md, decision 6: leads learn the active roles from their instructions and hydra_start_head's `role`) ----
 
 /** The lead action a bridge asks for the active roles with. The model never sees it. */
 export const activeRolesTool = 'hydra_active_roles';
@@ -272,7 +272,7 @@ const laneAdvice = 'Call hydra_lanes before you start and before large changes; 
 export function laneGuidance(name?: string, branch?: string, planJob = false): string {
   return `${name && branch ? `You are in Hydra lane "${name}" on branch ${branch}.` : 'You are in a Hydra lane.'} ${laneAdvice}${planJob ? ` ${planJobAdvice}` : ''}`;
 }
-/** A plan lane's part of the lane guidance (docs/Plan_Lanes_Plan.md, decision 6). */
+/** A plan lane's part of the lane guidance (docs/internal/Plan_Lanes_Plan.md, decision 6). */
 export const planJobAdvice = 'This lane runs a job of a Hydra plan; its full brief is in .hydra-job/brief.md (never committed). When the work is ready, commit it and call hydra_job_ready: the user then marks the job done, or merges the lane; when the plan auto-dispatches, Hydra runs the gates and types any failures back here. Never mark the job done yourself.';
 /**
  * The same guidance for agents that don't read MCP instructions (Codex's AGENTS.md).

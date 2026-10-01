@@ -14,7 +14,7 @@ import { LaneService } from '../src/core/laneService';
 import { fakePtyModule } from './lanePtyFake';
 import type { GateRuntime } from '../src/core/gates';
 
-// ---- toHeadCheckView / gateChip (docs/Gates_Plan.md, "Head views") ----
+// ---- toHeadCheckView / gateChip (docs/internal/Gates_Plan.md, "Head views") ----
 
 const check = (extra: Partial<JobCheckResult> = {}): JobCheckResult => ({ id: 'unit', required: true, passed: true, exitCode: 0, durationMs: 10, outputTail: '', ...extra });
 
@@ -43,7 +43,7 @@ test('gateChip: text carries the state (icon plus id), colour only adds to it; n
   }
 });
 
-// ---- Evidence document builder (docs/Gates_Plan.md, "View evidence") ----
+// ---- Evidence document builder (docs/internal/Gates_Plan.md, "View evidence") ----
 
 test('buildEvidenceMarkdown: state, summary, output tail, findings as file:line links, and screenshots as images', () => {
   const results: JobCheckResult[] = [
@@ -93,7 +93,7 @@ test('findingLink: a finding with a file (and optional line) opens it in the giv
   if (process.platform === 'win32') assert.equal(findingLink({ severity: 'major', note: 'x', file: 'src/a.ts', line: 7 }, 'D:\\w', 'C:\\logs'), '`src/a.ts:7`', 'another drive has no relative path: plain text');
 });
 
-// ---- Lane merge/run-gates text (docs/Gates_Plan.md, "Merge") ----
+// ---- Lane merge/run-gates text (docs/internal/Gates_Plan.md, "Merge") ----
 
 test('summarizeGateFailures: one short line per blocking gate, for the merge/run-gates modal', () => {
   const results: JobCheckResult[] = [
@@ -118,7 +118,7 @@ test('flattenGateFailureMessage: gateFailureMessage collapsed to one line, no li
   assert.match(gateFailureMessage(results), /call hydra_done again\.$/, 'a head still gets its own instruction');
 });
 
-// ---- Settings -> Gates page model (docs/Gates_Plan.md, "Hydra Settings -> Gates") ----
+// ---- Settings -> Gates page model (docs/internal/Gates_Plan.md, "Hydra Settings -> Gates") ----
 
 test('gatesPageHelpers: form <-> Gate round trip for each gate type', () => {
   const command = { id: 'unit', type: 'command' as const, required: true, command: ['npm', 'test'], timeoutSeconds: 300 };
@@ -141,7 +141,7 @@ test('gatesPageHelpers: .hydra/checks.json checks read as command gates, the sam
   assert.deepEqual(gates, [{ id: 'unit', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 120 }]);
 });
 
-// ---- SSR: gate chips on the canvas and on lane tiles (docs/Gates_Plan.md, "Seeing results") ----
+// ---- SSR: gate chips on the canvas and on lane tiles (docs/internal/Gates_Plan.md, "Seeing results") ----
 
 test('SSR: the canvas shows gate chips (passed, failed and not-run) with text, not colour alone', async () => {
   const React = (await import('react')).default;
@@ -175,7 +175,7 @@ test('SSR: a lane tile with a finished gates run shows its chips', async () => {
   assert.match(html, /class="gate-chip tone-good"[^>]*>✓ unit/);
 });
 
-// ---- LaneService.runGates (docs/Gates_Plan.md, "Lanes": Run gates, progress, cancel) ----
+// ---- LaneService.runGates (docs/internal/Gates_Plan.md, "Lanes": Run gates, progress, cancel) ----
 
 async function laneRepo() {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-lanegates-'));

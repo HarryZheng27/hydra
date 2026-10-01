@@ -3,7 +3,7 @@ import { evidenceLabel, gateBlocks, gateKind, gateState, type EvidenceStatus, ty
 import { providerName } from './gates/types';
 
 /**
- * View evidence (docs/Gates_Plan.md, "Seeing results"): a read-only Markdown
+ * View evidence (docs/internal/Gates_Plan.md, "Seeing results"): a read-only Markdown
  * document listing a head's or a lane's gate results — the state, the summary,
  * the output tail, findings with file:line links into the worktree under
  * review, and the screenshots as images. Built as plain text (unit tested

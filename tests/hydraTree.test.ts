@@ -27,7 +27,7 @@ test('the Hydra panel groups open lanes, running heads and live plans; merged/cl
   assert.equal(tree.empty, false);
 });
 
-test('a lane with a role shows it in the panel description (docs/Packs_Plan.md, "How roles show"): "Codex · Reviewer · lane/x"', () => {
+test('a lane with a role shows it in the panel description (docs/internal/Packs_Plan.md, "How roles show"): "Codex · Reviewer · lane/x"', () => {
   const roles: SnapshotRole[] = [{ ref: 'coding/reviewer', pack: 'coding', packTitle: 'Coding', id: 'reviewer', title: 'Reviewer', description: '', provider: 'codex' }];
   const tree = buildHydraTree(
     [lane('111111111111', 'Lane 1', { provider: 'codex', branch: 'lane/x', role: { pack: 'coding', role: 'reviewer' } })],
@@ -54,7 +54,7 @@ test('the tree is empty (for the welcome view) only when there are no lanes, hea
   assert.equal(buildHydraTree([lane('111111111111', 'Lane 1')], [], []).empty, false);
 });
 
-// ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 5): job progress and a plan lane's description. ----
+// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 5): job progress and a plan lane's description. ----
 
 const planJob = (key: string, extra: Record<string, unknown> = {}) => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], ...extra });
 

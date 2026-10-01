@@ -8,7 +8,7 @@ import { formatPacksFile, parsePacksFile, skipGatesProblem, type PacksFile, type
 import { choosePack, listPacks, type InstalledPack, type PackRoots } from './registry';
 
 /**
- * A project's packs (docs/Packs_Plan.md, section 3). `.hydra/packs.json` in the
+ * A project's packs (docs/internal/Packs_Plan.md, section 3). `.hydra/packs.json` in the
  * lead folder says which packs the project wants, in order; it is read from the
  * lead's folder only, never a worktree, so a head can't turn a pack on or off.
  *

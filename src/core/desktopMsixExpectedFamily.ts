@@ -6,7 +6,7 @@
  * a *trusted* alternate-publisher certificate can install that different
  * family side by side without ever touching Hydra's registration: Windows'
  * code-signing trust is not a substitute for this expected-identity
- * comparison. See docs/Desktop_Update_Channel_ADR.md ("MSIX publisher
+ * comparison. See docs/internal/Desktop_Update_Channel_ADR.md ("MSIX publisher
  * boundary"). This is a standalone, isolated increment: no production MSIX
  * update entry point exists yet, and this module performs no OS calls or
  * I/O. Callers supply both the expected (embedded, immutable) identity and

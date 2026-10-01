@@ -9,10 +9,10 @@ import { waitDuration } from './providerWait';
 import { integrationGateLabel, integrationPassed, isIntegrationFixKey, releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
 
 /**
- * Hydra plans (docs/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
+ * Hydra plans (docs/internal/Lanes_And_Planner_Plan.md, section 4). A plan is a small,
  * hand- or brief-drafted graph of jobs; running it starts each job, in
  * dependency order, as a Hydra head under one lead (`plan-<id>`) so the heads
- * group together on the canvas, or as a lane you drive (docs/Plan_Lanes_Plan.md).
+ * group together on the canvas, or as a lane you drive (docs/internal/Plan_Lanes_Plan.md).
  * Pure model and storage; nothing here starts a process or knows about
  * HelperService, so it is trivial to unit test. src/core/planRunner.ts runs plans.
  */
@@ -40,12 +40,12 @@ export const planJobTitleMax = 80;
 export const planJobBriefMax = 4000;
 export const planIdPattern = /^[a-f0-9]{12}$/;
 export const planJobKeyPattern = /^[a-z0-9-]{1,24}$/;
-/** A lane job's handed-on result (docs/Plan_Lanes_Plan.md, section 1): at most this many changed files, and a note this long. */
+/** A lane job's handed-on result (docs/internal/Plan_Lanes_Plan.md, section 1): at most this many changed files, and a note this long. */
 export const planResultFilesMax = 300;
 export const planResultNoteMax = 2000;
 export const planOutcomeReasonMax = 500;
 
-// ---- Plan jobs that run as lanes (docs/Plan_Lanes_Plan.md, section 1) ----
+// ---- Plan jobs that run as lanes (docs/internal/Plan_Lanes_Plan.md, section 1) ----
 export type PlanJobRunAs = 'head' | 'lane';
 /** What a lane job handed on: the lane's HEAD when it merged or was marked done. It never moves afterwards. */
 export interface PlanJobResult {
@@ -73,7 +73,7 @@ export interface PlanJob {
   /** Added with + Job after the plan ran (decision 5): it waits for Run plan, so a half-written job never starts by itself. */
   draft?: boolean;
   /**
-   * Packs (docs/Packs_Plan.md, "Plans and the planner"): a role from an active pack, as "pack/role".
+   * Packs (docs/internal/Packs_Plan.md, "Plans and the planner"): a role from an active pack, as "pack/role".
    * A head job passes it to its head, a lane job to its lane; the job's provider comes first, then the role's.
    */
   role?: string;
@@ -491,7 +491,7 @@ const isTime = (value: unknown): value is string => typeof value === 'string' &&
 export const jobStarted = (job: Pick<PlanJob, 'jobId' | 'laneId' | 'result' | 'outcome'>): boolean => !!(job.jobId || job.laneId || job.result || job.outcome);
 export const jobRunAs = (job: Pick<PlanJob, 'runAs'>): PlanJobRunAs => job.runAs ?? 'head';
 
-/** The lane-job fields (docs/Plan_Lanes_Plan.md, section 1), for one job. Throws the first problem found. */
+/** The lane-job fields (docs/internal/Plan_Lanes_Plan.md, section 1), for one job. Throws the first problem found. */
 function validateRunFields(job: PlanJob): void {
   const where = `Job "${job.key}"`;
   if (job.runAs !== undefined && job.runAs !== 'head' && job.runAs !== 'lane') throw new Error(`${where} must run as a head or a lane.`);
@@ -643,7 +643,7 @@ export function dependentsOf(jobs: readonly PlanJob[], key: string): PlanJob[] {
   return jobs.filter(job => found.has(job.key));
 }
 
-// ---- The planner-output parser (docs/Lanes_And_Planner_Plan.md, "Planning a brief") ----
+// ---- The planner-output parser (docs/internal/Lanes_And_Planner_Plan.md, "Planning a brief") ----
 
 const minPlannerJobs = 2, maxPlannerJobs = 8;
 
@@ -676,7 +676,7 @@ function matchingBrace(text: string, start: number): number {
 const stringList = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 
 /**
- * `roles` is the active roles' refs (docs/Packs_Plan.md, "Plans and the
+ * `roles` is the active roles' refs (docs/internal/Packs_Plan.md, "Plans and the
  * planner"): a role the model named that isn't one of them is dropped rather
  * than refused, since the model may have guessed or misspelled it.
  */
@@ -700,7 +700,7 @@ function parsePlanJobDraft(raw: unknown, index: number, roles?: ReadonlySet<stri
  * `{ "jobs": [...] }` with 2-8 jobs, and return the draft jobs. Tolerates code
  * fences and surrounding prose; throws with a plain-English reason otherwise.
  * `roleRefs` are the active roles a job's optional "role" may name
- * (docs/Packs_Plan.md, "Plans and the planner"); any other value is dropped.
+ * (docs/internal/Packs_Plan.md, "Plans and the planner"); any other value is dropped.
  */
 export function parsePlannerOutput(text: string, roleRefs?: readonly string[]): PlanJob[] {
   const object = extractFirstJsonObject(text);

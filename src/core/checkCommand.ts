@@ -6,7 +6,7 @@ import { processLaunch, terminateProcessTree } from './process';
 /**
  * Run one project check command (for example ["npm", "test"]) with a time limit, writing its
  * output to a log and stopping the whole process tree on timeout or abort. Used for
- * Hydra helper checks (docs/Official_Extensions_Plan.md). Extracted from the retired
+ * Hydra helper checks (docs/internal/Official_Extensions_Plan.md). Extracted from the retired
  * delegated-verification pipeline unchanged.
  */
 /**

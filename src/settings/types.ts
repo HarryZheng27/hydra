@@ -15,7 +15,7 @@ export interface SettingsContext {
   globalState: vscode.Memento;
   post(message: unknown): Thenable<boolean>;
   /**
-   * Packs (docs/Packs_Plan.md, section 4): the Packs page calls `turnOn`/`allow`
+   * Packs (docs/internal/Packs_Plan.md, section 4): the Packs page calls `turnOn`/`allow`
    * directly here, never through a public command — a command any extension could
    * call would let a repository allow a pack by itself. Every other page only
    * reads it (or not at all).

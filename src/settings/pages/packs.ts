@@ -7,7 +7,7 @@ import type { SettingsContext, SettingsPage } from '../types';
 import { packCard, savedNote, thirdPartyWarning, type PackCardView } from './packsHelpers';
 
 /**
- * Settings → Packs (docs/Packs_Plan.md, section 6): one card per pack with its
+ * Settings → Packs (docs/internal/Packs_Plan.md, section 6): one card per pack with its
  * state and one button, a "What it contains" disclosure, and the review panel
  * that "Turn on"/"Review…" opens inline in the card.
  *
@@ -17,7 +17,7 @@ import { packCard, savedNote, thirdPartyWarning, type PackCardView } from './pac
  * review panel's own button calls `ctx.packs.turnOn` directly, in this file,
  * never through a command. There is no `hydra.packs.allow` command.
  */
-const guideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Packs_Plan.md';
+const guideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md#packs';
 
 async function postState(ctx: SettingsContext): Promise<void> {
   try {
@@ -294,7 +294,7 @@ export const packsPage: SettingsPage = {
         await vscode.env.openExternal(vscode.Uri.parse(guideUrl));
         return true;
       // ---- The review panel's own button: turnOn (allow, then setEnabled) is called directly here, ----
-      // ---- never through a public command (docs/Packs_Plan.md, section 4; "Security rules" above). ----
+      // ---- never through a public command (docs/internal/Packs_Plan.md, section 4; "Security rules" above). ----
       case 'packsTurnOn': {
         const id = String(message.id), hash = String(message.hash ?? '');
         try {

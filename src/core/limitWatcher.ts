@@ -23,7 +23,7 @@ export interface LimitWatcherOptions {
   claudeProjectsDir: string;
   /** Whether this window's workspace (or an open lane's worktree) contains a folder. */
   owns: (cwd: string) => boolean;
-  /** Whether one of this window's open lanes has this id (docs/Gates_Plan.md, section 2). A lane event with no match falls through to `owns(cwd)`. */
+  /** Whether one of this window's open lanes has this id (docs/internal/Gates_Plan.md, section 2). A lane event with no match falls through to `owns(cwd)`. */
   ownsLane?: (laneId: string) => boolean;
   now?: () => number;
   graceMs?: number;

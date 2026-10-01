@@ -9,7 +9,7 @@ import { LanesView, type LaneSwitchCountdown } from './LanesView';
 export type AgentsViewName = 'canvas' | 'lanes';
 
 /**
- * The Agents tab's Canvas | Lanes switch (docs/Lanes_And_Planner_Plan.md,
+ * The Agents tab's Canvas | Lanes switch (docs/internal/Lanes_And_Planner_Plan.md,
  * section 2): a segmented control under the topbar, with each view getting the
  * full space. Both views stay mounted (only one is shown) so a lane's terminal
  * keeps running and its scrollback stays put while you're looking at the canvas.
@@ -22,23 +22,23 @@ export function AgentsBody({
   view: AgentsViewName;
   onViewChange: (view: AgentsViewName) => void;
   heads: readonly HelperJobView[];
-  /** Finished heads the tray's Clear button has hidden (docs/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
+  /** Finished heads the tray's Clear button has hidden (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
   dismissedTray?: readonly string[];
   plans?: readonly Plan[];
   lanes?: readonly LaneView[];
-  /** Each plan's job statuses (docs/Plan_Lanes_Plan.md, section 4-5), by plan id. */
+  /** Each plan's job statuses (docs/internal/Plan_Lanes_Plan.md, section 4-5), by plan id. */
   planJobs?: Readonly<Record<string, readonly PlanJobView[]>>;
   terminals: boolean;
   defaultProvider?: Provider;
-  /** The active packs' roles (docs/Packs_Plan.md, "Picking a role"), for the New lane card and the job popover. */
+  /** The active packs' roles (docs/internal/Packs_Plan.md, "Picking a role"), for the New lane card and the job popover. */
   roles?: readonly SnapshotRole[];
   laneError?: string;
   laneFocus?: string;
   onLaneFocused: () => void;
-  /** Usage-limit banners and switch countdowns (docs/Gates_Plan.md, section 2), by lane id. */
+  /** Usage-limit banners and switch countdowns (docs/internal/Gates_Plan.md, section 2), by lane id. */
   laneLimits?: Readonly<Record<string, LaneLimitOfferView>>;
   laneSwitchCountdowns?: Readonly<Record<string, LaneSwitchCountdown>>;
-  /** A gates run in progress on a lane, by lane id (docs/Gates_Plan.md, "Lanes"). */
+  /** A gates run in progress on a lane, by lane id (docs/internal/Gates_Plan.md, "Lanes"). */
   laneGates?: Readonly<Record<string, { done: JobCheckResult[]; running?: string }>>;
   onAction: (action: HeadAction, jobId: string) => void;
   onPlan?: (message: ClientMessage) => void;

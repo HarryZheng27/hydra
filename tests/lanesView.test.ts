@@ -24,7 +24,7 @@ test('an SSR render of the Lanes view shows the toolbar, tiles, their chips, and
   assert.match(html, /3 behind main/);
   assert.match(html, /Merges cleanly/);
   assert.match(html, /Merged/);
-  // An exited lane with no running heads is a compact row (docs/Lanes_And_Planner_Plan.md, "Lanes view"), not a full terminal tile.
+  // An exited lane with no running heads is a compact row (docs/internal/Lanes_And_Planner_Plan.md, "Lanes view"), not a full terminal tile.
   assert.match(html, /Exited \(code 1\)/);
   assert.match(html, /class="lane-row"/);
   assert.match(html, /Resume/); assert.match(html, /Start fresh/); assert.match(html, /Show terminal/);
@@ -89,7 +89,7 @@ test('an SSR render shows the usage-limit banner and, separately, the onLimit:"s
   assert.match(countingDown, />Cancel</);
 });
 
-// ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 5): the tile's plan chip, Mark job done, and its ⋯ menu. ----
+// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 5): the tile's plan chip, Mark job done, and its ⋯ menu. ----
 
 test('a plan lane\'s tile shows the plan chip, Mark job done, and Show plan/Cancel job in its menu', async () => {
   const React = (await import('react')).default;

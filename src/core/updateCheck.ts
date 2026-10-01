@@ -4,7 +4,7 @@ import { mkdir, open, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 /**
- * The in-app update prompt (README, "Updating"): find the latest full release on
+ * The in-app update prompt (docs/Releases.md, "Updating"): find the latest full release on
  * GitHub, download its HydraSetup.exe, and check it against the release's SHA256SUMS.
  * No vscode import, so it is unit-tested with an injected fetch (tests/updateCheck.test.ts);
  * src/extensionUpdates.ts wires it to notifications. The Electron main process's signed

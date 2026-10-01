@@ -4,7 +4,7 @@ import path from 'node:path';
 import { packCaps } from './format';
 
 /**
- * Reading a pack folder safely (docs/Packs_Plan.md, sections 2 and 4). A pack
+ * Reading a pack folder safely (docs/internal/Packs_Plan.md, sections 2 and 4). A pack
  * with a junction or symbolic link anywhere in it is refused (the 2026-09-24
  * lesson), and so is anything that isn't a plain file or folder. The folder is
  * read once, into memory (a pack is at most 4 MB); the checks, the hash and the

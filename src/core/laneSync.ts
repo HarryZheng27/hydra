@@ -7,7 +7,7 @@ import type { Lane } from './lanes';
 import type { LaneSyncView } from './model';
 
 /**
- * Lane coordination (docs/Lanes_And_Planner_Plan.md, "Coordination"). Hydra warns
+ * Lane coordination (docs/internal/Lanes_And_Planner_Plan.md, "Coordination"). Hydra warns
  * and never blocks, and everything here is deterministic git with no model calls:
  * each lane's current work becomes a snapshot commit, and `git merge-tree` says
  * which lanes would conflict with each other or with their target branch.
@@ -93,7 +93,7 @@ export async function branchTip(repository: string, branch: string): Promise<str
 }
 
 /**
- * Where a lane's own work is measured from (docs/Plan_Lanes_Plan.md, section 3): where
+ * Where a lane's own work is measured from (docs/internal/Plan_Lanes_Plan.md, section 3): where
  * `head` meets the target, as always; but while the lane's base commit isn't in the
  * target yet (a plan lane that started from unmerged dependency work), the base commit
  * itself, so the diff, the changed-files count and the gates see only this job's work.

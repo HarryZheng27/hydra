@@ -106,7 +106,7 @@ test('the Agents view offers only head actions: diff, log, answer, cancel and st
   for (const retired of ['task-rail', 'Resources and setup', 'Managed CLI', 'profile slots', 'Create task']) assert.ok(!page.includes(retired), retired);
 });
 
-// ---- Lanes (docs/Lanes_And_Planner_Plan.md, section 2): its own block. ----
+// ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md, section 2): its own block. ----
 
 test('buildCanvas draws every open lane as a lead node, even with no heads; closed and merged lanes are hidden', () => {
   const model = buildCanvas([], now, { lanes: [lane('111111111111', 'Lane 1'), lane('222222222222', 'Lane 2', { state: 'exited', exitedAt: at(60_000) }), lane('333333333333', 'Lane 3', { state: 'merged' }), lane('444444444444', 'Lane 4', { state: 'closed' })] });
@@ -210,7 +210,7 @@ test('an SSR render shows the Parked lanes strip, the Finished tray Clear button
   assert.match(idle, /Learn how/);
 });
 
-// ---- Planner (docs/Lanes_And_Planner_Plan.md, section 4): its own block. ----
+// ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
 
 test('buildCanvas draws a draft plan as a lead node with dashed jobs, laid out by dependency depth', () => {
   const draft = plan('draft', [planJob('api'), planJob('ui'), planJob('tests', { dependsOn: ['api', 'ui'] })]);
@@ -257,7 +257,7 @@ test('a done plan leaves the canvas once its heads and lanes are gone, like a ch
   assert.equal(stillShowing.plans.length, 1, 'its head is still fresh on the canvas, so the plan lingers');
 });
 
-// ---- Plan lanes (docs/Plan_Lanes_Plan.md, section 4): the running plan group. ----
+// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 4): the running plan group. ----
 
 test('buildCanvas groups a running mixed plan: a head slot, a lane-card slot and a waiting slot, with edges between them', () => {
   const running = plan('running', [

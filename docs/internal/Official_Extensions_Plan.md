@@ -1,6 +1,6 @@
 # Plan: chat in the official extensions, let Hydra run the helpers
 
-Status: **complete** (2026-09-24). All phases built, verified and merged: Phase 0 #178, 1 #179, 2 #180, 3 #181, 4 #182, 5 #183, 6 #184, 7 #185, 8 (this doc's final PR). See each phase's "As built" notes. The user guide is [Heads.md](Heads.md) (helpers were renamed Hydra heads).
+Status: **complete** (2026-09-24). All phases built, verified and merged: Phase 0 #178, 1 #179, 2 #180, 3 #181, 4 #182, 5 #183, 6 #184, 7 #185, 8 (this doc's final PR). See each phase's "As built" notes. The user guide is [Heads.md](../Heads.md) (helpers were renamed Hydra heads).
 Replaces: the marker-line delegation pipeline (`HYDRA_DELEGATION_V1`) and, over time, Hydra's own chat panel as the main place you talk to an agent.
 
 ## The idea in plain words
@@ -15,10 +15,10 @@ Why: most of the bugs so far came from rebuilding a chat UI that those extension
 
 ## Where we are (checked 2026-09-23)
 
-- **Auto mode stalls.** A parent only wakes after each child has a result receipt ([src/extension.ts](../src/extension.ts) around line 712). Receipts only come from the `hydra.receiveDelegationResult` command, and nothing in `src/` or `webview/` calls it; only tests do.
+- **Auto mode stalls.** A parent only wakes after each child has a result receipt ([src/extension.ts](../../src/extension.ts) around line 712). Receipts only come from the `hydra.receiveDelegationResult` command, and nothing in `src/` or `webview/` calls it; only tests do.
 - **The planner suffix and marker go on every turn, Solo included.** Solo replies in the probe still ended with `HYDRA_DELEGATION_V1:{…}`.
 - **46 delegation modules, about 3,900 lines.** Six of them are imported only by tests: `delegationRolloutReview`, `autoDelegationBrief`, `autoDelegationStopRecovery`, `delegationWakeup`, `autoDelegationSchedule` and `autoDelegationRollout`.
-- **Hydra can already hand a task to an official extension.** `handoffTask` in [src/core/handoff.ts](../src/core/handoff.ts) opens the task's worktree in a new window, and the task is marked `external` meanwhile. The extension IDs and open commands are in that file.
+- **Hydra can already hand a task to an official extension.** `handoffTask` in [src/core/handoff.ts](../../src/core/handoff.ts) opens the task's worktree in a new window, and the task is marked `external` meanwhile. The extension IDs and open commands are in that file.
 
 ## Facts this plan depends on
 
@@ -157,7 +157,7 @@ Known gap, to be written down rather than hidden: a helper runs as your user, so
 ### Phase 4: helper lifecycle
 **Opus for the lifecycle, Sonnet for the limits once the lifecycle is in.**
 - Runner changes from "Helpers" above: base on HEAD, `dontAsk` / sandbox, enforced limits, the done/stuck actions, one nudge on a silent exit, and "Stop all".
-- **Checks:** reuse `runDelegatedVerificationCommand` ([src/core/delegationVerification.ts](../src/core/delegationVerification.ts)), configured in `.hydra/checks.json` (commands plus timeouts). No config means done with "no checks configured". Failed checks re-prompt the helper, up to 2 more attempts.
+- **Checks:** reuse `runDelegatedVerificationCommand` ([src/core/delegationVerification.ts](../../src/core/delegationVerification.ts)), configured in `.hydra/checks.json` (commands plus timeouts). No config means done with "no checks configured". Failed checks re-prompt the helper, up to 2 more attempts.
 - **Write scope:** enforced on the diff when `hydra_done` is called. Remove the hard-coded default scope list.
 - **No approvals (decision 3):** helpers never ask anyone for permission. Anything outside their allowed tools and sandbox is denied, and they keep going.
 - **CLI versions (decision 5):** accept any Claude 2.1.x from 2.1.270 up, and any Codex 0.154.x from 0.154.0 up, instead of one exact version.
@@ -248,7 +248,7 @@ Acceptance:
 **Sonnet.**
 - Replace `docs/Adaptive_Delegation.md` and the `Auto_Delegation_*` docs with one `docs/Heads.md` covering the actions, states, limits and security notes.
 
-**As built (Phase 8), 2026-09-24:** [docs/Heads.md](Heads.md) is the single guide. It covers connecting, the actions, the lifecycle, limits and permissions, checks, the dashboard, security (including the known gap), supported versions and troubleshooting. Live links to the deleted delegation docs now point to it. Historical plan documents are left as they were written.
+**As built (Phase 8), 2026-09-24:** [docs/Heads.md](../Heads.md) is the single guide. It covers connecting, the actions, the lifecycle, limits and permissions, checks, the dashboard, security (including the known gap), supported versions and troubleshooting. Live links to the deleted delegation docs now point to it. Historical plan documents are left as they were written.
 
 ## Decisions (Nico, 2026-09-23)
 

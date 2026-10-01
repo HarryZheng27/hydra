@@ -3,7 +3,7 @@ import path from 'node:path';
 
 /**
  * What has to pass before a head's work is accepted, or a lane is merged
- * (docs/Gates_Plan.md, section 1). Read from the lead's folder only, never from
+ * (docs/internal/Gates_Plan.md, section 1). Read from the lead's folder only, never from
  * a worktree, so the agent being checked can't edit its own gates away.
  *
  * `.hydra/gates.json` wins. Without it, an older `.hydra/checks.json` still
@@ -17,7 +17,7 @@ export type ReviewerChoice = 'other' | 'same' | 'claude' | 'codex';
 export type LanePolicy = 'onMerge' | 'off';
 interface GateBase {
   id: string; required: boolean;
-  /** The pack this gate comes from (docs/Packs_Plan.md). Set only by the packs loader; gates.json can't set it. */
+  /** The pack this gate comes from (docs/internal/Packs_Plan.md). Set only by the packs loader; gates.json can't set it. */
   pack?: string;
   /** That pack's title, for "From the Coding pack". Set only by the packs loader. */
   packTitle?: string;

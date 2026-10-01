@@ -11,7 +11,7 @@ import { claudeProviderWaitSignal, codexProviderWaitSignal, ProviderWaitTracker,
 import { ClaudeNudge, claudeStreamLine, StreamActivity, type HeadActivity } from './headSilence';
 
 /**
- * Runs one Hydra helper process unattended (docs/Official_Extensions_Plan.md,
+ * Runs one Hydra helper process unattended (docs/internal/Official_Extensions_Plan.md,
  * Phase 4). Helpers never ask for permission: anything outside their allowed
  * tools and sandbox is denied and they keep going.
  *
@@ -37,7 +37,7 @@ export interface HelperRunSpec {
   logFile: string;
   /** Called with each process started for this helper, so Hydra can refuse it as a lead. */
   spawned?: (pid: number) => void;
-  /** Packs (docs/Packs_Plan.md, section 5): what the head's role adds to its command line and environment. */
+  /** Packs (docs/internal/Packs_Plan.md, section 5): what the head's role adds to its command line and environment. */
   role?: HeadRoleArguments;
   /** Step 2: how the head is confined. */
   confine: HeadConfinement;

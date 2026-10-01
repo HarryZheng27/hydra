@@ -15,7 +15,7 @@ import type { ReviewerChoice, ReviewGate } from './config';
 import { clip, notRun, providerName, type GateRun, type ReviewerSpec } from './types';
 
 /**
- * The review gate (docs/Gates_Plan.md): a second agent reads the change and
+ * The review gate (docs/internal/Gates_Plan.md): a second agent reads the change and
  * says whether it holds up. No agent grades its own work, so by default the
  * other agent reviews: Codex reviews a Claude head, and the reverse.
  *
@@ -37,7 +37,7 @@ const other = (provider: Provider): Provider => provider === 'claude' ? 'codex' 
  * `-i`, before `--sandbox`, so the image list can't swallow the `-` that means
  * "read the prompt from stdin"; Claude reads them by path.
  *
- * Web (docs/Packs_Plan.md, research R9): a pack review gate whose role has the "web" tool
+ * Web (docs/internal/Packs_Plan.md, research R9): a pack review gate whose role has the "web" tool
  * lets the reviewer open pages: Claude, still in plan mode, with WebFetch and WebSearch
  * allowed; Codex with `web_search='live'`. Every other Codex review has web search off,
  * since `codex exec` searches by default (R7). A Claude review gets no web, as before.
@@ -130,7 +130,7 @@ export interface ReviewPromptInput {
   earlier: readonly JobCheckResult[];
   screenshots: readonly string[];
   focus: string;
-  /** A pack review gate's role (docs/Packs_Plan.md): the reviewer works as it says. */
+  /** A pack review gate's role (docs/internal/Packs_Plan.md): the reviewer works as it says. */
   role?: { title: string; instructions: string };
 }
 
