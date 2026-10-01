@@ -73,7 +73,7 @@ import { StopSwitch } from './core/stopSwitch';
 // ---- Audit log (5.2). Its own line. ----
 import { AuditLog, type AuditEvent } from './core/audit';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from './core/windowClose';
-// ---- Updates (README, "Updating"). Its own line. ----
+// ---- Updates (docs/Releases.md, "Updating"). Its own line. ----
 import { registerUpdates } from './extensionUpdates';
 
 let manager: Manager | undefined;
@@ -410,7 +410,7 @@ class Manager {
     } catch (error) { this.disabled = true; this.report(error); }
     await this.startHelpers().catch(error => { this.output.appendLine(`[heads] not started: ${this.describe(error)}`); });
     this.startLimitDetection();
-    // ---- Updates (README, "Updating"): the daily check and Hydra: Check for Updates ----
+    // ---- Updates (docs/Releases.md, "Updating"): the daily check and Hydra: Check for Updates ----
     this.context.subscriptions.push(registerUpdates({
       context: this.context,
       log: line => this.output.appendLine(line),

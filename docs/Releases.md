@@ -1,6 +1,30 @@
 # Releasing Hydra
 
-How a Hydra release is built, published and checked, and what's still needed before Hydra can update itself.
+How Hydra updates and uninstalls, how a release is built, published and checked, and what's still needed for signed updates.
+
+## Updating
+
+Hydra installed with `HydraSetup.exe` checks GitHub for a newer release 30 seconds after it starts, then once a day. When there's one, it shows **Update**, **Release notes** and **Skip this version**. You can also run **Hydra: Check for Updates** from the Command Palette at any time.
+
+- **Update** downloads the new `HydraSetup.exe`, checks it against the release's `SHA256SUMS`, and asks once more. Hydra then closes, installs the update into the same folder, and reopens. The editor's hot exit keeps unsaved changes; running heads and lanes are stopped.
+- **Nothing is downloaded or installed** until you choose **Update** and then **Install and restart**.
+- **Turn off the daily check** with the `hydra.updates.check` setting. Development builds, and copies not installed with `HydraSetup.exe`, never offer updates.
+- **The log:** the update is logged to `%TEMP%hydra-update.log`.
+- **By hand:** download `HydraSetup.exe` from the [releases page](https://github.com/ndunl075/hydra/releases) and run it with Hydra closed.
+
+How the check decides what to trust is in [The update prompt](#the-update-prompt). What changed in each release is in the [changelog](../CHANGELOG.md).
+
+## Uninstalling
+
+Uninstall Hydra from **Windows Settings → Apps → Installed apps**, or run `unins000.exe` in Hydra's install folder.
+
+- **Your agents' settings:** if you connected Claude Code or Codex to Hydra (**Settings → Connectors**), uninstalling removes what Hydra added to them:
+  - in Claude Code: its `hydra` MCP server, allow rule and usage-limit hook;
+  - in Codex: its block and guidance.
+
+  Entries from another Hydra, such as a development build, are left alone. What was done is logged to `%TEMP%hydra-uninstall.log`.
+- **Hydra's own data:** uninstall asks whether to also remove your Hydra settings, history and extensions (`%APPDATA%Hydra` and `%USERPROFILE%.hydra`). The answer defaults to No. Your projects, and your Claude and Codex sign-ins, are never touched.
+- **A silent uninstall** keeps that data unless you add `/HYDRAREMOVEDATA`, for example `unins000.exe /VERYSILENT /HYDRAREMOVEDATA`.
 
 ## Publishing a release
 
@@ -8,7 +32,7 @@ How a Hydra release is built, published and checked, and what's still needed bef
 2. Run the **Windows desktop** workflow by hand (**Actions → Windows desktop → Run workflow**) on `main`, with:
    - **release_tag:** `v<that version>`, for example `v0.25.0`;
    - **prerelease:** off for a release installed copies should be offered (see [The update prompt](#the-update-prompt)); on for one they shouldn't.
-3. The `desktop` job builds and tests everything, as on a pull request: the build, smoke, the installer's install, reinstall and uninstall, the upgrade from the pinned previous release, and the MSIX checks. The uninstall test checks that uninstalling removes only this install's Claude Code and Codex entries, keeps Hydra's data by default, and removes it with `/HYDRAREMOVEDATA` (see [Uninstall](../README.md#uninstall)).
+3. The `desktop` job builds and tests everything, as on a pull request: the build, smoke, the installer's install, reinstall and uninstall, the upgrade from the pinned previous release, and the MSIX checks. The uninstall test checks that uninstalling removes only this install's Claude Code and Codex entries, keeps Hydra's data by default, and removes it with `/HYDRAREMOVEDATA` (see [Uninstalling](#uninstalling)).
 4. Only if all of that passes, the `release` job:
    - checks that the tag matches `package.json` and isn't already a release;
    - writes `SHA256SUMS` for the tested installer;
@@ -42,7 +66,7 @@ Installers aren't code-signed yet, so Windows SmartScreen may warn before one ru
 
 ## The update prompt
 
-An installed Hydra (one with `unins000.exe` beside `Hydra.exe`) on Windows checks for updates from its built-in extension; see [Updating](../README.md#updating). It:
+An installed Hydra (one with `unins000.exe` beside `Hydra.exe`) on Windows checks for updates from its built-in extension; see [Updating](#updating). It:
 - reads `https://api.github.com/repos/ndunl075/hydra/releases/latest`, which lists only the newest published full release: prereleases and drafts are never offered;
 - accepts it only if the tag is `v<x.y.z>`, newer than the running version, and has exactly one `HydraSetup.exe` and one `SHA256SUMS`, both under `https://github.com/ndunl075/hydra/releases/download/<tag>/`;
 - downloads over HTTPS only, following at most 5 redirects, and only to `github.com`, `objects.githubusercontent.com` or `release-assets.githubusercontent.com`;

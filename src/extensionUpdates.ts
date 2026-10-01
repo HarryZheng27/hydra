@@ -11,7 +11,7 @@ import {
 } from './core/updateCheck';
 
 /**
- * The in-app update prompt (README, "Updating"). An installed Hydra on Windows checks
+ * The in-app update prompt (docs/Releases.md, "Updating"). An installed Hydra on Windows checks
  * GitHub's latest release 30 s after startup and then once a day, and offers
  * Update / Release notes / Skip this version. Update downloads HydraSetup.exe, checks it
  * against SHA256SUMS, asks once more, then starts a hidden PowerShell helper (through WMI) that waits
