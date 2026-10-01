@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest something Hydra should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you're trying to do
+      description: The problem or workflow, before any solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: What Hydra could do about it. Rough ideas are fine.
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today
+      description: Any workaround you use now.

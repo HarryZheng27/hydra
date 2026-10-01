@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/ndunl075/hydra/security/advisories/new
+    about: Report it privately, not in a public issue.
+  - name: User guide
+    url: https://github.com/ndunl075/hydra/blob/main/docs/Heads.md
+    about: How heads, lanes, plans, gates and packs work.

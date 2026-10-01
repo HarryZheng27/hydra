@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in Hydra doesn't work as described.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: For a security problem, don't open an issue; see [SECURITY.md](https://github.com/ndunl075/hydra/blob/main/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a repository with ...
+        2. Ask the Claude Code chat to ...
+        3. ...
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Heads
+        - Plans
+        - Lanes
+        - Gates and reviews
+        - Packs
+        - The hydra command
+        - Install, update or uninstall
+        - Settings and connectors
+        - The editor
+        - Something else
+  - type: input
+    id: version
+    attributes:
+      label: Hydra version
+      description: Help → About.
+    validations:
+      required: true
+  - type: input
+    id: providers
+    attributes:
+      label: Claude Code and Codex versions
+      description: The output of `claude --version` and `codex --version`, if they're involved.
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from the Hydra output channel (View → Output → Hydra). Check it for secrets first.
+      render: text

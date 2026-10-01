@@ -247,4 +247,4 @@ Every control names the file and function it lives in, and the exact test name (
 
 ## 5. How to report a problem
 
-This repository does not yet have a `SECURITY.md` or a published security policy. Until one exists, report a suspected security problem privately through GitHub's security advisory feature on this repository (`Security` tab → `Report a vulnerability`) rather than opening a public issue, so it can be assessed before any details are public.
+Report a suspected security problem privately, never in a public issue: [SECURITY.md](../SECURITY.md) explains how, through GitHub's private vulnerability reporting on this repository (`Security` tab → `Report a vulnerability`), so it can be assessed before any details are public.
