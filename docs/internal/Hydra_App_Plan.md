@@ -1,8 +1,12 @@
-# Hydra App: plan
+# The Hydra app: plan
 
-Chat-first desktop app shipped beside the Hydra IDE, on the same engine and canvas. Proposal, 2026-10-02; nothing built. Agents: read this, then the files it names.
+A chat-first desktop app named **Hydra**, shipped beside the Hydra IDE on the same engine and canvas. Proposal, 2026-10-02; nothing built. Agents: read this, then the files it names.
 
-**Naming:** "desktop" in this repo means the IDE's standalone build (`desktop/`, `desktop:*`, `desktop.yml`). The new product is **Hydra App**, code in `app/`, scripts `app:*`. Final name open (D1).
+**Naming:** "desktop" in this repo already means the IDE's standalone build (`desktop/`, `desktop:*`, `desktop.yml`), so docs and code say "the app" (`app/`, `app:*`) and "the IDE". On one PC the two must stay distinct:
+- **Shown names:** the app is "Hydra". The IDE shows as "Hydra IDE" in the Start menu and the Apps list; display name only (D1).
+- **Separate identities:** install folder (the IDE owns `%LOCALAPPDATA%\Programs\Hydra`), user-data folder (Electron defaults to `%APPDATA%\<name>`, which is the IDE's, so set it explicitly), taskbar id (IDE: `Hydra.IDE`), single-instance mutex (IDE: `hydra-ide`).
+- **Installers:** `HydraSetup.exe` stays the IDE's, because installed IDEs update from that exact file. The app's is `HydraAppSetup.exe`.
+- **`hydra` command:** plan commands work with either app, since storage is shared. Which app `hydra <folder>` opens is settled in P4.
 
 ## Goal
 - Look and work like Claude's desktop app (Code tab): sidebar of projects and chats, chat pane, composer.
@@ -106,8 +110,9 @@ Cloud agents can't reach Hydra's endpoint (loopback only). Their work is checked
 | P4 | Ship: installer, updater, release job, docs, THREAT_MODEL entries | Install, upgrade, uninstall tests pass; prerelease out |
 | P5 | Cloud chats, then Codex cloud heads | A cloud job lands only after local gates pass |
 
-## Open decisions
-- **D1:** product name.
-- **D2:** Anthropic's answer on running Claude Code "in your products" (Commercial Terms clause; covers the IDE too). Ask through the legal page's contact link.
-- **D3:** installer: reuse the IDE's Inno Setup scripts (parity, existing tests) or electron-builder NSIS. Leaning Inno.
-- **D4:** whether the quality benchmark (`bench/QUALITY_RUN.md`) changes P3's priorities.
+## Decisions
+- **Name (decided):** Hydra.
+- **Installer (decided):** Inno Setup, like the IDE: per-user install without admin, uninstall that removes only this install's Claude and Codex entries and asks before deleting data (`/HYDRAREMOVEDATA`), and the in-app update mode. Adapt the IDE's scripts in `desktop/*.iss` and its installer, upgrade and uninstall tests.
+- **D1 (open):** show the IDE as "Hydra IDE" (display name only).
+- **D2 (open):** ask Anthropic, through the contact link on the legal page: (a) does a free, open-source app on the user's own PC, driving the user's own unmodified Claude Code, need their Commercial Terms? (b) do parallel heads and unattended plans count as "ordinary, individual usage" of a Pro or Max plan? This covers the IDE too.
+- **D3 (open):** whether the quality benchmark (`bench/QUALITY_RUN.md`) changes P3's priorities.
