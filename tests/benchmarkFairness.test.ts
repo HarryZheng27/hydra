@@ -353,6 +353,22 @@ test('benchmark.mjs summarize fills an old Hydra result\'s first-pass review fro
   } finally { await cleanup(out); }
 });
 
+test('a review the gate retried once is recorded on both sides and listed under the summary', () => {
+  const retriedCheck = { id: 'rigor-review', kind: 'review', state: 'passed', required: true, durationMs: 1000, summary: 'Reviewed by Codex. Fine. (The review was retried once: the first try didn\'t run. Codex exited with code 1.)', retriedAfter: 'Codex exited with code 1.' };
+  const reviewed = summarizeReview({ checks: [retriedCheck], durationMs: 1000, startedAt: 'x', base: 'b', head: 'h' });
+  assert.equal(reviewed.retried, true);
+  assert.equal(summarizeReview({ checks: [{ ...retriedCheck, retriedAfter: undefined, summary: 'Reviewed by Codex. Fine.' }], durationMs: 1000, startedAt: 'x', base: 'b', head: 'h' }).retried, undefined);
+  const looped = withReviewLoop({ kind: 'single', wallClockSeconds: 100, cost: { usd: 1 } }, { rounds: [{ review: reviewed }] });
+  assert.equal(looped.review.retried, 1);
+  const single = { kind: 'single', task: 'cli', wallClockSeconds: 600, gate: { passed: true }, check: { passed: true }, cost: { usd: 3 }, review: looped.review };
+  // A Hydra result keeps the field; one from a plan view without it still has the summary's note.
+  const hydra = { kind: 'hydra', task: 'cli', wallClockSeconds: 900, timeToWorkingCodeSeconds: 300, integrationGate: { passed: true, checks: [{ id: 'rigor-review', kind: 'review', state: 'passed', summary: retriedCheck.summary }] }, review: { state: 'passed' }, jobs: [{ key: 'a' }], cost: { usd: 1, usdJobs: 1 } };
+  const rows = [...runRows(single, 'r1-single'), ...runRows(hydra, 'r1-hydra')];
+  assert.deepEqual(rows.map((row: { setup: string; reviewRetried?: number }) => [row.setup, row.reviewRetried]), [['single', undefined], ['single+review', 1], ['hydra', 1]]);
+  assert.match(renderSummary(rows), /^Reviews retried once after the reviewer failed to run: r1-single \(single\+review\), r1-hydra \(hydra\)\.$/m);
+  assert.doesNotMatch(renderSummary(runRows({ ...single, review: reviewResult('pass', 'pass') }, 'r')), /Reviews retried once/);
+});
+
 test('summarizeSingle keeps the Claude Code session id, so review can resume the agent', () => {
   assert.equal(summarizeSingle({ agent: 'claude', wallClockSeconds: 1, exitCode: 0, gatePassed: true, gateOutput: '', agentOutput: { session_id: 'abc' } }).sessionId, 'abc');
   assert.equal('sessionId' in summarizeSingle({ agent: 'claude', wallClockSeconds: 1, exitCode: 0, gatePassed: true, gateOutput: '', agentOutput: {} }), false);

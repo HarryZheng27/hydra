@@ -24,7 +24,9 @@ import { clip, notRun, providerName, type GateRun, type ReviewerSpec } from './t
  * with JSON. The gate fails only for a "fail" verdict with at least one blocker
  * or major finding. When the review can't run (no reviewer, a usage limit, a
  * timeout, an unreadable reply), the gate is "not run" with the reason: a
- * tooling problem is never the work's fault.
+ * tooling problem is never the work's fault. A reviewer that crashed or replied
+ * unreadably gets one more try first (retriedAfter records it); a timeout or a
+ * usage limit doesn't, since trying again wouldn't change it.
  */
 export const reviewTimeoutMs = 5 * 60_000;
 export const maxReviewDiffBytes = 60 * 1024;
@@ -287,29 +289,44 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
     await writeFile(settingsFile, JSON.stringify(reviewerSettings(isolation.claudePlugins), null, 2), { encoding: 'utf8', mode: 0o600 });
   }
   run.log?.(`[gates] ${gate.id}: ${name} is reviewing${pick.note ? ` (${pick.note})` : ''}`);
-  const output = await run.runtime.runReviewer({
-    provider: pick.provider, executable: pick.executable,
-    args: reviewArguments(pick.provider, pick.provider === 'codex' ? screenshots : [], !!gate.reviewerRole?.web, { codexArgs: isolation.codexArgs, ...(settingsFile ? { settingsFile } : {}) }),
-    input: redactedPrompt, cwd: run.worktree, timeoutMs: reviewTimeoutMs, signal: run.signal, spawned: run.spawned, env: isolation.env,
-  });
-  await writeFile(replyFile, redact(`${output.stdout}${output.stderr ? `\n--- stderr ---\n${output.stderr}` : ''}`), 'utf8');
-  const evidence = [replyFile, promptFile];
-  const reviewer = { reviewer: pick.provider, evidence };
-  if (output.timedOut) return notRun(gate, `${name} didn't finish its review in ${Math.round(reviewTimeoutMs / 60_000)} minutes.`, elapsed(), reviewer);
-  const limit = reviewerLimit(pick.provider, output.stdout);
-  if (limit) return notRun(gate, `${name} hit its usage limit${limit.resetsAt ? ` (resets ${limit.resetsAt})` : ''}.`, elapsed(), reviewer);
-  if (output.error) return notRun(gate, `${name} couldn't review: ${output.error}`, elapsed(), reviewer);
-  if (output.exitCode !== 0) return notRun(gate, `${name} exited with code ${output.exitCode ?? 'none'}${output.stderr.trim() ? `: ${clip(output.stderr.trim(), 300)}` : '.'}`, elapsed(), reviewer);
-  let verdict: ReviewVerdict;
-  try { verdict = parseReviewOutput(plannerResultText(pick.provider, output.stdout)); }
-  catch (error) { return notRun(gate, `${name}'s reply wasn't the JSON Hydra asked for (${error instanceof Error ? error.message : String(error)}).`, elapsed(), reviewer); }
-  const failed = reviewFails(verdict);
-  const summary = `${pick.note ? `${pick.note}.` : `Reviewed by ${name}.`} ${verdict.summary || (failed ? 'The change has problems.' : 'The change looks right.')}`;
-  return {
-    id: gate.id, kind: 'review', required: gate.required, state: failed ? 'failed' : 'passed', passed: !failed,
-    exitCode: output.exitCode, durationMs: elapsed(), outputTail: clip(verdict.findings.map(formatFinding).join('\n'), 2000),
-    evidence, findings: verdict.findings, summary, reviewer: pick.provider,
+  // One reviewer run, sorted into a verdict, or "not run" with whether a second try could help: a crash, a
+  // failed launch or an unreadable reply can; a timeout, a usage limit or a cancel can't.
+  const attempt = async (file: string, evidence: string[]): Promise<{ result: JobCheckResult; retry?: true }> => {
+    const output = await run.runtime.runReviewer({
+      provider: pick.provider, executable: pick.executable,
+      args: reviewArguments(pick.provider, pick.provider === 'codex' ? screenshots : [], !!gate.reviewerRole?.web, { codexArgs: isolation.codexArgs, ...(settingsFile ? { settingsFile } : {}) }),
+      input: redactedPrompt, cwd: run.worktree, timeoutMs: reviewTimeoutMs, signal: run.signal, spawned: run.spawned, env: isolation.env,
+    });
+    await writeFile(file, redact(`${output.stdout}${output.stderr ? `\n--- stderr ---\n${output.stderr}` : ''}`), 'utf8');
+    const reviewer = { reviewer: pick.provider, evidence };
+    const retry = run.signal?.aborted ? {} : { retry: true as const };
+    if (output.timedOut) return { result: notRun(gate, `${name} didn't finish its review in ${Math.round(reviewTimeoutMs / 60_000)} minutes.`, elapsed(), reviewer) };
+    const limit = reviewerLimit(pick.provider, output.stdout);
+    if (limit) return { result: notRun(gate, `${name} hit its usage limit${limit.resetsAt ? ` (resets ${limit.resetsAt})` : ''}.`, elapsed(), reviewer) };
+    if (output.error) return { result: notRun(gate, `${name} couldn't review: ${output.error}`, elapsed(), reviewer), ...retry };
+    if (output.exitCode !== 0) return { result: notRun(gate, `${name} exited with code ${output.exitCode ?? 'none'}${output.stderr.trim() ? `: ${clip(output.stderr.trim(), 300)}` : '.'}`, elapsed(), reviewer), ...retry };
+    let verdict: ReviewVerdict;
+    try { verdict = parseReviewOutput(plannerResultText(pick.provider, output.stdout)); }
+    catch (error) { return { result: notRun(gate, `${name}'s reply wasn't the JSON Hydra asked for (${error instanceof Error ? error.message : String(error)}).`, elapsed(), reviewer), ...retry }; }
+    const failed = reviewFails(verdict);
+    const summary = `${pick.note ? `${pick.note}.` : `Reviewed by ${name}.`} ${verdict.summary || (failed ? 'The change has problems.' : 'The change looks right.')}`;
+    return {
+      result: {
+        id: gate.id, kind: 'review', required: gate.required, state: failed ? 'failed' : 'passed', passed: !failed,
+        exitCode: output.exitCode, durationMs: elapsed(), outputTail: clip(verdict.findings.map(formatFinding).join('\n'), 2000),
+        evidence, findings: verdict.findings, summary, reviewer: pick.provider,
+      },
+    };
   };
+  const first = await attempt(replyFile, [replyFile, promptFile]);
+  if (!first.retry) return first.result;
+  // A review that didn't run for a passing reason (Codex exiting with code 1, say) gets one more try, the same
+  // review on the same diff; the first reply is kept as evidence and the result says it was retried.
+  const firstReason = first.result.summary ?? 'the reviewer failed';
+  run.log?.(`[gates] ${gate.id}: ${firstReason} Retrying the review once.`);
+  const retryFile = path.join(run.logDirectory, `${gate.id}-reply-retry.txt`);
+  const second = (await attempt(retryFile, [retryFile, replyFile, promptFile])).result;
+  return { ...second, retriedAfter: clip(firstReason, 300), summary: `${second.summary ?? ''} (The review was retried once: the first try didn't run. ${clip(firstReason, 300)})`.trim() };
 }
 
 /** The real reviewer: the CLI through runProbe (processLaunch, the timeout, cancel on abort), with the prompt on stdin. */

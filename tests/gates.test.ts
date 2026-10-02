@@ -412,13 +412,38 @@ test('review: "not run" with the reason when it can\'t run, and that never fails
     return { result: result!, reviewer };
   };
   try {
-    assert.match((await run({ timedOut: true, exitCode: null, error: 'Provider check timed out.' })).result.summary!, /^Codex didn't finish its review in 5 minutes\.$/);
-    assert.match((await run({ stdout: 'I think it is fine.' })).result.summary!, /^Codex's reply wasn't the JSON Hydra asked for \(the reply had no JSON object\)\.$/);
-    assert.match((await run({ stdout: `${JSON.stringify({ type: 'error', message: "You've hit your usage limit. Try again at 3:40 PM." })}\n`, exitCode: 1 })).result.summary!, /^Codex hit its usage limit\.$/);
-    assert.match((await run({ exitCode: 2, stderr: 'config error' })).result.summary!, /^Codex exited with code 2: config error$/);
+    // A timeout or a usage limit isn't tried again; a crash or an unreadable reply is, once, and says so.
+    const timedOut = await run({ timedOut: true, exitCode: null, error: 'Provider check timed out.' });
+    assert.match(timedOut.result.summary!, /^Codex didn't finish its review in 5 minutes\.$/); assert.equal(timedOut.reviewer.specs.length, 1);
+    const unreadable = await run({ stdout: 'I think it is fine.' });
+    assert.match(unreadable.result.summary!, /^Codex's reply wasn't the JSON Hydra asked for \(the reply had no JSON object\)\. \(The review was retried once: the first try didn't run\. Codex's reply wasn't/);
+    assert.equal(unreadable.reviewer.specs.length, 2);
+    const limited = await run({ stdout: `${JSON.stringify({ type: 'error', message: "You've hit your usage limit. Try again at 3:40 PM." })}\n`, exitCode: 1 });
+    assert.match(limited.result.summary!, /^Codex hit its usage limit\.$/); assert.equal(limited.reviewer.specs.length, 1);
+    const crashed = await run({ exitCode: 2, stderr: 'config error' });
+    assert.match(crashed.result.summary!, /^Codex exited with code 2: config error \(The review was retried once: the first try didn't run\. Codex exited with code 2: config error\)$/);
+    assert.equal(crashed.result.retriedAfter, 'Codex exited with code 2: config error'); assert.equal(crashed.reviewer.specs.length, 2);
     const missing = await run({}, { executable: async provider => { throw new Error(`${provider === 'claude' ? 'Claude Code' : 'Codex'} CLI not found. Install it or set Hydra's ${provider} path.`); } });
     assert.equal(missing.reviewer.specs.length, 0);
     assert.match(missing.result.summary!, /^Codex isn't available \(Codex CLI not found\. Install it or set Hydra's codex path\), and Claude Code isn't available .*, so nobody reviewed this\.$/);
+  } finally { await f.close(); }
+});
+
+test('review: a reviewer that crashed is retried once, and a retry that reviews gives the verdict, recording the first try', async () => {
+  const f = await repository();
+  const gate: Gate = { id: 'review', type: 'review', required: true, reviewer: 'other', focus: '' };
+  try {
+    let calls = 0;
+    const reviewer = fakeReviewer(() => ++calls === 1
+      ? { exitCode: 1, stderr: 'stream disconnected' }
+      : { stdout: `${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: verdict({ verdict: 'pass', summary: 'Looks right.', findings: [] }) } })}\n` });
+    const [result] = await runGateList([gate], f.worktree, f.base, context(f.root, { runReviewer: reviewer.runReviewer }));
+    assert.equal(reviewer.specs.length, 2);
+    assert.equal(result!.state, 'passed', result!.summary);
+    assert.equal(result!.retriedAfter, 'Codex exited with code 1: stream disconnected');
+    assert.match(result!.summary!, /Looks right\. \(The review was retried once: the first try didn't run\. Codex exited with code 1: stream disconnected\)$/);
+    // Both replies are kept as evidence: the retry's first.
+    assert.deepEqual(result!.evidence!.map(file => path.basename(file)), ['review-reply-retry.txt', 'review-reply.txt', 'review-prompt.md']);
   } finally { await f.close(); }
 });
 
