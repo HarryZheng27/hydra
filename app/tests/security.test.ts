@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { hardenedWebPreferences, resolveAppFile, serveAppRequest } from '../src/main/security';
+import { confirmAndOpen, CONTENT_SECURITY_POLICY, externalLink, guardContents, guardSession, hardenedWebPreferences, requestAllowed, resolveAppFile, serveAppRequest } from '../src/main/security';
 
 test('app:// resolves only inside the renderer folder, on the hydra host', () => {
   const root = path.resolve(os.tmpdir(), 'app', 'dist', 'renderer');
@@ -43,4 +43,67 @@ test('windows get context isolation, the sandbox, and no Node or webview tag', (
   assert.equal(prefs.nodeIntegrationInSubFrames, false);
   assert.equal(prefs.webviewTag, false);
   assert.equal(prefs.webSecurity, true);
+});
+
+test('every app:// response, including errors, carries the CSP', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-csp-'));
+  try {
+    fs.writeFileSync(path.join(root, 'index.html'), '<p>hi</p>');
+    for (const url of ['app://hydra/index.html', 'app://hydra/missing.js', 'app://other/index.html']) {
+      assert.equal((await serveAppRequest(root, url)).headers.get('content-security-policy'), CONTENT_SECURITY_POLICY, url);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  assert.match(CONTENT_SECURITY_POLICY, /^default-src 'none'; script-src 'self';/);
+  assert.doesNotMatch(CONTENT_SECURITY_POLICY, /unsafe-eval|https?:|\*/);
+  assert.match(CONTENT_SECURITY_POLICY, /require-trusted-types-for 'script'/);
+});
+
+test('navigation, redirects and webviews are blocked; window.open is denied and only http(s) goes to the confirm', () => {
+  const listeners: Record<string, (event: { preventDefault(): void }, url?: string) => void> = {};
+  let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined;
+  const confirmed: string[] = [];
+  guardContents({ on: (name: string, listener: never) => { listeners[name] = listener; }, setWindowOpenHandler: (handler: typeof openHandler) => { openHandler = handler; } } as never, url => confirmed.push(url));
+  for (const name of ['will-navigate', 'will-redirect', 'will-attach-webview']) {
+    let prevented = false;
+    listeners[name]!({ preventDefault: () => { prevented = true; } }, 'https://example.com/');
+    assert.equal(prevented, true, name);
+  }
+  for (const url of ['https://example.com/a', 'http://example.com/b', 'file:///C:/x', 'javascript:alert(1)', 'app://hydra/index.html', 'https://user:pass@example.com/', 'mailto:a@b.c']) {
+    assert.deepEqual(openHandler!({ url }), { action: 'deny' }, url);
+  }
+  assert.deepEqual(confirmed, ['https://example.com/a', 'http://example.com/b']);
+});
+
+test('an external link opens only after the user confirms it', async () => {
+  const opened: string[] = [];
+  const asked: string[] = [];
+  const deps = (answer: boolean) => ({ ask: async (url: string) => { asked.push(url); return answer; }, open: async (url: string) => { opened.push(url); } });
+  assert.equal(await confirmAndOpen('https://example.com/no', deps(false)), false);
+  assert.equal(await confirmAndOpen('https://example.com/yes', deps(true)), true);
+  assert.equal(await confirmAndOpen('file:///C:/Windows/win.ini', deps(true)), false);
+  assert.deepEqual(asked, ['https://example.com/no', 'https://example.com/yes']);
+  assert.deepEqual(opened, ['https://example.com/yes']);
+  assert.equal(externalLink('HTTPS://Example.com'), 'https://example.com/');
+});
+
+test('the session refuses every permission and every request off the app scheme', () => {
+  let request: ((contents: unknown, permission: string, callback: (granted: boolean) => void) => void) | undefined;
+  let check: (() => boolean) | undefined;
+  let before: ((details: { url: string }, callback: (response: { cancel: boolean }) => void) => void) | undefined;
+  guardSession({ setPermissionRequestHandler: h => { request = h; }, setPermissionCheckHandler: h => { check = h; }, webRequest: { onBeforeRequest: l => { before = l; } } });
+  for (const permission of ['media', 'notifications', 'clipboard-read', 'openExternal', 'geolocation']) request!(undefined, permission, granted => assert.equal(granted, false, permission));
+  assert.equal(check!(), false);
+  const cancelled = (url: string) => { let result: boolean | undefined; before!({ url }, response => { result = response.cancel; }); return result; };
+  for (const url of ['app://hydra/index.html', 'data:text/plain,x', 'devtools://devtools/bundled/x.html']) assert.equal(cancelled(url), false, url);
+  for (const url of ['https://example.com/', 'http://127.0.0.1:1234/', 'file:///C:/x', 'app://other/x', 'ws://example.com/', 'nonsense']) assert.equal(cancelled(url), true, url);
+  assert.equal(requestAllowed('app://hydra/x'), true);
+});
+
+test('startup guards every webContents and the session before any window opens', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'startup.ts'), 'utf8');
+  assert.match(source, /app\.on\('web-contents-created', \(_event, contents\) => guardContents\(/);
+  const ready = source.slice(source.indexOf('app.whenReady()'));
+  assert.ok(ready.indexOf('guardSession(session.defaultSession)') >= 0);
+  assert.ok(ready.indexOf('guardSession(') < ready.indexOf('createMainWindow('));
+  assert.ok(ready.indexOf('registerIpc(') < ready.indexOf('createMainWindow('));
 });

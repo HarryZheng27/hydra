@@ -1,4 +1,5 @@
 import { IPC_TRANSPORT, parseCall, type Channel, type Payload, type Result } from '../shared/ipc';
+import { APP_HOST, APP_SCHEME } from './security';
 
 export type Handlers = { [C in Channel]: (payload: Payload<C>) => Result<C> | Promise<Result<C>> };
 
@@ -6,11 +7,10 @@ export type Handlers = { [C in Channel]: (payload: Payload<C>) => Result<C> | Pr
 export interface CallSender { senderFrame?: { url: string } | null }
 
 /** Only the app's own pages, served from app://hydra/, may call main. */
-export const APP_ORIGIN = 'app://hydra';
 export function trustedSender(event: CallSender): boolean {
   const url = event.senderFrame?.url;
   if (!url) return false;
-  try { const parsed = new URL(url); return parsed.protocol === 'app:' && parsed.host === 'hydra'; } catch { return false; }
+  try { const parsed = new URL(url); return parsed.protocol === `${APP_SCHEME}:` && parsed.host === APP_HOST; } catch { return false; }
 }
 
 /**
