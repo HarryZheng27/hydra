@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { gitBytes } from '../git';
 import { cmdUnsafe, isWindowsShim, runProbe } from '../process';
-import { pluginIdForm } from '../confine';
+import { claudeAiSyncOff, pluginIdForm } from '../confine';
 import { findProvider } from '../providers';
 import { extractFirstJsonObject } from '../plans';
 import { plannerResultText } from '../planner';
@@ -66,9 +66,10 @@ export function reviewArguments(provider: Provider, images: readonly string[] = 
 }
 
 /** A Claude reviewer's settings file (HSEC-71): every hook off, and each of your plugins. */
-export function reviewerSettings(plugins: readonly string[]): { disableAllHooks: true; enabledPlugins?: Record<string, false> } {
+export function reviewerSettings(plugins: readonly string[]): { disableAllHooks: true; enabledPlugins?: Record<string, false> } & typeof claudeAiSyncOff {
   const ids = [...new Set(plugins)].filter(id => pluginIdForm.test(id)).sort();
-  return { disableAllHooks: true, ...(ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false] as const)) } : {}) };
+  // HSEC-71: nor your claude.ai skills, plugins or connectors (claudeAiSyncOff).
+  return { disableAllHooks: true, ...claudeAiSyncOff, ...(ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false] as const)) } : {}) };
 }
 
 export type ReviewerAvailability = { ok: true; executable: string } | { ok: false; reason: string };

@@ -126,7 +126,19 @@ export function secretTargets(env: Readonly<Record<string, string | undefined>>,
   return targets;
 }
 
-export interface ClaudeSettings { disableAllHooks?: true; permissions: { blockReadsOutsideWorkingDirectories?: true; deny: string[] }; enabledPlugins?: Record<string, false> }
+export interface ClaudeSettings {
+  disableAllHooks?: true; permissions: { blockReadsOutsideWorkingDirectories?: true; deny: string[] }; enabledPlugins?: Record<string, false>;
+  syncClaudeAiSkills?: false; syncClaudeAiPlugins?: false; disableClaudeAiConnectors?: true;
+}
+
+/**
+ * HSEC-71 (#277 follow-up): what your claude.ai account syncs into Claude Code stays out of heads and reviewers. In a
+ * `--settings` file, the two sync switches block and hide your claude.ai skills and plugins for that one run only
+ * (nothing of yours is moved or deleted), and no claude.ai connector is fetched. Every supported Claude Code (2.1.270
+ * and up) defines all three as booleans with this same `--settings` meaning, so none of them can void the file's deny
+ * rules (R1); checked in the 2.1.270 and 2.1.282 binaries, 2026-10-02.
+ */
+export const claudeAiSyncOff = Object.freeze({ syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true } as const);
 
 /**
  * A plugin id as `enabledPlugins` spells it, `name@marketplace`. Anything else is left out: one
@@ -192,7 +204,7 @@ export function headSettings(input: HeadSettingsInput): ClaudeSettings {
     ...denyPairs(secretTargets(input.env, input.platform), input.platform),
   ])];
   const plugins = [...new Set(input.userPlugins ?? [])].filter(id => pluginIdForm.test(id)).sort();
-  const settings: ClaudeSettings = { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny } };
+  const settings: ClaudeSettings = { disableAllHooks: true, ...claudeAiSyncOff, permissions: { blockReadsOutsideWorkingDirectories: true, deny } };
   if (plugins.length) settings.enabledPlugins = Object.fromEntries(plugins.map(id => [id, false] as const));
   const problems = settingsProblems(settings, { platform: input.platform, blockReads: true, readable: [input.worktree, ...input.addDirs] });
   if (problems.length) throw new Error(`Hydra couldn't build the head's permission settings: ${problems[0]}`);
@@ -239,7 +251,13 @@ export function settingsProblems(value: unknown, options: { platform: NodeJS.Pla
   const problems: string[] = [];
   const plain = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item) && Object.getPrototypeOf(item) === Object.prototype;
   if (!plain(value)) return ['the settings must be an object'];
-  for (const key of Object.keys(value)) if (key !== 'permissions' && key !== 'enabledPlugins' && key !== 'disableAllHooks') problems.push(`unknown setting "${key}"`);
+  const syncKeys = Object.keys(claudeAiSyncOff) as (keyof typeof claudeAiSyncOff)[];
+  for (const key of Object.keys(value)) if (key !== 'permissions' && key !== 'enabledPlugins' && key !== 'disableAllHooks' && !(syncKeys as string[]).includes(key)) problems.push(`unknown setting "${key}"`);
+  // A head's claude.ai skills, plugins and connectors are off; a lane keeps your own.
+  for (const key of syncKeys) {
+    if (!options.blockReads) { if (key in value) problems.push('a lane keeps your own claude.ai skills, plugins and connectors'); }
+    else if (value[key] !== claudeAiSyncOff[key]) problems.push(`a head's ${key} must be ${claudeAiSyncOff[key]}`);
+  }
   if (options.blockReads ? value.disableAllHooks !== true : 'disableAllHooks' in value) problems.push(options.blockReads ? 'a head\'s hooks must be off' : 'a lane keeps your own hooks');
   if ('enabledPlugins' in value) {
     const plugins = value.enabledPlugins;

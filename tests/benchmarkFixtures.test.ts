@@ -150,7 +150,7 @@ test('benchmark.mjs single runs Claude Code isolated like a head: user plugins o
     assert.equal(ran.code, 0, ran.stderr);
     const args = JSON.parse(await readFile(path.join(out, 'fake-agent-args.json'), 'utf8')) as string[];
     const settings = JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'));
-    assert.deepEqual(settings, { enabledPlugins: { 'helper@market': false, 'other@market': false } });
+    assert.deepEqual(settings, { syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true, enabledPlugins: { 'helper@market': false, 'other@market': false } });
     assert.ok(args.includes('--strict-mcp-config'));
     assert.deepEqual(JSON.parse(await readFile(args[args.indexOf('--mcp-config') + 1]!, 'utf8')), { mcpServers: {} });
     assert.match(args[args.indexOf('--allowedTools') + 1]!, /Bash\(npm:\*\),Bash\(node:\*\),Bash\(git:\*\)/);
