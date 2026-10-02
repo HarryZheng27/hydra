@@ -94,7 +94,7 @@ try {
     assert.match(a.inlineScript, /^(threw: TypeError|undefined)$/);
     assert.match(a.evalBlocked, /^threw: EvalError/);
     assert.match(a.remoteFetch, /^failed/);
-    assert.match(a.mainSessionRemote, /^failed/);
+    assert.match(a.mainSessionRemote, /ERR_BLOCKED_BY_CLIENT/);
     const violations = a.consoleAtLoad.filter(m => /Content Security Policy|Trusted ?Type|TrustedHTML|TrustedScript/i.test(m.message));
     assert.deepEqual(violations, [], 'the app broke its own CSP while loading');
   });
@@ -105,6 +105,8 @@ try {
     assert.deepEqual(a.opened, ['https://example.com/accepted']);
     assert.equal(a.windowsAfterOpen, 1);
     assert.equal(a.permission, 'denied');
+    assert.deepEqual(a.downloads, [{ prevented: true, name: 'invoice.bat' }], 'the download was not refused');
+    assert.equal(a.saveDialogs, 0);
   });
   check('main refuses an unknown IPC channel, an unknown call and an invalid payload', () => {
     assert.equal(a.ipc.unknownTransport.ok, false);
@@ -115,6 +117,8 @@ try {
     assert.match(a.ipc.badPayload.error, /Refused: Invalid payload/);
     assert.equal(a.ipc.extraField.ok, false);
     assert.equal(a.ipc.valid.ok, true);
+    assert.equal(a.ipc.foreignSender.ok, false);
+    assert.match(a.ipc.foreignSender.error, /did not come from the app/);
   });
   check('a second launch focuses the first and exits', () => {
     assert.equal(a.hasLock, true);

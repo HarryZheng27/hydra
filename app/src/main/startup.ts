@@ -17,7 +17,7 @@ function confirmExternal(contents: WebContents, url: string): void {
       return response === 0;
     },
     open: link => shell.openExternal(link),
-  });
+  }, contents);
 }
 
 /** Runs after identity.ts has set the app's paths (main.ts). */
@@ -40,6 +40,8 @@ export function start(): void {
   Menu.setApplicationMenu(null);
   // Every webContents, the main window's and any other, gets the navigation, window-open and webview guards.
   app.on('web-contents-created', (_event, contents) => guardContents(contents, url => confirmExternal(contents, url)));
+  // Every session gets the permission, request and download guards, including any partition added later.
+  app.on('session-created', created => guardSession(created));
 
   const distDir = __dirname;
   const handlers: Handlers = {

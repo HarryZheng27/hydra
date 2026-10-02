@@ -58,12 +58,12 @@ test('every app:// response, including errors, carries the CSP', async () => {
   assert.match(CONTENT_SECURITY_POLICY, /require-trusted-types-for 'script'/);
 });
 
-test('navigation, redirects and webviews are blocked; window.open is denied and only http(s) goes to the confirm', () => {
+test('navigation by any frame, redirects and webviews are blocked; window.open is denied and only http(s) goes to the confirm', () => {
   const listeners: Record<string, (event: { preventDefault(): void }, url?: string) => void> = {};
   let openHandler: ((details: { url: string }) => { action: 'deny' }) | undefined;
   const confirmed: string[] = [];
   guardContents({ on: (name: string, listener: never) => { listeners[name] = listener; }, setWindowOpenHandler: (handler: typeof openHandler) => { openHandler = handler; } } as never, url => confirmed.push(url));
-  for (const name of ['will-navigate', 'will-redirect', 'will-attach-webview']) {
+  for (const name of ['will-navigate', 'will-frame-navigate', 'will-redirect', 'will-attach-webview']) {
     let prevented = false;
     listeners[name]!({ preventDefault: () => { prevented = true; } }, 'https://example.com/');
     assert.equal(prevented, true, name);
@@ -84,13 +84,34 @@ test('an external link opens only after the user confirms it', async () => {
   assert.deepEqual(asked, ['https://example.com/no', 'https://example.com/yes']);
   assert.deepEqual(opened, ['https://example.com/yes']);
   assert.equal(externalLink('HTTPS://Example.com'), 'https://example.com/');
+  assert.equal(externalLink(`https://example.com/${'a'.repeat(3000)}`), undefined, 'an overlong link is dropped');
 });
 
-test('the session refuses every permission and every request off the app scheme', () => {
+test('one confirm at a time per window: links a page sends while one is open are dropped', async () => {
+  let release: (answer: boolean) => void = () => undefined;
+  const asked: string[] = [];
+  const window = {};
+  const deps = { ask: (url: string) => { asked.push(url); return new Promise<boolean>(resolve => { release = resolve; }); }, open: async () => undefined };
+  const first = confirmAndOpen('https://example.com/1', deps, window);
+  assert.equal(await confirmAndOpen('https://example.com/2', deps, window), false);
+  assert.equal(await confirmAndOpen('https://example.com/3', deps, window), false);
+  release(false);
+  assert.equal(await first, false);
+  const again = confirmAndOpen('https://example.com/4', deps, window);
+  release(true);
+  assert.equal(await again, true);
+  assert.deepEqual(asked, ['https://example.com/1', 'https://example.com/4']);
+});
+
+test('the session refuses every permission, every download and every request off the app scheme', () => {
   let request: ((contents: unknown, permission: string, callback: (granted: boolean) => void) => void) | undefined;
   let check: (() => boolean) | undefined;
   let before: ((details: { url: string }, callback: (response: { cancel: boolean }) => void) => void) | undefined;
-  guardSession({ setPermissionRequestHandler: h => { request = h; }, setPermissionCheckHandler: h => { check = h; }, webRequest: { onBeforeRequest: l => { before = l; } } });
+  let download: ((event: { preventDefault(): void }) => void) | undefined;
+  guardSession({ setPermissionRequestHandler: h => { request = h; }, setPermissionCheckHandler: h => { check = h; }, webRequest: { onBeforeRequest: l => { before = l; } }, on: (_name, l) => { download = l; } });
+  let downloadPrevented = false;
+  download!({ preventDefault: () => { downloadPrevented = true; } });
+  assert.equal(downloadPrevented, true, 'downloads are refused');
   for (const permission of ['media', 'notifications', 'clipboard-read', 'openExternal', 'geolocation']) request!(undefined, permission, granted => assert.equal(granted, false, permission));
   assert.equal(check!(), false);
   const cancelled = (url: string) => { let result: boolean | undefined; before!({ url }, response => { result = response.cancel; }); return result; };
@@ -102,6 +123,7 @@ test('the session refuses every permission and every request off the app scheme'
 test('startup guards every webContents and the session before any window opens', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'startup.ts'), 'utf8');
   assert.match(source, /app\.on\('web-contents-created', \(_event, contents\) => guardContents\(/);
+  assert.match(source, /app\.on\('session-created', created => guardSession\(created\)\)/);
   const ready = source.slice(source.indexOf('app.whenReady()'));
   assert.ok(ready.indexOf('guardSession(session.defaultSession)') >= 0);
   assert.ok(ready.indexOf('guardSession(') < ready.indexOf('createMainWindow('));

@@ -29,6 +29,9 @@ let confirmAnswer = 1; // Cancel
 electron.dialog.showMessageBox = async (...args) => { const options = args.find(a => a && typeof a === 'object' && 'buttons' in a); report.confirms.push(options.detail); write(); return { response: confirmAnswer, checkboxChecked: false }; };
 electron.dialog.showMessageBoxSync = () => { report.confirms.push('sync'); return 1; };
 electron.shell.openExternal = async url => { report.opened.push(url); write(); };
+report.saveDialogs = 0;
+electron.dialog.showSaveDialog = async () => { report.saveDialogs++; write(); return { canceled: true }; };
+electron.dialog.showSaveDialogSync = () => { report.saveDialogs++; write(); return undefined; };
 
 app.on('browser-window-created', (_event, win) => {
   event('window-created');
@@ -66,6 +69,11 @@ async function ipcProbe() {
     valid: await call(`window.probe.invoke('hydra:call', { channel: 'app.info', payload: null })`),
   };
   probe.destroy();
+  // The same raw invoke from a page that isn't on app://hydra/.
+  const foreign = new BrowserWindow({ show: false, webPreferences: { preload: path.join(__dirname, 'probe-preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
+  await foreign.loadURL('data:text/html,<p>probe</p>').catch(() => undefined);
+  result.foreignSender = await foreign.webContents.executeJavaScript(`window.probe.invoke('hydra:call', { channel: 'app.info', payload: null }).then(v => ({ ok: true }), e => ({ ok: false, error: String(e && e.message || e) }))`);
+  foreign.destroy();
   return result;
 }
 
@@ -113,6 +121,10 @@ if (role === 'first') {
     await settle(() => wc.executeJavaScript(`window.open('https://example.com/accepted'); window.open('file:///C:/Windows/win.ini'); window.open('javascript:alert(1)'); 1`));
     report.windowsAfterOpen = BrowserWindow.getAllWindows().length;
     report.permission = await wc.executeJavaScript(`Notification.requestPermission()`).catch(e => `threw: ${e.message}`);
+    // A page-made download is refused before any Save As dialog.
+    report.downloads = [];
+    session.defaultSession.on('will-download', (event, item) => report.downloads.push({ prevented: event.defaultPrevented, name: item.getFilename() }));
+    await settle(() => wc.executeJavaScript(`(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['echo hi'])); a.download = 'invoice.bat'; document.body.appendChild(a); a.click(); a.remove(); return 1; })()`), 800);
 
     report.ipc = await ipcProbe();
     event('ready');

@@ -72,13 +72,16 @@ export async function serveAppRequest(root: string, requestUrl: string): Promise
   return new Response(new Uint8Array(body), { status: 200, headers: { ...baseHeaders, 'content-type': contentTypes[path.extname(file).toLowerCase()] ?? 'application/octet-stream' } });
 }
 
+/** Longer links are dropped, so a confirm can't be stretched past the point where its target shows. */
+export const MAX_LINK = 2048;
+
 /** An http(s) link the user may open in their browser, normalized, or undefined for anything else. */
 export function externalLink(raw: string): string | undefined {
   let url: URL;
   try { url = new URL(raw); } catch { return undefined; }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
   if (url.username || url.password) return undefined;
-  return url.href;
+  return url.href.length <= MAX_LINK ? url.href : undefined;
 }
 
 /** Network requests the app's sessions may make: only the app's own scheme, and in-memory data. */
@@ -91,17 +94,18 @@ export function requestAllowed(raw: string): boolean {
 
 /** The parts of a webContents the guards use. */
 export interface GuardedContents {
-  on(event: 'will-navigate' | 'will-redirect', listener: (event: { preventDefault(): void }, url: string) => void): unknown;
+  on(event: 'will-navigate' | 'will-frame-navigate' | 'will-redirect', listener: (event: { preventDefault(): void }, url: string) => void): unknown;
   on(event: 'will-attach-webview', listener: (event: { preventDefault(): void }) => void): unknown;
   setWindowOpenHandler(handler: (details: { url: string }) => { action: 'deny' }): void;
 }
 
 /**
- * Guards every webContents the app creates: no navigation away from the page, no redirects, no <webview>, and no
- * new windows. An http(s) link a page tries to open goes to `confirmExternal`, which asks before the browser opens it.
+ * Guards every webContents the app creates: no navigation away from the page by any frame (subframes are refused
+ * by the CSP too), no redirects, no <webview>, and no new windows. An http(s) link a page tries to open goes to `confirmExternal`, which asks before the browser opens it.
  */
 export function guardContents(contents: GuardedContents, confirmExternal: (url: string) => void): void {
   contents.on('will-navigate', event => event.preventDefault());
+  contents.on('will-frame-navigate', event => event.preventDefault());
   contents.on('will-redirect', event => event.preventDefault());
   contents.on('will-attach-webview', event => event.preventDefault());
   contents.setWindowOpenHandler(({ url }) => {
@@ -116,10 +120,15 @@ export interface GuardedSession {
   setPermissionRequestHandler(handler: (contents: unknown, permission: string, callback: (granted: boolean) => void) => void): void;
   setPermissionCheckHandler(handler: () => boolean): void;
   webRequest: { onBeforeRequest(listener: (details: { url: string }, callback: (response: { cancel: boolean }) => void) => void): void };
+  on(event: 'will-download', listener: (event: { preventDefault(): void }) => void): unknown;
 }
 
-/** Refuses every permission prompt (camera, notifications, clipboard, ...) and every request off the app's scheme. */
+/**
+ * Refuses every permission prompt (camera, notifications, clipboard, ...), every request off the app's scheme, and
+ * every download, so a page can't put a file of its choosing in front of a Save As dialog.
+ */
 export function guardSession(session: GuardedSession): void {
+  session.on('will-download', event => event.preventDefault());
   session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.setPermissionCheckHandler(() => false);
   session.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !requestAllowed(details.url) }));
@@ -130,10 +139,18 @@ export interface ConfirmDeps {
   open(url: string): Promise<void>;
 }
 
-/** Opens an http(s) link in the user's browser only after they confirm it. Returns whether it was opened. */
-export async function confirmAndOpen(raw: string, deps: ConfirmDeps): Promise<boolean> {
+/**
+ * Opens an http(s) link in the user's browser only after they confirm it. Returns whether it was opened. While one
+ * confirm is open for a window (`key`), further links from it are dropped, so a page can't stack up dialogs.
+ */
+const pendingConfirms = new Set<unknown>();
+export async function confirmAndOpen(raw: string, deps: ConfirmDeps, key: unknown = deps): Promise<boolean> {
   const link = externalLink(raw);
-  if (!link || !(await deps.ask(link))) return false;
+  if (!link || pendingConfirms.has(key)) return false;
+  pendingConfirms.add(key);
+  try {
+    if (!(await deps.ask(link))) return false;
+  } finally { pendingConfirms.delete(key); }
   await deps.open(link);
   return true;
 }

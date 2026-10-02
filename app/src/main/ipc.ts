@@ -4,12 +4,12 @@ import { APP_HOST, APP_SCHEME } from './security';
 export type Handlers = { [C in Channel]: (payload: Payload<C>) => Result<C> | Promise<Result<C>> };
 
 /** The parts of an IpcMainInvokeEvent the check reads. */
-export interface CallSender { senderFrame?: { url: string } | null }
+export interface CallSender { senderFrame?: { url: string } | null; sender?: { mainFrame: unknown } }
 
-/** Only the app's own pages, served from app://hydra/, may call main. */
+/** Only the main frame of the app's own pages, served from app://hydra/, may call main; never a subframe. */
 export function trustedSender(event: CallSender): boolean {
   const url = event.senderFrame?.url;
-  if (!url) return false;
+  if (!url || !event.sender || event.senderFrame !== event.sender.mainFrame) return false;
   try { const parsed = new URL(url); return parsed.protocol === `${APP_SCHEME}:` && parsed.host === APP_HOST; } catch { return false; }
 }
 
