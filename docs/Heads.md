@@ -185,7 +185,7 @@ No agent grades its own work. When a head calls `hydra_done`, its changes pass t
 **How results are handled:**
 - **Order:** gates run as command, then screenshots, then review. Once a required gate fails, the rest are skipped.
 - **Not blocking:** `required: false` gates are reported but never block.
-- **Not run:** a reviewer or browser that can't run (not installed, rate-limited, timed out) marks its gate **not run**. That never fails the head.
+- **Not run:** a reviewer or browser that can't run (not installed, rate-limited, timed out) marks its gate **not run**. That never fails the head. A reviewer that crashed (Codex exiting with code 1, say) or replied with something Hydra couldn't read is tried once more first, and the gate's summary says so; a timeout or a usage limit isn't retried.
 - **Failures:** they go back to the head with the output and findings, up to `maxAttempts`.
 
 **Seeing the results:** gate chips (**✓ unit · ✓ ui · ✗ review**) sit on the head's card. **View evidence** in its menu opens the output, findings (linked to file:line) and screenshots.

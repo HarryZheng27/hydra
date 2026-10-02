@@ -126,6 +126,7 @@ export function redactGateResult(result: JobCheckResult, redact: (text: string) 
     ...result,
     outputTail: redact(result.outputTail),
     ...(result.summary !== undefined ? { summary: redact(result.summary) } : {}),
+    ...(result.retriedAfter !== undefined ? { retriedAfter: redact(result.retriedAfter) } : {}),
     ...(result.findings ? { findings: result.findings.map(finding => ({ ...finding, note: redact(finding.note) })) } : {}),
   };
 }
