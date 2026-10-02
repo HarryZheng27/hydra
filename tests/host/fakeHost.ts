@@ -1,4 +1,4 @@
-import type { Disposable, Host, HostPaths, HostSettings, HostState, NoticeLevel, PickItem } from '../../src/host/host';
+import type { Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, NoticeLevel, PickItem } from '../../src/host/host';
 
 /**
  * A Host for tests (docs/internal/hydra-app/G2-host-split.md): no editor, no window. It records what the controller
@@ -25,6 +25,15 @@ export class FakeHost implements Host {
   readonly machineValues = new Map<string, unknown>();
   readonly settings: HostSettings;
   readonly paths: HostPaths;
+  /** The window's folders (paths), whether they're trusted, and the rest of what a window is, for lifecycle tests. */
+  folderPaths: string[] = [];
+  isTrusted = true;
+  development = true;
+  closed = 0;
+  readonly kept: Disposable[] = [];
+  readonly watchers: { folder: string; pattern: string; listener: () => void; disposed: boolean }[] = [];
+  readonly extensions = new Map<string, { path: string; version?: string }>();
+  readonly installed: ({ id: string } | { file: string })[] = [];
   private readonly listeners = new Set<(affects: (key: string) => boolean) => void>();
   constructor(paths: HostPaths, settings: Record<string, unknown> = {}) {
     this.paths = paths;
@@ -61,5 +70,19 @@ export class FakeHost implements Host {
   }
   async openFile(file: string, options: { preview: boolean }): Promise<void> { this.opened.push({ file, preview: options.preview }); }
   async openUrl(url: string): Promise<void> { this.opened.push({ url }); }
+  folders(): HostFolder[] { return this.folderPaths.map(folder => ({ path: folder, uri: `file:///${folder.split('\\').join('/')}` })); }
+  trusted(): boolean { return this.isTrusted; }
+  windowProcessIds(): number[] { return [process.pid]; }
+  watch(folder: string, pattern: string, listener: () => void): Disposable {
+    const watcher = { folder, pattern, listener, disposed: false };
+    this.watchers.push(watcher);
+    return { dispose: () => { watcher.disposed = true; } };
+  }
+  keep(disposable: Disposable): void { this.kept.push(disposable); }
+  async closeWindow(): Promise<void> { this.closed++; }
+  extension(id: string): { path: string; version?: string } | undefined { return this.extensions.get(id); }
+  async installExtension(source: { id: string } | { file: string }): Promise<void> { this.installed.push(source); }
+  /** Disposes everything kept, as the host does when Hydra shuts down. */
+  disposeKept(): void { for (const item of this.kept.splice(0)) item.dispose(); }
   async postToUi(message: unknown): Promise<void> { this.posted.push(structuredClone(message)); }
 }

@@ -1,33 +1,7 @@
 import * as vscode from 'vscode';
 
-/**
- * "Connect Claude Code and Codex to Hydra" (docs/internal/Official_Extensions_Plan.md,
- * Phase 5), shared by onboarding and Settings. Modelled on Zed's external-agent
- * setup: one row per agent with its install state and one action, and a plain
- * note that each agent keeps its own sign-in and billing.
- */
-export interface ProviderConnectionView {
-  provider: 'claude' | 'codex';
-  name: string;
-  extensionInstalled: boolean;
-  /** The installed extension's own version (vscode.extensions...packageJSON.version), when installed. */
-  extensionVersion?: string;
-  connected: boolean;
-  current: boolean;
-  /** A development window never rewrites the user-level connection, so "updating" would never come true there. */
-  development?: boolean;
-  error?: string;
-  /** Claude only, when hydra.claudeMem.enabled is on: claude-mem (and the Bun it needs) is set up. Undefined when the setting is off. */
-  memory?: 'ready' | 'missing';
-  /** Claude only: hydra.claudeMem.enabled, the opt-in setting behind claude-mem. */
-  memoryEnabled?: boolean;
-  /** Claude only (Settings → Connectors row text, from claudeMemRowText): what to say about claude-mem right now. */
-  memoryText?: string;
-  /** Claude only (Settings → Connectors): whether the Repair button belongs on screen. */
-  memoryRepair?: boolean;
-  /** From hydra.getAccountSetupState; 'unchecked' until the user opens Accounts. */
-  signedIn?: 'unchecked' | 'working' | 'pending' | 'signed-in' | 'signed-out' | 'other' | 'cancelled' | 'error';
-}
+import type { ProviderConnectionView } from './core/model';
+export type { ProviderConnectionView };
 
 /** Handle one connections message from a webview. Returns true when the message was ours. */
 export async function handleConnectionsMessage(message: Record<string, unknown>, post: (value: unknown) => Thenable<boolean>): Promise<boolean> {

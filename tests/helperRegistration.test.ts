@@ -195,7 +195,8 @@ test('one Connect button installs and connects; claude-mem is opt-in, not a defa
   assert.doesNotMatch(view, /data-install|Install extension/);
   assert.match(view, /data-connect=/); assert.match(view, /claude-mem/);
   assert.doesNotMatch(view, /remembers across sessions with claude-mem/, 'Connect no longer claims to always set up claude-mem');
-  const extension = await readFile('src/extension.ts', 'utf8');
+  // Connect itself lives in the controller (docs/internal/hydra-app/G2-host-split.md, milestone 4).
+  const extension = await readFile('src/host/controller.ts', 'utf8');
   assert.match(extension, /await this\.installProviderExtension\(provider\);/);
   assert.match(extension, /installWithFallback\(id,/, 'the install falls back to Open VSX (installWithFallback) whenever the gallery fails');
   assert.match(extension, /shouldSetUpClaudeMem\(/, 'Connect checks the opt-in setting before touching claude-mem');
@@ -226,7 +227,7 @@ test('turning off Memory (claude-mem) never uninstalls anything, and Repair refu
   assert.deepEqual(claudeMemRowText(true, true, notInstalled), { text: 'claude-mem is not set up yet.', repair: true });
   assert.deepEqual(claudeMemRowText(true, true, installed), { text: 'claude-mem is set up.', repair: true });
 
-  const extension = await readFile('src/extension.ts', 'utf8');
+  const extension = await readFile('src/host/controller.ts', 'utf8');
   assert.match(extension, /repairClaudeMem\(\): Promise[\s\S]{0,200}shouldSetUpClaudeMem/, 'Repair itself refuses when the setting is off, not just the button that is hidden');
   const connectors = await readFile('src/settings/pages/connectors.ts', 'utf8');
   assert.match(connectors, /data-claude-mem-toggle/);
