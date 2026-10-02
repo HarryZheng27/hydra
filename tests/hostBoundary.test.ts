@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { FakeHost } from './host/fakeHost';
@@ -40,11 +41,33 @@ test('the boundary check finds every way of importing vscode or electron', () =>
   assert.deepEqual(editorImports(`const message = "Load plugins from 'vscode'";`), []);
 });
 
-test('nothing under src/core or src/host imports vscode or electron', async () => {
-  const files = [...await sources(path.join('src', 'core')), ...await sources(path.join('src', 'host'))];
-  assert.ok(files.length > 50, 'src/core and src/host were found');
+/** The relative imports a source file makes, resolved to files (`./x` is `./x.ts`, `./x.tsx` or `./x/index.ts`). */
+function localImports(file: string, source: string): string[] {
+  const found: string[] = [];
+  for (const { fileName } of ts.preProcessFile(source, true, true).importedFiles) {
+    if (!fileName.startsWith('.')) continue;
+    const base = path.resolve(path.dirname(file), fileName);
+    const candidate = [base, `${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')].find(item => existsSync(item) && statSync(item).isFile());
+    if (candidate) found.push(candidate);
+  }
+  return found;
+}
+
+test('nothing under src/core or src/host reaches vscode or electron, directly or through what it imports', async () => {
+  const roots = [...await sources(path.join('src', 'core')), ...await sources(path.join('src', 'host'))].map(file => path.resolve(file));
+  assert.ok(roots.length > 50, 'src/core and src/host were found');
   const offenders: string[] = [];
-  for (const file of files) for (const name of editorImports(await readFile(file, 'utf8'))) offenders.push(`${file.split(path.sep).join('/')} imports ${name}`);
+  const seen = new Map<string, string[]>();
+  const queue = roots.map(file => ({ file, chain: [file] }));
+  while (queue.length) {
+    const { file, chain } = queue.shift()!;
+    if (seen.has(file)) continue;
+    seen.set(file, chain);
+    const source = await readFile(file, 'utf8');
+    const show = (item: string) => path.relative(process.cwd(), item).split(path.sep).join('/');
+    for (const name of editorImports(source)) offenders.push(`${chain.map(show).join(' -> ')} imports ${name}`);
+    for (const next of localImports(file, source)) if (!seen.has(next)) queue.push({ file: next, chain: [...chain, next] });
+  }
   assert.deepEqual(offenders, []);
 });
 

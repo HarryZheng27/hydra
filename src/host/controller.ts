@@ -1,10 +1,34 @@
+import path from 'node:path';
+import { mkdir, stat as fsStat, writeFile } from 'node:fs/promises';
 import { findProvider } from '../core/providers';
+import { OwnershipLock } from '../core/ownership';
+import { repositoryRoot } from '../core/worktrees';
+import { HelperEndpoint } from '../core/helperEndpoint';
+import { HelperService, userPlanSession, type HelperServiceOptions } from '../core/helperService';
+import { removeUserHandshake, sweepStaleHandshakes, writeUserHandshake } from '../core/userHandshake';
+import { discoveryDirectory, removeWindowRecord, writeWindowRecord } from '../core/helperDiscovery';
+import { buildProjectSummary, startProjectSummaryPublisher, type ProjectSummaryPublisher } from '../core/projectSummary';
+import { startHelperRun } from '../core/helperRunner';
+import type { HeadSandbox } from '../core/headSandbox';
+import { createLeadVerifier, createUserVerifier } from '../core/leadVerification';
+import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from '../core/claudeMem';
+import { installWithFallback } from '../core/openVsx';
+import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
+import { claudeSupportsLimitHook, limitHookGroup, limitHookState, type LimitHookGroup } from '../core/claudeLimitHook';
+import type { LimitEvent } from '../core/limitEvents';
+import { maskSecret } from '../core/mcpServers';
+import { claudeForRegistration as claudeFor } from './claudeExecutable';
+import { otherStillLimited } from '../core/limitOffer';
+import { loadGates } from '../core/gates';
+import { detectTestScript, noGatesFile, starterTestGatesFile } from '../core/starterGates';
+import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from '../core/windowClose';
+import type { PackService } from '../core/packs/service';
+import { Emitter } from './emitter';
 import { selfCheckCli } from '../core/cliSelfCheck';
 import { git } from '../core/worktrees';
-import { resolveHeadDefaults, toHeadCheckView, type JobStore } from '../core/jobs';
-import type { HelperEndpoint } from '../core/helperEndpoint';
-import type { HelperService, PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from '../core/helperService';
-import { isLaneMessage, parseMessage, type ClientMessage, type HelperJobView, type LaneClientMessage, type LanePlanJobView, type LaneView, type Provider, type Snapshot, type SnapshotRole } from '../core/model';
+import { JobStore, finalJobStates, resolveHeadDefaults, toHeadCheckView } from '../core/jobs';
+import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from '../core/helperService';
+import { isLaneMessage, parseMessage, type ClientMessage, type HelperJobView, type LaneClientMessage, type LanePlanJobView, type LaneView, type ProviderConnectionView, type Provider, type Snapshot, type SnapshotRole } from '../core/model';
 import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, createPlan, cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, maxPlanJobs, buildPlanReport, type Plan, type PlanJob, type PlanJobRunAs, type PlanReportJobDetail, PlanStore } from '../core/plans';
 import { planBrief } from '../core/planner';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart, type PlanMergeVia } from '../core/planRunner';
@@ -12,7 +36,7 @@ import { defaultIntegrationFixRounds, integrationLeadView, integrationSettled, i
 import { redactText } from '../core/redact';
 import type { StopSwitch } from '../core/stopSwitch';
 import type { AuditLog } from '../core/audit';
-import type { Host } from './host';
+import type { Disposable, Host } from './host';
 
 /** The lanes the controller drives (src/extensionLanes.ts's LanesController in the IDE). */
 export interface ControllerLanes {
@@ -27,6 +51,14 @@ export interface ControllerLanes {
   planStatesChanged(): void;
   handle(message: LaneClientMessage): Promise<void>;
   webviewReady(): void;
+  start(repository: string, storageDirectory: string): Promise<void>;
+  stop(): Promise<void>;
+  stopProcesses(): Promise<number>;
+  exists(id: string): boolean;
+  describe(you?: string): Promise<unknown>;
+  jobReady(laneId: string, note?: string): Promise<unknown>;
+  openWorktrees(): string[];
+  activeRolesChanged(): Promise<void>;
 }
 
 /** What the tree of lanes, heads and plans shows (the IDE's Hydra panel). */
@@ -48,10 +80,15 @@ export interface ControllerIde {
   showingAgents(): boolean;
   openAgents(): Promise<void>;
   tree(update: TreeUpdate): void;
-  /** Something this window's project summary counts changed. */
-  summaryChanged(): void;
-  /** A head finished: the one-time starter-gates offer for this folder. */
-  offerStarterGates(folder: string): void;
+  /** A handoff window (one piece of work handed to an official extension) runs no heads. */
+  inHandoff(): boolean;
+  /** Refreshes open Settings pages, so they show a change made elsewhere. */
+  refreshSettingsPages(pages: string[]): Promise<void>;
+  showSettings(page: string): void;
+  /** Each provider's sign-in, as the Accounts page last saw it. */
+  accounts(): Record<'claude' | 'codex', { status: NonNullable<ProviderConnectionView['signedIn']> }>;
+  /** The installed app's first run: connect the agents already on this computer. */
+  connectOnFirstRun(): Promise<void>;
   /** Shows an error to the user and republishes. */
   report(error: unknown): void;
 }
@@ -62,6 +99,13 @@ export interface ControllerOptions {
   lanes: ControllerLanes;
   stop: StopSwitch;
   audit: AuditLog;
+  packs: PackService;
+  headSandbox: HeadSandbox;
+  /** This window's own storage folder (under Hydra's storage, keyed by its folders), and the key heads group under. */
+  storageDirectory: string;
+  leadKey: string;
+  /** Tests only: stand-ins (head processes, executables, isolation) laid over the heads service's real options. */
+  helperService?: Partial<HelperServiceOptions>;
 }
 
 const describe = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -94,12 +138,44 @@ export class HydraController {
   private readonly planWaiters = new Set<() => void>();
   /** O7: the morning report (docs/Heads.md, "Unattended plans"): the ending each plan was last reported at. */
   private readonly reportedPlans = new Map<string, string>();
+  /** This window's Git repositories (canonical roots), and whether Hydra is off here (an ownership or handoff error). */
+  repositories: string[] = [];
+  disabled = false;
+  private readonly locks: OwnershipLock[] = [];
+  /** The window's discovery record lists its folders plus open lanes' worktrees. */
+  private discovery?: { port: number; folders: string[]; written: string; queue: Promise<void> };
+  /** Step D: this window's small summary, published beside its discovery record for "Hydra: Show All Projects". */
+  private projectSummary?: ProjectSummaryPublisher;
+  /**
+   * Every usage limit Hydra notices (docs/internal/Hydra_Agent_Plan.md, Phase 1): Claude chats
+   * (StopFailure hook), Codex chats (rate-limit polling) and heads. The handoff UI
+   * subscribes with `limitEvents.event(listener)`.
+   */
+  readonly limitEvents = new Emitter<LimitEvent>();
+  // ---- Gates (docs/internal/Gates_Plan.md): each provider's latest usage limit, so a review gate uses the other agent while one is limited ----
+  readonly latestLimits = new Map<Provider, LimitEvent>();
+  /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
+  packsLeadFolder?: string;
+  /** Watches your packs folder (hydra.packs.folder), so a pack added or edited there refreshes without Reload. */
+  private packsFolderWatcher?: Disposable;
   constructor(private readonly options: ControllerOptions) {
     this.host = options.host; this.ide = options.ide; this.lanes = options.lanes;
+    this.host.keep(this.limitEvents);
     const storedDismissed = this.host.state.get<string[] | undefined>(dismissedTrayKey, undefined);
     if (Array.isArray(storedDismissed)) this.dismissedTrayIds = new Set(storedDismissed.filter(id => typeof id === 'string'));
   }
 
+  private get stop(): StopSwitch { return this.options.stop; }
+  private get audit(): AuditLog { return this.options.audit; }
+  private get packs(): PackService { return this.options.packs; }
+  private get headSandbox(): HeadSandbox { return this.options.headSandbox; }
+  private get storageDirectory(): string { return this.options.storageDirectory; }
+  private get leadKey(): string { return this.options.leadKey; }
+
+  /** The claude CLI Hydra registers with (src/host/claudeExecutable.ts). */
+  private claudeForRegistration(): Promise<string | undefined> {
+    return claudeFor(this.host.settings.machine<string>('claudePath'), this.host.extension('anthropic.claude-code')?.path);
+  }
   async helperExecutable(provider: Provider): Promise<string> {
     const info = await findProvider(provider, this.host.settings.machine<string>(`${provider}Path`));
     if (!info.executable) throw new Error(`${provider === 'claude' ? 'Claude Code' : 'Codex'} CLI not found. Install it or set Hydra's ${provider} path.`);
@@ -135,10 +211,10 @@ export class HydraController {
     this.ide.tree({ heads });
     // Plan lanes: the runner moves running plans along (it also makes them done or incomplete).
     this.planRunner?.advanceSoon();
-    this.ide.summaryChanged();
+    this.projectSummary?.changed();
     this.publishSoon();
     // Step A: a head just finished — the one-time starter-gates offer, non-blocking.
-    if (this.helpers && heads.some(head => head.state === 'done')) this.ide.offerStarterGates(this.helpers.service.leadFolder);
+    if (this.helpers && heads.some(head => head.state === 'done')) void this.offerStarterGatesIfNeeded(this.helpers.service.leadFolder);
   }
   /** One trailing publish for high-frequency updates; an immediate publish() supersedes it. */
   publishSoon(): void {
@@ -214,7 +290,7 @@ export class HydraController {
     void this.broadcast({ type: 'plans', plans, planJobs: this.planJobViews() }).catch(() => undefined);
     this.ide.tree({ plans, planJobs: this.planJobViews() });
     this.lanes.planStatesChanged();
-    this.ide.summaryChanged();
+    this.projectSummary?.changed();
     this.publishSoon();
     this.wakePlanWaiters();
   }
@@ -767,5 +843,475 @@ export class HydraController {
       if (!updated) throw new Error(`No plan ${planId} in this window.`);
     });
     this.plansChanged();
+  }
+
+  // ---- The window's lifecycle: ownership, heads, discovery, connections, Stop all ----
+
+  /** Lock each canonical repository, so different workspace configurations cannot own the same repo. */
+  async acquireOwnership(): Promise<void> {
+    await this.refreshRepositories();
+    if (this.host.trusted()) {
+      for (const repository of [...this.repositories].sort()) {
+        const lock = new OwnershipLock();
+        await lock.acquire(path.join(this.host.paths.storage, 'ownership'), repository);
+        this.locks.push(lock);
+      }
+    }
+  }
+  async releaseOwnership(): Promise<void> {
+    for (const lock of this.locks) await lock.release();
+  }
+  get limitEventsDirectory(): string { return path.join(this.host.paths.storage, 'limit-events'); }
+  /** Claude's StopFailure hook: this editor's executable as Node, running dist/hydra-limit-hook.cjs into the shared events folder. */
+  limitHook(): LimitHookGroup {
+    return limitHookGroup({ executable: process.execPath, script: path.join(this.host.paths.dist, 'hydra-limit-hook.cjs'), eventsDir: this.limitEventsDirectory });
+  }
+  /** The hook, if this Claude runs exec-form hooks (2.1.139+); older ones would run it through a shell. */
+  async limitHookFor(claude: string): Promise<LimitHookGroup | undefined> {
+    const version = await runClaude(claude, ['--version']);
+    if (version.code === 0 && claudeSupportsLimitHook(version.output)) return this.limitHook();
+    this.host.log('[limits] Claude Code is older than 2.1.139; its usage-limit hook is not installed.');
+    return undefined;
+  }
+  /** How a CLI starts Hydra's stdio bridge: this editor's executable as Node, running dist/hydra-mcp.cjs. */
+  helperBridge(provider?: ConnectableProvider): { command: string; args: string[]; env: Record<string, string> } {
+    return { command: process.execPath, args: [path.join(this.host.paths.dist, 'hydra-mcp.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: path.join(this.host.paths.storage, 'helpers'), ...(provider ? { HYDRA_LEAD_PROVIDER: provider } : {}) } };
+  }
+  /** Helpers need a trusted Git folder. The first repository in the window is the lead's folder. */
+  async startHelpers(): Promise<void> {
+    if (this.disabled || this.ide.inHandoff() || !this.host.trusted() || this.helpers) return;
+    const folders = this.host.folders().map(folder => folder.path);
+    let leadFolder: string | undefined;
+    for (const folder of folders) { try { leadFolder = await repositoryRoot(folder); break; } catch { /* not a Git folder */ } }
+    if (!leadFolder) return;
+    const directory = path.join(this.storageDirectory, 'helpers');
+    const store = new JobStore(directory, undefined, undefined, () => {
+      const settings = this.host.settings;
+      return resolveHeadDefaults({
+        minutes: settings.get<number | undefined>('heads.defaultMinutes', undefined),
+        maxTurns: settings.get<number | undefined>('heads.defaultMaxTurns', undefined),
+        budgetUsd: settings.get<number | undefined>('heads.defaultBudgetUsd', undefined),
+      });
+    });
+    await store.load();
+    const leadKey = path.basename(this.storageDirectory);
+    let service: HelperService | undefined;
+    const verifyLead = createLeadVerifier(() => ({
+      // This window's extension host and its main process start the official
+      // extensions' CLIs and Hydra's terminals; helpers are refused by process.
+      allowedAncestors: new Set(this.host.windowProcessIds()),
+      deniedAncestors: service?.helperProcessIds() ?? new Set<number>(),
+    }), undefined, undefined, line => this.host.log(line));
+    const verifyUser = createUserVerifier(() => ({ deniedAncestors: service?.helperProcessIds() ?? new Set<number>() }), undefined, undefined, line => this.host.log(line));
+    const endpoint = new HelperEndpoint(async (caller, tool, args, signal) => {
+      if (!service) throw new Error('Hydra heads are still starting.');
+      // Every action is logged, whoever calls it (plan, Phase 3 security note).
+      this.host.log(`[heads] ${caller.role}${caller.jobId ? ` ${caller.jobId}` : ''}: ${tool}`);
+      return service.handle(caller, tool, args, signal);
+    }, { leadKey, laneExists: id => this.lanes.exists(id),
+      // Refusals are logged too (docs/THREAT_MODEL.md): who, what and why, never a token.
+      onRefuse: event => {
+        this.host.log(`[heads] refused ${event.status}: ${event.reason}${event.role ? ` (${event.role}${event.jobId ? ` ${event.jobId}` : ''}${event.tool ? `, ${event.tool}` : ''})` : ''}`);
+        // 5.2: a denial — every endpoint refusal.
+        this.audit.record({ kind: 'denial', what: `endpoint refused: ${event.status}`, detail: event.reason, role: event.role, jobId: event.jobId });
+      },
+      // O8a: a user token (from the handshake file) is refused from inside a head, like a lead.
+      verifyUser: async socket => {
+        const verdict = await verifyUser(socket);
+        if (!verdict.ok) this.host.log(`[heads] user connection refused: ${verdict.reason}`);
+        return verdict;
+      },
+      verifyLead: async socket => {
+      const verdict = await verifyLead(socket);
+      this.host.log(`[heads] lead connection ${verdict.ok ? 'accepted' : `refused: ${verdict.reason}`}`);
+      // 5.2: a denial — a refused lead connection.
+      if (!verdict.ok) this.audit.record({ kind: 'denial', what: 'lead connection refused', detail: verdict.reason });
+      return verdict;
+    } });
+    const port = await endpoint.start();
+    service = new HelperService({
+      store, endpoint, leadFolder, leadKey,
+      worktreeRoot: () => this.host.settings.machine<string>('worktreeRoot') || undefined,
+      startRun: startHelperRun, executable: provider => this.helperExecutable(provider),
+      bridge: this.helperBridge(), logDirectory: path.join(directory, 'logs'),
+      maxConcurrent: () => Math.max(1, Math.min(8, this.host.settings.get<number>('maxConcurrentHelpers', 3))),
+      onChange: () => this.headsChanged(), log: line => this.host.log(line),
+      lanes: { describe: you => this.lanes.describe(you), name: id => this.lanes.laneName(id),
+        // Gates plan, section 3: a lane's heads branch from the lane's HEAD.
+        worktree: id => this.lanes.state().lanes.find(lane => lane.id === id)?.worktree,
+        // Plan lanes (docs/internal/Plan_Lanes_Plan.md, decision 6): a plan lane's agent asks you to mark its job done.
+        jobReady: (laneId, note) => this.lanes.jobReady(laneId, note) },
+      // ---- Gates (docs/internal/Gates_Plan.md) ----
+      providerLimited: provider => otherStillLimited(this.latestLimits.get(provider), new Date()),
+      // ---- Packs (docs/internal/Packs_Plan.md) ----
+      gates: this.packs.gates, roles: this.packs,
+      // ---- Step 2: confining heads ----
+      sandbox: this.headSandbox, hydraStorage: this.host.paths.storage,
+      // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
+      tempDirectory: path.join(this.host.paths.storage, 't'),
+      // ---- Stop all (5.3) ----
+      stop: this.stop,
+      // ---- Audit log (5.2) ----
+      audit: event => this.audit.record(event),
+      // ---- O8a: the user role's stop and resume ----
+      control: {
+        stopAll: reason => this.stopAllAgents(reason, 'Stop all agents (from a script)'),
+        resume: () => this.resumeAgents('Resume agents (from a script)'),
+        // HSEC-72: `hydra close`.
+        activity: () => this.windowActivityNow(),
+        closeWindow: request => this.closeFromScript(request),
+      },
+      // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
+      plans: this.createPlanLeadBridge(),
+      planBoard: this.createPlanBoardBridge(),
+      // ---- O7: unattended plans (docs/Heads.md, "Unattended plans") ----
+      enforceUnattendedBudgets: () => this.enforceUnattendedBudgets(),
+      ...this.options.helperService,
+    });
+    this.host.keep(service.onLimit(event => this.limitEvents.fire(event)));
+    this.host.keep(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
+    // Plans need the same trusted repository as heads (they read it, and running one starts heads in it). Loaded
+    // before recover() (O3): a plan's head that was waiting for an answer goes back in the queue, not failed.
+    const planStore = new PlanStore(path.join(this.storageDirectory, 'plans'));
+    await planStore.load();
+    this.plans = { store: planStore, planning: new Map() };
+    await service.recover();
+    await this.lanes.start(leadFolder, this.storageDirectory).catch(error => this.host.log(`[lanes] not started: ${describe(error)}`));
+    const record = await writeWindowRecord(path.join(this.host.paths.storage, 'helpers'), { port, pid: process.pid, folders: [...folders, ...this.lanes.openWorktrees()] });
+    this.discovery = { port, folders, written: JSON.stringify(this.lanes.openWorktrees()), queue: Promise.resolve() };
+    this.helpers = { store, endpoint, service, record };
+    // ---- O8a: the user role's handshake (docs/Heads.md, "Scripts and CI") ----
+    // Hydra mints the user token here, once per window, and puts it only in the handshake file.
+    // A failure leaves scripts without Hydra, never the window: the token is revoked with it.
+    const helpersRoot = path.join(this.host.paths.storage, 'helpers');
+    await sweepStaleHandshakes(helpersRoot).catch(() => 0);
+    const userToken = endpoint.issue({ role: 'user', leadKey, leadSessionId: userPlanSession });
+    try { this.helpers.handshake = await writeUserHandshake(helpersRoot, { pid: process.pid, port, token: userToken, repository: leadFolder }); }
+    catch (error) { endpoint.revoke(userToken); this.host.log(`[heads] no handshake for scripts: ${describe(error)}`); }
+    this.startProjectSummary(record, leadFolder);
+    // Plan lanes: the runner picks up running plans; a lane job that is ready now waits for Start lane.
+    this.planRunner = this.createPlanRunner(planStore, service, leadFolder, this.leadKey);
+    await this.planRunner.advanceAll({ startup: true }).catch(error => this.host.log(`[plans] ${describe(error)}`));
+    this.ide.tree({ lanes: this.lanes.state().lanes, heads: this.headViews() ?? [], plans: planStore.list(), planJobs: this.planJobViews() });
+    this.host.log(`[heads] ready for ${leadFolder}`);
+    void this.refreshHelperConnections().then(() => this.ide.connectOnFirstRun()).catch(error => this.host.log(`[heads] first run: ${describe(error)}`));
+    // ---- Packs (docs/internal/Packs_Plan.md): the active roles for the pickers, and the notification for a ----
+    // ---- project whose packs.json lists a pack that still needs your OK on this machine. ----
+    this.packsLeadFolder = leadFolder;
+    await this.rolesChanged();
+    void this.notifyPacksIfNeeded(leadFolder);
+    this.host.watch(leadFolder, '.hydra/{packs.json,packs/**}', () => void this.rolesChanged());
+    await this.setupPacksFolderWatcher();
+  }
+  /**
+   * Your packs folder (hydra.packs.folder, default ~/.hydra/packs): watched too, so a pack you
+   * add or edit there refreshes roles, the Packs page and Settings → Gates' "From packs" without
+   * pressing Reload (docs/internal/Packs_Plan.md, "Not done"). Debounced, like the packs.json watcher above
+   * isn't (a pack folder can see several files change at once). Never creates the folder just to
+   * watch it: with no folder there yet, this simply watches nothing until Reload, addFolder or a
+   * setting change calls it again.
+   */
+  async setupPacksFolderWatcher(): Promise<void> {
+    this.packsFolderWatcher?.dispose();
+    this.packsFolderWatcher = undefined;
+    const folder = this.packs.places().user;
+    if (!folder) return;
+    const found = await fsStat(folder).then(info => info.isDirectory(), () => false);
+    if (!found) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const debounced = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = undefined; void this.rolesChanged(); }, 500);
+    };
+    this.packsFolderWatcher = this.host.watch(folder, '**', debounced);
+  }
+  /** The folder `hydra.packs.*` commands act on: the one given, else this window's lead folder. */
+  async packsFolder(folder?: unknown): Promise<string> {
+    if (typeof folder === 'string' && folder) {
+      // Any extension can run these commands, so a folder must be this window's lead or one of its
+      // workspace folders: never a place to write .hydra/packs.json that the user hasn't opened.
+      const key = (value: string) => { const resolved = path.resolve(value); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
+      const open = [this.packsLeadFolder, ...this.host.folders().map(item => item.path)].filter((item): item is string => !!item);
+      if (!open.some(item => key(item) === key(folder))) throw new Error('Packs can only be changed for a folder open in this window.');
+      return folder;
+    }
+    if (this.packsLeadFolder) return this.packsLeadFolder;
+    throw new Error('Hydra packs are not ready in this window yet: open a project folder (a Git repository) first.');
+  }
+  /** Re-read the active roles (Snapshot.roles) and publish, so every picker sees a pack change at once. */
+  async rolesChanged(): Promise<void> {
+    if (!this.packsLeadFolder) { this.roles = []; return; }
+    try {
+      const roles = await this.packs.roles(this.packsLeadFolder);
+      this.roles = roles.map(role => ({ ref: role.ref, pack: role.pack, packTitle: role.packTitle, id: role.id, title: role.title, description: role.description, provider: role.provider }));
+    } catch (error) { this.roles = []; this.host.log(`[packs] roles: ${describe(error)}`); }
+    this.ide.tree({ roles: this.roles });
+    // A running lane whose role just went away (or came back) hears about it now, not only at its next launch.
+    await this.lanes.activeRolesChanged().catch(error => this.host.log(`[lanes] active roles: ${describe(error)}`));
+    // An open Settings → Packs and Settings → Gates follow too: a pack added to your packs folder, or a
+    // hand-edited packs.json, shows there without pressing Reload.
+    await this.ide.refreshSettingsPages(['packs', 'gates']).catch(() => undefined);
+    await this.publish();
+  }
+  /**
+   * "This project uses the Coding pack. Nothing from it runs until you review
+   * it." (docs/internal/Packs_Plan.md, "Notification"): once per window per project,
+   * never in a test run.
+   */
+  private async notifyPacksIfNeeded(folder: string): Promise<void> {
+    if (process.env.HYDRA_TEST_REPOSITORY) return;
+    try {
+      const { packs } = await this.packs.state(folder);
+      const needsOk = packs.find(pack => pack.state === 'needsOk');
+      if (!needsOk) return;
+      const key = 'hydra.packs.notified.v1';
+      const notified = new Set(this.host.state.get<string[]>(key, []));
+      if (notified.has(needsOk.id)) return;
+      await this.host.state.update(key, [...notified, needsOk.id]);
+      const pick = await this.host.notify('info', `This project uses the ${needsOk.title} pack. Nothing from it runs until you review it.`, 'Review', 'Not now');
+      if (pick === 'Review') this.ide.showSettings('packs');
+    } catch { /* packs aren't available in this window; say nothing */ }
+  }
+  /**
+   * Starter gates (Step A): once per project per window, when it
+   * has no .hydra/gates.json at all, from the first lane merge or head acceptance in it. Never
+   * blocks: heads are unattended, and a lane merge has already happened by the time this runs.
+   */
+  async offerStarterGatesIfNeeded(folder: string): Promise<void> {
+    if (process.env.HYDRA_TEST_REPOSITORY) return;
+    try {
+      const config = await (this.packs.gates ?? loadGates)(folder);
+      if (config.source !== 'none') return;
+      const key = 'hydra.starterGates.asked.v1';
+      const asked = new Set(this.host.state.get<string[]>(key, []));
+      if (asked.has(folder)) return;
+      await this.host.state.update(key, [...asked, folder]);
+      const hasTest = await detectTestScript(folder);
+      const pick = await this.host.notify('info', 
+        'This project has no gates yet: nothing independently checks a head\'s work before it\'s accepted, or a lane before it merges.',
+        hasTest ? 'Add a test gate (npm test)' : 'Add a test gate', 'No gates for this project', 'Not now',
+      );
+      if (!pick || pick === 'Not now') return;
+      const file = path.join(folder, '.hydra', 'gates.json');
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, pick.startsWith('Add a test gate') ? starterTestGatesFile() : noGatesFile(), 'utf8');
+      await this.ide.refreshSettingsPages(['gates']).catch(() => undefined);
+    } catch { /* gates aren't available in this window; say nothing, and never block acceptance or the merge */ }
+  }
+  // ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md). The editor side is LanesController (src/extensionLanes.ts). ----
+  /** Unfinished heads started from a lane. */
+  // ---- Step D: a read-only view across projects ----
+  /**
+   * (Re)starts this window's summary publisher, keyed by the discovery record's own file name
+   * (so both files sit beside each other under the same id). Called once at startup and again
+   * whenever the record's id changes (its folders changed, so its hash did too); the old
+   * publisher's file is removed by its own dispose() before the new one starts.
+   */
+  startProjectSummary(record: string, folder: string): void {
+    const previous = this.projectSummary;
+    const id = path.basename(record, '.json');
+    const dir = discoveryDirectory(path.join(this.host.paths.storage, 'helpers'));
+    this.projectSummary = startProjectSummaryPublisher({
+      dir, id, pid: process.pid,
+      build: () => {
+        const heads = this.headViews() ?? [];
+        const lanes = this.lanes.state().lanes;
+        const providers = [...new Set([...heads.map(head => head.provider), ...lanes.map(lane => lane.provider)])];
+        return buildProjectSummary({ pid: process.pid, folder, heads, lanes, plans: this.plans?.store.list() ?? [], planJobs: this.planJobViews(), providers });
+      },
+      onError: error => this.host.log(`[projects] summary not written: ${describe(error)}`),
+    });
+    void previous?.dispose().catch(() => undefined);
+  }
+  laneHeads(laneId: string): number {
+    return this.helpers?.service.list().filter(job => job.lead?.lane === laneId && !finalJobStates.has(job.state)).length ?? 0;
+  }
+  /**
+   * Rewrite the discovery record when the open lanes' worktrees change, so a
+   * lane's bridge finds this window from inside its worktree. The old record goes.
+   */
+  laneFoldersChanged(): void {
+    this.ide.tree({ lanes: this.lanes.state().lanes });
+    // Plan lanes: a lane merged, marked, closed or started may move its plan along.
+    this.planRunner?.advanceSoon();
+    this.projectSummary?.changed();
+    const discovery = this.discovery;
+    if (!discovery) return;
+    const worktrees = this.lanes.openWorktrees(), key = JSON.stringify(worktrees);
+    if (key === discovery.written) return;
+    discovery.written = key;
+    discovery.queue = discovery.queue.then(async () => {
+      const helpers = this.helpers;
+      if (!helpers || this.discovery !== discovery) return;
+      const next = await writeWindowRecord(path.join(this.host.paths.storage, 'helpers'), { port: discovery.port, pid: process.pid, folders: [...discovery.folders, ...worktrees] });
+      // The record's file name (the summary's id) is a hash of its folders: a new one means a new id.
+      if (next !== helpers.record) { await removeWindowRecord(helpers.record).catch(() => undefined); helpers.record = next; this.startProjectSummary(next, helpers.service.leadFolder); }
+    }).catch(error => this.host.log(`[lanes] discovery record not updated: ${describe(error)}`));
+  }
+  // ---- Connecting Claude Code and Codex to Hydra (plan, Phase 5) ----
+  helperServerSpec(provider: ConnectableProvider): HelperServerSpec { const bridge = this.helperBridge(provider); return { command: bridge.command, args: bridge.args, env: bridge.env }; }
+  /** Claude's own CLI does the registration: the configured or PATH claude, else the extension's bundled one. */
+  async helperConnections(): Promise<ProviderConnectionView[]> {
+    const paths = providerPaths();
+    const [claude, codex, memory] = await Promise.all([claudeStatus(paths, this.helperServerSpec('claude')), codexStatus(paths.codexConfig, this.helperServerSpec('codex')), claudeMemStatus()]);
+    const accounts = this.ide.accounts();
+    const claudeExtension = this.host.extension('anthropic.claude-code');
+    const codexExtension = this.host.extension('openai.chatgpt');
+    const development = this.host.development;
+    const memoryEnabled = (this.host.settings.machine<boolean>('claudeMem.enabled') ?? false);
+    const memoryRow = claudeMemRowText(memoryEnabled, claude.connected && claude.current, memory);
+    return [
+      { ...claude, name: 'Claude Code', extensionInstalled: !!claudeExtension, extensionVersion: claudeExtension?.version, memory: memoryEnabled ? (memory.plugin && memory.bun && memory.dependencies ? 'ready' : 'missing') : undefined, memoryEnabled, memoryText: memoryRow.text, memoryRepair: memoryRow.repair, signedIn: accounts.claude.status, ...(development ? { development } : {}) },
+      { ...codex, name: 'Codex', extensionInstalled: !!codexExtension, extensionVersion: codexExtension?.version, signedIn: accounts.codex.status, ...(development ? { development } : {}) },
+    ];
+  }
+  /** "What Hydra wrote" (Settings, Connectors): the exact user-level entries read back off disk, secrets masked. */
+  async helperWrittenEntries(): Promise<WrittenEntries> {
+    return helperWrittenEntries(providerPaths(), maskSecret);
+  }
+  /** Re-run claude-mem's setup idempotently: the Repair button, and reused by Connect. Both are gated on the opt-in setting. */
+  async repairClaudeMem(): Promise<{ status: Awaited<ReturnType<typeof claudeMemStatus>>; installed: string[] }> {
+    if (!shouldSetUpClaudeMem((this.host.settings.machine<boolean>('claudeMem.enabled') ?? false))) throw new Error('Turn on Memory (claude-mem) in Settings → Connectors first.');
+    const claude = await this.claudeForRegistration();
+    if (!claude) throw new Error('Install the Claude Code extension or CLI first.');
+    return setupClaudeMem(claude);
+  }
+  /** Install an official extension from the gallery, or straight from Open VSX when the gallery can't (installWithFallback). */
+  async installProviderExtension(provider: ConnectableProvider): Promise<void> {
+    if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown provider.');
+    const id = provider === 'claude' ? 'anthropic.claude-code' : 'openai.chatgpt';
+    if (this.host.extension(id)) return;
+    const via = await installWithFallback(id,
+      extension => this.host.installExtension({ id: extension }),
+      file => this.host.installExtension({ file }),
+      undefined, line => this.host.log(line));
+    this.host.log(`[heads] installed ${id} from ${via === 'gallery' ? 'the extension gallery' : 'Open VSX'}`);
+  }
+  /**
+   * One Connect: install the official extension if it's missing, connect it to
+   * Hydra, and for Claude set up claude-mem too, but only when the user turned on
+   * Memory (claude-mem) in Settings → Connectors; off by default, so a plain
+   * Connect never installs Bun or claude-mem. A claude-mem problem doesn't undo
+   * the connection; it's reported and Connect can be pressed again.
+   */
+  async connectHelpers(provider: ConnectableProvider): Promise<string | undefined> {
+    await this.installProviderExtension(provider);
+    const paths = providerPaths(), spec = this.helperServerSpec(provider);
+    if (provider === 'codex') await connectCodex(paths.codexConfig, spec);
+    else if (provider === 'claude') {
+      const claude = await this.claudeForRegistration();
+      if (!claude) throw new Error('Install the Claude Code extension or CLI first; Hydra connects through it.');
+      await connectClaude(claude, paths, spec, await this.limitHookFor(claude));
+      this.host.log('[heads] connected claude to Hydra');
+      if (!shouldSetUpClaudeMem((this.host.settings.machine<boolean>('claudeMem.enabled') ?? false))) return undefined;
+      try {
+        const memory = await setupClaudeMem(claude);
+        if (memory.installed.length) this.host.log(`[heads] set up ${memory.installed.join(' and ')} for claude-mem`);
+        return undefined;
+      } catch (error) { this.host.log(`[heads] claude-mem setup failed: ${describe(error)}`); return `Connected, but claude-mem could not be set up: ${describe(error)}`; }
+    } else throw new Error('Unknown provider.');
+    this.host.log(`[heads] connected ${provider} to Hydra`);
+    return undefined;
+  }
+  async disconnectHelpers(provider: ConnectableProvider): Promise<void> {
+    const paths = providerPaths();
+    if (provider === 'codex') await disconnectCodex(paths.codexConfig);
+    else if (provider === 'claude') await disconnectClaude(await this.claudeForRegistration(), paths);
+    else throw new Error('Unknown provider.');
+    this.host.log(`[heads] disconnected ${provider} from Hydra`);
+  }
+  /** A connection made by an older Hydra (a different executable path) is refreshed; nothing is connected here that the user didn't connect. */
+  private async refreshHelperConnections(): Promise<void> {
+    // A development or test window (another profile, another extension folder) would
+    // point the user's real Claude and Codex at itself; only an installed Hydra refreshes.
+    if (this.host.development) { this.host.log('[heads] development window: leaving the Claude and Codex connections as they are'); return; }
+    for (const connection of await this.helperConnections()) {
+      if (connection.connected && !connection.current && !connection.error) {
+        await this.connectHelpers(connection.provider).catch(error => this.host.log(`[heads] could not refresh ${connection.provider}: ${describe(error)}`));
+      } else if (connection.provider === 'claude' && connection.connected && !connection.error) {
+        await this.refreshLimitHook().catch(error => this.host.log(`[limits] could not refresh the Claude hook: ${describe(error)}`));
+      }
+    }
+  }
+  /**
+   * A connected Claude gets the usage-limit hook: rewritten when Hydra's path moved,
+   * added when a Connect from before the hook existed didn't write it.
+   */
+  private async refreshLimitHook(): Promise<void> {
+    const paths = providerPaths(), group = this.limitHook();
+    const state = limitHookState(await read(paths.claudeSettings), group);
+    if (state === 'current') return;
+    if (state === 'missing') { const claude = await this.claudeForRegistration(); if (!claude || !await this.limitHookFor(claude)) return; }
+    await setClaudeLimitHook(paths, group);
+    this.host.log(`[limits] ${state === 'stale' ? 'updated' : 'added'} the Claude usage-limit hook`);
+  }
+  /**
+   * Stop All Agents (5.3), shared by the command (after its confirmation) and the user role's
+   * hydra_stop_all (O8a), which asks nothing: the script is you. `what` is the audit line.
+   */
+  async stopAllAgents(reason: string, what: string): Promise<{ heads: number; lanes: number }> {
+    await this.stop.stop(reason);
+    const heads = await this.helpers?.service.stopAll(reason) ?? 0;
+    const lanes = await this.lanes.stopProcesses();
+    const parts = [heads ? `${heads} head${heads === 1 ? '' : 's'}` : '', lanes ? `${lanes} lane${lanes === 1 ? '' : 's'}` : ''].filter(Boolean);
+    // 5.2: a stop — Stop All Agents itself, distinct from each head's own "head cancelled" line.
+    this.audit.record({ kind: 'stop', what, detail: parts.join(', ') || undefined });
+    void this.host.notify('info', `Hydra stopped${parts.length ? `: ${parts.join(', ')}` : ''}. Starting heads, launching lanes and advancing plans are refused until you run "Hydra: Resume Agents".`);
+    return { heads, lanes };
+  }
+  /**
+   * HSEC-72: `hydra close` (the user role's hydra_close), after HelperService has checked that nothing is still working
+   * here or the caller forced it. Logged and audited now; the window closes closeDelayMs later, so the caller gets its reply, after checking again (unless forced) that no work started meanwhile.
+   */
+  closeFromScript(request: { force: boolean; activity: WindowActivity; reason?: string }): void {
+    const working = describeActivity(request.activity);
+    const detail = [request.reason, request.force && working ? `forced, cutting short ${working}` : ''].filter(Boolean).join('; ');
+    this.host.log(`[close] Closing this window, as a script asked (hydra close)${detail ? `: ${detail}` : ''}.`);
+    this.audit.record({ kind: 'close', what: 'Close window (from a script)', ...(detail ? { detail } : {}) });
+    scheduleClose({
+      force: request.force,
+      activity: () => this.windowActivityNow(),
+      close: () => { void this.host.closeWindow().catch(error => this.host.log(`[close] ${describe(error)}`)); },
+      aborted: refusal => {
+        // Work started between the reply and the close: the window stays open.
+        this.host.log(`[close] Not closing after all: ${refusal}`);
+        this.audit.record({ kind: 'denial', what: 'Close window (from a script) stopped: work started before it closed', detail: refusal, role: 'user' });
+      },
+    });
+  }
+  /** What in this window is still working (HSEC-72). */
+  windowActivityNow(): WindowActivity {
+    return windowActivity({ heads: this.helpers?.service.list() ?? [], lanes: this.lanes.state().lanes, plans: this.plans?.store.list() ?? [] });
+  }
+  /** Resume Agents (5.3), shared by the command and the user role's hydra_resume (O8a). */
+  async resumeAgents(what: string): Promise<void> {
+    await this.stop.resume();
+    await this.planRunner?.advanceAll().catch(error => this.host.log(`[plans] ${describe(error)}`));
+    // 5.2: a resume.
+    this.audit.record({ kind: 'resume', what });
+    void this.host.notify('info', 'Hydra resumed: heads, lanes and plans may start again.');
+  }
+  async stopHelpers(): Promise<void> {
+    this.planRunner?.dispose(); this.planRunner = undefined;
+    const plans = this.plans; this.plans = undefined;
+    for (const controller of plans?.planning.values() ?? []) controller.abort();
+    const helpers = this.helpers; this.helpers = undefined;
+    await this.lanes.stop().catch(() => undefined);
+    const summary = this.projectSummary; this.projectSummary = undefined;
+    await summary?.dispose('closed').catch(() => undefined);
+    if (!helpers) return;
+    await this.discovery?.queue.catch(() => undefined); this.discovery = undefined;
+    await removeWindowRecord(helpers.record).catch(() => undefined);
+    if (helpers.handshake) await removeUserHandshake(helpers.handshake).catch(() => undefined);
+    await helpers.service.dispose();
+    await helpers.endpoint.close();
+  }
+  async refreshRepositories(): Promise<void> {
+    const repositories: string[] = [];
+    for (const folder of this.host.folders()) {
+      try { repositories.push(await repositoryRoot(folder.path)); }
+      catch { /* Non-Git folders remain ordinary editor workspaces. */ }
+    }
+    this.repositories = [...new Set(repositories)];
   }
 }
