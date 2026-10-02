@@ -84,6 +84,8 @@ test('CLI paths and projects come only from main\'s own pickers, never from the 
       pickFolder: async () => { picked.push('folder'); return project; },
       pickExecutable: async provider => { picked.push(provider); return nextFile; },
       applyTheme: () => undefined,
+      checkSetup: async () => { throw new Error('not used'); },
+      signIn: async () => ({ started: false }),
     });
     assert.deepEqual((await handlers['settings.pickCliPath']({ provider: 'claude' })).cliPaths, { claude: absolute });
     nextFile = undefined;
@@ -165,5 +167,49 @@ test('one read is shared: a load that started before a write never brings back t
     await early;
     await written;
     assert.equal((await store.load()).theme, 'light');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a brief Windows lock is waited out, and a lock that never clears ends read-only', async () => {
+  const dir = scratch();
+  const file = path.join(dir, SETTINGS_FILE);
+  fs.writeFileSync(file, JSON.stringify({ version: 1, theme: 'light', cliPaths: {} }));
+  const realRead = fs.promises.readFile;
+  const lockFor = (times: number) => {
+    let left = times;
+    (fs.promises as { readFile: unknown }).readFile = async (...args: Parameters<typeof realRead>) => {
+      if (left-- > 0) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return realRead(...args);
+    };
+  };
+  try {
+    lockFor(3);
+    const store = createSettingsStore(dir);
+    assert.equal((await store.load()).theme, 'light');
+    assert.equal(store.readOnly, false);
+    lockFor(100);
+    const stuck = createSettingsStore(dir);
+    assert.deepEqual(await stuck.load(), defaultSettings());
+    assert.equal(stuck.readOnly, true);
+    assert.match(stuck.problem ?? '', /EBUSY/);
+  } finally {
+    (fs.promises as { readFile: unknown }).readFile = realRead;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('after a failed write the next one starts from the last saved value', async () => {
+  const dir = scratch();
+  try {
+    let fail = true;
+    const store = new JsonStore(path.join(dir, 'state.json'), parseState, defaultState, async (temporary, destination) => {
+      if (fail) throw new Error('disk full');
+      await replaceAtomic(temporary, destination);
+    });
+    await assert.rejects(store.update(current => ({ ...current, sidebarOpen: false })), /disk full/);
+    fail = false;
+    const next = await store.update(current => current);
+    assert.equal(next.sidebarOpen, true, 'the failed change was not kept');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).sidebarOpen, true);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

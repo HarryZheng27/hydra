@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { standinCalls, writeStandins } from './standins.mjs';
 
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // G1's CSP (docs/internal/hydra-app/G1-spikes.md, S4 item 4), written out here so the smoke checks the app against
@@ -19,7 +20,16 @@ const project = path.join(work, 'Project One');
 fs.mkdirSync(project, { recursive: true });
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(out, { recursive: true });
-const env = { ...process.env };
+// Stand-in CLIs on PATH, and scratch Claude and Codex config folders: the smoke never runs or reads the real ones.
+const bin = writeStandins(path.join(work, 'bin'));
+const claudeConfig = path.join(work, 'claude-config'), codexHome = path.join(work, 'codex-home');
+fs.mkdirSync(claudeConfig, { recursive: true });
+fs.mkdirSync(codexHome, { recursive: true });
+fs.writeFileSync(path.join(claudeConfig, '.claude.json'), JSON.stringify({ mcpServers: { hydra: { command: 'C:/Hydra/Hydra.exe', args: [], env: {} } } }));
+fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n');
+const configBefore = [path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8'));
+const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+const env = { ...process.env, PATH: [bin, path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
@@ -70,7 +80,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -159,6 +169,28 @@ try {
     assert.deepEqual(a.stores.state.projects.map(p => [p.name, p.path]), [['Project One', project]]);
     assert.deepEqual(a.stores.files.filter(f => f.endsWith('.tmp')), []);
     assert.deepEqual(a.consoleErrors, []);
+  });
+  check('onboarding shows each CLI version and support, and the hydra registration, read-only', () => {
+    assert.deepEqual(a.setup.map(p => [p.provider, p.status, p.registration, p.signIn]), [
+      ['claude', '2.1.282 · supported', 'Hydra tools: registered', true],
+      ['codex', '0.157.1 · supported', 'Hydra tools: not registered', true],
+    ]);
+    assert.deepEqual([path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8')), configBefore, 'a config file changed');
+    assert.deepEqual(fs.readdirSync(claudeConfig), ['.claude.json']);
+    assert.deepEqual(fs.readdirSync(codexHome), ['config.toml']);
+  });
+  check('Sign in opens a console running the CLI login, and reads nothing back', () => {
+    assert.equal(a.signIns.length, 1);
+    assert.match(a.signIns[0].script, /codex\.cmd' 'login'/);
+    assert.equal(a.signIns[0].windowsHide, false);
+    assert.equal(a.signIns[0].stdio, 'ignore');
+    assert.match(a.signInNote, /sign-in window opened/);
+  });
+  check('no provider process starts except the version and help checks', () => {
+    const calls = standinCalls(bin);
+    assert.ok(calls.length >= 5, calls.join(', '));
+    const allowed = new Set(['claude --version', 'claude --help', 'codex --version', 'codex --help', 'codex app-server --help']);
+    assert.deepEqual(calls.filter(call => !allowed.has(call)), []);
   });
   check('a second launch focuses the first and exits', () => {
     assert.equal(a.hasLock, true);

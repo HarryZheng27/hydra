@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { AppInfo, AppSettings, CliProvider } from '../shared/ipc';
 import type { ThemeSetting } from '../shared/theme';
 
@@ -17,9 +18,10 @@ interface Props {
   onTheme(theme: ThemeSetting): void;
   onPickCli(provider: CliProvider): void;
   onClearCli(provider: CliProvider): void;
+  setup: ReactNode;
 }
 
-export function SettingsView({ settings, info, onTheme, onPickCli, onClearCli }: Props) {
+export function SettingsView({ settings, info, onTheme, onPickCli, onClearCli, setup }: Props) {
   return (
     <section className="settings">
       <h1>Settings</h1>
@@ -47,6 +49,7 @@ export function SettingsView({ settings, info, onTheme, onPickCli, onClearCli }:
           </div>
         );
       })}
+      {setup}
       {info && <p className="about">Hydra {info.version} · Electron {info.electron}</p>}
     </section>
   );

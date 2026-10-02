@@ -13,6 +13,15 @@ export interface AppInfo { name: string; version: string; electron: string; plat
 export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>> }
 /** A folder the user picked. Chats arrive in G4. */
 export interface Project { id: string; path: string; name: string }
+/** One provider CLI, as onboarding found it: only `--version` and `--help` were run. */
+export interface ProviderStatus {
+  provider: CliProvider; name: string; found: boolean; executable?: string; configured: boolean;
+  version?: string; supported: boolean; minimum: string; requirement: string; advertised?: string[]; error?: string;
+}
+/** Whether the user-level `hydra` MCP server is registered with a CLI, read from its config file. */
+export interface RegistrationStatus { registered: boolean; where: string; error?: string }
+export interface OnboardingReport { providers: ProviderStatus[]; registration: Record<CliProvider, RegistrationStatus>; checkedAt: string }
+
 /** The sidebar and the projects, in state.json. */
 export interface AppState { version: 1; sidebarOpen: boolean; projects: Project[] }
 
@@ -31,6 +40,10 @@ export interface Channels {
   /** Main shows a folder picker; the renderer never sends a path. `picked` is the chosen folder's project, new or not. */
   'projects.pick': { payload: null; result: { state: AppState; picked?: string } };
   'projects.remove': { payload: { id: string }; result: AppState };
+  /** Runs the version and help checks (again, with refresh) and reads the registrations. */
+  'onboarding.check': { payload: { refresh: boolean }; result: OnboardingReport };
+  /** Opens a console window running the CLI's own sign-in. Nothing is read back. */
+  'onboarding.signIn': { payload: { provider: CliProvider }; result: { started: boolean; error?: string } };
 }
 export type Channel = keyof Channels;
 export type Payload<C extends Channel> = Channels[C]['payload'];
@@ -64,6 +77,8 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'state.setSidebarOpen': exactly<{ open: boolean }>({ open: value => typeof value === 'boolean' }),
   'projects.pick': isNull,
   'projects.remove': exactly<{ id: string }>({ id: isId }),
+  'onboarding.check': exactly<{ refresh: boolean }>({ refresh: value => typeof value === 'boolean' }),
+  'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
 };
 
 export const channels = Object.freeze(Object.keys(validators) as Channel[]);
@@ -96,4 +111,6 @@ export interface HydraApi {
   setSidebarOpen(open: boolean): Promise<AppState>;
   pickProject(): Promise<{ state: AppState; picked?: string }>;
   removeProject(id: string): Promise<AppState>;
+  checkSetup(refresh: boolean): Promise<OnboardingReport>;
+  signIn(provider: CliProvider): Promise<{ started: boolean; error?: string }>;
 }

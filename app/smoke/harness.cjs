@@ -42,6 +42,24 @@ report.saveDialogs = 0;
 electron.dialog.showSaveDialog = async () => { report.saveDialogs++; write(); return { canceled: true }; };
 electron.dialog.showSaveDialogSync = () => { report.saveDialogs++; write(); return undefined; };
 
+// Sign in would open a console window: the harness records the launch instead. Everything else (the version and help
+// checks) runs for real against run.mjs's stand-in CLIs.
+const childProcess = require('node:child_process');
+const realSpawn = childProcess.spawn;
+report.signIns = [];
+childProcess.spawn = (executable, args, options) => {
+  if (options && options.detached && Array.isArray(args) && args.includes('-EncodedCommand')) {
+    const script = Buffer.from(args[args.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
+    report.signIns.push({ script, windowsHide: options.windowsHide, stdio: options.stdio });
+    write();
+    const { EventEmitter } = require('node:events');
+    const fake = new EventEmitter();
+    fake.unref = () => undefined;
+    return fake;
+  }
+  return realSpawn(executable, args, options);
+};
+
 app.on('browser-window-created', (_event, win) => {
   event('window-created');
   win.show = () => event('show');
@@ -156,6 +174,14 @@ if (role === 'first') {
       throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent).join(' | ')`)}`);
     };
     report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
+    // Onboarding: the version and help checks, the registrations, and Sign in.
+    await until(`document.querySelectorAll('.setup .provider').length === 2`, 'the onboarding checks', 30000);
+    report.setup = await ui(`[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, signIn: !p.querySelector('.primary').disabled }))`);
+    await ui(`document.querySelector('.setup .provider[data-provider=codex] .primary').click(); 1`);
+    await until(`!!document.querySelector('.setup .provider[data-provider=codex] .hint')`, 'the sign-in note');
+    report.signInNote = await ui(`document.querySelector('.setup .provider[data-provider=codex] .hint').textContent`);
+    await ui(`[...document.querySelectorAll('.setup-head button')][0].click(); 1`);
+    await until(`!document.querySelector('.setup[aria-busy=true]')`, 'the re-check', 30000);
     const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
     report.themes = { initial: await themeNow() };
     // `--smoke-shots=<dir>` saves what the hidden window draws, for a person to look at. Off in CI.
