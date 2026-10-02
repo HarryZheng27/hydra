@@ -21,11 +21,11 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  defaultFixRounds, defaultFixture, defaultPollSeconds, defaultUsd, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, planSignature, pollDelayMs,
+  defaultFixRounds, defaultFixture, isFixJob, defaultPollSeconds, defaultUsd, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, planSignature, pollDelayMs,
   renderSummary, resolveTool, runRows, singleAllowedTools, singleClaudeArgs, singleFixBrief, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, taskLabel, withResults, withReviewLoop,
 } from './benchmark-lib.mjs';
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
-import { hydraFindingRows, hydraTiming, renderFindings, singleFindingRows } from './benchmark-findings.mjs';
+import { findingRows, hydraReviews, hydraTiming, renderFindings, singleReviews } from './benchmark-findings.mjs';
 import { run } from './benchmark-run.mjs';
 import { guardSuspend, renderVoidRuns, replaceVoidFolder } from './benchmark-suspend.mjs';
 import { closeCli, closeLeftovers, closeOwnWindow, markerFile, ownMarkerMaxAgeMs, readMarker, readWindowRecords } from './benchmark-windows.mjs';
@@ -499,24 +499,31 @@ async function findings(flags, rest) {
   const patterns = [...String(flags.runs ?? '').split(','), ...rest].map(item => item.trim()).filter(Boolean);
   if (!patterns.length) throw new Error('--runs needs run folders or globs, comma-separated.');
   const folders = [...new Set((await Promise.all(patterns.map(expandGlob))).flat())].sort();
-  const rows = [], timings = [], missing = [];
+  if (!folders.length) throw new Error(`No run folders match ${patterns.join(', ')}.`);
+  const reviews = [], rows = [], timings = [], skipped = [];
   for (const folder of folders) {
     const run = path.basename(folder);
-    const read = async name => { try { return await readJson(path.join(folder, name)); } catch { return undefined; } };
+    const read = async name => { try { return await readJson(path.join(folder, name)); } catch (error) { if (error?.code !== 'ENOENT') skipped.push(`${run} (${name} unreadable)`); return undefined; } };
     const single = await read('single-results.json'), review = await read('single-review.json'), hydraResults = await read('hydra-results.json');
-    if (single && review) rows.push(...singleFindingRows(review, { task: taskLabel(single), run }));
-    if (hydraResults?.planId) {
-      const plan = await storedPlan(hydraResults.planId, flags['plan-store']);
-      if (!plan) { missing.push(run); continue; }
-      rows.push(...hydraFindingRows(plan, { task: taskLabel(hydraResults), run }));
+    let used = false;
+    if (single && review) { const found = singleReviews(review, { task: taskLabel(single), run }); reviews.push(...found); rows.push(...findingRows(found)); used = true; }
+    if (hydraResults) {
+      const plan = hydraResults.planId ? await storedPlan(hydraResults.planId, flags['plan-store']) : undefined;
+      if (!plan) { skipped.push(`${run} (its plan isn't in the plan store: pass --plan-store)`); continue; }
+      const found = hydraReviews(plan, { task: taskLabel(hydraResults), run });
+      reviews.push(...found);
+      rows.push(...findingRows(found, plan.singleHead?.jobs ?? (plan.jobs ?? []).filter(job => !isFixJob(job.key))));
       const timing = hydraTiming(plan);
       if (timing) timings.push({ ...timing, task: taskLabel(hydraResults), run });
+      used = true;
     }
+    if (!used && !skipped.some(item => item.startsWith(`${run} `))) skipped.push(`${run} (no reviewed single run or Hydra run)`);
   }
-  const markdown = renderFindings(rows, timings) + (missing.length ? `\nHydra runs whose plan isn't in the plan store (pass --plan-store): ${missing.join(', ')}.\n` : '');
-  const file = path.resolve(flags.out ?? path.join(path.dirname(folders[0] ?? '.'), 'findings.md'));
+  const markdown = renderFindings(reviews, rows, timings) + (skipped.length ? `\nSkipped: ${skipped.join('; ')}.\n` : '');
+  const parent = folders.length === 1 ? path.dirname(folders[0]) : folders.reduce((common, folder) => { while (!(folder + path.sep).toLowerCase().startsWith(common.toLowerCase() + path.sep) && common !== path.dirname(common)) common = path.dirname(common); return common; }, folders[0]);
+  const file = path.resolve(flags.out ?? path.join(parent, 'findings.md'));
   await fs.writeFile(file, markdown);
-  console.log(`${rows.length} finding(s) from ${folders.length} folder(s). Wrote ${file}.`);
+  console.log(`${reviews.length} review(s), ${rows.length} finding(s) from ${folders.length} folder(s)${skipped.length ? `; skipped ${skipped.length}` : ''}. Wrote ${file}.`);
 }
 
 async function publish(flags) {
