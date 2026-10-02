@@ -24,17 +24,25 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   // One check at a time, remembered until a refresh or a change of CLI path.
   let report: { key: string; value: Promise<OnboardingReport> } | undefined;
   let running: Promise<OnboardingReport> | undefined;
+  let followUp: Promise<OnboardingReport> | undefined;
+  const begin = (key: string, cliPaths: AppSettings['cliPaths']): Promise<OnboardingReport> => {
+    const value = deps.checkSetup(cliPaths);
+    report = { key, value };
+    running = value;
+    value.then(() => { if (running === value) running = undefined; }, () => { if (running === value) running = undefined; if (report?.value === value) report = undefined; });
+    return value;
+  };
   const checkSetup = async (refresh: boolean) => {
     const { cliPaths } = await deps.settings.load();
     const key = JSON.stringify(cliPaths);
-    // A refresh while a check is running joins it rather than starting five more processes.
-    if (running && report?.key === key) return running;
-    if (refresh || !report || report.key !== key) {
-      const value = deps.checkSetup(cliPaths);
-      report = { key, value };
-      running = value;
-      value.then(() => { if (running === value) running = undefined; }, () => { if (running === value) running = undefined; if (report?.value === value) report = undefined; });
+    if (running && report?.key === key) {
+      if (!refresh) return running;
+      // A refresh while a check runs gets one fresh check after it, shared by every refresh that arrives meanwhile, so
+      // its answer is never older than the click and a page can't start more than one extra set of processes.
+      followUp ??= running.catch(() => undefined).then(() => { followUp = undefined; return begin(key, cliPaths); });
+      return followUp;
     }
+    if (refresh || !report || report.key !== key) return begin(key, cliPaths);
     return report.value;
   };
   // One sign-in window per provider every few seconds, so a page can't stack them up.
@@ -71,7 +79,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const now = Date.now();
       if (now - (lastSignIn.get(provider) ?? -Infinity) < SIGN_IN_GAP_MS) return { started: false, error: 'A sign-in window was just opened; finish there.' };
       lastSignIn.set(provider, now);
-      return deps.signIn(provider, (await deps.settings.load()).cliPaths[provider]);
+      const result = await deps.signIn(provider, (await deps.settings.load()).cliPaths[provider]);
+      // Only an opened window uses up the slot; a failed try can be retried at once.
+      if (!result.started) lastSignIn.delete(provider);
+      return result;
     },
   };
 }

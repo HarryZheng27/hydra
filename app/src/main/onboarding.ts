@@ -90,6 +90,8 @@ export function signInLaunch(provider: CliProvider, executable: string): { execu
   };
 }
 
+export const SIGN_IN_TIMEOUT_MS = 15_000;
+
 export interface SpawnedChild { once(event: 'error', listener: (error: Error) => void): unknown; once(event: 'exit', listener: (code: number | null) => void): unknown }
 export type Spawner = (executable: string, args: string[], options: { cwd: string; windowsHide: true; windowsVerbatimArguments: true; stdio: 'ignore' }) => SpawnedChild;
 
@@ -103,10 +105,13 @@ export async function openSignIn(provider: CliProvider, configured: string | und
   let launch: { executable: string; commandLine: string };
   try { launch = signInLaunch(provider, found.executable); } catch (error) { return { started: false, error: error instanceof Error ? error.message : String(error) }; }
   return new Promise(resolve => {
+    // `start` returns at once; if cmd somehow doesn't, the call still answers.
+    const timer = setTimeout(() => resolve({ started: false, error: 'Windows took too long to open the sign-in window.' }), SIGN_IN_TIMEOUT_MS);
+    const finish = (result: { started: boolean; error?: string }) => { clearTimeout(timer); resolve(result); };
     try {
       const child = run(launch.executable, [launch.commandLine], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore' });
-      child.once('error', error => resolve({ started: false, error: error.message }));
-      child.once('exit', code => resolve(code === 0 ? { started: true } : { started: false, error: `Windows couldn't open the sign-in window (${code}).` }));
-    } catch (error) { resolve({ started: false, error: error instanceof Error ? error.message : String(error) }); }
+      child.once('error', error => finish({ started: false, error: error.message }));
+      child.once('exit', code => finish(code === 0 ? { started: true } : { started: false, error: `Windows couldn't open the sign-in window (${code}).` }));
+    } catch (error) { finish({ started: false, error: error instanceof Error ? error.message : String(error) }); }
   });
 }

@@ -109,28 +109,39 @@ test('Sign in opens a window it never reads, and does nothing when the CLI is mi
 test('a page can\'t stack sign-in windows or checks: one sign-in per provider at a time, and a refresh joins a running check', async () => {
   const signIns: string[] = [];
   let checks = 0;
-  let release: () => void = () => undefined;
+  let nextStart = true;
+  const releases: Array<() => void> = [];
   const store = { load: async () => ({ version: 1, theme: 'system', cliPaths: {} }) } as never;
   const handlers = createHandlers({
     info: { name: 'Hydra', version: '0', electron: '44', platform: 'win32' }, settings: store, state: store,
     pickFolder: async () => undefined, pickExecutable: async () => undefined, applyTheme: () => undefined,
-    checkSetup: () => { checks++; return new Promise(resolve => { release = () => resolve({ providers: [], registration: {} as never, checkedAt: String(checks) }); }); },
-    signIn: async provider => { signIns.push(provider); return { started: true }; },
+    checkSetup: () => { const n = ++checks; return new Promise(resolve => { releases.push(() => resolve({ providers: [], registration: {} as never, checkedAt: String(n) })); }); },
+    signIn: async provider => { signIns.push(provider); return nextStart ? { started: true } : { started: false, error: 'missing' }; },
   });
+  const tick = () => new Promise(resolve => setTimeout(resolve, 10));
   assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'claude' }), { started: true });
-  assert.equal((await handlers['onboarding.signIn']({ provider: 'claude' })).started, false);
-  assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'codex' }), { started: true });
-  assert.deepEqual(signIns, ['claude', 'codex']);
+  assert.equal((await handlers['onboarding.signIn']({ provider: 'claude' })).started, false, 'a second window straight away is refused');
+  nextStart = false;
+  assert.equal((await handlers['onboarding.signIn']({ provider: 'codex' })).error, 'missing');
+  nextStart = true;
+  assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'codex' }), { started: true }, 'a failed try can be retried at once');
+  assert.deepEqual(signIns, ['claude', 'codex', 'codex']);
+
+  // A plain check joins the running one; refreshes during it share one fresh check after it, never the older answer.
   const first = handlers['onboarding.check']({ refresh: false });
-  const joined = [handlers['onboarding.check']({ refresh: true }), handlers['onboarding.check']({ refresh: true })];
-  await new Promise(resolve => setTimeout(resolve, 10));
-  release();
-  assert.deepEqual((await Promise.all([first, ...joined])).map(report => report.checkedAt), ['1', '1', '1']);
+  await tick();
+  const joined = handlers['onboarding.check']({ refresh: false });
+  const refreshes = [handlers['onboarding.check']({ refresh: true }), handlers['onboarding.check']({ refresh: true })];
+  await tick();
   assert.equal(checks, 1);
-  const again = handlers['onboarding.check']({ refresh: true });
-  await new Promise(resolve => setTimeout(resolve, 10));
-  release();
-  assert.equal((await again).checkedAt, '2', 'once it finished, a refresh runs again');
+  releases.shift()!();
+  await tick();
+  assert.equal(checks, 2, 'one follow-up check for both refreshes');
+  releases.shift()!();
+  assert.deepEqual([(await first).checkedAt, (await joined).checkedAt], ['1', '1']);
+  assert.deepEqual((await Promise.all(refreshes)).map(report => report.checkedAt), ['2', '2']);
+  assert.equal((await handlers['onboarding.check']({ refresh: false })).checkedAt, '2', 'the latest answer is remembered');
+  assert.equal(checks, 2);
 });
 
 test('onboarding never imports the self-check that starts a provider', () => {
