@@ -29,6 +29,15 @@ let confirmAnswer = 1; // Cancel
 electron.dialog.showMessageBox = async (...args) => { const options = args.find(a => a && typeof a === 'object' && 'buttons' in a); report.confirms.push(options.detail); write(); return { response: confirmAnswer, checkboxChecked: false }; };
 electron.dialog.showMessageBoxSync = () => { report.confirms.push('sync'); return 1; };
 electron.shell.openExternal = async url => { report.opened.push(url); write(); };
+// The folder and file pickers are stand-ins too: they answer with what run.mjs passed, and record that main asked.
+const pickedFolder = arg('folder');
+report.pickers = [];
+electron.dialog.showOpenDialog = async (...args) => {
+  const options = args.find(a => a && typeof a === 'object' && 'properties' in a);
+  report.pickers.push(options.properties.includes('openDirectory') ? 'folder' : 'file');
+  write();
+  return pickedFolder && options.properties.includes('openDirectory') ? { canceled: false, filePaths: [pickedFolder] } : { canceled: true, filePaths: [] };
+};
 report.saveDialogs = 0;
 electron.dialog.showSaveDialog = async () => { report.saveDialogs++; write(); return { canceled: true }; };
 electron.dialog.showSaveDialogSync = () => { report.saveDialogs++; write(); return undefined; };
@@ -127,6 +136,69 @@ if (role === 'first') {
     await settle(() => wc.executeJavaScript(`(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['echo hi'])); a.download = 'invoice.bat'; document.body.appendChild(a); a.click(); a.remove(); return 1; })()`), 800);
 
     report.ipc = await ipcProbe();
+
+    // The UI shell: title bar, sidebar, empty state, themes and the stores.
+    const ui = expression => wc.executeJavaScript(expression);
+    report.ui = await ui(`({
+      titleBar: !!document.querySelector('.titlebar'),
+      sidebarToggle: !!document.querySelector('.titlebar [aria-label="Hide sidebar"]'),
+      chatTab: document.querySelector('.mode-switch [aria-pressed=true]')?.textContent,
+      agentsDisabled: document.querySelector('.mode-switch button[disabled]')?.textContent,
+      sidebar: [...document.querySelectorAll('.sidebar .side-action span')].map(e => e.textContent),
+      search: !!document.querySelector('.sidebar input[type=search]'),
+      emptyButton: document.querySelector('.empty .primary')?.textContent,
+    })`);
+    const uiConsoleStart = report.console.length;
+    // Each click goes through IPC and an atomic write; wait for the page to show its result rather than for a fixed time.
+    const until = async (expression, what, ms = 10000) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { if (await ui(expression)) return; await wait(100); }
+      throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent).join(' | ')`)}`);
+    };
+    report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
+    const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
+    report.themes = { initial: await themeNow() };
+    // `--smoke-shots=<dir>` saves what the hidden window draws, for a person to look at. Off in CI.
+    const shots = arg('shots');
+    const shot = async name => { if (shots) fs.writeFileSync(path.join(shots, `${name}.png`), (await wc.capturePage()).toPNG()); };
+    await shot('home');
+    await ui(`document.querySelector('.empty .primary').click(); 1`);
+    await until(`document.querySelectorAll('.project-name').length === 1 && document.querySelector('.empty h1')?.textContent === 'Project One'`, 'the picked project');
+    await shot('project-'+(await themeNow()).theme);
+    report.afterPick = await ui(`({ projects: [...document.querySelectorAll('.project-name span')].map(e => e.textContent), heading: document.querySelector('.empty h1')?.textContent })`);
+    await ui(`document.querySelector('.titlebar .icon-button').click(); 1`);
+    await until(`!document.querySelector('.sidebar')`, 'the sidebar to hide');
+    report.sidebarAfterToggle = await ui(`!!document.querySelector('.sidebar')`);
+    await ui(`document.querySelector('.titlebar .icon-button').click(); 1`);
+    await until(`!!document.querySelector('.sidebar')`, 'the sidebar to show');
+    // Picking the same folder again, from Settings, leads back to its project and adds nothing.
+    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await until(`!!document.querySelector('.settings h1')`, 'Settings');
+    await ui(`document.querySelector('.section-head .icon-button').click(); 1`);
+    await until(`!document.querySelector('.settings h1') && document.querySelector('.project-row.selected .project-name span')?.textContent === 'Project One'`, 'the re-picked project');
+    report.projectsAfterRepick = await ui(`document.querySelectorAll('.project-name').length`);
+    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await until(`document.querySelector('.settings h1')?.textContent === 'Settings'`, 'Settings');
+    await shot('settings');
+    report.settingsView = await ui(`({ heading: document.querySelector('.settings h1')?.textContent, themes: [...document.querySelectorAll('.segmented [role=radio]')].map(b => b.textContent + ':' + b.getAttribute('aria-checked')) })`);
+    // Each theme through the Settings screen, as a user picks it.
+    for (const [label, theme] of [['Light', 'light'], ['Dark', 'dark'], ['System', 'system']]) {
+      await ui(`[...document.querySelectorAll('.segmented [role=radio]')].find(b => b.textContent === '${label}').click(); 1`);
+      await until(`document.querySelector('.segmented [aria-checked=true]')?.textContent === '${label}'`, `${label} to be chosen`);
+      // The page follows the system's preference through prefers-color-scheme, which reaches it a moment later.
+      const expected = theme === 'system' ? (electron.nativeTheme.shouldUseDarkColors ? 'dark' : 'light') : theme;
+      for (let i = 0; i < 30 && (await themeNow()).theme !== expected; i++) await wait(100);
+      await shot(`settings-${theme}`);
+      report.themes[theme] = { ...(await themeNow()), native: electron.nativeTheme.themeSource, nativeDark: electron.nativeTheme.shouldUseDarkColors, checked: await ui(`document.querySelector('.segmented [aria-checked=true]')?.textContent`) };
+    }
+    report.badTheme = await ui(`window.hydra.setTheme('hacker').then(() => 'accepted', e => 'refused')`);
+    await ui(`[...document.querySelectorAll('.setting-value button')][0].click(); 1`);
+    await until(`true`, 'nothing', 100);
+    for (let i = 0; i < 50 && !report.pickers.includes('file'); i++) await wait(100);
+    const userData = app.getPath('userData');
+    const readJson = name => { try { return JSON.parse(fs.readFileSync(path.join(userData, name), 'utf8')); } catch (e) { return String(e.message); } };
+    report.stores = { settings: readJson('settings.json'), state: readJson('state.json'), files: fs.readdirSync(userData) };
+    report.consoleErrors = report.console.slice(uiConsoleStart).filter(m => m.level === 'error' || m.level === 3);
     event('ready');
     // Wait for run.mjs's second launch to reach this instance, then leave.
     const deadline = Date.now() + 30000;

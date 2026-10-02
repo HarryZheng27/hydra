@@ -1,9 +1,12 @@
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, type WebContents } from 'electron';
+import type { CliProvider } from '../shared/ipc';
+import { createHandlers } from './handlers';
 import { identityProblems, PRODUCT_NAME } from './identity';
-import { registerIpc, type Handlers } from './ipc';
+import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
-import { createMainWindow, focusMainWindow } from './window';
+import { createSettingsStore, createStateStore } from './settings';
+import { applyTheme, createMainWindow, focusMainWindow, getMainWindow, repaintTitleBar } from './window';
 
 declare const HYDRA_APP_VERSION: string;
 
@@ -18,6 +21,21 @@ function confirmExternal(contents: WebContents, url: string): void {
     },
     open: link => shell.openExternal(link),
   }, contents);
+}
+
+async function pickFolder(): Promise<string | undefined> {
+  const options = { title: 'Open a project folder', properties: ['openDirectory' as const, 'dontAddToRecent' as const] };
+  const win = getMainWindow();
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? undefined : result.filePaths[0];
+}
+
+async function pickExecutable(provider: CliProvider): Promise<string | undefined> {
+  const name = provider === 'claude' ? 'Claude Code' : 'Codex';
+  const options = { title: `Choose ${name}'s command-line tool`, properties: ['openFile' as const, 'dontAddToRecent' as const], filters: [{ name: 'Programs', extensions: ['exe', 'cmd', 'bat'] }] };
+  const win = getMainWindow();
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? undefined : result.filePaths[0];
 }
 
 /** Runs after identity.ts has set the app's paths (main.ts). */
@@ -44,15 +62,25 @@ export function start(): void {
   app.on('session-created', created => guardSession(created));
 
   const distDir = __dirname;
-  const handlers: Handlers = {
-    'app.info': () => ({ name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform }),
-  };
+  const userData = app.getPath('userData');
+  const settings = createSettingsStore(userData);
+  const state = createStateStore(userData);
+  const handlers = createHandlers({
+    info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
+    settings,
+    state,
+    pickFolder: () => pickFolder(),
+    pickExecutable: provider => pickExecutable(provider),
+    applyTheme,
+  });
 
   app.on('window-all-closed', () => app.quit());
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     guardSession(session.defaultSession);
     protocol.handle(APP_SCHEME, request => serveAppRequest(path.join(distDir, 'renderer'), request.url));
     registerIpc(ipcMain, handlers);
+    nativeTheme.themeSource = (await settings.load()).theme;
+    nativeTheme.on('updated', repaintTitleBar);
     createMainWindow(distDir);
   });
 }

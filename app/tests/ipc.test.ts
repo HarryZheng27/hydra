@@ -3,7 +3,8 @@ import test from 'node:test';
 import { dispatch, registerIpc, trustedSender, type Handlers } from '../src/main/ipc';
 import { channels, IPC_TRANSPORT, parseCall } from '../src/shared/ipc';
 
-const handlers: Handlers = { 'app.info': () => ({ name: 'Hydra', version: '1', electron: '44', platform: 'win32' }) };
+// Only app.info runs in these tests; the rest are never reached.
+const handlers = { 'app.info': () => ({ name: 'Hydra', version: '1', electron: '44', platform: 'win32' }) } as unknown as Handlers;
 const frame = (url: string) => { const mainFrame = { url }; return { senderFrame: mainFrame, sender: { mainFrame } }; };
 const fromApp = frame('app://hydra/index.html');
 
@@ -44,6 +45,38 @@ test('main registers exactly one transport channel', () => {
 });
 
 test('every channel has a validator, and parseCall agrees with it', () => {
-  assert.deepEqual([...channels], ['app.info']);
+  assert.deepEqual([...channels].sort(), ['app.info', 'app.problems', 'projects.pick', 'projects.remove', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen']);
   assert.equal(parseCall({ channel: 'app.info', payload: null }).ok, true);
+  const good: Array<[string, unknown]> = [
+    ['settings.setTheme', { theme: 'system' }], ['settings.pickCliPath', { provider: 'codex' }], ['settings.clearCliPath', { provider: 'claude' }],
+    ['state.setSidebarOpen', { open: false }], ['projects.remove', { id: '0f8fad5b-d9cb-469f-a165-70867728950e' }], ['projects.pick', null],
+  ];
+  for (const [channel, payload] of good) assert.equal(parseCall({ channel, payload }).ok, true, channel);
+});
+
+test('no payload field accepts a path, a command or free text', () => {
+  const samples: Record<string, Record<string, unknown>> = {
+    'settings.setTheme': { theme: 'dark' }, 'settings.pickCliPath': { provider: 'claude' }, 'settings.clearCliPath': { provider: 'codex' },
+    'state.setSidebarOpen': { open: true }, 'projects.remove': { id: '0f8fad5b-d9cb-469f-a165-70867728950e' },
+  };
+  for (const channel of channels) {
+    const sample = samples[channel];
+    if (!sample) { assert.equal(parseCall({ channel, payload: { path: 'C:\\x.exe' } }).ok, false, channel); continue; }
+    assert.equal(parseCall({ channel, payload: sample }).ok, true, channel);
+    for (const key of Object.keys(sample)) {
+      for (const hostile of ['C:\\Windows\\System32\\cmd.exe', '../../x', 'claude --dangerously-skip-permissions', 'x'.repeat(40)]) {
+        assert.equal(parseCall({ channel, payload: { ...sample, [key]: hostile } }).ok, false, `${channel}.${key} took ${hostile}`);
+      }
+    }
+  }
+});
+
+test('no channel takes a path or a command from the renderer', () => {
+  const bad: Array<[string, unknown]> = [
+    ['settings.setTheme', { theme: 'hacker' }], ['settings.setTheme', { theme: 'dark', extra: 1 }],
+    ['settings.pickCliPath', { provider: 'claude', path: 'C:/evil.exe' }], ['settings.pickCliPath', { provider: 'bash' }],
+    ['state.setSidebarOpen', { open: 'yes' }], ['projects.pick', { path: 'C:/Users' }], ['projects.remove', { id: '../x' }],
+    ['projects.remove', { id: 'a'.repeat(100) }], ['settings.get', {}],
+  ];
+  for (const [channel, payload] of bad) assert.equal(parseCall({ channel, payload }).ok, false, `${channel} ${JSON.stringify(payload)}`);
 });

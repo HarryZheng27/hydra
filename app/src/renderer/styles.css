@@ -1,7 +1,96 @@
-:root { color-scheme: dark; --bg: #141414; --fg: #F0F0F0; --muted: #F0F0F0BD; }
+/* The app's look. Colors come from Hydra Dark and Hydra Light (themes/hydra-*.json) as CSS variables, set by App.tsx;
+   these defaults are Hydra Dark's, so the first paint matches the window's background. */
+:root {
+  color-scheme: dark;
+  --bg: #141414; --fg: #F5F5F5; --muted: #F0F0F0BD; --faint: #F0F0F05C;
+  --sidebar-bg: #141414; --sidebar-fg: #F0F0F0BD; --sidebar-border: #F0F0F013; --border: #2B2B2B;
+  --hover: #F0F0F011; --selected-bg: #F0F0F011; --selected-fg: #F0F0F0;
+  --input-bg: #1B1B1B; --input-fg: #F5F5F5; --input-border: #363636;
+  --button-bg: #173C2C; --button-fg: #FFFFFF; --button-hover: #24553F;
+  --focus: #F0F0F026; --link: #9FCAB0; --titlebar-bg: #141414; --titlebar-fg: #B8B8B8;
+  --error: #FC6B83; --warning: #F1B467; --ok: #70B489;
+  --titlebar-height: 40px; --sidebar-width: 264px; --radius: 6px;
+}
+/* Hydra Light's, for a window that starts light, so its first paint matches too. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #FAFBF9; --fg: #18221C; --muted: #566651; --faint: #141414BD;
+    --sidebar-bg: #F1F4EF; --sidebar-fg: #334238; --sidebar-border: #D5DED2; --border: #D5DED2;
+    --hover: #E9EEE7; --selected-bg: #14141414; --selected-fg: #141414; --input-bg: #FFFFFF;
+    --input-fg: #18221C; --input-border: #C5CFC4; --button-bg: #173C2C; --button-fg: #FFFFFF;
+    --button-hover: #24553F; --focus: #14141433; --link: #276342; --titlebar-bg: #FAFBF9;
+    --titlebar-fg: #18221C; --error: #BE1744; --warning: #A46700; --ok: #007041;
+  }
+}
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
-.empty { height: 100%; display: grid; place-content: center; text-align: center; gap: 4px; }
-.empty h1 { font-size: 20px; font-weight: 600; margin: 0; }
-.empty p { color: var(--muted); margin: 0; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+.icon { display: block; flex: none; }
+
+.app { height: 100%; display: flex; flex-direction: column; }
+.body { flex: 1; display: flex; min-height: 0; }
+
+/* Title bar: draggable, with Windows' buttons drawn over its right end. */
+.titlebar { height: var(--titlebar-height); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 140px 0 10px; background: var(--titlebar-bg); color: var(--titlebar-fg); -webkit-app-region: drag; user-select: none; }
+.no-drag, .titlebar button { -webkit-app-region: no-drag; }
+.titlebar-title { margin-left: auto; margin-right: auto; font-size: 12px; opacity: .8; }
+.icon-button { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius); color: var(--muted); }
+.icon-button:hover { background: var(--hover); color: var(--fg); }
+.icon-button.small { width: 22px; height: 22px; }
+.mode-switch { display: flex; padding: 2px; border-radius: 8px; background: var(--hover); }
+.mode { padding: 2px 12px; border-radius: 6px; font-size: 12px; color: var(--muted); }
+.mode.active { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--border); }
+
+/* Sidebar */
+.sidebar { width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--sidebar-bg); color: var(--sidebar-fg); border-right: 1px solid var(--sidebar-border); }
+.side-action { flex: none; width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--radius); text-align: left; }
+.side-action:hover, .side-action.selected { background: var(--hover); color: var(--fg); }
+.side-action.settings-link { margin-top: auto; }
+.search { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 0 8px; height: 30px; border-radius: var(--radius); background: var(--input-bg); border: 1px solid var(--input-border); color: var(--muted); }
+.search:focus-within { border-color: var(--link); }
+.search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--input-fg); font: inherit; }
+.section-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.projects { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; flex: 1; }
+.project-row { display: flex; align-items: center; border-radius: var(--radius); }
+.project-row:hover, .project-row.selected { background: var(--hover); color: var(--fg); }
+.project-row.selected { background: var(--selected-bg); color: var(--selected-fg); }
+.twisty { display: grid; place-items: center; width: 20px; height: 28px; color: var(--faint); }
+.chevron { transition: transform .12s; }
+.chevron.open { transform: rotate(90deg); }
+.project-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; text-align: left; }
+.project-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hover-only { opacity: 0; }
+.project-row:hover .hover-only, .project-row:focus-within .hover-only { opacity: 1; }
+.chats-empty, .sidebar-note { padding: 2px 8px 6px 46px; font-size: 12px; color: var(--muted); }
+.sidebar-note { padding-left: 8px; list-style: none; }
+
+/* Main pane */
+.main { flex: 1; min-width: 0; overflow: auto; position: relative; }
+.banner { margin: 12px 16px 0; padding: 8px 12px; border-radius: var(--radius); border: 1px solid var(--border); }
+.banner.error { color: var(--error); }
+.banner.warning { color: var(--warning); }
+.empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.empty h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.empty p { margin: 0; color: var(--muted); max-width: 520px; }
+.path { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.primary { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 14px; border-radius: var(--radius); background: var(--button-bg); color: var(--button-fg); }
+.primary:hover { background: var(--button-hover); }
+
+/* Settings */
+.settings { max-width: 720px; margin: 0 auto; padding: 32px 24px; }
+.settings h1 { margin: 0 0 16px; font-size: 22px; font-weight: 600; }
+.settings h2 { margin: 24px 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.setting-value { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.setting-value .path { max-width: 360px; color: var(--muted); }
+.setting-value button, .segmented button { padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); }
+.setting-value button:hover, .segmented button:hover { border-color: var(--link); }
+.segmented { display: flex; gap: 4px; }
+.segmented button.active { background: var(--button-bg); color: var(--button-fg); border-color: var(--button-bg); }
+.hint { margin: 0 0 4px; color: var(--muted); }
+.about { margin-top: 32px; font-size: 12px; color: var(--faint); }

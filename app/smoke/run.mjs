@@ -15,13 +15,15 @@ const electron = createRequire(import.meta.url)('electron');
 const work = path.join(appDir, '.smoke', String(Date.now()));
 const appData = path.join(work, 'AppData', 'Roaming');
 const out = path.join(work, 'out');
+const project = path.join(work, 'Project One');
+fs.mkdirSync(project, { recursive: true });
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(out, { recursive: true });
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
-  const child = spawn(electron, [path.join(appDir, 'smoke', 'harness.cjs'), `--smoke-role=${role}`, `--smoke-out=${out}`, `--smoke-appdata=${appData}`], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(electron, [path.join(appDir, 'smoke', 'harness.cjs'), `--smoke-role=${role}`, `--smoke-out=${out}`, `--smoke-appdata=${appData}`, `--smoke-folder=${project}`, ...process.argv.slice(2).filter(a => a.startsWith('--smoke-shots='))], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout.on('data', d => { log += d; });
   child.stderr.on('data', d => { log += d; });
@@ -38,6 +40,7 @@ async function until(test, ms, what) {
   throw new Error(`Timed out waiting for ${what}.`);
 }
 
+const themeColor = (name, key) => JSON.parse(fs.readFileSync(path.join(appDir, '..', 'themes', `hydra-${name}.json`), 'utf8')).colors[key];
 const checks = [];
 const check = (name, fn) => { fn(); checks.push(name); console.log(`ok - ${name}`); };
 const first = launch('first');
@@ -67,7 +70,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -119,6 +122,43 @@ try {
     assert.equal(a.ipc.valid.ok, true);
     assert.equal(a.ipc.foreignSender.ok, false);
     assert.match(a.ipc.foreignSender.error, /did not come from the app/);
+  });
+  check('the shell: title bar with sidebar toggle and Chat / Agents, sidebar, and an empty state with a folder picker', () => {
+    assert.equal(a.ui.titleBar, true);
+    assert.equal(a.ui.sidebarToggle, true);
+    assert.equal(a.ui.chatTab, 'Chat');
+    assert.equal(a.ui.agentsDisabled, 'Agents');
+    assert.deepEqual(a.ui.sidebar, ['New chat', 'Settings']);
+    assert.equal(a.ui.search, true);
+    assert.match(a.ui.emptyButton, /Open a folder/);
+    assert.deepEqual(a.afterPick.projects, ['Project One']);
+    assert.equal(a.afterPick.heading, 'Project One');
+    assert.equal(a.sidebarAfterToggle, false);
+    assert.equal(a.settingsView.heading, 'Settings');
+    assert.deepEqual(a.pickers, ['folder', 'folder', 'file']);
+    assert.equal(a.projectsAfterRepick, 1);
+    assert.deepEqual(a.problems, []);
+  });
+  check('Hydra Dark and Light come from the theme files, with a Dark, Light or System setting', () => {
+    assert.equal(a.themes.light.theme, 'light');
+    assert.equal(a.themes.light.bg, themeColor('light', 'editor.background'));
+    assert.equal(a.themes.light.native, 'light');
+    assert.equal(a.themes.dark.theme, 'dark');
+    assert.equal(a.themes.dark.bg, themeColor('dark', 'editor.background'));
+    assert.equal(a.themes.dark.native, 'dark');
+    assert.equal(a.themes.system.native, 'system');
+    assert.equal(a.themes.system.theme, a.themes.system.nativeDark ? 'dark' : 'light');
+    assert.equal(a.badTheme, 'refused');
+    assert.deepEqual(a.settingsView.themes, ['Dark:false', 'Light:false', 'System:true']);
+    assert.deepEqual([a.themes.light.checked, a.themes.dark.checked, a.themes.system.checked], ['Light', 'Dark', 'System']);
+  });
+  check('settings and state are stored in user data, schema-checked, with nothing left half-written', () => {
+    assert.deepEqual(a.stores.settings, { version: 1, theme: 'system', cliPaths: {} });
+    assert.equal(a.stores.state.version, 1);
+    assert.equal(a.stores.state.sidebarOpen, true);
+    assert.deepEqual(a.stores.state.projects.map(p => [p.name, p.path]), [['Project One', project]]);
+    assert.deepEqual(a.stores.files.filter(f => f.endsWith('.tmp')), []);
+    assert.deepEqual(a.consoleErrors, []);
   });
   check('a second launch focuses the first and exits', () => {
     assert.equal(a.hasLock, true);
