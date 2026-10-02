@@ -118,7 +118,8 @@ test('Connectors page shows the claude-mem Repair action and a "What Hydra wrote
   assert.match(settings, /repairClaudeMem/);
   assert.match(settings, /What Hydra wrote/);
   assert.match(settings, /writtenEntries/);
-  const extension = await readFile('src/extension.ts', 'utf8');
+  // The commands are the controller's (src/host/controller.ts's registerCommands).
+  const extension = await readFile('src/host/controller.ts', 'utf8');
   assert.match(extension, /hydra\.repairClaudeMem/);
   assert.match(extension, /hydra\.helperWrittenEntries/);
 });

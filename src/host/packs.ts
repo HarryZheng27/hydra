@@ -1,9 +1,8 @@
-import * as vscode from 'vscode';
-import { machineSetting } from './core/machineSetting';
 import path from 'node:path';
-import { defaultMcpContext, listMcpServers } from './core/mcpServers';
-import { PackService, defaultUserPacksFolder } from './core/packs/service';
-import type { AuditEvent } from './core/audit';
+import { defaultMcpContext, listMcpServers } from '../core/mcpServers';
+import { PackService, defaultUserPacksFolder } from '../core/packs/service';
+import type { AuditEvent } from '../core/audit';
+import type { Host } from './host';
 
 /**
  * Packs in the window (docs/internal/Packs_Plan.md): the PackService built from the
@@ -17,19 +16,19 @@ import type { AuditEvent } from './core/audit';
  * `turnOn` must be the review panel's own button: VS Code commands can be run
  * by any extension, so a public command must never allow a pack by itself.
  */
-export function createPackService(context: vscode.ExtensionContext, log: (line: string) => void, audit?: (event: AuditEvent) => void): PackService {
+export function createPackService(host: Host, log: (line: string) => void, audit?: (event: AuditEvent) => void): PackService {
   let warned = '';
   return new PackService({
     audit,
-    builtin: path.join(context.extensionPath, 'packs'),
+    builtin: path.join(host.paths.extension, 'packs'),
     userFolder: () => {
-      const configured = (machineSetting<string>(vscode.workspace.getConfiguration('hydra'), 'packs.folder') ?? '').trim();
+      const configured = (host.settings.machine<string>('packs.folder') ?? '').trim();
       if (configured && path.isAbsolute(configured)) return configured;
       if (configured && configured !== warned) { warned = configured; log(`[packs] hydra.packs.folder must be an absolute path; using ${defaultUserPacksFolder()} instead of "${configured}".`); }
       return defaultUserPacksFolder();
     },
-    storage: path.join(context.globalStorageUri.fsPath, 'packs'),
-    version: String((context.extension.packageJSON as { version?: unknown } | undefined)?.version ?? '0.0.0'),
+    storage: path.join(host.paths.storage, 'packs'),
+    version: host.version,
     nodeExecutable: process.execPath,
     userServers: async () => {
       const { servers } = await listMcpServers(defaultMcpContext());

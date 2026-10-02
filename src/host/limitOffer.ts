@@ -1,23 +1,25 @@
-import * as vscode from 'vscode';
-import { notices } from './notices';
-import type { Job } from './core/jobs';
-import { buildHandoff, saveHandoff, type HandoffDeps } from './core/limitHandoff';
-import type { LimitEvent } from './core/limitEvents';
-import { otherProvider } from './core/limitEvents';
-import { buildOffer, LimitOfferTracker, providerLabel } from './core/limitOffer';
-import type { Provider } from './core/model';
-import { openOfficialExtension } from './extensionBridge';
+import type { Job } from '../core/jobs';
+import { buildHandoff, saveHandoff, type HandoffDeps } from '../core/limitHandoff';
+import type { LimitEvent } from '../core/limitEvents';
+import { otherProvider } from '../core/limitEvents';
+import { buildOffer, LimitOfferTracker, providerLabel } from '../core/limitOffer';
+import type { Provider } from '../core/model';
+import type { Disposable, Host } from './host';
 
 /**
  * Phase 3 (docs/internal/Hydra_Agent_Plan.md, "Offer where to continue"): on each limit
  * event, save the handoff to global storage and show one notification with
  * "Continue in <Other>" (or "Set up <Other>"), "View handoff" and "Wait". The
  * decision logic (message, buttons, dedupe) is in src/core/limitOffer.ts; this
- * module only wires it to vscode (notifications, clipboard, the other extension,
+ * module wires it to the host (notifications, the clipboard, the other extension,
  * HelperService.continueWith).
  */
 export interface LimitOfferDeps {
-  limitEvents: vscode.Event<LimitEvent>;
+  /** The program Hydra runs in (src/host/host.ts). */
+  host: Host;
+  limitEvents: (listener: (event: LimitEvent) => unknown) => Disposable;
+  /** Opens the other provider's official chat (the IDE's official extension), following Docked/Tabs. */
+  openOfficial: (provider: Provider) => Promise<void>;
   /** Extension global storage root; handoffs are saved under `<storageDir>/handoffs`. */
   storageDir: string;
   offerEnabled: () => boolean;
@@ -40,7 +42,7 @@ export interface LimitOfferDeps {
   tracker?: LimitOfferTracker;
 }
 
-export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
+export function registerLimitOffer(deps: LimitOfferDeps): Disposable {
   const tracker = deps.tracker ?? new LimitOfferTracker();
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? (() => undefined);
@@ -72,18 +74,18 @@ export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
     // through to the ordinary offer below, same as any other head.
     if (!deps.offerEnabled()) return;
     const offer = buildOffer(event, now(), considered.otherAlsoLimited, otherReady);
-    const choice = await notices.info(offer.message, ...offer.buttons.map(button => button.label));
+    const choice = await deps.host.notify('info', offer.message, ...offer.buttons.map(button => button.label));
     const button = offer.buttons.find(candidate => candidate.label === choice);
     if (!button) return; // dismissed, or "Wait"
     try {
       switch (button.id) {
-        case 'viewHandoff': await openHandoffPreview(file); break;
-        case 'setupOther': await vscode.commands.executeCommand('hydra.openSettings', 'connectors'); break;
+        case 'viewHandoff': await deps.host.openMarkdown(file); break;
+        case 'setupOther': await deps.host.command('hydra.openSettings', 'connectors'); break;
         case 'continueOther': await continueInOther(event, other, handoff.markdown, deps); break;
         case 'wait': break;
       }
     } catch (error) {
-      void notices.error(error instanceof Error ? error.message : String(error));
+      void deps.host.notify('error', error instanceof Error ? error.message : String(error));
     }
   }
   return { dispose: () => subscription.dispose() };
@@ -96,16 +98,7 @@ async function continueInOther(event: LimitEvent, other: Provider, markdown: str
   }
   // A chat: Hydra never types into the other extension. It copies the handoff and
   // opens the other chat (following Docked/Tabs), for the user to paste themselves.
-  await vscode.env.clipboard.writeText(markdown);
-  await openOfficialExtension(other);
-  void notices.info(`Handoff copied. Paste it into the new ${providerLabel[other]} chat to continue.`);
+  await deps.host.copy(markdown);
+  await deps.openOfficial(other);
+  void deps.host.notify('info', `Handoff copied. Paste it into the new ${providerLabel[other]} chat to continue.`);
 }
-
-export { saveHandoff };
-
-export async function openHandoffPreview(file: string): Promise<void> {
-  const uri = vscode.Uri.file(file);
-  try { await vscode.commands.executeCommand('markdown.showPreview', uri); }
-  catch { const doc = await vscode.workspace.openTextDocument(uri); await vscode.window.showTextDocument(doc, { preview: true }); }
-}
-

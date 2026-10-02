@@ -1,26 +1,22 @@
 import * as vscode from 'vscode';
-import { machineSetting } from './core/machineSetting';
-import { mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { accountRpc, CodexAccountFlow, supportedAccountVersion, publicClaudeAccount, type AccountState } from './core/accountSetup';
-import { supportedCliDescription } from './core/cliVersions';
-import { findProvider } from './core/providers';
-import { processLaunch, runProbe } from './core/process';
+import type { AccountState } from './core/accountSetup';
 import type { Provider } from './core/model';
+import { AccountsService } from './host/accounts';
+import { VsCodeHost } from './vscodeHost';
 
+/** The IDE's Accounts panel over src/host/accounts.ts's AccountsService. */
 export class ProviderAccounts implements vscode.Disposable {
   private panel?:vscode.WebviewPanel;
-  private readonly states:Record<Provider,AccountState>={claude:{status:'unchecked',text:'Not checked. Sign in or refresh when ready.'},codex:{status:'unchecked',text:'Not checked. Sign in or refresh when ready.'}};
-  private readonly probes=new Map<Provider,AbortController>();
-  private codex?:CodexAccountFlow;
-  private terminal?:vscode.Terminal;
-  private disposed=false;
-  private readonly closed:vscode.Disposable;
-  constructor(private readonly context:vscode.ExtensionContext,private readonly available:boolean){
-    this.closed=vscode.window.onDidCloseTerminal(terminal=>{if(this.terminal===terminal){this.terminal=undefined;this.update('claude',{status:'unchecked',text:'Claude Code sign-in terminal closed. Refresh status to check the result.'});}});
+  /** The sign-in state and flows themselves. */
+  readonly service:AccountsService;
+  private readonly updates:vscode.Disposable;
+  constructor(context:vscode.ExtensionContext,private readonly available:boolean){
+    this.service=new AccountsService(new VsCodeHost(context,{appendLine:()=>undefined},()=>undefined),available);
+    this.updates=this.service.onUpdate(states=>{void this.panel?.webview.postMessage({type:'accounts',states});});
   }
-  snapshot():Record<Provider,AccountState>{return structuredClone(this.states);}
-  private update(provider:Provider,state:AccountState):void{if(this.disposed)return;this.states[provider]=state;void this.panel?.webview.postMessage({type:'accounts',states:this.snapshot()});}
+  snapshot():Record<Provider,AccountState>{return this.service.snapshot();}
+  private update(provider:Provider,state:AccountState):void{this.service.update(provider,state);}
   show(focus?:Provider,autoLogin?:boolean):void{
     if(!this.available)throw new Error('Account setup is available in the local Hydra desktop IDE.');
     // Check the provider's own reported status first: an already signed-in
@@ -28,7 +24,7 @@ export class ProviderAccounts implements vscode.Disposable {
     // for an account that is already connected.
     const startLogin=(provider:Provider)=>{void (async()=>{
       await this.action(provider,'refresh');
-      if(this.states[provider].status==='signed-in')return;
+      if(this.service.snapshot()[provider].status==='signed-in')return;
       await this.action(provider,'login');
     })().catch(()=>this.update(provider,{status:'error',text:'Use account setup in your trusted local Hydra window.'}));};
     if(this.panel){
@@ -54,43 +50,9 @@ export class ProviderAccounts implements vscode.Disposable {
       if((message.provider==='claude'||message.provider==='codex')&&['login','refresh','cancel','guide'].includes(String(message.type))){const provider=message.provider;void this.action(provider,message.type as 'login'|'refresh'|'cancel'|'guide').catch(()=>this.update(provider,{status:'error',text:'Use account setup in your trusted local Hydra window.'}));}
     });
   }
-  async action(provider:Provider,action:'login'|'refresh'|'cancel'|'guide'):Promise<void>{
-    if(action==='cancel'){
-      this.probes.get(provider)?.abort();this.probes.delete(provider);
-      if(provider==='codex'){const flow=this.codex;this.codex=undefined;await flow?.cancel().catch(()=>{});}
-      else{const terminal=this.terminal;this.terminal=undefined;terminal?.dispose();}
-      this.update(provider,{status:'cancelled',text:'Local setup stopped. This does not sign out an existing account. Refresh to check.'});return;
-    }
-    if(!this.available||!vscode.workspace.isTrusted||this.disposed||vscode.env.remoteName||vscode.workspace.getConfiguration('hydra').get('handoff'))throw new Error('Use account setup in your trusted local Hydra window.');
-    if(action==='guide'){await vscode.env.openExternal(vscode.Uri.parse(provider==='claude'?'https://code.claude.com/docs/en/setup':'https://developers.openai.com/codex/cli'));return;}
-    if(this.probes.has(provider)||this.states[provider].status==='pending'||this.states[provider].status==='working')return;
-    const controller=new AbortController();this.probes.set(provider,controller);this.update(provider,{status:'working',text:'Checking the installed provider version…'});
-    try{
-      const configured=machineSetting<string>(vscode.workspace.getConfiguration('hydra'), `${provider}Path`);
-      const found=await findProvider(provider,configured);if(controller.signal.aborted)return;
-      if(!found.executable)throw new Error(`Install ${supportedCliDescription(provider)} using its official guide, or set its executable path in Hydra editor settings.`);
-      const cwd=this.context.globalStorageUri.fsPath;await mkdir(cwd,{recursive:true});
-      const version=await runProbe(found.executable,['--version'],cwd,{signal:controller.signal,timeoutMs:8000,maxBytes:16384});
-      if(controller.signal.aborted)return;
-      if(version.error||version.exitCode!==0||!supportedAccountVersion(provider,version.stdout))throw new Error(`Account setup needs ${supportedCliDescription(provider)}; this one reports "${(version.stdout||'').trim().slice(0,80)||'no version'}". Update it with its official guide, or set its path in Hydra editor settings.`);
-      if(provider==='codex'){
-        const flow=new CodexAccountFlow((notify,failed)=>accountRpc(found.executable!,cwd,notify,failed),state=>{if(this.codex===flow)this.update(provider,state);},async url=>{if(controller.signal.aborted||this.disposed)return false;return vscode.env.openExternal(vscode.Uri.parse(url));});this.codex=flow;
-        if(action==='login')await flow.login();else await flow.refresh();
-      }else if(action==='login'){
-        const launch=processLaunch(found.executable,['auth','login','--claudeai']);
-        this.terminal=vscode.window.createTerminal({name:'Claude Code · Subscription sign-in',cwd,shellPath:launch.executable,shellArgs:launch.args,isTransient:true});this.terminal.show(false);
-        this.update(provider,{status:'pending',text:'Complete the unmodified Claude Code sign-in flow in its terminal/browser. Close that terminal, then refresh status. Hydra does not read its terminal output.'});
-      }else{
-        const status=await runProbe(found.executable,['auth','status','--json'],cwd,{signal:controller.signal,timeoutMs:15000,maxBytes:16384});
-        if(controller.signal.aborted)return;
-        // Only public auth-mode fields are interpreted; identity and credential fields are discarded.
-        this.update(provider,publicClaudeAccount(status.exitCode,status.error,status.stdout));
-      }
-    }catch(error){if(!controller.signal.aborted)this.update(provider,{status:'error',text:error instanceof Error?error.message:'Account setup failed. Retry or use the official client.'});}
-    finally{if(this.probes.get(provider)===controller)this.probes.delete(provider);}
-  }
-  async shutdown():Promise<void>{this.disposed=true;for(const controller of this.probes.values())controller.abort();this.probes.clear();this.terminal?.dispose();this.terminal=undefined;await this.codex?.cancel().catch(()=>{});}
-  dispose():void{this.closed.dispose();this.panel?.dispose();void this.shutdown();}
+  action(provider:Provider,action:'login'|'refresh'|'cancel'|'guide'):Promise<void>{return this.service.action(provider,action);}
+  shutdown():Promise<void>{return this.service.shutdown();}
+  dispose():void{this.updates.dispose();this.panel?.dispose();this.service.dispose();}
   private html():string{
     const nonce=randomBytes(24).toString('base64');
     return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none';style-src 'nonce-${nonce}';script-src 'nonce-${nonce}'"><style nonce="${nonce}">
