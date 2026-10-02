@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
-import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from './host/host';
+import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from './host/host';
 
 /**
  * The IDE's Host (docs/internal/hydra-app/G2-host-split.md): each method does exactly what the extension did before
@@ -11,6 +11,7 @@ import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSettings,
 export class VsCodeHost implements Host {
   readonly settings: HostSettings;
   readonly state: HostState;
+  readonly globalState: HostState;
   readonly paths: HostPaths;
   readonly development: boolean;
   /**
@@ -28,6 +29,7 @@ export class VsCodeHost implements Host {
       }),
     };
     this.state = { get: <T>(key: string, fallback: T) => context.workspaceState.get<T>(key, fallback), update: async (key, value) => { await context.workspaceState.update(key, value); } };
+    this.globalState = { get: <T>(key: string, fallback: T) => context.globalState.get<T>(key, fallback), update: async (key, value) => { await context.globalState.update(key, value); } };
     this.development = context.extensionMode !== vscode.ExtensionMode.Production;
     this.paths = { storage: context.globalStorageUri.fsPath, dist: vscode.Uri.joinPath(context.extensionUri, 'dist').fsPath, appRoot: vscode.env.appRoot };
   }
@@ -36,6 +38,33 @@ export class VsCodeHost implements Host {
   async confirm(message: string, action: string, detail?: string): Promise<boolean> {
     return await vscode.window.showWarningMessage(message, { modal: true, ...(detail !== undefined ? { detail } : {}) }, action) === action;
   }
+  async command<T = unknown>(id: string, ...args: unknown[]): Promise<T> { return await vscode.commands.executeCommand<T>(id, ...args); }
+  section(name: string): HostSection {
+    const config = () => vscode.workspace.getConfiguration(name);
+    return {
+      get: <T>(key: string, fallback: T) => config().get<T>(key, fallback),
+      inspect: <T>(key: string) => config().inspect<T>(key),
+      update: async (key, value) => { await config().update(key, value, vscode.ConfigurationTarget.Global); },
+    };
+  }
+  colorTheme(): 'light' | 'dark' {
+    const kind = vscode.window.activeColorTheme.kind;
+    return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? 'light' : 'dark';
+  }
+  onColorThemeChange(listener: () => void): Disposable { return vscode.window.onDidChangeActiveColorTheme(() => listener()); }
+  iconThemes(): { id: string; label: string }[] {
+    const themes = [{ id: '', label: 'None' }];
+    for (const extension of vscode.extensions.all) {
+      const contributed = (extension.packageJSON as { contributes?: { iconThemes?: { id: string; label?: string }[] } } | undefined)?.contributes?.iconThemes;
+      for (const theme of contributed || []) themes.push({ id: theme.id, label: theme.label || theme.id });
+    }
+    return themes;
+  }
+  async pickFolder(title: string): Promise<string | undefined> {
+    const picked = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, title });
+    return picked?.[0]?.fsPath;
+  }
+  async revealInOS(file: string): Promise<void> { await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(file)); }
   async ask(level: 'info' | 'warning', message: string, detail: string | undefined, ...actions: string[]): Promise<string | undefined> {
     const options = { modal: true, ...(detail !== undefined ? { detail } : {}) };
     return level === 'info' ? await vscode.window.showInformationMessage(message, options, ...actions) : await vscode.window.showWarningMessage(message, options, ...actions);

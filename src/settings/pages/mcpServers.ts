@@ -1,9 +1,8 @@
-import * as vscode from 'vscode';
 import {
   addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, mcpAgents, removeMcpServer, testMcpServer, validateServerSpec,
   type McpAgent, type McpContext, type McpServerSpec,
 } from '../../core/mcpServers';
-import { claudeForRegistration } from '../../claudeExecutable';
+import { claudeForRegistration } from '../../host/claudeExecutable';
 import type { SettingsContext, SettingsPage } from '../types';
 import { mcpAgentLabel } from './mcpServersHelpers';
 
@@ -21,11 +20,11 @@ import { mcpAgentLabel } from './mcpServersHelpers';
 const lockIcon = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3.5" y="7" width="9" height="6.5" rx="1.2"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/></svg>';
 const caretIcon = '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2l8 6-8 6z"/></svg>';
 
-async function buildContext(): Promise<McpContext> {
-  return defaultMcpContext(await claudeForRegistration());
+async function buildContext(ctx: SettingsContext): Promise<McpContext> {
+  return defaultMcpContext(await claudeForRegistration(ctx.host.settings.machine<string>('claudePath'), ctx.host.extension('anthropic.claude-code')?.path));
 }
 async function refreshList(ctx: SettingsContext): Promise<void> {
-  const list = await listMcpServers(await buildContext());
+  const list = await listMcpServers(await buildContext(ctx));
   await ctx.post({ type: 'mcpList', list });
 }
 function parseAgent(value: unknown): McpAgent {
@@ -375,7 +374,7 @@ export const mcpServersPage: SettingsPage = {
       case 'mcpToggle': {
         const name = String(message.name), agent = parseAgent(message.agent), on = !!message.on;
         try {
-          const context = await buildContext();
+          const context = await buildContext(ctx);
           if (on) await enableMcpServerFor(context, name, agent);
           else await removeMcpServer(context, name, agent);
           await ctx.post({ type: 'status', text: `${on ? 'Enabled' : 'Removed'} "${name}" for ${mcpAgentLabel(agent)}.` });
@@ -387,7 +386,7 @@ export const mcpServersPage: SettingsPage = {
       }
       case 'mcpRemoveAll': {
         const name = String(message.name), agents = parseAgentList(message.agents);
-        const context = await buildContext();
+        const context = await buildContext(ctx);
         const failures: string[] = [];
         for (const agent of agents) {
           try { await removeMcpServer(context, name, agent); } catch (error) { failures.push(`${mcpAgentLabel(agent)}: ${error instanceof Error ? error.message : 'failed'}`); }
@@ -401,7 +400,7 @@ export const mcpServersPage: SettingsPage = {
         const name = String(message.name), agent = parseAgent(message.agent), token = String(message.token ?? '');
         let result;
         try {
-          const context = await buildContext();
+          const context = await buildContext(ctx);
           const spec = await configuredSpec(context, name, agent);
           result = await testMcpServer(spec);
         } catch (error) {
@@ -424,7 +423,7 @@ export const mcpServersPage: SettingsPage = {
       }
       case 'mcpAdd': {
         try {
-          const context = await buildContext();
+          const context = await buildContext(ctx);
           const name = String(message.name), spec = validateServerSpec(message.spec), agents = parseAgentList(message.agents);
           await addMcpServer(context, name, spec, agents);
           await ctx.post({ type: 'mcpAddDone' });

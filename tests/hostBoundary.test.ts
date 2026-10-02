@@ -55,8 +55,9 @@ function localImports(file: string, source: string): string[] {
   return found;
 }
 
-test('nothing under src/core or src/host reaches vscode or electron, directly or through what it imports', async () => {
-  const roots = [...await sources(path.join('src', 'core')), ...await sources(path.join('src', 'host'))].map(file => path.resolve(file));
+test('nothing under src/core, src/host or src/settings reaches vscode or electron, directly or through what it imports', async () => {
+  // Settings pages render in the Hydra app too (milestone 6), so they reach their program only through Host.
+  const roots = [...await sources(path.join('src', 'core')), ...await sources(path.join('src', 'host')), ...await sources(path.join('src', 'settings'))].map(file => path.resolve(file));
   assert.ok(roots.length > 50, 'src/core and src/host were found');
   const offenders: string[] = [];
   const seen = new Map<string, string[]>();

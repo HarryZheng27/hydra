@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadGates, parseGatesConfig, type Gate, type GatesConfig } from '../../core/gates/config';
@@ -37,7 +36,7 @@ export async function postFromPacks(ctx: SettingsContext, root: string): Promise
 }
 async function postConfig(ctx: SettingsContext): Promise<void> {
   try {
-    const root = await leadFolder();
+    const root = await leadFolder(ctx.host);
     const config = await loadGates(root);
     const hasTestScript = await detectTestScript(root);
     await ctx.post({ type: 'gatesConfig', ...config, hasTestScript });
@@ -255,7 +254,7 @@ export const gatesPage: SettingsPage = {
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     if (message.type === 'setStarterGates') {
       try {
-        const root = await leadFolder();
+        const root = await leadFolder(ctx.host);
         const file = gatesFile(root);
         await mkdir(path.dirname(file), { recursive: true });
         await writeFile(file, message.choice === 'test' ? starterTestGatesFile() : noGatesFile(), 'utf8');
@@ -268,7 +267,7 @@ export const gatesPage: SettingsPage = {
     }
     if (message.type !== 'setGates') return false;
     try {
-      const root = await leadFolder();
+      const root = await leadFolder(ctx.host);
       const candidate = { maxAttempts: message.maxAttempts, lanes: message.lanes, gates: message.gates };
       const parsed = parseGatesConfig(candidate);
       const file = gatesFile(root);

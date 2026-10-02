@@ -1,5 +1,4 @@
-import * as vscode from 'vscode';
-import type { SettingsPage } from '../types';
+import type { SettingsContext, SettingsPage } from '../types';
 
 const links = [
   { id: 'heads', title: 'Heads guide', description: 'How Hydra heads work and when to use them.', url: 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md' },
@@ -23,11 +22,11 @@ export const docsPage: SettingsPage = {
     `;
   },
   script: `document.querySelectorAll('[data-doc]').forEach(button => button.addEventListener('click', () => send({type:'openDoc', id: button.dataset.doc})));`,
-  async handle(message: Record<string, unknown>): Promise<boolean> {
+  async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     if (message.type !== 'openDoc') return false;
     const link = links.find(item => item.id === message.id);
     if (!link) throw new Error('Unknown doc.');
-    await vscode.env.openExternal(vscode.Uri.parse(link.url));
+    await ctx.host.openUrl(link.url);
     return true;
   },
 };

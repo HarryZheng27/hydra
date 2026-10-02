@@ -1,30 +1,31 @@
-import * as vscode from 'vscode';
-
 import type { ProviderConnectionView } from './core/model';
 export type { ProviderConnectionView };
 
+/** Runs one of Hydra's commands by id (Host.command, or the IDE's executeCommand). */
+export type CommandRunner = <T = unknown>(id: string, ...args: unknown[]) => Thenable<T>;
+
 /** Handle one connections message from a webview. Returns true when the message was ours. */
-export async function handleConnectionsMessage(message: Record<string, unknown>, post: (value: unknown) => Thenable<boolean>): Promise<boolean> {
+export async function handleConnectionsMessage(message: Record<string, unknown>, post: (value: unknown) => Thenable<boolean>, command: CommandRunner): Promise<boolean> {
   const provider = message.provider === 'claude' || message.provider === 'codex' ? message.provider : undefined;
   let text = '';
   switch (message.type) {
     case 'connections': break;
     case 'connectHelpers': {
       if (!provider) throw new Error('Unknown provider.');
-      const result = await vscode.commands.executeCommand<{ warning?: string }>('hydra.connectHelpers', provider);
+      const result = await command<{ warning?: string }>('hydra.connectHelpers', provider);
       text = result?.warning || `${provider === 'claude' ? 'Claude Code' : 'Codex'} is connected to Hydra. New ${provider === 'claude' ? 'Claude' : 'Codex'} chats can start Hydra heads.`; break;
     }
     case 'disconnectHelpers':
       if (!provider) throw new Error('Unknown provider.');
-      await vscode.commands.executeCommand('hydra.disconnectHelpers', provider);
+      await command('hydra.disconnectHelpers', provider);
       text = `${provider === 'claude' ? 'Claude Code' : 'Codex'} is disconnected from Hydra.`; break;
     case 'signIn':
       if (!provider) throw new Error('Unknown provider.');
-      await vscode.commands.executeCommand('hydra.openAccounts', provider, true);
+      await command('hydra.openAccounts', provider, true);
       text = 'Starting sign-in.'; break;
     default: return false;
   }
-  const connections = await vscode.commands.executeCommand<ProviderConnectionView[]>('hydra.helperConnections');
+  const connections = await command<ProviderConnectionView[]>('hydra.helperConnections');
   await post({ type: 'connections', connections, text });
   return true;
 }

@@ -1,4 +1,4 @@
-import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from '../../src/host/host';
+import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from '../../src/host/host';
 
 /**
  * A Host for tests (docs/internal/hydra-app/G2-host-split.md): no editor, no window. It records what the controller
@@ -14,6 +14,19 @@ export class FakeHost implements Host {
   /** What the next pickMany returns, by its title (a substring match): labels to pick, or undefined to dismiss. */
   readonly picks = new Map<string, string[] | undefined>();
   readonly stateValues = new Map<string, unknown>();
+  readonly globalValues = new Map<string, unknown>();
+  readonly globalState: HostState = {
+    get: <T>(key: string, fallback: T) => (this.globalValues.has(key) ? structuredClone(this.globalValues.get(key)) : fallback) as T,
+    update: async (key, value) => { if (value === undefined) this.globalValues.delete(key); else this.globalValues.set(key, structuredClone(value)); },
+  };
+  /** Commands run (id and arguments), and what each returns, by id. */
+  readonly commands: { id: string; args: unknown[] }[] = [];
+  readonly commandResults = new Map<string, (...args: unknown[]) => unknown>();
+  /** Other settings sections, as "section.key". */
+  readonly sectionValues = new Map<string, unknown>();
+  theme: 'light' | 'dark' = 'dark';
+  folderToPick: string | undefined;
+  readonly revealed: string[] = [];
   readonly state: HostState = {
     get: <T>(key: string, fallback: T) => (this.stateValues.has(key) ? structuredClone(this.stateValues.get(key)) : fallback) as T,
     update: async (key, value) => { this.stateValues.set(key, structuredClone(value)); },
@@ -70,6 +83,22 @@ export class FakeHost implements Host {
   readonly textSources = new Map<string, (path: string, query: string) => Promise<string>>();
   readonly changes: { title: string; resources: [ChangeSide, ChangeSide, ChangeSide][] }[] = [];
   previews = true;
+  async command<T = unknown>(id: string, ...args: unknown[]): Promise<T> {
+    this.commands.push({ id, args });
+    return await this.commandResults.get(id)?.(...args) as T;
+  }
+  section(name: string): HostSection {
+    return {
+      get: <T>(key: string, fallback: T) => (this.sectionValues.has(`${name}.${key}`) ? this.sectionValues.get(`${name}.${key}`) : fallback) as T,
+      inspect: <T>(key: string) => (this.sectionValues.has(`${name}.${key}`) ? { globalValue: this.sectionValues.get(`${name}.${key}`) as T } : {}),
+      update: async (key, value) => { if (value === undefined || value === null) this.sectionValues.delete(`${name}.${key}`); else this.sectionValues.set(`${name}.${key}`, value); },
+    };
+  }
+  colorTheme(): 'light' | 'dark' { return this.theme; }
+  onColorThemeChange(): Disposable { return { dispose: () => {} }; }
+  iconThemes(): { id: string; label: string }[] { return [{ id: '', label: 'None' }]; }
+  async pickFolder(): Promise<string | undefined> { return this.folderToPick; }
+  async revealInOS(file: string): Promise<void> { this.revealed.push(file); }
   async ask(_level: 'info' | 'warning', message: string, detail: string | undefined, ...actions: string[]): Promise<string | undefined> {
     this.confirms.push({ message, action: actions.join(' | '), ...(detail !== undefined ? { detail } : {}) });
     const picked = this.answer(message);
