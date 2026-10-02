@@ -18,7 +18,7 @@ import { FakeHost } from './host/fakeHost';
 async function setup(t: { after(fn: () => Promise<void>): void }) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'hydra-controller-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const host = new FakeHost({ storage: root, dist: path.join(root, 'dist') });
+  const host = new FakeHost({ storage: root, dist: path.join(root, 'dist'), appRoot: path.join(root, 'app') });
   const ideMessages: ClientMessage[] = [], trees: TreeUpdate[] = [];
   let agentsOpen = true, opened = 0, ready = 0;
   const ide: ControllerIde = {

@@ -40,7 +40,7 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'init']);
 
   const storage = path.join(root, 'storage');
-  const host = new FakeHost({ storage, dist: path.join(root, 'dist') }, { maxConcurrentHelpers: 2 });
+  const host = new FakeHost({ storage, dist: path.join(root, 'dist'), appRoot: path.join(root, 'app') }, { maxConcurrentHelpers: 2 });
   host.folderPaths = [repo];
   host.machineValues.set('worktreeRoot', path.join(root, 'worktrees'));
   const ide: ControllerIde = {

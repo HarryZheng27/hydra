@@ -35,12 +35,20 @@ export interface HostFolder { path: string; uri: string }
 /** One choice in a list the user picks from. */
 export interface PickItem { label: string; description?: string; picked?: boolean }
 
+/** A text box the user types into: the editor's input box options. `validateInput` returns a problem, or undefined when the value is fine. */
+export interface InputOptions { title?: string; prompt?: string; value?: string; placeHolder?: string; ignoreFocusOut?: boolean; validateInput?: (value: string) => string | undefined }
+
+/** One side of a file in a multi-file diff: a file on disk, or text Hydra serves under its own scheme (registerTextSource). */
+export type ChangeSide = { file: string } | { scheme: string; path: string; query: string };
+
 /** Folders Hydra reads or writes outside the user's projects. */
 export interface HostPaths {
   /** Hydra's own storage (the IDE's global storage folder): workspaces, helpers, audit, ownership locks. */
   storage: string;
   /** Hydra's built files (`dist/`): `hydra-mcp.cjs`, `hydra-limit-hook.cjs`, the webview bundle. */
   dist: string;
+  /** The program's own install folder, where it keeps node-pty (src/core/lanePty.ts). */
+  appRoot: string;
 }
 
 export interface Host {
@@ -52,6 +60,26 @@ export interface Host {
   confirm(message: string, action: string, detail?: string): Promise<boolean>;
   /** A list the user picks any number of items from. Undefined when they dismissed it, so nothing should change. */
   pickMany<T extends PickItem>(items: T[], options: { title: string; placeHolder: string }): Promise<T[] | undefined>;
+  /** A modal question with any number of actions. Resolves to the action chosen, or undefined when dismissed. */
+  ask(level: 'info' | 'warning', message: string, detail: string | undefined, ...actions: string[]): Promise<string | undefined>;
+  /** A text box. Undefined when the user dismissed it. */
+  input(options: InputOptions): Promise<string | undefined>;
+  /** A list the user picks one item from. Undefined when dismissed. */
+  pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean }): Promise<T | undefined>;
+  /** Copies text to the clipboard. */
+  copy(text: string): Promise<void>;
+  /** Shows progress while `task` runs. */
+  withProgress<T>(title: string, task: () => Promise<T>): Promise<T>;
+  /** Opens a folder as a window: a new one, or (both false) the window that already has it if there is one. */
+  openFolder(folder: string, options: { forceNewWindow: boolean; forceReuseWindow?: boolean }): Promise<void>;
+  /** Opens a web page inside the program, beside the current view. False when the program can't, so the caller can offer the browser. */
+  openPreview(url: string): Promise<boolean>;
+  /** Shows a Markdown file rendered, or as text when rendering isn't available. */
+  openMarkdown(file: string): Promise<void>;
+  /** Serves text for `scheme`, by path and query, to openChanges. */
+  registerTextSource(scheme: string, provide: (path: string, query: string) => Promise<string>): Disposable;
+  /** A multi-file diff: for each file, its label (on disk), its left side and its right side. */
+  openChanges(title: string, resources: [ChangeSide, ChangeSide, ChangeSide][]): Promise<void>;
   /** Opens a text file for reading or editing; `preview: false` keeps its tab open. */
   openFile(file: string, options: { preview: boolean }): Promise<void>;
   /** Opens a web page in the user's browser. */

@@ -53,7 +53,7 @@ export async function loadPreviewConfig(folder: string): Promise<PreviewConfig |
   catch (error) { throw new Error(error instanceof Error ? error.message : String(error)); }
 }
 
-/** Write `.hydra/preview.json` in the project's lead folder, from the one-time input box (extensionLanes.ts). */
+/** Write `.hydra/preview.json` in the project's lead folder, from the one-time input box (src/host/lanes.ts). */
 export async function savePreviewConfig(folder: string, config: PreviewConfig): Promise<void> {
   await mkdir(path.join(folder, '.hydra'), { recursive: true });
   await writeFile(path.join(folder, '.hydra', 'preview.json'), `${JSON.stringify({ command: config.command, url: config.url }, null, 2)}\n`, 'utf8');
