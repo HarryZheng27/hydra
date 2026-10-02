@@ -66,7 +66,7 @@ Each plan leaves room for Hydra's two rounds of integration fixes within its 12-
   - *first-pass review*: the first review of the work. For Hydra it is the round 1 gate's, read from the plan's `integration-fix-1` job, whose brief lists what failed (the plan's gate result and the reviewer's `plan-<id>-integration/rigor-review-reply.txt` are overwritten each round); with no fix round it is the final review. It is recorded as `firstReview`. For the single agent it is the first `review`.
   - *final review*: the last one, after up to N fix rounds. `benchmark.mjs review` gives the single agent the same rounds (`--fix-rounds`, 2 by default): a failed review resumes the agent with the findings, formatted like Hydra's fix brief, then reviews again (below).
   - *passed within N fix rounds*: the final review passed after at most N rounds.
-  A review that didn't run (no reviewer, a usage limit, a timeout, or a gate failed before it) is "not run", never a failure: `summarize` leaves it out of the pass rate and counts it beside it.
+  A review that didn't run (no reviewer, a usage limit, a timeout, or a gate failed before it) is "not run", never a failure: `summarize` leaves it out of the pass rate and counts it beside it. A reviewer that crashed or replied unreadably is tried once more by the review gate itself, so both setups get the retry from the same code; each review records it (for Hydra, every round's review, read from the fix briefs that quote it), and `summarize` lists the runs where it happened.
 - **Fix rounds:** for Hydra, the jobs a failed integration gate added to fix what it found (`integration-fix-<n>`); for the single agent, its resumed runs.
 - **Time to working code, before and after the review loop:** before is the time above. After is when the review and its fix rounds are done and the work still works: for the single agent, its run plus every review and fix round, with `npm test` and the hidden check run again on the fixed repository; for Hydra, when the plan's integration gate settled after its fix jobs.
 - **The hidden check:** how many of the fixture's acceptance checks passed.
@@ -155,6 +155,13 @@ For each group it gives the median and the range (min–max) of time to working 
 ```
 node scripts/benchmark.mjs summarize --runs ".bench/overnight/bench-p1-*"
 ```
+
+### Why a review failed: `benchmark.mjs findings`
+
+`node scripts/benchmark.mjs findings --runs "<folders or globs>" [--out <file>] [--plan-store <plans.json>]` writes `findings.md` beside the runs, a worksheet for sorting review findings by cause:
+- **Counts** by task, setup and round: round 1 is the first-pass review, and the last round is the final one.
+- **Every finding**, with its severity, file, note and an empty **Bucket** column (seam, spec miss, bug in one job, test gap, questionable). The single agent's come from `single-review.json`'s rounds. Hydra's come from its fix jobs' briefs, which quote each failed review (the gate record and reviewer replies are overwritten each round), and from its final integration gate in Hydra's plan store. A fix brief quotes at most 20 findings per gate and is cut at 4,000 characters, so Hydra's counts before its final round are lower bounds, and the worksheet marks them. A Hydra finding also names the plan job whose write scope holds its file. Reviews with no findings are counted too, and folders that couldn't be read are listed.
+- **Where Hydra's time went:** when each job and fix job landed, and when the gate last ran, from the plan record. Head starts, each job's own gates and waits on dependencies are in Hydra's output log.
 
 ### Runs the machine slept through (void runs)
 

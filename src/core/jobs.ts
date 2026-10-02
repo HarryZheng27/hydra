@@ -79,6 +79,8 @@ export interface JobCheckResult {
   summary?: string;
   /** Who reviewed, for a review gate. */
   reviewer?: Provider;
+  /** A review gate whose first try didn't run (the reviewer crashed or replied unreadably) and was run once more: why the first try didn't run. */
+  retriedAfter?: string;
   /** The pack the gate comes from (docs/internal/Packs_Plan.md), for "From the Coding pack". */
   pack?: string;
   /** That pack's title. */

@@ -10,6 +10,8 @@
 //     (a failed review resumes the single agent with the findings, up to --fix-rounds times, and reviews again, as Hydra's integration gate does)
 //     (exits 1 when the review didn't run, and 3 when a usage limit stopped it)
 //   node scripts/benchmark.mjs summarize --runs <folders or globs, comma-separated> [--out <file>] [--plan-store <plans.json>]
+//   node scripts/benchmark.mjs findings --runs <folders or globs, comma-separated> [--out <file>] [--plan-store <plans.json>]
+//     (every review finding, both setups and every round, as a worksheet to sort by cause, and where Hydra's time went)
 //   node scripts/benchmark.mjs publish --results <dir> [--label <text>] [--notes <text>]
 //   node scripts/benchmark.mjs swebench --n 30 --seed 1 --setup single|hydra [--out <dir>] … (scripts/benchmark-swebench.mjs)
 //   node scripts/benchmark.mjs swebench-submit --out <dir> [--run-id <id>] [--wait <minutes>]
@@ -19,10 +21,11 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  defaultFixRounds, defaultFixture, defaultPollSeconds, defaultUsd, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, planSignature, pollDelayMs,
-  renderSummary, resolveTool, runRows, singleAllowedTools, singleClaudeArgs, singleFixBrief, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, withResults, withReviewLoop,
+  defaultFixRounds, defaultFixture, isFixJob, defaultPollSeconds, defaultUsd, fixturePath, globSegment, harnessOnlyFiles, landingFromStore, observePlan, parseCheckOutput, pickTask, planSignature, pollDelayMs,
+  renderSummary, resolveTool, runRows, singleAllowedTools, singleClaudeArgs, singleFixBrief, singleSettings, summarizeHydra, summarizeReview, summarizeSingle, taskFromPlan, taskLabel, withResults, withReviewLoop,
 } from './benchmark-lib.mjs';
 import { renderSwebenchSummary, swebench, swebenchSubmit } from './benchmark-swebench.mjs';
+import { findingRows, hydraReviews, hydraTiming, renderFindings, singleReviews } from './benchmark-findings.mjs';
 import { run } from './benchmark-run.mjs';
 import { guardSuspend, renderVoidRuns, replaceVoidFolder } from './benchmark-suspend.mjs';
 import { closeCli, closeLeftovers, closeOwnWindow, markerFile, ownMarkerMaxAgeMs, readMarker, readWindowRecords } from './benchmark-windows.mjs';
@@ -487,6 +490,42 @@ async function summarize(flags, rest) {
   console.log(`${markdown}\nWrote ${file}.`);
 }
 
+/**
+ * Plan v3, Phase A: every review finding of the runs (single-review.json's rounds; a Hydra plan's fix briefs and its
+ * final integration gate, from Hydra's plan store), with the Hydra plan job each finding's file belongs to, and when
+ * each Hydra job landed. Writes findings.md (a worksheet with an empty Bucket column) beside the runs.
+ */
+async function findings(flags, rest) {
+  const patterns = [...String(flags.runs ?? '').split(','), ...rest].map(item => item.trim()).filter(Boolean);
+  if (!patterns.length) throw new Error('--runs needs run folders or globs, comma-separated.');
+  const folders = [...new Set((await Promise.all(patterns.map(expandGlob))).flat())].sort();
+  if (!folders.length) throw new Error(`No run folders match ${patterns.join(', ')}.`);
+  const reviews = [], rows = [], timings = [], skipped = [];
+  for (const folder of folders) {
+    const run = path.basename(folder);
+    const read = async name => { try { return await readJson(path.join(folder, name)); } catch (error) { if (error?.code !== 'ENOENT') skipped.push(`${run} (${name} unreadable)`); return undefined; } };
+    const single = await read('single-results.json'), review = await read('single-review.json'), hydraResults = await read('hydra-results.json');
+    let used = false;
+    if (single && review) { const found = singleReviews(review, { task: taskLabel(single), run }); reviews.push(...found); rows.push(...findingRows(found)); used = true; }
+    if (hydraResults) {
+      const plan = hydraResults.planId ? await storedPlan(hydraResults.planId, flags['plan-store']) : undefined;
+      if (!plan) { skipped.push(`${run} (its plan isn't in the plan store: pass --plan-store)`); continue; }
+      const found = hydraReviews(plan, { task: taskLabel(hydraResults), run });
+      reviews.push(...found);
+      rows.push(...findingRows(found, plan.singleHead?.jobs ?? (plan.jobs ?? []).filter(job => !isFixJob(job.key))));
+      const timing = hydraTiming(plan);
+      if (timing) timings.push({ ...timing, task: taskLabel(hydraResults), run });
+      used = true;
+    }
+    if (!used && !skipped.some(item => item.startsWith(`${run} `))) skipped.push(`${run} (no reviewed single run or Hydra run)`);
+  }
+  const markdown = renderFindings(reviews, rows, timings) + (skipped.length ? `\nSkipped: ${skipped.join('; ')}.\n` : '');
+  const parent = folders.length === 1 ? path.dirname(folders[0]) : folders.reduce((common, folder) => { while (!(folder + path.sep).toLowerCase().startsWith(common.toLowerCase() + path.sep) && common !== path.dirname(common)) common = path.dirname(common); return common; }, folders[0]);
+  const file = path.resolve(flags.out ?? path.join(parent, 'findings.md'));
+  await fs.writeFile(file, markdown);
+  console.log(`${reviews.length} review(s), ${rows.length} finding(s) from ${folders.length} folder(s)${skipped.length ? `; skipped ${skipped.length}` : ''}. Wrote ${file}.`);
+}
+
 async function publish(flags) {
   const out = path.resolve(flags.results ?? '');
   const read = async name => { try { return await readJson(path.join(out, name)); } catch { return undefined; } };
@@ -508,11 +547,11 @@ const resultsOf = (flags, ...names) => () => { const dir = path.resolve(flags.re
 const guardedSingle = flags => guardSuspend(() => single(flags), { files: resultsOf(flags, 'single-results.json') });
 const guardedHydra = flags => guardSuspend(() => hydra(flags), { files: resultsOf(flags, 'hydra-results.json') });
 const commands = {
-  prepare, summarize, publish,
+  prepare, summarize, findings, publish,
   hydra: guardedHydra, single: guardedSingle,
   review: flags => guardSuspend(() => review(flags), { files: resultsOf(flags, 'single-results.json', 'single-review.json') }),
   swebench: (options, extra) => swebench(options, extra, { root, run, git, runSingle: guardedSingle, runHydra: guardedHydra, openHydra }),
   'swebench-submit': (options, extra) => swebenchSubmit(options, extra, { run }),
 };
-if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|publish|swebench|swebench-submit [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
+if (!commands[command]) { console.error('Usage: node scripts/benchmark.mjs prepare|hydra|single|review|summarize|findings|publish|swebench|swebench-submit [options] (see docs/Benchmark.md)'); process.exitCode = 2; }
 else commands[command](flags, rest).catch(error => { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = error?.exitCode ?? 1; });
