@@ -57,15 +57,20 @@ test('a lane diff\'s base side is served through the host, only for an open lane
   assert.equal(platform.textSources.has('hydra-lane'), false, 'disposing the controller unregisters it');
 });
 
-test('New lane without terminals explains itself through the host, and Show waits for the view', async t => {
+test('New lane without terminals explains itself through the host, an unknown lane is refused, and Show waits for the view', async t => {
   const { repo, root, platform, lanes, posted, setReady, opened } = await setup(t);
   await lanes.start(repo, path.join(root, 'storage', 'workspaces', 'w'));
-  await lanes.action('nope', 'refresh', false).catch(error => assert.match(String(error), /isn't open in this window/));
+  await assert.rejects(lanes.action('nope', 'refresh', false), /isn't open in this window/);
+  // hydra.newLane, through the commands the IDE registers: with no terminals it says so, and asks nothing.
+  const commands = new Map<string, (...args: unknown[]) => unknown>();
+  lanes.registerCommands((name, callback) => { commands.set(name, callback); });
+  await commands.get('hydra.newLane')!();
+  assert.deepEqual(platform.notices.map(notice => [notice.level, notice.message]), [['error', "Hydra: Terminals aren't available in this build."]]);
+  assert.equal(platform.confirms.length, 0);
   await lanes.show('lanes');
   assert.equal(opened(), 1);
   assert.equal(posted.filter(message => message.type === 'show').length, 0, 'not posted before the view is ready');
   setReady(true);
   await lanes.show('canvas');
   assert.deepEqual(posted.filter(message => message.type === 'show').at(-1), { type: 'show', view: 'canvas' });
-  assert.equal(platform.notices.length, 0);
 });

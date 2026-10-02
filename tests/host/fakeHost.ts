@@ -73,7 +73,8 @@ export class FakeHost implements Host {
   async ask(_level: 'info' | 'warning', message: string, detail: string | undefined, ...actions: string[]): Promise<string | undefined> {
     this.confirms.push({ message, action: actions.join(' | '), ...(detail !== undefined ? { detail } : {}) });
     const picked = this.answer(message);
-    return typeof picked === 'string' && actions.includes(picked) ? picked : picked === true ? actions[0] : undefined;
+    // A dialog with several buttons needs the button's own text: `true` would hide which one was pressed.
+    return typeof picked === 'string' && actions.includes(picked) ? picked : undefined;
   }
   async input(options: InputOptions): Promise<string | undefined> {
     for (const [title, value] of this.inputs) if ((options.title ?? '').includes(title)) return value;
