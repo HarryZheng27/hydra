@@ -13,7 +13,7 @@ export type AgentsViewName = 'canvas' | 'lanes';
  * section 2): a segmented control under the topbar, with each view getting the
  * full space. Both views stay mounted (only one is shown) so a lane's terminal
  * keeps running and its scrollback stays put while you're looking at the canvas.
- * No `acquireVsCodeApi` here, unlike index.tsx, so this renders under SSR too.
+ * No host bridge here (webview/bridge.ts), unlike index.tsx, so this renders under SSR too.
  */
 export function AgentsBody({
   view, onViewChange, heads, dismissedTray, plans, lanes, planJobs, terminals, defaultProvider, laneError, laneFocus, onLaneFocused,

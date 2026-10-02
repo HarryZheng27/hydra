@@ -75,6 +75,8 @@ import { AuditLog, type AuditEvent } from './core/audit';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from './core/windowClose';
 // ---- Updates (docs/Releases.md, "Updating"). Its own line. ----
 import { registerUpdates } from './extensionUpdates';
+// ---- The host boundary (docs/internal/hydra-app/G2-host-split.md). Its own line. ----
+import { VsCodeHost } from './vscodeHost';
 
 let manager: Manager | undefined;
 // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
@@ -128,6 +130,8 @@ class Manager {
   // ---- Audit log (5.2): one per window, denials/approvals/stops ----
   private readonly audit: AuditLog;
   private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
+  /** What the controller needs from VS Code (docs/internal/hydra-app/G2-host-split.md). */
+  private readonly host: VsCodeHost;
   private readonly locks: OwnershipLock[] = [];
   private readonly storageDirectory: string;
   /** Hydra helpers for this window (docs/internal/Official_Extensions_Plan.md): job store, local endpoint, service, discovery record. */
@@ -182,6 +186,7 @@ class Manager {
   /** Watches your packs folder (hydra.packs.folder), so a pack added or edited there refreshes without Reload. */
   private packsFolderWatcher?: vscode.FileSystemWatcher;
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.host = new VsCodeHost(context, this.output, message => this.panel?.webview.postMessage(message));
     // Stop all (5.3): a workspace-wide switch, so it survives a reload until Resume Agents runs.
     this.stop = new StopSwitch(context.workspaceState);
     // Audit log (5.2): one file per window, under Hydra's own storage, never a worktree.
@@ -1752,7 +1757,7 @@ class Manager {
     await this.requirePlanRunner().cancelJob(id, key, 'Cancelled from the plan.');
   }
   private async broadcast(message: unknown): Promise<void> {
-    await this.panel?.webview.postMessage(message);
+    await this.host.postToUi(message);
   }
   private connectWebview(webview: vscode.Webview): void {
     webview.onDidReceiveMessage(value => { void this.handle(value).catch(error => this.report(error)); }, undefined, this.context.subscriptions);

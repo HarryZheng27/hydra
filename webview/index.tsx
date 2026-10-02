@@ -9,9 +9,9 @@ import { AgentsBody, type AgentsViewName } from './AgentsBody';
 import type { LaneSwitchCountdown } from './LanesView';
 import { HydraMark } from './HydraMark';
 import { emitLaneEvent } from './laneBus';
+import { hostBridge } from './bridge';
 
-declare function acquireVsCodeApi(): { postMessage(message: ClientMessage): void; getState(): unknown; setState(state: unknown): void };
-const api = acquireVsCodeApi();
+const api = hostBridge();
 const send = (message: ClientMessage) => api.postMessage(message);
 const initial: Snapshot = { busy: false, mode: 'agents' };
 const providerName = (provider: Provider) => provider === 'claude' ? 'Claude Code' : 'Codex';
