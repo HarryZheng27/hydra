@@ -53,7 +53,7 @@ test('identity.ts imports nothing that could touch user data first', () => {
   assert.deepEqual(imports, ['node:path']);
 });
 
-test('nothing in the app names the IDE\'s data folder except identity.ts', () => {
+test('nothing in the app names the IDE data folder except identity.ts', () => {
   const root = path.join(__dirname, '..', 'src');
   const hits: string[] = [];
   const walk = (dir: string): void => {
