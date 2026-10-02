@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 // @ts-expect-error: a plain .mjs module with no type declarations.
-import { endFromStore, endOfRun, landingFromStore, runRows, summarizeHydra, summarizeSingle } from '../scripts/benchmark-lib.mjs';
+import { endFromStore, endOfRun, landingFromStore, renderSummary, runRows, summarizeHydra, summarizeSingle } from '../scripts/benchmark-lib.mjs';
 
 /**
  * A run ends at Hydra's own timestamps, not at the poll that noticed the plan settled (docs/Benchmark.md).
@@ -75,4 +75,15 @@ test('summarize: time to working and reviewed code come from the plan store, unl
     assert.ok(summary.includes('7m 20s'), summary);
     assert.ok(!summary.includes('7m 42s'), summary);
   } finally { await rm(out, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
+
+test('a plan Hydra ran as one head is recorded as such (mode, why, its jobs), and summarize says in how many runs', () => {
+  const single = { ...view, jobs: [{ key: 'whole-plan', status: 'done' }], integration: { ...view.integration, landed: ['whole-plan'] }, mode: 'single-head', mode_reason: '6 jobs in a dependency chain of 3', single_head_jobs: ['a', 'b'] };
+  const recorded = summarizeHydra({ view: single, wallClockSeconds: 300, passed: true, task: 'discounts' });
+  assert.deepEqual([recorded.mode, recorded.modeReason, recorded.singleHeadJobs], ['single-head', '6 jobs in a dependency chain of 3', ['a', 'b']]);
+  const split = summarizeHydra({ view, wallClockSeconds: 300, passed: true, task: 'discounts' });
+  assert.deepEqual([split.mode, split.modeReason], ['jobs', undefined]);
+  const rows = [...runRows({ ...recorded, timeToWorkingCodeSeconds: 200 }, 'r1-hydra'), ...runRows({ ...split, timeToWorkingCodeSeconds: 200 }, 'r2-hydra')];
+  assert.deepEqual(rows.map((row: { singleHead?: boolean }) => row.singleHead), [true, undefined]);
+  assert.match(renderSummary(rows), /^Hydra ran discounts as one head in 1\/2 runs\.$/m);
 });

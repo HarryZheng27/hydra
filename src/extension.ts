@@ -1235,6 +1235,7 @@ class Manager {
       amendments: plan.amendments ?? [],
       ...(plan.unattended ? { unattended: plan.unattended } : {}),
       ...(plan.integration ? { integration: integrationLeadView(plan) } : {}),
+      ...(plan.singleHead ? { singleHead: { reason: plan.singleHead.reason, jobs: plan.singleHead.jobs.map(job => job.key) } } : {}),
     };
   }
   /** O3: hydra_plan_integrate — the integration gate on what has landed; waits for its result. */
@@ -1601,6 +1602,8 @@ class Manager {
       // O7/O3: an unattended plan writes its morning report once there's nothing more to wait for: at once when it
       // ends incomplete (or has no integration branch), else after its integration gate has a result for the tip.
       onSettled: plan => { if (plan.unattended && integrationSettled(plan)) void this.writePlanReport(plan); },
+      // Small plans run as one head (docs/Heads.md): on unless hydra.plans.singleHeadForSmallPlans is off.
+      singleHead: () => vscode.workspace.getConfiguration('hydra').get<boolean>('plans.singleHeadForSmallPlans', true),
       onGateDone: plan => { if (plan.unattended && plan.state === 'done' && integrationSettled(plan)) void this.writePlanReport(plan); },
       log: line => this.output.appendLine(line),
       // ---- Stop all (5.3) ----
