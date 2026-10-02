@@ -251,8 +251,9 @@ test('review: the exact read-only arguments, and the prompt with the diff cap, t
   assert.deepEqual(reviewArguments('codex', ['a.png', 'b.png'], false, isolation), ['exec', '--json', '--ignore-user-config', '-c', 'features.apps=false', '-c', 'web_search=\'disabled\'', '-i', 'a.png', '-i', 'b.png', '--sandbox', 'read-only', '-']);
   assert.deepEqual(reviewArguments('codex', [], true), ['exec', '--json', '-c', 'web_search=\'live\'', '--sandbox', 'read-only', '-']);
   assert.deepEqual(reviewArguments('claude', [], true, settings), [...claudeBase, '--allowedTools', 'WebFetch,WebSearch'], 'still plan mode, with the web tools allowed');
-  assert.deepEqual(reviewerSettings([]), { disableAllHooks: true });
-  assert.deepEqual(reviewerSettings(['b@m', 'a@m', 'a@m', 'not a plugin']), { disableAllHooks: true, enabledPlugins: { 'a@m': false, 'b@m': false } }, 'sorted, deduplicated, odd ids left out');
+  const syncOff = { syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true };
+  assert.deepEqual(reviewerSettings([]), { disableAllHooks: true, ...syncOff });
+  assert.deepEqual(reviewerSettings(['b@m', 'a@m', 'a@m', 'not a plugin']), { disableAllHooks: true, ...syncOff, enabledPlugins: { 'a@m': false, 'b@m': false } }, 'sorted, deduplicated, odd ids left out');
 
   assert.deepEqual(capDiff('small\n'), { text: 'small\n', cut: false });
   const line = `+${'é'.repeat(99)}\n`;
@@ -335,7 +336,7 @@ test('review: the other agent reviews; the same one stands in when the other is 
     const settingsFile = path.join(path.dirname(result!.evidence![0]!), 'review-settings.json');
     assert.deepEqual(reviewer.specs[0]!.args, ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--setting-sources', 'user', '--settings', settingsFile, '--strict-mcp-config', '--disable-slash-commands']);
     // HSEC-71: every hook and your plugins off, and no CLAUDE.md.
-    assert.deepEqual(JSON.parse(await readFile(settingsFile, 'utf8')), { disableAllHooks: true, enabledPlugins: { 'claude-mem@thedotmack': false } });
+    assert.deepEqual(JSON.parse(await readFile(settingsFile, 'utf8')), { disableAllHooks: true, syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true, enabledPlugins: { 'claude-mem@thedotmack': false } });
     assert.deepEqual(reviewer.specs[0]!.env, { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' });
     assert.equal(reviewer.specs[0]!.executable, 'fake-claude'); assert.equal(reviewer.specs[0]!.timeoutMs, 5 * 60_000);
     assert.equal(result!.state, 'failed'); assert.equal(result!.reviewer, 'claude');

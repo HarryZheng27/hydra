@@ -72,7 +72,7 @@ test('a Claude head\'s settings: exactly the read block and the deny pairs, and 
     platform: 'win32', env: winHome, storage: 'C:\\Data\\Hydra', storageRead: [{ path: 'C:\\Data\\Hydra', dir: true }],
     worktree: 'C:\\wt\\aaa', addDirs: [], otherWorktrees: ['C:\\wt\\bbb', 'C:\\wt\\lane-ccc'], leadFolder: 'C:\\repo',
   });
-  assert.deepEqual(settings, { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: [
+  assert.deepEqual(settings, { disableAllHooks: true, syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: [
     'Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)',
     'Read(//c/wt/bbb/**)', 'Edit(//c/wt/bbb/**)', 'Read(//c/wt/lane-ccc/**)', 'Edit(//c/wt/lane-ccc/**)',
     'Read(//c/repo/.hydra/**)', 'Edit(//c/repo/.hydra/**)', 'Read(//c/repo/.git/**)', 'Edit(//c/repo/.git/**)',
@@ -80,18 +80,18 @@ test('a Claude head\'s settings: exactly the read block and the deny pairs, and 
   ] } });
   // What goes into the file is what Claude reads back: only known keys, each rule in the form R1 showed works.
   const written = JSON.parse(JSON.stringify(settings, null, 2));
-  assert.deepEqual(Object.keys(written), ['disableAllHooks', 'permissions'], 'HSEC-71: every hook off');
+  assert.deepEqual(Object.keys(written), ['disableAllHooks', 'syncClaudeAiSkills', 'syncClaudeAiPlugins', 'disableClaudeAiConnectors', 'permissions'], 'HSEC-71: every hook off, and nothing synced from claude.ai');
   assert.deepEqual(Object.keys(written.permissions).sort(), ['blockReadsOutsideWorkingDirectories', 'deny']);
   for (const rule of written.permissions.deny) assert.match(rule, /^(Read|Edit)\(\/\/c\/[^\\[\]*]+(\/\*\*)?\)$/);
   assert.deepEqual(settingsProblems(written, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
 });
 
 test('the settings checker refuses anything Claude might reject or that would hide the head\'s own files', () => {
-  const good = { disableAllHooks: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: ['Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)'] } };
+  const good = { disableAllHooks: true, syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true, permissions: { blockReadsOutsideWorkingDirectories: true, deny: ['Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)'] } };
   const check = (value: unknown, readable: string[] = []) => settingsProblems(value, { platform: 'win32', blockReads: true, readable });
   assert.deepEqual(check(good), []);
   // HSEC-71: a head's hooks are off, exactly; a lane keeps yours.
-  assert.match(check({ permissions: good.permissions })[0]!, /a head's hooks must be off/);
+  assert.match(check({ ...good, disableAllHooks: undefined })[0]!, /a head's hooks must be off/);
   assert.match(check({ ...good, disableAllHooks: false })[0]!, /a head's hooks must be off/);
   assert.match(settingsProblems({ disableAllHooks: true, permissions: { deny: ['Read(//home/me/.ssh/**)'] } }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own hooks/);
   assert.match(check({ ...good, sandbox: { enabled: true } })[0]!, /unknown setting "sandbox"/);
@@ -120,7 +120,13 @@ test('a Claude head turns your plugins off, and the checker lets enabledPlugins 
   const settings = headSettings({ ...input, userPlugins: ['tools@other.market', 'claude-mem@thedotmack', 'claude-mem@thedotmack', 'bad id@x'] });
   assert.deepEqual(settings.enabledPlugins, { 'claude-mem@thedotmack': false, 'tools@other.market': false });
   assert.equal(settings.permissions.blockReadsOutsideWorkingDirectories, true, 'the read block and deny rules are unchanged');
-  assert.deepEqual(Object.keys(headSettings(input)), ['disableAllHooks', 'permissions'], 'no plugins, no key');
+  assert.deepEqual(Object.keys(headSettings(input)), ['disableAllHooks', 'syncClaudeAiSkills', 'syncClaudeAiPlugins', 'disableClaudeAiConnectors', 'permissions'], 'no plugins, no key');
+  // HSEC-71: your claude.ai skills, plugins and connectors are off for a head, and a lane keeps them.
+  assert.deepEqual([settings.syncClaudeAiSkills, settings.syncClaudeAiPlugins, settings.disableClaudeAiConnectors], [false, false, true]);
+  assert.match(settingsProblems({ ...JSON.parse(JSON.stringify(settings)), syncClaudeAiSkills: true }, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] })[0]!, /a head's syncClaudeAiSkills must be false/);
+  const { syncClaudeAiPlugins: _plugins, ...missing } = JSON.parse(JSON.stringify(settings));
+  assert.match(settingsProblems(missing, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] })[0]!, /a head's syncClaudeAiPlugins must be false/);
+  assert.match(settingsProblems({ permissions: { deny: ['Read(//home/me/.ssh/**)'] }, disableClaudeAiConnectors: true }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own claude\.ai skills/);
   assert.deepEqual(settingsProblems(JSON.parse(JSON.stringify(settings)), { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
 
   const check = (enabledPlugins: unknown, blockReads = true) => settingsProblems({ ...settings, permissions: blockReads ? settings.permissions : { deny: settings.permissions.deny }, enabledPlugins }, { platform: 'win32', blockReads });
