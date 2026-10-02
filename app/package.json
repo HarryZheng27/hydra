@@ -1,0 +1,26 @@
+{
+  "name": "hydra-app",
+  "productName": "Hydra",
+  "description": "Hydra: chat with Claude Code and Codex, with Hydra's heads and plans on top.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit -p .",
+    "test": "node scripts/test.mjs",
+    "dev": "node build.mjs && node scripts/dev.mjs",
+    "smoke": "node build.mjs && node smoke/run.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "electron": "44.5.1",
+    "esbuild": "^0.25.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}

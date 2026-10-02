@@ -1,0 +1,46 @@
+name: App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/app.yml'
+      - 'app/**'
+      - 'src/core/**'
+      - 'src/host/**'
+      - 'webview/**'
+  pull_request:
+    paths:
+      - '.github/workflows/app.yml'
+      - 'app/**'
+      - 'src/core/**'
+      - 'src/host/**'
+      - 'webview/**'
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+      # The app bundles ../src/core and ../webview, whose dependencies come from the root package.
+      - run: npm ci
+      - run: npm ci --prefix app
+      - run: npm run check
+        working-directory: app
+      - run: npm test
+        working-directory: app
+      - run: npm run build
+        working-directory: app
+      - run: npm run smoke
+        working-directory: app
