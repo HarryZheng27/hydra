@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
 import { notices } from './notices';
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import type { Job } from './core/jobs';
-import { buildHandoff, handoffFileName, type HandoffDeps } from './core/limitHandoff';
+import { buildHandoff, saveHandoff, type HandoffDeps } from './core/limitHandoff';
 import type { LimitEvent } from './core/limitEvents';
 import { otherProvider } from './core/limitEvents';
 import { buildOffer, LimitOfferTracker, providerLabel } from './core/limitOffer';
@@ -35,14 +33,12 @@ export interface LimitOfferDeps {
   /** O6: true when this head runs a plan job and hydra.limits.autoContinuePlans is on; it then fails over without asking, since an unattended plan may have nobody watching. */
   autoContinuePlan?: (jobId: string) => boolean;
   /**
-   * Shared with the lane banner (extensionLanes.ts LanesController), so
+   * Shared with the lane banner (src/host/lanes.ts LanesController), so
    * "otherStillLimited" reflects every chat, head and lane in this window, not
    * just chats. Defaults to a fresh, unshared tracker.
    */
   tracker?: LimitOfferTracker;
 }
-
-const maxSavedHandoffs = 20;
 
 export function registerLimitOffer(deps: LimitOfferDeps): vscode.Disposable {
   const tracker = deps.tracker ?? new LimitOfferTracker();
@@ -105,31 +101,11 @@ async function continueInOther(event: LimitEvent, other: Provider, markdown: str
   void notices.info(`Handoff copied. Paste it into the new ${providerLabel[other]} chat to continue.`);
 }
 
+export { saveHandoff };
+
 export async function openHandoffPreview(file: string): Promise<void> {
   const uri = vscode.Uri.file(file);
   try { await vscode.commands.executeCommand('markdown.showPreview', uri); }
   catch { const doc = await vscode.workspace.openTextDocument(uri); await vscode.window.showTextDocument(doc, { preview: true }); }
 }
 
-export async function saveHandoff(storageDir: string, event: LimitEvent, markdown: string): Promise<string> {
-  const dir = path.join(storageDir, 'handoffs');
-  await mkdir(dir, { recursive: true });
-  const file = path.join(dir, handoffFileName(event));
-  await writeFile(file, markdown, 'utf8');
-  await pruneHandoffs(dir);
-  return file;
-}
-
-/** Keeps only the newest `maxSavedHandoffs` handoff files. */
-async function pruneHandoffs(dir: string): Promise<void> {
-  let names: string[];
-  try { names = await readdir(dir); } catch { return; }
-  const candidates = names.filter(name => name.startsWith('HANDOFF-') && name.endsWith('.md'));
-  if (candidates.length <= maxSavedHandoffs) return;
-  const withTimes = (await Promise.all(candidates.map(async name => {
-    const full = path.join(dir, name);
-    try { return { full, mtimeMs: (await stat(full)).mtimeMs }; } catch { return undefined; }
-  }))).filter((entry): entry is { full: string; mtimeMs: number } => !!entry);
-  withTimes.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  for (const stale of withTimes.slice(maxSavedHandoffs)) await rm(stale.full, { force: true });
-}

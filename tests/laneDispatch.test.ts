@@ -235,7 +235,7 @@ async function laneFixture(jobs: PlanJob[], settings: PlanDispatch, gates?: unkn
   const plans = new PlanStore(path.join(root, 'plans'));
   await plans.load();
   const plan = await plans.save({ ...createPlan({ title: 'Checkout' }), jobs, dispatch: settings });
-  // As extensionLanes' laneLook, planLanes and startPlanLane do it.
+  // As LanesController's laneLook, planLanes and startPlanLane do it.
   const runner = new PlanRunner({
     store: plans, repository: repo,
     look: {
@@ -358,7 +358,7 @@ test('a project without gates for lanes passes as "No gates configured"; a plan 
     const commit = await f.commit(f.service.get(laneId)!.worktree, 'api.ts', 'api\n');
     assert.deepEqual((await f.ready(laneId)).check, { kind: 'passed', commit });
     assert.deepEqual([f.byKey('api').result?.commit, f.byKey('api').result?.status], [commit, 'none']);
-    // Mode off: the check is no longer Hydra's; extensionLanes shows the Mark job done prompt as before.
+    // Mode off: the check is no longer Hydra's; LanesController shows the Mark job done prompt as before.
     const other = await f.plans.save({ ...createPlan({ title: 'Manual' }), state: 'running', jobs: [lane('x')] });
     await f.runner.advance(other.id);
     const manual = f.plans.get(other.id)!.jobs[0]!.laneId!;

@@ -82,7 +82,7 @@ test('the Agents view reaches its host only through the bridge', async () => {
 });
 
 test('FakeHost records what it was asked and answers as scripted', async () => {
-  const host = new FakeHost({ storage: '/storage', dist: '/dist' }, { defaultProvider: 'codex' });
+  const host = new FakeHost({ storage: '/storage', dist: '/dist', appRoot: '/app' }, { defaultProvider: 'codex' });
   assert.equal(host.settings.get('defaultProvider', 'claude'), 'codex');
   assert.equal(host.settings.get('heads.defaultBudgetUsd', 5), 5);
   assert.equal(host.settings.machine('codexPath'), undefined);
