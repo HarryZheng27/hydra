@@ -1,16 +1,4 @@
-import * as vscode from 'vscode';
 import type { SettingsContext, SettingsPage } from '../types';
-
-interface IconThemeEntry { id: string; label: string }
-
-function installedIconThemes(): IconThemeEntry[] {
-  const themes: IconThemeEntry[] = [{ id: '', label: 'None' }];
-  for (const extension of vscode.extensions.all) {
-    const contributed = (extension.packageJSON as { contributes?: { iconThemes?: { id: string; label?: string }[] } } | undefined)?.contributes?.iconThemes;
-    for (const theme of contributed || []) themes.push({ id: theme.id, label: theme.label || theme.id });
-  }
-  return themes;
-}
 
 /** Appearance: the existing Dark/Light control (unchanged setAppearance behaviour/message), plus an icon theme picker. */
 export const appearancePage: SettingsPage = {
@@ -45,10 +33,9 @@ export const appearancePage: SettingsPage = {
   });
   `,
   async onReady(ctx: SettingsContext): Promise<void> {
-    const kind = vscode.window.activeColorTheme.kind;
-    await ctx.post({ type: 'appearance', mode: kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? 'light' : 'dark' });
-    const current = vscode.workspace.getConfiguration('workbench').get<string>('iconTheme', '') || '';
-    await ctx.post({ type: 'iconThemes', themes: installedIconThemes(), current });
+    await ctx.post({ type: 'appearance', mode: ctx.host.colorTheme() });
+    const current = ctx.host.section('workbench').get<string>('iconTheme', '') || '';
+    await ctx.post({ type: 'iconThemes', themes: ctx.host.iconThemes(), current });
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     switch (message.type) {
@@ -56,7 +43,7 @@ export const appearancePage: SettingsPage = {
       // theme-change subscription that republishes this row — see src/settings/shell.ts.
       case 'iconTheme': {
         const value = typeof message.value === 'string' ? message.value : '';
-        await vscode.workspace.getConfiguration('workbench').update('iconTheme', value || null, vscode.ConfigurationTarget.Global);
+        await ctx.host.section('workbench').update('iconTheme', value || null);
         await ctx.post({ type: 'status', text: value ? `Icon theme set to ${value}.` : 'Icon theme cleared.' });
         return true;
       }

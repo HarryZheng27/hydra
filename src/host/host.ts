@@ -23,6 +23,15 @@ export interface HostSettings {
   onChange(listener: (affects: (key: string) => boolean) => void): Disposable;
 }
 
+/** Any of the program's own settings sections (`workbench`, `window`, …), read and written at the user's level. */
+export interface HostSection {
+  get<T>(key: string, fallback: T): T;
+  /** Where a value comes from: the default, the user's own, or a workspace's. */
+  inspect<T>(key: string): { defaultValue?: T; globalValue?: T; workspaceValue?: T; workspaceFolderValue?: T } | undefined;
+  /** Saves the user's value; undefined or null clears it. */
+  update(key: string, value: unknown): Promise<void>;
+}
+
 /** Small values kept for this window's folders across restarts (the IDE's workspace state). */
 export interface HostState {
   get<T>(key: string, fallback: T): T;
@@ -102,8 +111,23 @@ export interface Host {
   extension(id: string): { path: string; version?: string } | undefined;
   /** Installs an editor extension by id, or from a downloaded package file. */
   installExtension(source: { id: string } | { file: string }): Promise<void>;
+  /** Runs a command by id: one of Hydra's own (`hydra.*`), or one of the program's. Resolves to what it returns. */
+  command<T = unknown>(id: string, ...args: unknown[]): Promise<T>;
+  /** One of the program's settings sections, beyond Hydra's own. */
+  section(name: string): HostSection;
+  /** Whether the program's current colour theme is light or dark, and a way to hear when it changes. */
+  colorTheme(): 'light' | 'dark';
+  onColorThemeChange(listener: () => void): Disposable;
+  /** The installed file icon themes, after a "None" entry with an empty id. */
+  iconThemes(): { id: string; label: string }[];
+  /** A folder the user chooses; undefined when they cancel. */
+  pickFolder(title: string): Promise<string | undefined>;
+  /** Shows a file or folder in the system's file manager. */
+  revealInOS(file: string): Promise<void>;
   readonly settings: HostSettings;
   readonly state: HostState;
+  /** Small values kept for the user across every window (the IDE's global state). */
+  readonly globalState: HostState;
   readonly paths: HostPaths;
   /** Sends a message to the UI (the Agents view). Dropped when no UI is open. */
   postToUi(message: unknown): Promise<void>;

@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import type { ImportCategory } from '../../core/profileImport';
 import { clearDismissedPrompts } from '../dismissedPrompts';
 import type { SettingsContext, SettingsPage } from '../types';
@@ -110,33 +109,33 @@ export const generalPage: SettingsPage = {
   `,
   async onReady(ctx: SettingsContext): Promise<void> {
     if (ctx.imports.available) await ctx.post({ type: 'importStatus', ...await ctx.imports.status() });
-    const startupLayout = vscode.workspace.getConfiguration('hydra').get<string>('startupLayout', 'editor');
+    const startupLayout = ctx.host.settings.get<string>('startupLayout', 'editor');
     await ctx.post({ type: 'windowLayoutState', value: startupLayout === 'agents' ? 'agents' : 'editor' });
-    const chatLocation = vscode.workspace.getConfiguration('hydra').get<string>('chatLocation', 'docked');
+    const chatLocation = ctx.host.settings.get<string>('chatLocation', 'docked');
     await ctx.post({ type: 'chatLocationState', value: chatLocation });
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     switch (message.type) {
       case 'editorSettings':
-        await vscode.commands.executeCommand('workbench.action.openSettings');
+        await ctx.host.command('workbench.action.openSettings');
         return true;
       case 'keyboardShortcuts':
-        await vscode.commands.executeCommand('workbench.action.openGlobalKeybindings');
+        await ctx.host.command('workbench.action.openGlobalKeybindings');
         return true;
       case 'accounts':
-        await vscode.commands.executeCommand('hydra.openAccounts');
+        await ctx.host.command('hydra.openAccounts');
         return true;
       case 'onboarding':
-        await vscode.commands.executeCommand('hydra.openOnboarding');
+        await ctx.host.command('hydra.openOnboarding');
         return true;
       case 'resetDismissedPrompts':
-        await clearDismissedPrompts(ctx.globalState);
+        await clearDismissedPrompts(ctx.host.globalState);
         await ctx.post({ type: 'status', text: 'Cleared dismissed dialogs. They will show again when you next hit them.' });
         return true;
       case 'chatLocation': {
         const value = message.value === 'tabs' ? 'tabs' : 'docked';
         try {
-          await vscode.commands.executeCommand('hydra.setChatLocation', value);
+          await ctx.host.command('hydra.setChatLocation', value);
           await ctx.post({ type: 'chatLocationState', value });
           await ctx.post({ type: 'status', text: `Chat location set to ${value === 'tabs' ? 'Tabs' : 'Docked'}.` });
         } catch {
@@ -147,9 +146,9 @@ export const generalPage: SettingsPage = {
       }
       case 'windowLayout': {
         const value = message.value === 'agents' ? 'agents' : 'editor';
-        await vscode.workspace.getConfiguration('hydra').update('startupLayout', value, vscode.ConfigurationTarget.Global);
-        const state = await Promise.resolve(vscode.commands.executeCommand<{ mode: 'editor' | 'agents' }>('hydra.getLayoutMode')).catch(() => undefined);
-        if (state && state.mode !== value) await vscode.commands.executeCommand('hydra.toggleMode');
+        await ctx.host.settings.update('startupLayout', value);
+        const state = await ctx.host.command<{ mode: 'editor' | 'agents' }>('hydra.getLayoutMode').catch(() => undefined);
+        if (state && state.mode !== value) await ctx.host.command('hydra.toggleMode');
         await ctx.post({ type: 'windowLayoutState', value });
         await ctx.post({ type: 'status', text: `Window layout set to ${value === 'agents' ? 'Agent Manager' : 'Editor'}.` });
         return true;
