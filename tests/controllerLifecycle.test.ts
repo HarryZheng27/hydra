@@ -30,6 +30,7 @@ async function until(check: () => boolean, what: string): Promise<void> {
 
 test('the controller runs a plan end to end on a FakeHost, with a stand-in head', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'hydra-controller-e2e-'));
+  // Registered first, so it runs last: after the window has shut down (below).
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -92,6 +93,8 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   assert.ok(host.logs.some(line => line.startsWith('[heads] ready for ')));
   const records = await readdir(path.join(storage, 'helpers', 'windows'));
   assert.ok(records.some(name => name.endsWith('.json')), 'the window wrote its discovery record');
+  assert.equal((await readdir(path.join(storage, 'helpers', 'handshakes'))).length, 1, 'the window wrote its handshake for scripts');
+  assert.ok(host.watchers.some(watcher => watcher.folder === repo && watcher.pattern === '.hydra/{packs.json,packs/**}'), 'it watches the project\'s packs');
 
   // A plan made and run through the Agents view's own messages.
   await controller.handle({ type: 'planCreateEmpty', title: 'End to end' });
@@ -103,9 +106,10 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   await until(() => controller.plans!.store.get(id)?.state === 'done', `the plan finishes (state ${controller.plans!.store.get(id)?.state}; log: ${host.logs.slice(-5).join(' | ')})`);
   assert.equal(runs.length, 1, 'one stand-in head ran');
 
-  // What the Agents view would show: the head done, and the plan done.
-  await controller.publish();
-  const snapshot = host.posted.filter((message): message is { type: 'snapshot'; snapshot: Snapshot } => (message as { type?: string }).type === 'snapshot').at(-1)!.snapshot;
+  // What the Agents view shows: the controller publishes the finished plan by itself, without being asked.
+  const snapshots = () => host.posted.filter((message): message is { type: 'snapshot'; snapshot: Snapshot } => (message as { type?: string }).type === 'snapshot').map(message => message.snapshot);
+  await until(() => snapshots().some(item => item.plans?.find(plan => plan.id === id)?.state === 'done'), 'a published snapshot shows the plan done');
+  const snapshot = snapshots().at(-1)!;
   assert.equal(snapshot.helpers?.[0]?.state, 'done');
   assert.equal(snapshot.helpers?.[0]?.summary, 'Added b.ts');
   assert.equal(snapshot.plans?.find(plan => plan.id === id)?.state, 'done');
@@ -123,4 +127,5 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   shutDown = true;
   assert.equal(controller.helpers, undefined);
   assert.deepEqual((await readdir(path.join(storage, 'helpers', 'windows'))).filter(name => name.endsWith('.json') && !name.includes('summary')), []);
+  assert.deepEqual(await readdir(path.join(storage, 'helpers', 'handshakes')), [], 'the handshake for scripts is gone');
 });

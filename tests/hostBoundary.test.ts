@@ -47,7 +47,9 @@ function localImports(file: string, source: string): string[] {
   for (const { fileName } of ts.preProcessFile(source, true, true).importedFiles) {
     if (!fileName.startsWith('.')) continue;
     const base = path.resolve(path.dirname(file), fileName);
-    const candidate = [base, `${base}.ts`, `${base}.tsx`, path.join(base, 'index.ts')].find(item => existsSync(item) && statSync(item).isFile());
+    // `./x.js` names `./x.ts` under the bundler's resolution, as some core files write it.
+    const stem = base.replace(/\.(c|m)?js$/, '');
+    const candidate = [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${stem}.cts`, `${base}.js`, `${base}.mjs`, `${base}.cjs`, path.join(base, 'index.ts')].find(item => existsSync(item) && statSync(item).isFile());
     if (candidate) found.push(candidate);
   }
   return found;

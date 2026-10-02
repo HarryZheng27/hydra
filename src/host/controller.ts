@@ -151,7 +151,7 @@ export class HydraController {
    * (StopFailure hook), Codex chats (rate-limit polling) and heads. The handoff UI
    * subscribes with `limitEvents.event(listener)`.
    */
-  readonly limitEvents = new Emitter<LimitEvent>();
+  readonly limitEvents = new Emitter<LimitEvent>(error => this.host.log(`[limits] a listener failed: ${describe(error)}`));
   // ---- Gates (docs/internal/Gates_Plan.md): each provider's latest usage limit, so a review gate uses the other agent while one is limited ----
   readonly latestLimits = new Map<Provider, LimitEvent>();
   /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
