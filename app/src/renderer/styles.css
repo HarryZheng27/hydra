@@ -1,0 +1,7 @@
+:root { color-scheme: dark; --bg: #141414; --fg: #F0F0F0; --muted: #F0F0F0BD; }
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+.empty { height: 100%; display: grid; place-content: center; text-align: center; gap: 4px; }
+.empty h1 { font-size: 20px; font-weight: 600; margin: 0; }
+.empty p { color: var(--muted); margin: 0; }

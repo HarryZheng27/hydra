@@ -7,6 +7,7 @@ Thanks for helping. Bug reports and ideas go in [issues](https://github.com/ndun
 - `src/`: Hydra's built-in extension. `src/core/` holds the logic (heads, lanes, plans, gates, packs, worktrees), kept free of editor APIs where it can be, so it's testable in plain Node.
 - `src/host/`: the `Host` interface, everything the controller needs from the program it runs in, so the IDE and the Hydra app share one controller ([G2](docs/internal/hydra-app/G2-host-split.md)). `src/host/controller.ts` is the controller itself (the Agents view's state and messages, plans and the plan runner, heads and the window's lifecycle), and `src/host/lanes.ts` drives lanes; `src/vscodeHost.ts` is the IDE's `Host`, and `src/extension.ts` forwards to the controller. Hydra Settings (`src/settings/`) reaches its program through `Host` too, so the app can render it; `src/extensionSettings.ts` shows it in an IDE panel. Nothing under `src/core/`, `src/host/` or `src/settings/` imports `vscode` or `electron`, even indirectly; `tests/hostBoundary.test.ts` enforces it.
 - `webview/`: the Agent Manager canvas, the lanes grid and other webview UI.
+- `app/`: the Hydra app (unreleased), a chat-first Electron app with its own `package.json` and lockfile ([plan](docs/internal/Hydra_App_Plan.md)). It bundles `src/core`, `src/host` and `webview/` with esbuild; the IDE never loads it.
 - `desktop/` and `scripts/desktop.mjs`: the standalone editor build, from a pinned upstream commit (`desktop/upstream.json`), and its Windows installer.
 - `packs/` and `schemas/`: the built-in packs, and the JSON schemas for `.hydra/` files.
 - `tests/`: unit and integration tests (`npm test`), and the smoke suite (`tests/smoke.ts`, run by `scripts/smoke.mjs`).
@@ -43,6 +44,21 @@ npm run desktop:installer   # HydraSetup.exe; see docs/Windows_Installer.md
 ```
 
 The build lands under `.desktop/`. Hydra changes the upstream editor only through `scripts/desktop.mjs`, never through a `patches/` folder. The script refuses to build when the pinned upstream changes shape, so don't move `desktop/upstream.json`'s commit in a feature change. The installer is described in [Windows_Installer.md](docs/Windows_Installer.md), and how a release is published in [Releases.md](docs/Releases.md).
+
+## Building the Hydra app
+
+The app in `app/` is unreleased. It needs the root `npm ci` too, because it bundles the root's `src/`.
+
+```powershell
+npm ci
+npm ci --prefix app
+npm --prefix app run check
+npm --prefix app test
+npm --prefix app run smoke   # starts the built app hidden, twice, against a scratch AppData folder
+npm --prefix app run dev     # opens Hydra
+```
+
+Its user data is `%APPDATA%\Hydra App`, never the IDE's `%APPDATA%\Hydra`. The **App** workflow (`.github/workflows/app.yml`) runs these on Windows when `app/`, `src/core/`, `src/host/` or `webview/` change.
 
 ## Pull requests
 
