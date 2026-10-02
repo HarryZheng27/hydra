@@ -110,8 +110,8 @@ function collectSensitive(value, parentKey, found, depth = 0) {
     if (typeof v === 'string' && !/^\[[^\]]*\]$/.test(v)) {
       const identity = identityKeyPattern.test(key) || (identityParentPattern.test(parentKey ?? '') && /(id|uuid|name|email)$/i.test(key));
       // Secret-looking keys, except the session and thread ids the checks follow (a label already replaces Claude's).
-      const secret = secretKeyPattern.test(key) && !/session|thread/i.test(key) && v.length >= 8 && /\d/.test(v);
-      if ((identity && v.length >= 4) || secret) found.add(v);
+      const secret = secretKeyPattern.test(key) && !/session|thread/i.test(key) && v.length >= 8 && (/\d/.test(v) || v.length >= 16);
+      if ((identity && v.length >= 6) || secret) found.add(v); // shorter values would rewrite ordinary words
     }
     collectSensitive(v, key, found, depth + 1);
   }
@@ -150,12 +150,12 @@ function dropNameTails(lines) {
       for (let cut = Math.min(text.length, name.length - 1); cut >= 1; cut--) {
         const piece = lower.slice(0, cut);
         const continues = [...Array(name.length - 1).keys()].some(k => name.slice(k + 1).startsWith(piece));
-        if (continues && /^[\\/"]|^$/.test(text.slice(cut))) { holder[field] = text.slice(cut); changed = true; break; }
+        if (continues && /^[\\/"-]|^$/.test(text.slice(cut))) { holder[field] = text.slice(cut); changed = true; break; }
       }
     } else if (/Users(?:\\+|\/+|-)$/i.test(previous)) {
       // The last delta stopped right before the name; mask whatever part of it starts this one.
       for (let cut = name.length; cut >= 1; cut--) {
-        if (lower.startsWith(name.slice(0, cut)) && (cut === name.length || text.length === cut || /^[\\/"]/.test(text.slice(cut)))) { holder[field] = '[user]' + text.slice(cut); changed = true; break; }
+        if (lower.startsWith(name.slice(0, cut)) && (cut === name.length || text.length === cut || /^[\\/"-]/.test(text.slice(cut)))) { holder[field] = '[user]' + text.slice(cut); changed = true; break; }
       }
     }
     previous = (previous + holder[field]).slice(-64); // the joined stream: a separator can arrive as its own delta
@@ -168,7 +168,23 @@ function dropNameTails(lines) {
 /** The redacted fixture lines for a transcript: header first, then every entry. */
 export function redactTranscript(header, entries, extra = []) {
   const all = [...extra, ...structuredRedactions(entries)];
-  return dropNameTails([JSON.stringify(header), ...entries.map(e => JSON.stringify(e))].map(l => redactLine(l, all)));
+  return dropNameTails([JSON.stringify(header), ...entries.map(e => JSON.stringify(e))].map(line => {
+    const redacted = redactLine(line, all);
+    try { JSON.parse(redacted); return redacted; } catch {}
+    // redact.ts can swallow the backslash that escapes a quote ("token: abc12345\""), which
+    // breaks the line. Then redact each string leaf, at every JSON-in-string depth, instead.
+    return JSON.stringify(redactLeaves(JSON.parse(line), all));
+  }));
+}
+function redactLeaves(value, extra) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) { try { return JSON.stringify(redactLeaves(JSON.parse(trimmed), extra)); } catch {} }
+    return redactLine(value, extra);
+  }
+  if (Array.isArray(value)) return value.map(v => redactLeaves(v, extra));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactLeaves(v, extra)]));
+  return value;
 }
 
 // ---- Transcripts ----
@@ -281,20 +297,27 @@ export function scratchRepo(prefix, workdir) {
 
 /**
  * Why an approval for `tool` with `input` must become a deny in the scratch repository `root`,
- * or undefined when it may stand. File paths must resolve inside root; Bash may only run the
- * small commands the scenarios ask for, with no absolute or parent paths.
+ * or undefined when it may stand. File paths must resolve inside root. A shell command may only
+ * be one the scenario names exactly in `commands`, or a bare `mkdir g1-<name>`: no first-word
+ * allowlist, since chaining, redirection and `node -e` would get anything past one.
  */
-export function confinementProblem(root, tool, input = {}) {
+export function confinementProblem(root, tool, input = {}, { commands = [] } = {}) {
   const inside = candidate => { const resolved = path.resolve(root, candidate); const rel = path.relative(path.resolve(root), resolved); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
   for (const key of ['file_path', 'notebook_path', 'path']) {
     if (typeof input[key] === 'string' && !inside(input[key])) return `${key} is outside the scratch repository`;
   }
   if (tool === 'Bash' || tool === 'PowerShell') {
-    const command = String(input.command ?? '');
-    if (!/^(mkdir|node|echo)\b/.test(command.trim())) return 'only mkdir, node and echo may run';
-    if (/\.\.[\\/]|(^|[\s"'=])([A-Za-z]:[\\/]|[\\/]{1,2}[A-Za-z])/.test(command)) return 'the command names a path outside the scratch repository';
+    const command = String(input.command ?? '').trim();
+    if (!/^mkdir g1-[\w-]+$/.test(command) && !commands.includes(command)) return 'only the exact commands this scenario asks for may run';
   }
   return undefined;
+}
+
+/** The inner command of a Codex Windows shell call: `"…\powershell.exe" [-NoProfile …] -Command '<command>'`. */
+export function innerShellCommand(command) {
+  const text = Array.isArray(command) ? command.join(' ') : String(command ?? '');
+  const match = /^"?[^"]*\\(?:powershell|pwsh)\.exe"?(?:\s+-(?!Command\b)\w+)*\s+-Command\s+'([\s\S]*)'$/i.exec(text.trim());
+  return match ? match[1].replaceAll("''", "'") : text;
 }
 
 // ---- Running scenarios ----
@@ -328,9 +351,13 @@ export async function runScenarios({ provider, scenarios, options, live, evidenc
     process.stdout.write(`${status.toUpperCase()} ${scenario.name}${failures.length ? `\n  - ${failures.join('\n  - ')}` : ''}\n`);
     if (error instanceof TurnCapError) break;
   }
+  // The user's own setup must come out of a live run unchanged: { check: true|false }, and any false fails the run.
+  const userState = options.mode === 'live' && live?.userStateUnchanged ? live.userStateUnchanged() : undefined;
+  for (const [check, unchanged] of Object.entries(userState ?? {})) process.stdout.write(`${check} unchanged by this run: ${unchanged}\n`);
+  const userStateOk = Object.values(userState ?? {}).every(Boolean);
   const evidence = {
     schema: `hydra-app-live/${provider}/v1`, provider, mode: options.mode, turnsUsed: budget.used, turnCap: budget.max,
-    result: results.length && results.every(r => r.status === 'pass') ? 'pass' : 'fail', results, ...evidenceExtra
+    result: results.length && results.every(r => r.status === 'pass') && userStateOk ? 'pass' : 'fail', results, ...(userState ? { userStateUnchanged: userState } : {}), ...evidenceExtra
   };
   writeFileSync(path.resolve(options.evidence), redactLine(JSON.stringify(evidence, null, 2)) + '\n', { encoding: 'utf8', flag: 'wx' });
   process.stdout.write(`${evidence.result}: ${path.resolve(options.evidence)} (${budget.used}/${budget.max} turns)\n`);

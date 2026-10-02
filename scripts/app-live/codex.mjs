@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { MessageBus, Transcript, TurnCapError, confinementProblem, parseOptions, runScenarios, scratchRepo, startProcess, waitFor } from './common.mjs';
+import { MessageBus, Transcript, TurnCapError, confinementProblem, innerShellCommand, parseOptions, runScenarios, scratchRepo, startProcess, waitFor } from './common.mjs';
 
 const usage = 'Usage: node scripts/app-live/codex.mjs --fixture|--live --evidence <path> [--executable <path>] [--max-turns N] [--only a,b] [--workdir <dir>]';
 const provider = 'codex';
@@ -44,7 +44,7 @@ function isolationArgs() {
   try { text = readFileSync(userConfig, 'utf8'); } catch {}
   // `-c mcp_servers={}` merges and leaves every server enabled, so disable each by name.
   // Every way TOML can name a server: [mcp_servers.x], [mcp_servers."x"], [mcp_servers.'x'], or inline.
-  if (/^\s*mcp_servers\s*=/m.test(text) || /^\s*\[mcp_servers\]/m.test(text)) throw new Error('config.toml declares MCP servers inline; refusing to run, since they can\'t be disabled by name.');
+  if (/^\s*mcp_servers\s*[=.]/m.test(text) || /^\s*\[mcp_servers\]/m.test(text)) throw new Error('config.toml declares MCP servers inline; refusing to run, since they can\'t be disabled by name.');
   const names = new Set([...text.matchAll(/^\s*\[mcp_servers\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))(?:\.[^\]]*)?\]/gm)].map(m => m[1] ?? m[2] ?? m[3]));
   userServerNames = [...names];
   for (const name of names) {
@@ -133,7 +133,11 @@ class CodexSession {
   respondDecision(message, decision) {
     let problem;
     if (decision === 'accept' || decision === 'acceptForSession') {
-      if (message.method === 'item/commandExecution/requestApproval') problem = typeof message.params.cwd === 'string' ? confinementProblem(this.cwd, 'Write', { path: message.params.cwd }) : undefined;
+      if (message.method === 'item/commandExecution/requestApproval') {
+        // Both where it runs and exactly what runs: an approved command escapes the sandbox.
+        problem = (typeof message.params.cwd === 'string' ? confinementProblem(this.cwd, 'Write', { path: message.params.cwd }) : undefined)
+          ?? confinementProblem(this.cwd, 'Bash', { command: innerShellCommand(message.params.command) }, { commands: this.commands ?? [] });
+      }
       else if (message.method === 'item/fileChange/requestApproval') {
         const changes = this.fileChanges?.get(message.params.itemId);
         problem = !changes ? 'the proposed changes were never shown' : changes.map(c => confinementProblem(this.cwd, 'Write', { path: String(c.path ?? '') })).find(Boolean);
@@ -186,7 +190,8 @@ async function openThread(session, transcript, { approvalPolicy = 'on-request', 
   transcript.note(`thread/start granted approvalPolicy=${JSON.stringify(started.approvalPolicy)} sandbox=${started.sandbox?.type} reviewer=${started.approvalsReviewer} effort=${started.reasoningEffort}`);
   // Before any turn: every server from the user's config must report disabled, or nothing runs.
   const status = await session.request('mcpServerStatus/list', { threadId: started.thread.id });
-  const live = (status.data ?? []).filter(s => userServerNames.includes(s.name) && s.runtimeStatus !== 'disabled');
+  // Any enabled server that isn't the harness's own (g1…) fails the run, however it was declared.
+  const live = (status.data ?? []).filter(s => s.runtimeStatus !== 'disabled' && !/^g1/.test(s.name));
   if (live.length) throw new Error(`user MCP servers still enabled: ${live.map(s => s.name).join(', ')}; refusing to send a turn.`);
   return { threadId: started.thread.id, started, pick };
 }
@@ -269,7 +274,8 @@ function removeScratchTrust(dir) {
   let text; try { text = readFileSync(userConfig, 'utf8'); } catch { return 0; }
   const scratch = path.resolve(dir).toLowerCase();
   let removed = 0;
-  const kept = text.replace(/^\[projects\.(['"])(.+?)\1\]\r?\n(?:(?!\[)[^\r\n]*\r?\n?)*/gm, (block, _quote, key) => {
+  // A table ends at the next line that starts with "[", indented or not, so nothing after it is taken.
+  const kept = text.replace(/^[ \t]*\[projects\.(['"])(.+?)\1\][ \t]*\r?\n(?:(?![ \t]*\[)[^\r\n]*\r?\n?)*/gm, (block, _quote, key) => {
     const target = path.resolve(key.replaceAll('\\\\', '\\')).toLowerCase();
     if (target === scratch || target.startsWith(scratch + path.sep)) { removed++; return ''; }
     return block;
@@ -358,6 +364,7 @@ const scenarios = [
             return true;
           };
           const cmd = 'node -e "console.log(6*7)"';
+          session.commands = [cmd];
           const r1 = await runTurn(ctx, session, t, 'decline', { threadId, effort: pick.effort, input: [text(`Use your shell tool to run exactly this command, nothing else: ${cmd}\nThen reply with its output. If the command is declined, reply "declined" and do not retry.`)] }, { onRequest: answer(['decline']) });
           t.note(`decline turn: approvals=${r1.approvals.length} reply mentions declined: ${/declin|denied|not approved|reject/i.test(r1.reply)}`);
           const r2 = await runTurn(ctx, session, t, 'accept', { threadId, effort: pick.effort, input: [text('Run that exact command once more now and reply with its output.')] }, { onRequest: answer(['accept']) });
@@ -730,9 +737,9 @@ if (options.mode === 'live') {
   const before = configHash();
   live = {
     executable, version, isolation, workdir: options.workdir,
-    redactions: () => { const r = redactions; redactions = []; return r; }
+    redactions: () => { const r = redactions; redactions = []; return r; },
+    userStateUnchanged: () => ({ '~/.codex/config.toml': configHash() === before })
   };
   evidenceExtra = { cli: version, isolation: isolation.filter(a => !a.startsWith('-')).map(a => a.replace(/^mcp_servers\.[^.]+\./, 'mcp_servers.<name>.')) };
-  process.on('exit', () => { const unchanged = configHash() === before; process.stdout.write(`~/.codex/config.toml unchanged by this run: ${unchanged}\n`); });
 }
 await runScenarios({ provider, scenarios, options, live, evidenceExtra });

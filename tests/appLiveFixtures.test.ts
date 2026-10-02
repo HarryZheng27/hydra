@@ -32,6 +32,13 @@ for (const provider of providers) {
       assert.doesNotMatch(text, /\/(home|Users)\/(?!\[user\])[a-z][\w.-]*\//, `${name} holds a home path`);
       assert.doesNotMatch(text, /[A-Za-z0-9._%+-]+@(?!example\.invalid\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}/, `${name} holds an email address`);
       assert.doesNotMatch(text, /\b(sk-ant-|sk-|eyJ)[A-Za-z0-9_-]{20,}/, `${name} holds a token`);
+      // A streamed delta can split a name ("C:\\Users\\nd" + "unl"), so check the joined stream too:
+      // after "Users\", "Users/" or "Users-" only a placeholder may follow, and nothing after one.
+      const stream = entries.filter(e => e.dir === 'recv').map(e => {
+        try { const m = JSON.parse(e.line); const piece = m?.event?.delta?.partial_json ?? m?.event?.delta?.text ?? m?.params?.delta; return typeof piece === 'string' ? piece : ''; } catch { return ''; }
+      }).join('');
+      assert.doesNotMatch(stream, /\[user\][A-Za-z0-9]/, `${name}: a name fragment follows [user] in the joined stream`);
+      assert.doesNotMatch(stream, /Users(?:\\+|\/+|-)(?!\[user\])[A-Za-z0-9]/, `${name}: a name follows Users in the joined stream`);
       // Machine and installation identity only ever holds a placeholder, at any escaping depth.
       // (Claude's --settings also uses serverName, for the live check's own MCP servers.)
       assert.doesNotMatch(text, /\\*"(serverName|installationId|machineId|deviceId|hostname|computerName|accountId|account_uuid|organization_uuid|email)\\*"\s*:\s*\\*"(?!\[|(?:g1[\w-]*|hydra)\\*")/, `${name} holds a machine or account identifier`);

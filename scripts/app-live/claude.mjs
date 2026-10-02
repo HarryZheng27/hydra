@@ -52,7 +52,7 @@ const readLog = file => existsSync(file) ? readFileSync(file, 'utf8').split('\n'
 
 // ---- One CLI process ----
 const openSessions = new Set();
-function openSession(ctx, transcript, { cwd, args, onControl, env }) {
+function openSession(ctx, transcript, { cwd, args, onControl, env, commands = [] }) {
   const bus = new MessageBus();
   let stderr = ''; let limited; let controls = 0;
   const proc = startProcess(ctx.executable, args, { cwd, env: env ?? childEnv(), onLine: bus.lineHandler(), onStderr: chunk => { stderr += chunk; }, transcript });
@@ -63,7 +63,7 @@ function openSession(ctx, transcript, { cwd, args, onControl, env }) {
       try { response = await onControl?.(message.request ?? {}, message); } catch (e) { error = e.message; }
       // Whatever a scenario allows, nothing runs outside its scratch repository.
       const request = message.request ?? {};
-      const problem = request.subtype === 'can_use_tool' && response?.behavior === 'allow' ? confinementProblem(cwd, request.tool_name, response.updatedInput ?? request.input) : undefined;
+      const problem = request.subtype === 'can_use_tool' && response?.behavior === 'allow' ? confinementProblem(cwd, request.tool_name, response.updatedInput ?? request.input, { commands }) : undefined;
       if (problem) { transcript.note(`confined: ${request.tool_name} denied (${problem})`); response = { behavior: 'deny', message: `The G1 host only allows work inside the scratch repository: ${problem}.` }; }
       if (response) proc.write({ type: 'control_response', response: { subtype: 'success', request_id: message.request_id, response } });
       else proc.write({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: error ?? `G1 host does not handle ${message.request?.subtype}` } });
@@ -132,6 +132,7 @@ function eventTypes(t) {
 const allSuccessful = (t, n) => { const r = results(t); const f = []; if (r.length < n) f.push(`expected ${n} results, saw ${r.length}`); return f; };
 
 // ---- Scenarios ----
+const interruptCommand = `node -e "setTimeout(() => console.log('finished'), 30000)"`;
 const scenarios = [];
 
 // 1. Three turns in one process.
@@ -333,13 +334,14 @@ scenarios.push({
     let s;
     let toolAllowedAt;
     s = openSession(ctx, t, {
+      commands: [interruptCommand],
       cwd: dir, args: baseArgs({ sessionId: randomUUID(), extra: [...routeA, '--strict-mcp-config', '--mcp-config', mcp] }),
       onControl: r => { if (r.subtype !== 'can_use_tool') return undefined; toolAllowedAt = Date.now(); return { behavior: 'allow', updatedInput: r.input }; }
     });
     await s.control('initialize');
     // Mid-tool: interrupt three seconds after the 30-second command was allowed.
     // Not `sleep 30`: 2.1.282 blocks a bare long sleep and steers the model to background it.
-    const toolTurn = s.turn('Use the Bash tool in the foreground (not in the background) to run exactly: node -e "setTimeout(() => console.log(\'finished\'), 30000)"', 'interrupt mid-tool');
+    const toolTurn = s.turn(`Use the Bash tool in the foreground (not in the background) to run exactly: ${interruptCommand}`, 'interrupt mid-tool');
     await waitFor(s.bus, m => m.type === 'assistant' && (m.message?.content ?? []).some(c => c.type === 'tool_use' && c.name === 'Bash'), 60_000, 'Bash tool_use');
     await new Promise(r => setTimeout(r, 4000));
     t.note(`mid-tool: Bash was ${toolAllowedAt ? 'prompted and allowed' : 'not prompted'}`);
@@ -644,17 +646,15 @@ const userClaudeState = () => {
   let hydra = 'missing'; try { hydra = JSON.stringify(JSON.parse(readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')).mcpServers?.hydra ?? null); } catch {}
   return { settings: hash(path.join(os.homedir(), '.claude', 'settings.json')), hydra };
 };
-if (options.mode === 'live') {
-  const before = userClaudeState();
-  process.on('exit', () => {
-    const after = userClaudeState();
-    process.stdout.write(`~/.claude/settings.json unchanged by this run: ${after.settings === before.settings}\n~/.claude.json hydra MCP entry unchanged by this run: ${after.hydra === before.hydra}\n`);
-  });
-}
+const stateBefore = options.mode === 'live' ? userClaudeState() : undefined;
+const userStateUnchanged = () => {
+  const after = userClaudeState();
+  return { '~/.claude/settings.json': after.settings === stateBefore.settings, '~/.claude.json hydra MCP entry': after.hydra === stateBefore.hydra };
+};
 
 const redactions = () => {
   if (!workdir) return [];
   const variants = [workdir, workdir.replaceAll('\\', '/'), workdir.replaceAll('\\', '\\\\'), workdir.replaceAll('\\', '\\\\\\\\')];
   return [...[...new Set(variants)].sort((a, b) => b.length - a.length).map(v => [v, '[workdir]']), ...sessionLabels];
 };
-await runScenarios({ provider: 'claude', scenarios, options, live: { executable, workdir, redactions }, evidenceExtra: { cli: 'claude', model: 'haiku', effort: 'low' } });
+await runScenarios({ provider: 'claude', scenarios, options, live: { executable, workdir, redactions, userStateUnchanged }, evidenceExtra: { cli: 'claude', model: 'haiku', effort: 'low' } });

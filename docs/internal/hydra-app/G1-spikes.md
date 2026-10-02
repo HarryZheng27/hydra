@@ -61,13 +61,26 @@ HYDRA_G1_WINDOWS_SANDBOX=unelevated node scripts/app-live/codex.mjs --live --evi
 node scripts/app-live/claude.mjs --fixture --evidence <file>      # what npm test runs, for both
 ```
 
-**Status:** all three spikes are done. The final live runs passed everything: Claude 11/11 (26 turns), Codex 10/10 (15 turns). The committed fixtures come from those runs, and both scripts pass on them in `--fixture` mode.
+**Status:** all three spikes are done. The final live runs passed everything: Claude 11/11 (26 turns), Codex 10/10 (15 turns). The scenarios the confinement rule touches were then re-recorded with the final scripts and passed again. Both scripts pass on the committed fixtures in `--fixture` mode.
 
-**Turn budget, disclosed:** each live run stays under the 30-turn cap the script enforces, but building the scripts took more. Claude used about 90 haiku turns across the session; Codex used about 23 turns on `gpt-6-luna`, after Nico used a reset credit (the first 6 `turn/start` requests hit the weekly limit and were refused at no cost).
+**Turn budget, disclosed:** each live run stays under the 30-turn cap the script enforces, but building and re-recording the scripts took more. Claude used about 105 haiku turns across the session. Codex used about 47 turns on `gpt-6-luna`, after Nico used a reset credit; the first 6 `turn/start` requests hit the weekly limit and were refused at no cost.
 
-**Isolation, checked on every run:** the user's MCP servers stayed off (Codex checks `mcpServerStatus/list` before any turn and refuses otherwise). `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml` were unchanged. Approvals only stand for work inside the scratch repository: `confinementProblem` in `common.mjs` turns anything else into a deny. Plan files a run's own sessions write to `~/.claude/plans` are removed.
+**Isolation, checked on every run:**
+- The user's MCP servers stayed off. Codex checks `mcpServerStatus/list` before any turn and fails if any server other than the harness's own is enabled.
+- `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml` must come out unchanged. They are recorded in the evidence, and a change fails the run.
+- Approvals only stand for work inside the scratch repository (`confinementProblem` in `common.mjs`). File paths must resolve inside it, and a shell command must be exactly one the scenario names, or `mkdir g1-<name>`. Anything else is answered with a deny or decline.
+- Plan files a run's own sessions write to `~/.claude/plans` are removed.
 
-**Redaction:** `redact.ts`, plus home paths, the machine name, the user's name from git, emails, and identity or secret keys found by walking the parsed (often nested) JSON. Each value found is masked with a stable `[redacted-N]` label, so ids the checks correlate stay equal. `tests/appLiveFixtures.test.ts` fails on any machine, installation or account identifier left in a fixture.
+**Redaction:** `redact.ts`, plus home paths, the machine name, the user's name from git, emails, and identity or secret keys found by walking the parsed (often nested) JSON.
+- Each value found is masked with a stable `[redacted-N]` label, so ids the checks correlate stay equal.
+- A line that whole-line redaction would break is redacted leaf by leaf instead.
+- `tests/appLiveFixtures.test.ts` fails on:
+  - known identity keys (`serverName`, `installationId`, account ids, emails) holding anything but a placeholder;
+  - token shapes;
+  - home paths;
+  - a user-name fragment left where a streamed delta split a path.
+
+  It can't recognise an identifier it has no pattern for.
 
 ### S1: Claude (live: 11/11, 26 turns; fixtures: 11/11)
 Every process runs `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --session-id <uuid> --model haiku --effort low --setting-sources project,local --strict-mcp-config --mcp-config <file>`, then sends `{"type":"control_request","request_id":"…","request":{"subtype":"initialize"}}`. The reply comes at once, before any turn, and lists `commands`, `agents`, `models`, `account` and `current_permission_mode`. No usage limit was hit.
