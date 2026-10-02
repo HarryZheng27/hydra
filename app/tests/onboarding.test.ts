@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { openSignIn, providerStatus, registrationStatus, signInArgs, signInLaunch, type Spawner } from '../src/main/onboarding';
+import { createHandlers } from '../src/main/handlers';
+import { openSignIn, providerStatus, registrationStatus, signInArgs, signInLaunch, signInScript, type Spawner } from '../src/main/onboarding';
 import { standinCalls, writeStandins } from '../smoke/standins.mjs';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-onboarding-'));
 const windows = process.platform === 'win32';
-const decode = (args: string[]) => Buffer.from(args[args.indexOf('-EncodedCommand') + 1]!, 'base64').toString('utf16le');
 
 test('onboarding finds each CLI, reads its version, and runs nothing but the version and help checks', { skip: !windows }, async () => {
   const dir = writeStandins(scratch());
@@ -67,30 +67,70 @@ test('the hydra registration is read from Claude\'s and Codex\'s config files, a
 
 test('Sign in runs the CLI\'s own login in a console window, quoted, and waits for Enter', () => {
   assert.deepEqual(signInArgs, { claude: ['auth', 'login', '--claudeai'], codex: ['login'] });
-  const launch = signInLaunch('claude', "C:\\Users\\O'Neil\\claude.exe");
-  assert.match(launch.executable, /powershell\.exe$/i);
-  const script = decode(launch.args);
+  const script = signInScript('claude', "C:\\Users\\O'Neil\\claude.exe");
   assert.ok(script.includes("& 'C:\\Users\\O''Neil\\claude.exe' 'auth' 'login' '--claudeai'"), script);
   assert.match(script, /WindowTitle = 'Claude Code sign-in'/);
   assert.match(script, /Read-Host 'Press Enter to close this window'/);
-  assert.match(decode(signInLaunch('codex', 'C:\\x\\codex.cmd').args), /& 'C:\\x\\codex\.cmd' 'login'/);
-  assert.throws(() => signInLaunch('codex', 'C:\\x\ny.exe'));
+  assert.match(signInScript('codex', 'C:\\x\\codex.cmd'), /& 'C:\\x\\codex\.cmd' 'login'/);
+  assert.throws(() => signInScript('codex', 'C:\\x\ny.exe'));
+  // cmd's `start` gives PowerShell its own console; cmd sees only the title, PowerShell's path and base64.
+  const launch = signInLaunch('codex', 'C:\\Users\\a&b %PATH% "q"\\codex.cmd');
+  assert.match(launch.executable, /cmd\.exe$/i);
+  const match = /^\/d \/s \/c "start "Codex sign-in" "([^"]+powershell\.exe)" -NoLogo -NoProfile -EncodedCommand ([A-Za-z0-9+/=]+)"$/.exec(launch.commandLine);
+  assert.ok(match, launch.commandLine);
+  assert.ok(!launch.commandLine.includes('a&b') && !launch.commandLine.includes('%PATH%'), 'the CLI path never reaches cmd');
+  assert.equal(Buffer.from(match[2]!, 'base64').toString('utf16le'), signInScript('codex', 'C:\\Users\\a&b %PATH% "q"\\codex.cmd'));
 });
 
 test('Sign in opens a window it never reads, and does nothing when the CLI is missing', { skip: !windows }, async () => {
   const dir = writeStandins(scratch(), { codex: false });
   try {
     const spawned: Array<{ executable: string; args: string[]; options: unknown }> = [];
-    const fake: Spawner = (executable, args, options) => { spawned.push({ executable, args, options }); return { unref: () => undefined, once: () => undefined }; };
+    let exitCode = 0;
+    const fake: Spawner = (executable, args, options) => {
+      spawned.push({ executable, args, options });
+      return { once: (event: string, listener: (value: never) => void) => { if (event === 'exit') setTimeout(() => listener(exitCode as never), 5); } } as never;
+    };
     assert.deepEqual(await openSignIn('claude', path.join(dir, 'claude.cmd'), dir, fake), { started: true });
     assert.equal(spawned.length, 1);
-    assert.deepEqual(spawned[0]!.options, { cwd: dir, detached: true, windowsHide: false, stdio: 'ignore' });
-    assert.match(decode(spawned[0]!.args), /claude\.cmd' 'auth' 'login' '--claudeai'/);
+    assert.deepEqual(spawned[0]!.options, { cwd: dir, windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore' });
+    assert.match(spawned[0]!.executable, /cmd\.exe$/i);
+    assert.equal(spawned[0]!.args.length, 1);
+    assert.match(Buffer.from(/-EncodedCommand ([A-Za-z0-9+/=]+)/.exec(spawned[0]!.args[0]!)![1]!, 'base64').toString('utf16le'), /claude\.cmd' 'auth' 'login' '--claudeai'/);
+    exitCode = 1;
+    assert.equal((await openSignIn('claude', path.join(dir, 'claude.cmd'), dir, fake)).started, false, 'a start that fails is not reported as opened');
     const missing = await openSignIn('codex', path.join(dir, 'codex.cmd'), dir, fake);
     assert.equal(missing.started, false);
-    assert.equal(spawned.length, 1, 'nothing was started for a missing CLI');
+    assert.equal(spawned.length, 2, 'nothing was started for a missing CLI');
     assert.deepEqual(standinCalls(dir), [], 'the CLI itself was never run here');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a page can\'t stack sign-in windows or checks: one sign-in per provider at a time, and a refresh joins a running check', async () => {
+  const signIns: string[] = [];
+  let checks = 0;
+  let release: () => void = () => undefined;
+  const store = { load: async () => ({ version: 1, theme: 'system', cliPaths: {} }) } as never;
+  const handlers = createHandlers({
+    info: { name: 'Hydra', version: '0', electron: '44', platform: 'win32' }, settings: store, state: store,
+    pickFolder: async () => undefined, pickExecutable: async () => undefined, applyTheme: () => undefined,
+    checkSetup: () => { checks++; return new Promise(resolve => { release = () => resolve({ providers: [], registration: {} as never, checkedAt: String(checks) }); }); },
+    signIn: async provider => { signIns.push(provider); return { started: true }; },
+  });
+  assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'claude' }), { started: true });
+  assert.equal((await handlers['onboarding.signIn']({ provider: 'claude' })).started, false);
+  assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'codex' }), { started: true });
+  assert.deepEqual(signIns, ['claude', 'codex']);
+  const first = handlers['onboarding.check']({ refresh: false });
+  const joined = [handlers['onboarding.check']({ refresh: true }), handlers['onboarding.check']({ refresh: true })];
+  await new Promise(resolve => setTimeout(resolve, 10));
+  release();
+  assert.deepEqual((await Promise.all([first, ...joined])).map(report => report.checkedAt), ['1', '1', '1']);
+  assert.equal(checks, 1);
+  const again = handlers['onboarding.check']({ refresh: true });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  release();
+  assert.equal((await again).checkedAt, '2', 'once it finished, a refresh runs again');
 });
 
 test('onboarding never imports the self-check that starts a provider', () => {

@@ -27,7 +27,7 @@ export function Setup({ report, checking, onCheck, onSignIn }: Props) {
   };
 
   return (
-    <section className="setup" aria-label="Set up Claude Code and Codex" aria-busy={checking}>
+    <section className="setup" aria-label="Set up Claude Code and Codex" aria-busy={checking} data-checked-at={report?.checkedAt}>
       <div className="setup-head">
         <h2>Your agents</h2>
         <button onClick={onCheck} disabled={checking}>{checking ? 'Checking…' : 'Check again'}</button>

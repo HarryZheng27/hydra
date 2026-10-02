@@ -182,13 +182,20 @@ try {
   check('Sign in opens a console running the CLI login, and reads nothing back', () => {
     assert.equal(a.signIns.length, 1);
     assert.match(a.signIns[0].script, /codex\.cmd' 'login'/);
-    assert.equal(a.signIns[0].windowsHide, false);
+    assert.equal(a.signIns[0].executable.toLowerCase(), 'cmd.exe');
+    assert.match(a.signIns[0].line, /^\/d \/s \/c "start "Codex sign-in" ".*powershell\.exe" -NoLogo -NoProfile -EncodedCommand <script>"$/);
+    assert.equal(a.signIns[0].detached, false, 'detached would leave PowerShell without a console');
+    assert.equal(a.signIns[0].verbatim, true);
     assert.equal(a.signIns[0].stdio, 'ignore');
+    assert.equal(a.secondSignIn.started, false);
+    assert.deepEqual(a.refusedLaunches, [], 'something tried to start a visible process');
     assert.match(a.signInNote, /sign-in window opened/);
   });
   check('no provider process starts except the version and help checks', () => {
     const calls = standinCalls(bin);
-    assert.ok(calls.length >= 5, calls.join(', '));
+    assert.equal(a.recheckDone, true);
+    // Two full checks (the first, and Check again): each runs exactly these five, and nothing else.
+    assert.deepEqual([...calls].sort(), ['claude --help', 'claude --help', 'claude --version', 'claude --version', 'codex --help', 'codex --help', 'codex --version', 'codex --version', 'codex app-server --help', 'codex app-server --help'], calls.join(', '));
     const allowed = new Set(['claude --version', 'claude --help', 'codex --version', 'codex --help', 'codex app-server --help']);
     assert.deepEqual(calls.filter(call => !allowed.has(call)), []);
   });

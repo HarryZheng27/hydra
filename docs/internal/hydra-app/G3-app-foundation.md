@@ -70,12 +70,15 @@ Four PRs, one per milestone: [#298](https://github.com/ndunl075/hydra/pull/298) 
 - **Fuses** are set when the app is packaged, in G6. The threat-model section records G1's choice.
 - **The core `Thenable`:** a few `src/core` signatures name VS Code's global `Thenable`. The app declares the same shape in `app/src/types/core-globals.d.ts` so it can type-check core without `@types/vscode`.
 
-**The visible check:** every run in this goal was hidden (the smoke records `show` and `focus` instead of performing them), so no window opened on Nico's machine. The behaviour is proven on Windows, locally and in CI, but nobody has yet watched `npm --prefix app run dev` open the window and come forward on a second launch. That takes about a minute, whenever the machine is free:
+**The visible check:** the smoke keeps every window hidden (it records `show` and `focus` instead of performing them) and fakes the sign-in launch. The behaviour is proven on Windows, locally and in CI, but two things need a person's eyes once, whenever the machine is free (about two minutes):
 ```
 npm ci --prefix app
 npm --prefix app run dev
 npm --prefix app run dev   # in a second terminal: the first window comes forward, and this one exits
 ```
+- In the window, click **Sign in** for an installed CLI. A console titled "Claude Code sign-in" or "Codex sign-in" opens and runs its own login. The first review caught that Node's `detached` gives PowerShell no console at all, which the smoke's stub had hidden.
+- The hand-off from cmd to PowerShell was checked without a window (`start /b`, a script that writes a marker file). Only the window itself appearing is unverified.
+- While that fix was tested, a smoke run whose stub hadn't been updated opened two real sign-in consoles on Nico's machine. They ran the stand-in `codex.cmd`, not the real CLI, and were closed. The stub now fails closed: every `cmd.exe` launch is faked, and any other unhidden launch is refused and fails the smoke.
 
 **Follow-ups:**
 - **G4:**
@@ -85,4 +88,5 @@ npm --prefix app run dev   # in a second terminal: the first window comes forwar
   - add Monaco and xterm under the CSP already in place (its Trusted Types names cover them).
 - **G5:** implement `Host` for the app, using G2's list of methods that differ. The shared storage root is the one deliberate exception to "nothing in `%APPDATA%\Hydra`", and `identity.test.ts`'s scan of the IDE folder must allow it.
 - **G6:** fuses, the installer, and the mutex or Restart Manager choice.
+- **Sign in:** launch the path onboarding showed, rather than looking the CLI up again (a review note).
 - **Stores:** a `state.json` from a newer schema (after a downgrade) is moved aside, not read, so its projects need restoring by hand.

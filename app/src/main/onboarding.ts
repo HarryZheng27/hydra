@@ -3,6 +3,7 @@ import path from 'node:path';
 import { checkProvider } from '../../../src/core/diagnostics';
 import { supportedCliDescription, supportedCliMinimum, supportedCliVersion } from '../../../src/core/cliVersions';
 import { claudeWrittenServer, codexWrittenBlock, providerPaths, type ProviderPaths } from '../../../src/core/helperRegistration';
+import { cmdUnsafe } from '../../../src/core/process';
 import { findProvider } from '../../../src/core/providers';
 import type { CliProvider, OnboardingReport, ProviderStatus, RegistrationStatus } from '../shared/ipc';
 
@@ -35,7 +36,10 @@ export async function providerStatus(provider: CliProvider, configured: string |
   };
 }
 
-/** Whether the user-level `hydra` MCP server is registered with each CLI. Reads the files; writes nothing. */
+/**
+ * Whether the user-level `hydra` MCP server is registered with each CLI. Reads the files and writes nothing. Only
+ * `mcpServers.hydra` (Claude) and Hydra's marked block (Codex) are looked at; nothing else in them is kept or returned.
+ */
 export async function registrationStatus(paths: ProviderPaths = providerPaths()): Promise<Record<CliProvider, RegistrationStatus>> {
   const hide = () => '•••';
   const look = async (find: () => Promise<string | undefined>, where: string): Promise<RegistrationStatus> => {
@@ -58,38 +62,51 @@ export const signInArgs: Record<CliProvider, string[]> = { claude: ['auth', 'log
 
 const psQuote = (value: string) => `'${value.replace(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
 
-/**
- * The console window for a sign-in: PowerShell runs the CLI's own login, then waits for Enter so its last words stay
- * readable. The script is passed encoded, each argument a single-quoted string, as core's processLaunch does.
- */
-export function signInLaunch(provider: CliProvider, executable: string): { executable: string; args: string[] } {
+/** The PowerShell script a sign-in window runs: the CLI's own login, then a wait for Enter so its last words stay readable. */
+export function signInScript(provider: CliProvider, executable: string): string {
   if (/[\r\n\u0000]/.test(executable)) throw new Error('The program path has a line break in it.');
-  const title = `${providerNames[provider]} sign-in`;
-  const script = [
-    `$Host.UI.RawUI.WindowTitle = ${psQuote(title)}`,
+  return [
+    `$Host.UI.RawUI.WindowTitle = ${psQuote(`${providerNames[provider]} sign-in`)}`,
     `& ${[executable, ...signInArgs[provider]].map(psQuote).join(' ')}`,
     `Write-Host ''`,
     `Read-Host 'Press Enter to close this window' | Out-Null`,
   ].join('; ');
+}
+
+/**
+ * How a sign-in window is opened: a hidden `cmd /c start` gives PowerShell a console of its own, which the user sees.
+ * (Node's `detached` would give it none: libuv sets DETACHED_PROCESS, and PowerShell without a console exits at once.)
+ * The script travels base64-encoded, each argument a single-quoted PowerShell string, as core's processLaunch does,
+ * so nothing in a path reaches cmd: its command line holds only the fixed title, PowerShell's own path and base64.
+ */
+export function signInLaunch(provider: CliProvider, executable: string): { executable: string; commandLine: string } {
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const powershell = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if (cmdUnsafe.test(powershell)) throw new Error('Windows\' own folder has a character cmd can\'t take.');
+  const encoded = Buffer.from(signInScript(provider, executable), 'utf16le').toString('base64');
   return {
-    executable: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    args: ['-NoLogo', '-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    executable: path.join(systemRoot, 'System32', 'cmd.exe'),
+    commandLine: `/d /s /c "start "${providerNames[provider]} sign-in" "${powershell}" -NoLogo -NoProfile -EncodedCommand ${encoded}"`,
   };
 }
 
-export type Spawner = (executable: string, args: string[], options: { cwd: string; detached: true; windowsHide: false; stdio: 'ignore' }) => { unref(): void; once(event: 'error', listener: (error: Error) => void): unknown };
+export interface SpawnedChild { once(event: 'error', listener: (error: Error) => void): unknown; once(event: 'exit', listener: (code: number | null) => void): unknown }
+export type Spawner = (executable: string, args: string[], options: { cwd: string; windowsHide: true; windowsVerbatimArguments: true; stdio: 'ignore' }) => SpawnedChild;
 
-/** Opens the sign-in console. Its output is never read: stdio is ignored and the window belongs to the user. */
+/**
+ * Opens the sign-in console. Its output is never read: stdio is ignored and the window belongs to the user. `started`
+ * means Windows started the window (`start` exited 0); whether the user finishes signing in is theirs to see.
+ */
 export async function openSignIn(provider: CliProvider, configured: string | undefined, cwd: string, run: Spawner = spawn as unknown as Spawner): Promise<{ started: boolean; error?: string }> {
   const found = await findProvider(provider, configured).catch(() => undefined);
   if (!found?.available || !found.executable) return { started: false, error: `${providerNames[provider]} isn't installed, so there's nothing to sign in to yet.` };
-  const launch = signInLaunch(provider, found.executable);
+  let launch: { executable: string; commandLine: string };
+  try { launch = signInLaunch(provider, found.executable); } catch (error) { return { started: false, error: error instanceof Error ? error.message : String(error) }; }
   return new Promise(resolve => {
     try {
-      const child = run(launch.executable, launch.args, { cwd, detached: true, windowsHide: false, stdio: 'ignore' });
+      const child = run(launch.executable, [launch.commandLine], { cwd, windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore' });
       child.once('error', error => resolve({ started: false, error: error.message }));
-      child.unref();
-      setTimeout(() => resolve({ started: true }), 250);
+      child.once('exit', code => resolve(code === 0 ? { started: true } : { started: false, error: `Windows couldn't open the sign-in window (${code}).` }));
     } catch (error) { resolve({ started: false, error: error instanceof Error ? error.message : String(error) }); }
   });
 }

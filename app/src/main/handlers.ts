@@ -23,16 +23,23 @@ export interface HandlerDeps {
 export function createHandlers(deps: HandlerDeps): Handlers {
   // One check at a time, remembered until a refresh or a change of CLI path.
   let report: { key: string; value: Promise<OnboardingReport> } | undefined;
+  let running: Promise<OnboardingReport> | undefined;
   const checkSetup = async (refresh: boolean) => {
     const { cliPaths } = await deps.settings.load();
     const key = JSON.stringify(cliPaths);
+    // A refresh while a check is running joins it rather than starting five more processes.
+    if (running && report?.key === key) return running;
     if (refresh || !report || report.key !== key) {
       const value = deps.checkSetup(cliPaths);
       report = { key, value };
-      value.catch(() => { if (report?.value === value) report = undefined; });
+      running = value;
+      value.then(() => { if (running === value) running = undefined; }, () => { if (running === value) running = undefined; if (report?.value === value) report = undefined; });
     }
     return report.value;
   };
+  // One sign-in window per provider every few seconds, so a page can't stack them up.
+  const lastSignIn = new Map<CliProvider, number>();
+  const SIGN_IN_GAP_MS = 5000;
   return {
     'app.info': () => deps.info,
     'app.problems': async () => {
@@ -60,6 +67,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     'projects.remove': ({ id }) => deps.state.update(current => removeProject(current, id)),
     'onboarding.check': ({ refresh }) => checkSetup(refresh),
-    'onboarding.signIn': async ({ provider }) => deps.signIn(provider, (await deps.settings.load()).cliPaths[provider]),
+    'onboarding.signIn': async ({ provider }) => {
+      const now = Date.now();
+      if (now - (lastSignIn.get(provider) ?? -Infinity) < SIGN_IN_GAP_MS) return { started: false, error: 'A sign-in window was just opened; finish there.' };
+      lastSignIn.set(provider, now);
+      return deps.signIn(provider, (await deps.settings.load()).cliPaths[provider]);
+    },
   };
 }
