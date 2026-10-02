@@ -105,7 +105,7 @@ The single Claude Code agent runs as isolated as a head, so the two setups work 
 claude -p --output-format json --permission-mode acceptEdits --settings <run>/single-settings.json --strict-mcp-config --mcp-config <run>/single-mcp.json --allowedTools Read,Edit,Write,Glob,Grep,Bash(npm:*),Bash(node:*),Bash(git:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(mkdir:*),Bash(cd:*),Bash(grep:*),Bash(echo:*),Bash(sort:*),Bash(diff:*),Bash(pwd:*)
 ```
 
-- `single-settings.json` turns off every one of your Claude Code plugins, the same list a head turns off (`userClaudePlugins`, from Hydra's own code); `single-mcp.json` has no MCP servers, and `--strict-mcp-config` keeps out your own.
+- `single-settings.json` turns off every one of your Claude Code plugins, the same list a head turns off (`userClaudePlugins`, from Hydra's own code), and, as a head's and a reviewer's do, what your claude.ai account syncs: its skills, plugins and connectors; `single-mcp.json` has no MCP servers, and `--strict-mcp-config` keeps out your own.
 - The brief goes to stdin. The two files are written beside the repository, so the agent never commits them; `single-results.json` records the isolation.
 - Unlike a head, the single agent runs **unsandboxed** in the run folder: its allowed commands run as you. Run it only on benchmark folders.
 - `--claude <path>` points at Claude Code when it isn't `claude` on `PATH` (for example `%USERPROFILE%\.local\bin\claude.exe`); the isolation still applies.

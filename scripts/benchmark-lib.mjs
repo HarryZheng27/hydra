@@ -305,7 +305,9 @@ export function summarizeSingle({ agent, wallClockSeconds, exitCode, gatePassed,
 /** The single agent's own settings when it's Claude Code (pure): every user plugin turned off, as a head's are (#260). */
 export function singleSettings(pluginIds) {
   const ids = [...new Set(pluginIds ?? [])].filter(id => /^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)).sort();
-  return ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false])) } : {};
+  // Like a head and a reviewer, without your claude.ai skills, plugins or connectors: src/core/confine.ts's claudeAiSyncOff
+  // (this plain .mjs can't import it; tests/benchmarkHarness.test.ts checks the two agree).
+  return { syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true, ...(ids.length ? { enabledPlugins: Object.fromEntries(ids.map(id => [id, false])) } : {}) };
 }
 /** What the single Claude Code agent may run without asking: the project's tools and reading, not anything. It includes cd, grep and echo, because a compound command (`cd x && npm test 2>&1 | tail`) is allowed only when every part is, the same shapes a head runs. */
 export const singleAllowedTools = Object.freeze(['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash(npm:*)', 'Bash(node:*)', 'Bash(git:*)', 'Bash(ls:*)', 'Bash(cat:*)', 'Bash(head:*)', 'Bash(tail:*)', 'Bash(wc:*)', 'Bash(mkdir:*)', 'Bash(cd:*)', 'Bash(grep:*)', 'Bash(echo:*)', 'Bash(sort:*)', 'Bash(diff:*)', 'Bash(pwd:*)']);

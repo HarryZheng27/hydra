@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, mkdir, writeFile, readdir } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { reviewRepository } from '../scripts/benchmark-review';
+import { claudeAiSyncOff } from '../src/core/confine';
 // @ts-expect-error: a plain .mjs module with no type declarations.
 import { fixturePath, pickTask, taskLabel, observePlan, summarizeHydra, summarizeSingle, workDoneSeconds, landingFromStore, parseCheckOutput, summarizeReview, withReview, runRows, renderSummary, spread, rate, reviewRate, median, globSegment, isFixJob, singleSettings, singleClaudeArgs, singleAllowedTools, usageLimited } from '../scripts/benchmark-lib.mjs';
 
@@ -269,8 +270,9 @@ test('a review that didn\'t run is left out of the pass rate, and counted beside
 });
 
 test('the single Claude Code agent runs isolated like a head: no user plugins, no MCP servers, and the project\'s tools allowed', () => {
-  assert.deepEqual(singleSettings(['b@market', 'a@market', 'bad id', 'a@market']), { enabledPlugins: { 'a@market': false, 'b@market': false } });
-  assert.deepEqual(singleSettings([]), {});
+  assert.deepEqual(singleSettings(['b@market', 'a@market', 'bad id', 'a@market']), { ...claudeAiSyncOff, enabledPlugins: { 'a@market': false, 'b@market': false } });
+  // The same claude.ai switches a head and a reviewer get (src/core/confine.ts), so both sides run alike.
+  assert.deepEqual(singleSettings([]), { ...claudeAiSyncOff });
   const args = singleClaudeArgs({ settingsFile: 's.json', mcpConfigFile: 'm.json' });
   assert.deepEqual(args.slice(0, 5), ['-p', '--output-format', 'json', '--permission-mode', 'acceptEdits']);
   assert.equal(args[args.indexOf('--settings') + 1], 's.json');
