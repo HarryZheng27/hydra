@@ -29,6 +29,9 @@ export interface HostState {
   update(key: string, value: unknown): Promise<void>;
 }
 
+/** A folder open in this window: its path, and its URI as the program names it (Hydra's per-window storage key hashes these). */
+export interface HostFolder { path: string; uri: string }
+
 /** One choice in a list the user picks from. */
 export interface PickItem { label: string; description?: string; picked?: boolean }
 
@@ -53,6 +56,24 @@ export interface Host {
   openFile(file: string, options: { preview: boolean }): Promise<void>;
   /** Opens a web page in the user's browser. */
   openUrl(url: string): Promise<void>;
+  /** The folders open in this window. */
+  folders(): HostFolder[];
+  /** Whether the user trusts this window's folders. Hydra runs nothing in an untrusted one. */
+  trusted(): boolean;
+  /** The processes whose descendants count as this window, so their agents may act as its lead (src/core/leadVerification.ts). */
+  windowProcessIds(): number[];
+  /** Calls `listener` whenever a file matching `pattern` (a glob relative to `folder`) is created, changed or deleted. */
+  watch(folder: string, pattern: string, listener: () => void): Disposable;
+  /** Disposes `disposable` when the host shuts Hydra down. */
+  keep(disposable: Disposable): void;
+  /** Closes this window. */
+  closeWindow(): Promise<void>;
+  /** A development or test run of Hydra, which must never rewrite the user's own Claude Code or Codex connection to point at itself. */
+  readonly development: boolean;
+  /** An installed editor extension, by id: its folder and version; undefined when it isn't installed or the host has no extensions. */
+  extension(id: string): { path: string; version?: string } | undefined;
+  /** Installs an editor extension by id, or from a downloaded package file. */
+  installExtension(source: { id: string } | { file: string }): Promise<void>;
   readonly settings: HostSettings;
   readonly state: HostState;
   readonly paths: HostPaths;
