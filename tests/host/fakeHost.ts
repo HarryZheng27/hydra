@@ -1,4 +1,5 @@
-import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from '../../src/host/host';
+import path from 'node:path';
+import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, HostTerminal, InputOptions, NoticeLevel, PickItem } from '../../src/host/host';
 
 /**
  * A Host for tests (docs/internal/hydra-app/G2-host-split.md): no editor, no window. It records what the controller
@@ -48,8 +49,9 @@ export class FakeHost implements Host {
   readonly extensions = new Map<string, { path: string; version?: string }>();
   readonly installed: ({ id: string } | { file: string })[] = [];
   private readonly listeners = new Set<(affects: (key: string) => boolean) => void>();
-  constructor(paths: HostPaths, settings: Record<string, unknown> = {}) {
-    this.paths = paths;
+  /** `extension` defaults to the folder `dist` is in. */
+  constructor(paths: Omit<HostPaths, 'extension'> & Partial<Pick<HostPaths, 'extension'>>, settings: Record<string, unknown> = {}) {
+    this.paths = { extension: path.dirname(paths.dist), ...paths };
     for (const [key, value] of Object.entries(settings)) this.values.set(key, value);
     this.settings = {
       get: <T>(key: string, fallback: T) => (this.values.has(key) ? this.values.get(key) : fallback) as T,
@@ -109,12 +111,13 @@ export class FakeHost implements Host {
     for (const [title, value] of this.inputs) if ((options.title ?? '').includes(title)) return value;
     return undefined;
   }
-  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean }): Promise<T | undefined> {
+  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean; matchOnDetail?: boolean }): Promise<T | undefined> {
     for (const [title, labels] of this.picks) if ((options.title ?? '').includes(title)) return labels && items.find(item => labels.includes(item.label));
     return undefined;
   }
   async copy(text: string): Promise<void> { this.clipboard.push(text); }
-  withProgress<T>(_title: string, task: () => Promise<T>): Promise<T> { return task(); }
+  readonly progress: string[] = [];
+  withProgress<T>(_title: string, task: (progress: { report(value: { message?: string }): void }) => Promise<T>): Promise<T> { return task({ report: value => { if (value.message) this.progress.push(value.message); } }); }
   async openFolder(folder: string, _options: { forceNewWindow: boolean; forceReuseWindow?: boolean }): Promise<void> { this.opened.push({ file: folder }); }
   async openPreview(url: string): Promise<boolean> { if (this.previews) this.opened.push({ url }); return this.previews; }
   async openMarkdown(file: string): Promise<void> { this.opened.push({ file }); }
@@ -128,7 +131,22 @@ export class FakeHost implements Host {
     return undefined;
   }
   async openFile(file: string, options: { preview: boolean }): Promise<void> { this.opened.push({ file, preview: options.preview }); }
-  async openUrl(url: string): Promise<void> { this.opened.push({ url }); }
+  async openUrl(url: string): Promise<boolean> { this.opened.push({ url }); return true; }
+  version = '0.0.0-test';
+  remote = false;
+  isFocused = true;
+  focused(): boolean { return this.isFocused; }
+  onFocusChange(): Disposable { return { dispose: () => {} }; }
+  readonly terminals: { name: string; cwd: string; shellPath: string; shellArgs: string[]; close: () => void; disposed: boolean }[] = [];
+  openTerminal(options: { name: string; cwd: string; shellPath: string; shellArgs: string[] }): HostTerminal {
+    const listeners: (() => void)[] = [];
+    const entry = { ...options, disposed: false, close: () => { for (const listener of listeners) listener(); } };
+    this.terminals.push(entry);
+    return { dispose: () => { entry.disposed = true; }, onClose: listener => { listeners.push(listener); return { dispose: () => {} }; } };
+  }
+  readonly texts: { content: string; language: string }[] = [];
+  async openText(content: string, language: string): Promise<void> { this.texts.push({ content, language }); }
+  async openFileBeside(file: string): Promise<void> { this.opened.push({ file, preview: true }); }
   folders(): HostFolder[] { return this.folderPaths.map(folder => ({ path: folder, uri: `file:///${folder.split('\\').join('/')}` })); }
   trusted(): boolean { return this.isTrusted; }
   windowProcessIds(): number[] { return [process.pid]; }

@@ -42,13 +42,19 @@ export interface HostState {
 export interface HostFolder { path: string; uri: string }
 
 /** One choice in a list the user picks from. */
-export interface PickItem { label: string; description?: string; picked?: boolean }
+export interface PickItem { label: string; description?: string; detail?: string; picked?: boolean }
 
 /** A text box the user types into: the editor's input box options. `validateInput` returns a problem, or undefined when the value is fine. */
 export interface InputOptions { title?: string; prompt?: string; value?: string; placeHolder?: string; ignoreFocusOut?: boolean; validateInput?: (value: string) => string | undefined }
 
 /** One side of a file in a multi-file diff: a file on disk, or text Hydra serves under its own scheme (registerTextSource). */
 export type ChangeSide = { file: string } | { scheme: string; path: string; query: string };
+
+/** A terminal the host opened for a command (a provider's own sign-in, for example). Hydra never reads what it shows. */
+export interface HostTerminal extends Disposable {
+  /** Called once, when the user closes it or it ends. */
+  onClose(listener: () => void): Disposable;
+}
 
 /** Folders Hydra reads or writes outside the user's projects. */
 export interface HostPaths {
@@ -58,6 +64,8 @@ export interface HostPaths {
   dist: string;
   /** The program's own install folder, where it keeps node-pty (src/core/lanePty.ts). */
   appRoot: string;
+  /** Hydra's own folder: `dist/` and the built-in `packs/` are inside it. */
+  extension: string;
 }
 
 export interface Host {
@@ -74,25 +82,38 @@ export interface Host {
   /** A text box. Undefined when the user dismissed it. */
   input(options: InputOptions): Promise<string | undefined>;
   /** A list the user picks one item from. Undefined when dismissed. */
-  pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean }): Promise<T | undefined>;
+  pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean; matchOnDetail?: boolean }): Promise<T | undefined>;
   /** Copies text to the clipboard. */
   copy(text: string): Promise<void>;
-  /** Shows progress while `task` runs. */
-  withProgress<T>(title: string, task: () => Promise<T>): Promise<T>;
+  /** Shows progress while `task` runs; `report` adds a line of what it is doing now. */
+  withProgress<T>(title: string, task: (progress: { report(value: { message?: string }): void }) => Promise<T>): Promise<T>;
   /** Opens a folder as a window: a new one, or (both false) the window that already has it if there is one. */
   openFolder(folder: string, options: { forceNewWindow: boolean; forceReuseWindow?: boolean }): Promise<void>;
   /** Opens a web page inside the program, beside the current view. False when the program can't, so the caller can offer the browser. */
   openPreview(url: string): Promise<boolean>;
-  /** Shows a Markdown file rendered, or as text when rendering isn't available. */
-  openMarkdown(file: string): Promise<void>;
+  /** Shows a Markdown file rendered, or (unless `fallback` is false, when it fails instead) as text when rendering isn't available. */
+  openMarkdown(file: string, options?: { fallback?: boolean }): Promise<void>;
   /** Serves text for `scheme`, by path and query, to openChanges. */
   registerTextSource(scheme: string, provide: (path: string, query: string) => Promise<string>): Disposable;
   /** A multi-file diff: for each file, its label (on disk), its left side and its right side. */
   openChanges(title: string, resources: [ChangeSide, ChangeSide, ChangeSide][]): Promise<void>;
   /** Opens a text file for reading or editing; `preview: false` keeps its tab open. */
   openFile(file: string, options: { preview: boolean }): Promise<void>;
-  /** Opens a web page in the user's browser. */
-  openUrl(url: string): Promise<void>;
+  /** Opens a web page in the user's browser. True when the browser was asked to open it. */
+  openUrl(url: string): Promise<boolean>;
+  /** Hydra's own version (its package.json). */
+  readonly version: string;
+  /** A window on another machine (a remote session), where Hydra's local-only features stay off. */
+  readonly remote: boolean;
+  /** Whether this window has focus, and a way to hear when that changes. */
+  focused(): boolean;
+  onFocusChange(listener: (focused: boolean) => void): Disposable;
+  /** Opens a terminal that runs `shellPath` with `shellArgs` in `cwd`, and shows it without taking focus. */
+  openTerminal(options: { name: string; cwd: string; shellPath: string; shellArgs: string[] }): HostTerminal;
+  /** Opens text (a diff, for example) as an unsaved read-only document beside the current one. */
+  openText(content: string, language: string): Promise<void>;
+  /** Opens a file beside the current one, as a preview. */
+  openFileBeside(file: string): Promise<void>;
   /** The folders open in this window. */
   folders(): HostFolder[];
   /** Whether the user trusts this window's folders. Hydra runs nothing in an untrusted one. */

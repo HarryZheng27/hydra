@@ -5,7 +5,7 @@ import type { Provider } from './model';
 /**
  * Phase 3 (docs/internal/Hydra_Agent_Plan.md, "Offer where to continue"): decide whether to
  * show one notification for a limit event, what it says, and which buttons it
- * offers. Pure — no vscode API — so it is unit-testable; src/extensionLimitOffer.ts
+ * offers. Pure — no vscode API — so it is unit-testable; src/host/limitOffer.ts
  * wires this to the real notification, clipboard and dispatch.
  */
 

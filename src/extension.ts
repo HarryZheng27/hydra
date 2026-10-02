@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
 import { randomBytes, createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { git, repositoryRoot } from './core/worktrees';
 import { AppearanceSettings } from './extensionSettings';
@@ -11,41 +11,27 @@ import { Onboarding } from './extensionOnboarding';
 import { ProviderAccounts } from './extensionAccounts';
 import { ProviderQuota } from './extensionQuota';
 import { findProvider } from './core/providers';
-import { evidenceLabel, finalJobStates, type EvidenceStatus } from './core/jobs';
-import { alive as isWindowAlive, discoveryDirectory } from './core/helperDiscovery';
+import { finalJobStates } from './core/jobs';
 // ---- Step D: a read-only view across projects ----
-import { readProjectSummaries } from './core/projectSummary';
 import { HeadSandbox } from './core/headSandbox';
-import { headShellSentence } from './core/confine';
-import { firstRunConnectKey, firstRunProviders, shouldConnectOnFirstRun } from './core/onboarding';
-import { codexStatus, providerPaths, type ConnectableProvider } from './core/helperRegistration';
 import type { LimitEvent } from './core/limitEvents';
-import { ClaudeChatLimits, CodexChatLimits } from './extensionLimits';
-import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from './core/mcpServers';
 import { createRedactor } from './core/redact';
 import { checkProvider } from './core/diagnostics';
 import { settingsRequiringRefresh } from './core/settingsRefresh';
 import { parseHandoff, officialProviders } from './core/handoff';
 import { officialExtensionInfo, openOfficialExtension } from './extensionBridge';
-import { claudeForRegistration } from './claudeExecutable';
 import { registerChatLocationController, setChatLocation } from './chatLocationController';
-import { registerLimitOffer } from './extensionLimitOffer';
-import { codexLaneFanout } from './core/limitEvents';
 import { LimitOfferTracker } from './core/limitOffer';
 import { LanesController } from './host/lanes';
 import { HydraTreeProvider } from './extensionTree';
 // ---- Packs (docs/internal/Packs_Plan.md). Its own block. ----
-import { createPackService } from './extensionPacks';
+import { createPackService } from './host/packs';
 import type { PackService } from './core/packs/service';
 import { type ClientMessage, type Provider, type ProviderDiagnostic, type Snapshot, type Handoff, type HandoffTask } from './core/model';
 // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4). Its own block; Phase 1 (Lanes) wires its own imports separately. ----
-import { PlanStore, type Plan, type PlanDispatch } from './core/plans';
 // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md). Their own block. ----
-import { planIdPattern, planJobKeyPattern } from './core/plans';
-import { PlanRunner } from './core/planRunner';
 // ---- Gates (docs/internal/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
-import { buildEvidenceMarkdown } from './core/evidence';
 // ---- Stop all (5.3). Its own line. ----
 import { StopSwitch } from './core/stopSwitch';
 // ---- Audit log (5.2). Its own line. ----
@@ -57,9 +43,6 @@ import { VsCodeHost } from './vscodeHost';
 import { HydraController } from './host/controller';
 
 let manager: Manager | undefined;
-// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
-const planIdArgument = (value: unknown): string => { if (typeof value !== 'string' || !planIdPattern.test(value)) throw new Error('Pass a plan id.'); return value; };
-const jobKeyArgument = (value: unknown): string => { if (typeof value !== 'string' || !planJobKeyPattern.test(value)) throw new Error('Pass a job key.'); return value; };
 /** Every contributed Hydra setting except the preference-only ones (see settingsRefresh). */
 function otherHydraSettings(context: vscode.ExtensionContext): string[] {
   return settingsRequiringRefresh([context.extension.packageJSON?.contributes?.configuration].flat().flatMap((section: { properties?: Record<string, unknown> } | undefined) => Object.keys(section?.properties || {})));
@@ -112,8 +95,6 @@ class Manager {
   // Helpers, plans, the plan runner and the active roles live in the controller.
   private get helpers() { return this.controller.helpers; }
   private set helpers(value) { this.controller.helpers = value; }
-  private get plans() { return this.controller.plans; }
-  private set plans(value) { this.controller.plans = value; }
   private get planRunner() { return this.controller.planRunner; }
   private set planRunner(value) { this.controller.planRunner = value; }
   private get repositories() { return this.controller.repositories; }
@@ -152,7 +133,7 @@ class Manager {
     this.settingsImport = new SettingsImport(context);
     this.accounts = new ProviderAccounts(context, this.settingsImport.available);
     this.quota = new ProviderQuota(context, this.settingsImport.available);
-    this.packs = createPackService(context, line => this.output.appendLine(line), event => this.audit.record(event));
+    this.packs = createPackService(this.host, line => this.output.appendLine(line), event => this.audit.record(event));
     this.settings = new AppearanceSettings(context, this.settingsImport, this.packs);
     this.onboarding = new Onboarding(context, this.settingsImport, this.settings, () => void this.openAgents().catch(error => this.report(error)));
     context.subscriptions.push(this.settings, this.onboarding, this.accounts, this.quota, this.tree);
@@ -197,7 +178,7 @@ class Manager {
     context.subscriptions.push(this.lanes);
     this.controller = new HydraController({
       host: this.host, lanes: this.lanes, stop: this.stop, audit: this.audit, packs: this.packs, headSandbox: this.headSandbox,
-      storageDirectory: this.storageDirectory, leadKey: this.leadKey,
+      storageDirectory: this.storageDirectory, leadKey: this.leadKey, quota: this.quota.service, limitOfferTracker: this.limitOfferTracker,
       ide: {
         view: () => this.view(),
         handle: message => this.handleIde(message),
@@ -210,7 +191,9 @@ class Manager {
         refreshSettingsPages: async pages => { await this.settings.refreshPages(pages); },
         showSettings: page => this.settings.show(page),
         accounts: () => this.accounts.snapshot(),
-        connectOnFirstRun: () => this.connectOnFirstRun(),
+        connectionsChanged: () => this.onboarding.refreshConnections(),
+        desktop: () => this.settingsImport.available,
+        openOfficial: provider => openOfficialExtension(provider),
         report: error => this.report(error),
       },
     });
@@ -242,85 +225,9 @@ class Manager {
     command('hydra.applyImport', (token: string, categories: any) => this.settingsImport.apply(token, categories));
     command('hydra.undoImport', () => this.settingsImport.undo());
     command('hydra.getImportStatus', () => this.settingsImport.status());
-    command('hydra.stopAllHelpers', async () => {
-      const stopped = await this.helpers?.service.stopAll() ?? 0;
-      void notices.info(stopped ? `Stopped ${stopped} Hydra head${stopped === 1 ? '' : 's'}.` : 'No Hydra heads are running.');
-      return stopped;
-    });
-    command('hydra.listHelpers', () => structuredClone(this.helpers?.service.list() ?? []));
-    // ---- Stop all (5.3) ----
-    command('hydra.stopAllAgents', async (options?: { confirm?: boolean }) => {
-      if (options?.confirm !== false) {
-        const pick = await vscode.window.showWarningMessage('Stop every head and lane in this window?', { modal: true }, 'Stop all');
-        if (pick !== 'Stop all') return false;
-      }
-      await this.controller.stopAllAgents('Stopped with "Hydra: Stop All Agents".', 'Stop all agents');
-      return true;
-    });
-    command('hydra.resumeAgents', async () => {
-      await this.controller.resumeAgents('Resume agents');
-      return true;
-    });
     // ---- Audit log (5.2) ----
     command('hydra.openAuditLog', () => this.openAuditLog());
-    // Not contributed: Settings → Heads asks it, to show whether Hydra is stopped now.
-    command('hydra.getStopState', () => ({ stopped: this.stop.isStopped(), since: this.stop.since(), reason: this.stop.reason() }));
-    // Not contributed: Settings → Heads asks it. Checks the head sandbox once per window if it hasn't been yet.
-    command('hydra.headShellStatus', async () => { const shell = await this.headSandbox.shell(); return { kind: shell.kind, text: headShellSentence(shell) }; });
-    // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4). newPlan is public; the plans.* commands are test-only, not in menus. ----
-    command('hydra.newPlan', () => this.newPlan());
-    command('hydra.plans.list', () => structuredClone(this.plans?.store.list() ?? []));
-    command('hydra.plans.save', async (plan: unknown) => { const saved = await this.requirePlans().store.save(plan as Plan); this.plansChanged(); return saved; });
-    command('hydra.plans.run', async (id: unknown) => { await this.runPlanById(String(id)); return structuredClone(this.requirePlans().store.get(String(id))); });
-    // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): test and automation commands, never asking anything ----
-    command('hydra.plans.status', (id: unknown) => structuredClone(this.requirePlanRunner().statuses(planIdArgument(id)) ?? []));
-    command('hydra.plans.retry', async (id: unknown) => { await this.requirePlanRunner().retry(planIdArgument(id)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
-    command('hydra.plans.cancelJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().cancelJob(planIdArgument(id), jobKeyArgument(key), 'Cancelled.'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
-    command('hydra.plans.startJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().startJob(planIdArgument(id), jobKeyArgument(key)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
-    // Step C: Auto-dispatch to lanes; null or nothing turns it off. setDispatch validates the settings.
-    // O3: the integration gate and Merge plan, for tests and automation (never asking anything; no override here).
-    command('hydra.plans.integrate', async (id: unknown) => { await this.requirePlanRunner().integrate(planIdArgument(id)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
-    command('hydra.plans.merge', async (id: unknown, via?: unknown) => { await this.requirePlanRunner().merge(planIdArgument(id), via === 'pr' ? 'pr' : 'merge'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
-    command('hydra.plans.dispatch', async (id: unknown, dispatch?: unknown) => { await this.requirePlanRunner().setDispatch(planIdArgument(id), dispatch == null ? undefined : dispatch as PlanDispatch); this.plansChanged(); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
-    // ---- Packs (docs/internal/Packs_Plan.md, section 6). The Packs page and smoke tests call these; there is ----
-    // ---- no hydra.packs.allow command — allowing a pack only ever happens from the review panel's   ----
-    // ---- own button (src/settings/pages/packs.ts), never through a command any extension could call. ----
-    command('hydra.packs.state', async (folder?: unknown) => structuredClone(await this.packs.state(await this.controller.packsFolder(folder))));
-    command('hydra.packs.setEnabled', async (folder: unknown, id: unknown, on: unknown) => {
-      const root = await this.controller.packsFolder(folder);
-      const packId = String(id), enable = !!on;
-      // Turning on here never allows a pack: an off pack that isn't already allowed for this project stays "Needs your OK".
-      if (enable && !(await this.packs.isAllowed(root, packId))) throw new Error(`The ${packId} pack needs your review first. Turn it on from Settings → Packs.`);
-      await this.packs.setEnabled(root, packId, enable);
-      await this.controller.rolesChanged();
-      return structuredClone(await this.packs.state(root));
-    });
-    command('hydra.packs.skipGate', async (folder: unknown, id: unknown, gate: unknown, skip: unknown) => {
-      const root = await this.controller.packsFolder(folder);
-      await this.packs.skipGate(root, String(id), String(gate), !!skip);
-      return structuredClone(await this.packs.state(root));
-    });
-    command('hydra.packs.addFolder', async (source: unknown) => {
-      if (typeof source !== 'string' || !source) throw new Error('Pass the folder to add.');
-      const installed = await this.packs.addFolder(source);
-      // addFolder makes your packs folder if it didn't exist yet, so the watcher may need to start now.
-      await this.controller.setupPacksFolderWatcher();
-      return structuredClone(installed);
-    });
-    command('hydra.packs.reload', async () => { await this.controller.setupPacksFolderWatcher(); await this.controller.rolesChanged(); return true; });
-    command('hydra.helperConnections', () => this.controller.helperConnections());
-    command('hydra.connectHelpers', async (provider: ConnectableProvider) => ({ warning: await this.controller.connectHelpers(provider), connections: await this.controller.helperConnections() }));
-    command('hydra.disconnectHelpers', async (provider: ConnectableProvider) => { await this.controller.disconnectHelpers(provider); return this.controller.helperConnections(); });
-    command('hydra.installProviderExtension', async (provider: ConnectableProvider) => { await this.controller.installProviderExtension(provider); return this.controller.helperConnections(); });
-    command('hydra.repairClaudeMem', () => this.controller.repairClaudeMem());
-    command('hydra.helperWrittenEntries', () => this.controller.helperWrittenEntries());
-    // MCP servers (Settings plan, Phase 4). Lists come back with secrets masked; changes return the fresh list.
-    const mcp = async () => defaultMcpContext(await claudeForRegistration());
-    command('hydra.mcpServers.list', async () => listMcpServers(await mcp()));
-    command('hydra.mcpServers.add', async (name: unknown, spec: unknown, agents: unknown) => { const context = await mcp(); await addMcpServer(context, name, spec, agents); return listMcpServers(context); });
-    command('hydra.mcpServers.remove', async (name: unknown, agent: unknown) => { const context = await mcp(); await removeMcpServer(context, name, agent); return listMcpServers(context); });
-    command('hydra.mcpServers.enable', async (name: unknown, agent: unknown) => { const context = await mcp(); await enableMcpServerFor(context, name, agent); return listMcpServers(context); });
-    command('hydra.mcpServers.test', async (target: unknown, agent?: McpAgent) => testMcpServer(typeof target === 'string' ? await configuredSpec(await mcp(), target, agent) : validateServerSpec(target)));
+    this.controller.registerCommands(command);
     command('hydra.openOfficialExtension', () => this.handle({ type: 'openOfficial' }));
     command('hydra.getHandoff', () => structuredClone(this.handoff));
     command('hydra.checkProvider', async (provider?: string) => {
@@ -333,12 +240,12 @@ class Manager {
     // ---- Gates (docs/internal/Gates_Plan.md): View evidence, a read-only Markdown document built fresh each time it's opened. ----
     command('hydra.openEvidence', (kind: unknown, id: unknown) => {
       if ((kind !== 'head' && kind !== 'lane') || typeof id !== 'string' || !/^[a-f0-9]{12}$/.test(id)) throw new Error('openEvidence takes "head" or "lane" and a 12-hex id.');
-      return this.openEvidence(kind, id);
+      return this.controller.openEvidence(kind, id);
     });
     // ---- The Hydra panel (docs/internal/Lanes_And_Planner_Plan.md, section 3) ----
     this.context.subscriptions.push(vscode.window.createTreeView('hydra.overview', { treeDataProvider: this.tree }));
     // ---- Step D: a read-only view across projects ----
-    command('hydra.showAllProjects', () => this.showAllProjects());
+    command('hydra.showAllProjects', () => this.controller.showAllProjects());
     command('hydra.overview.mergeLane', (row: { item?: { id?: string } } = {}) => row.item?.id && this.lanes.action(row.item.id, 'merge', true));
     command('hydra.overview.closeLane', (row: { item?: { id?: string } } = {}) => row.item?.id && this.lanes.action(row.item.id, 'close', true));
     // Not in the palette: fires a made-up limit event, for the handoff UI and smoke tests.
@@ -382,7 +289,7 @@ class Manager {
       if (this.handoff) { await this.verifyHandoffWorkspace(); await this.openAgents(); }
     } catch (error) { this.disabled = true; this.report(error); }
     await this.controller.startHelpers().catch(error => { this.output.appendLine(`[heads] not started: ${this.describe(error)}`); });
-    this.startLimitDetection();
+    this.controller.startLimitDetection();
     // ---- Updates (docs/Releases.md, "Updating"): the daily check and Hydra: Check for Updates ----
     this.context.subscriptions.push(registerUpdates({
       context: this.context,
@@ -393,163 +300,10 @@ class Manager {
         stopped: this.stop.isStopped(),
       }),
     }));
-    this.context.subscriptions.push(registerLimitOffer({
-      limitEvents: this.limitEvents.event,
-      storageDir: this.context.globalStorageUri.fsPath,
-      offerEnabled: () => vscode.workspace.getConfiguration('hydra').get<boolean>('limits.offerHandoff', true),
-      job: jobId => this.helpers?.store.get(jobId),
-      otherReady: async provider => (await this.controller.helperConnections()).find(connection => connection.provider === provider)?.connected ?? false,
-      continueWith: async (jobId, provider, markdown) => {
-        if (!this.helpers) throw new Error('Hydra heads are still starting.');
-        await this.helpers.service.continueWith(jobId, provider, markdown);
-      },
-      // O6: a plan job fails over on its own, unless turned off.
-      autoContinuePlan: jobId => vscode.workspace.getConfiguration('hydra').get<boolean>('limits.autoContinuePlans', true) && !!this.controller.jobPlanFor(jobId),
-      log: line => this.output.appendLine(line),
-      tracker: this.limitOfferTracker,
-    }));
-    // Lanes (docs/internal/Gates_Plan.md, section 2): a lane's own tile banner, never a notification.
-    this.context.subscriptions.push(this.limitEvents.event(event => { void this.lanes.onLimitEvent(event).catch(error => this.output.appendLine(`[lanes] limit offer: ${this.describe(error)}`)); }));
+    this.controller.startLimitOffer();
     await this.publish();
   }
-  /** Chats in the official extensions: Claude's hook events and Codex's polled limits. Heads report through their service. */
-  private startLimitDetection(): void {
-    if (this.handoff || !vscode.workspace.isTrusted || vscode.env.remoteName) return;
-    const fire = (event: LimitEvent) => this.limitEvents.fire(event);
-    // Lanes (docs/internal/Gates_Plan.md, section 2): Claude's hook already tags its own lane's
-    // events with HYDRA_LANE_ID; its worktree also counts as an owned folder like any
-    // workspace folder. Codex has no per-session hook, so its account-limit event is
-    // fanned out here to one lane event per running Codex lane.
-    const claude = new ClaudeChatLimits(this.controller.limitEventsDirectory, providerPaths().claudeProjects, fire, () => this.lanes.laneWorktreeEntries());
-    this.context.subscriptions.push(claude);
-    void claude.start().catch(error => this.output.appendLine(`[limits] Claude chat limits not watched: ${this.describe(error)}`));
-    const fireCodex = (event: LimitEvent) => {
-      fire(event);
-      for (const laneEvent of codexLaneFanout(event, this.lanes.runningLanes('codex'))) fire(laneEvent);
-    };
-    this.context.subscriptions.push(new CodexChatLimits(this.quota, async () =>
-      this.settingsImport.available && vscode.workspace.isTrusted && !!vscode.extensions.getExtension('openai.chatgpt') && (await codexStatus(providerPaths().codexConfig, this.controller.helperServerSpec('codex'))).connected,
-    fireCodex, line => this.output.appendLine(line)));
-  }
   private helperExecutable(provider: Provider): Promise<string> { return this.controller.helperExecutable(provider); }
-  /**
-   * "Hydra: Show All Projects" (Step D): every open window's summary, read-only. Selecting a
-   * live entry opens its folder — VS Code focuses that folder's window if it already has one
-   * open, rather than opening a second window on it, so this passes forceNewWindow: false,
-   * forceReuseWindow: false (neither "always a new window" nor "always reuse this one"). A
-   * closed or not-responding entry has nothing to focus, so it only explains itself.
-   */
-  private async showAllProjects(): Promise<void> {
-    const dir = discoveryDirectory(path.join(this.context.globalStorageUri.fsPath, 'helpers'));
-    const summaries = await readProjectSummaries(dir, new Date(), isWindowAlive);
-    if (!summaries.length) { void notices.info('No Hydra projects found.'); return; }
-    const livenessLabel = { running: undefined, 'not-responding': 'Not responding', closed: 'Closed' } as const;
-    const items = summaries
-      .slice()
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map(summary => {
-        const isThisWindow = summary.pid === process.pid && summary.folder === this.helpers?.service.leadFolder;
-        const counts = [
-          summary.heads.running ? `${summary.heads.running} head${summary.heads.running === 1 ? '' : 's'} running` : undefined,
-          summary.lanes.running ? `${summary.lanes.running} lane${summary.lanes.running === 1 ? '' : 's'}` : undefined,
-          summary.blocked.length ? `${summary.blocked.length} blocked` : undefined,
-        ].filter(Boolean).join(' · ') || 'Nothing running';
-        const label = livenessLabel[summary.liveness];
-        const detail = summary.liveness === 'closed' ? 'This window has closed.'
-          : summary.liveness === 'not-responding' ? 'No update from this window in over 3 minutes.'
-          : summary.blocked.length ? summary.blocked.map(item => `${item.title}: ${item.reason}`).join(' · ')
-          : Object.entries(summary.evidence).filter(([, count]) => count).map(([status, count]) => `${count} ${evidenceLabel(status as EvidenceStatus)}`).join(' · ') || 'No evidence recorded yet.';
-        return { label: summary.name, description: [isThisWindow ? 'This window' : undefined, label, counts].filter(Boolean).join(' · '), detail, summary, isThisWindow };
-      });
-    const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Every Hydra project window (read-only)', matchOnDetail: true });
-    if (!pick || pick.isThisWindow) return;
-    if (pick.summary.liveness === 'closed') { void notices.info(`${pick.summary.name}'s window has closed.`); return; }
-    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(pick.summary.folder), { forceNewWindow: false, forceReuseWindow: false });
-  }
-  /**
-   * First run (docs/Heads.md, "Connecting Claude Code and Codex"): once, in an installed desktop Hydra, connect the
-   * agents whose command-line tools are already on this computer (installing their extensions), so a new user
-   * doesn't have to find Connect. Anything that fails says so, with a way to Settings → Connectors.
-   */
-  private async connectOnFirstRun(): Promise<void> {
-    const host = await Promise.resolve(vscode.commands.executeCommand<{ development: boolean }>('hydra.desktop.startupContext')).catch(() => undefined);
-    if (!shouldConnectOnFirstRun({ desktop: this.settingsImport.available, production: this.context.extensionMode === vscode.ExtensionMode.Production,
-      development: host?.development !== false, test: !!process.env.HYDRA_TEST_REPOSITORY, handoff: !!this.handoff, done: !!this.context.globalState.get(firstRunConnectKey) })) return;
-    await this.context.globalState.update(firstRunConnectKey, true);
-    const connections = await this.controller.helperConnections();
-    const row = (provider: ConnectableProvider) => connections.find(item => item.provider === provider);
-    const cli = async (provider: 'claude' | 'codex') => !!(await findProvider(provider, machineSetting<string>(vscode.workspace.getConfiguration('hydra'), provider === 'claude' ? 'claudePath' : 'codexPath') || undefined).catch(() => undefined))?.executable;
-    const wanted = firstRunProviders({
-      claude: { cli: await cli('claude'), connected: !!row('claude')?.connected, extension: !!row('claude')?.extensionInstalled },
-      codex: { cli: await cli('codex'), connected: !!row('codex')?.connected, extension: !!row('codex')?.extensionInstalled },
-    });
-    if (!wanted.length) return;
-    const done: string[] = [], failed: string[] = [];
-    await notices.withProgress({ title: 'Hydra: connecting your agents' }, async progress => {
-      for (const provider of wanted) {
-        const name = provider === 'claude' ? 'Claude Code' : 'Codex';
-        progress.report({ message: `${name}…` });
-        try { await this.controller.connectHelpers(provider); done.push(name); }
-        catch (error) { failed.push(`${name} (${this.describe(error)})`); this.output.appendLine(`[heads] first run: couldn't connect ${provider}: ${this.describe(error)}`); }
-      }
-    });
-    this.onboarding.refreshConnections();
-    if (failed.length) {
-      const pick = await notices.warning(`Hydra couldn't connect ${failed.join(', ')}.${done.length ? ` ${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected.` : ''}`, 'Open Connectors');
-      if (pick) await vscode.commands.executeCommand('hydra.openSettings', 'connectors');
-    } else void notices.info(`${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected to Hydra: chat in ${done.length === 1 ? 'its extension' : 'their extensions'}, and they can start Hydra heads.`);
-  }
-  /** Dashboard actions: review a helper's changes as a diff, open its log, view its gate evidence, or cancel it. */
-  private async helperAction(action: 'helperReview' | 'helperLog' | 'helperCancel' | 'helperAnswer' | 'helperEvidence', jobId: string): Promise<void> {
-    const helpers = this.helpers;
-    const job = helpers?.store.get(jobId);
-    if (!helpers || !job) throw new Error('That head is not in this window.');
-    if (action === 'helperCancel') { await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_cancel_head', { job_id: jobId, reason: 'Cancelled from the Agents view.' }, new AbortController().signal); return; }
-    if (action === 'helperEvidence') { await this.openEvidence('head', jobId); return; }
-    if (action === 'helperAnswer') {
-      // The head is waiting on the lead; you can answer in its place from the Agents view.
-      if (job.state !== 'blocked') throw new Error('That head is not waiting for an answer.');
-      const message = await vscode.window.showInputBox({ title: `Answer "${job.title}"`, prompt: job.question || 'The head is waiting for an answer.', placeHolder: 'Your answer', ignoreFocusOut: true, validateInput: value => value.trim() && value.length <= 8000 ? undefined : 'Write an answer (up to 8000 characters).' });
-      if (message === undefined) return;
-      await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, message }, new AbortController().signal);
-      return;
-    }
-    if (action === 'helperLog') {
-      const log = path.join(this.storageDirectory, 'helpers', 'logs', `${jobId}.jsonl`);
-      await this.toEditor();
-      await vscode.window.showTextDocument(vscode.Uri.file(log), { preview: true, viewColumn: vscode.ViewColumn.Beside });
-      return;
-    }
-    if (!job.worktree || !job.baseCommit) throw new Error('This head has no changes yet.');
-    const head = job.result?.commit || (await git(job.worktree, ['rev-parse', 'HEAD'])).trim();
-    const diff = await git(job.worktree, ['diff', '--stat', '--patch', '--no-color', job.baseCommit, head, '--']);
-    await this.toEditor();
-    const document = await vscode.workspace.openTextDocument({ language: 'diff', content: `# ${job.title} (Hydra head ${job.id})\n# ${job.branch} ${job.baseCommit.slice(0, 12)}..${head.slice(0, 12)}\n# Merge it yourself with git when you're happy: git merge ${job.branch}\n\n${diff || '(no changes)'}` });
-    await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
-  }
-  /**
-   * View evidence: the Markdown is written next to the evidence (in the run's log root) and
-   * previewed from there, because the preview follows links and shows images relative to the
-   * document but refuses `file:` links.
-   */
-  private async openEvidence(kind: 'head' | 'lane', id: string): Promise<void> {
-    let base: string, markdown: string;
-    if (kind === 'head') {
-      const job = this.helpers?.store.get(id);
-      if (!job?.result?.checks.length) throw new Error('This head has no gate results yet.');
-      base = path.join(this.storageDirectory, 'helpers', 'logs');
-      markdown = buildEvidenceMarkdown({ title: job.title, worktree: job.worktree ?? this.helpers!.service.leadFolder, logDirectories: [base], baseDirectory: base, results: job.result.checks, ...(job.result.status ? { status: job.result.status, commit: job.result.commit } : {}) });
-    } else {
-      const evidence = this.lanes.laneEvidence(id), root = this.lanes.laneGatesLogRoot();
-      if (!evidence || !root) throw new Error('This lane has no gate results yet.');
-      base = root;
-      markdown = buildEvidenceMarkdown({ title: evidence.title, worktree: evidence.worktree, logDirectories: [root], baseDirectory: root, results: evidence.results, ...(evidence.status ? { status: evidence.status, commit: evidence.commit, stale: evidence.stale } : {}) });
-    }
-    await mkdir(base, { recursive: true });
-    const file = path.join(base, `${id}-evidence.md`);
-    await writeFile(file, markdown, 'utf8');
-    await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
-  }
   /**
    * Hydra: Open Audit Log (5.2). Opens a snapshot of the file's
    * current content as an untitled document, never the file itself, so it can't be edited in
@@ -639,16 +393,11 @@ class Manager {
     this.status.tooltip = `Hydra: switch to the ${this.mode === 'agents' ? 'Editor' : 'Agent Manager'} (Alt+Shift+A)`;
     return { mode: this.mode, busy: this.busy || this.disabled, error: this.error, handoff: this.handoff, officialExtensions: ['claude', 'codex'].map(provider => officialExtensionInfo(provider as 'claude' | 'codex')) };
   }
-  private plansChanged(): void { this.controller.plansChanged(); }
-  private requirePlans(): { store: PlanStore; planning: Map<string, AbortController> } { return this.controller.requirePlans(); }
 
   /** hydra.learn: opens the "Work with Hydra" walkthrough (docs/internal/Lanes_And_Planner_Plan.md, "A walkthrough"). */
   private async openWalkthrough(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.openWalkthrough', `${this.context.extension.id}#hydra.workWithHydra`, false);
   }
-  private newPlan(): Promise<void> { return this.controller.newPlan(); }
-  private runPlanById(id: string): Promise<void> { return this.controller.runPlanById(id); }
-  private requirePlanRunner(): PlanRunner { return this.controller.requirePlanRunner(); }
   private connectWebview(webview: vscode.Webview): void {
     webview.onDidReceiveMessage(value => { void this.handle(value).catch(error => this.report(error)); }, undefined, this.context.subscriptions);
   }
@@ -705,7 +454,6 @@ class Manager {
     if (message.type === 'refresh') { await this.refresh(); return; }
     if (message.type === 'helperStopAll') { await vscode.commands.executeCommand('hydra.stopAllHelpers'); return; }
     if (message.type === 'learn') { await vscode.commands.executeCommand('hydra.learn'); return; }
-    if (message.type === 'helperReview' || message.type === 'helperLog' || message.type === 'helperCancel' || message.type === 'helperAnswer' || message.type === 'helperEvidence') { await this.helperAction(message.type, message.jobId); return; }
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace to use Hydra.');
     if (this.disabled) throw new Error('Hydra is disabled in this window. Resolve the ownership or handoff error and reload this window.');
     if (message.type === 'checkProvider') {

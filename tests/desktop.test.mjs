@@ -537,8 +537,11 @@ test('the Agent Manager is the whole window, and the Editor comes back exactly a
   assert.ok(profile.includes("enforcePartOptions({ showTabs: 'none' })"), 'the tab strip goes, without touching the user setting');
   assert.ok(profile.includes('toggleMaximizeGroup('), 'other editor groups step aside');
   assert.ok(profile.includes('StorageScope.WORKSPACE'), 'what was showing survives closing the window in the Agent Manager');
-  const extension = await fs.readFile('src/extension.ts', 'utf8');
-  for (const opener of ["await this.toEditor();\n      await vscode.window.showTextDocument(", "await this.toEditor();\n    const document = await vscode.workspace.openTextDocument({ language: 'diff'"]) assert.ok(extension.replaceAll('\r\n', '\n').includes(opener), 'opening a log or diff from the Agent Manager switches to the Editor first');
+  // A head's log and diff open through the IDE's Host (src/vscodeHost.ts), which leaves the Agent Manager first.
+  const host = (await fs.readFile('src/vscodeHost.ts', 'utf8')).replaceAll('\r\n', '\n');
+  for (const opener of ["await this.toEditor();\n    await vscode.window.showTextDocument(vscode.Uri.file(file)", "await this.toEditor();\n    const document = await vscode.workspace.openTextDocument({ language, content });"]) assert.ok(host.includes(opener), 'opening a log or diff from the Agent Manager switches to the Editor first');
+  const controller = await fs.readFile('src/host/controller.ts', 'utf8');
+  assert.ok(controller.includes('await this.host.openFileBeside(log);') && controller.includes('await this.host.openText(`# ${job.title} (Hydra head ${job.id})'), 'the head log and diff use those openers');
   const lanes = await fs.readFile('src/host/lanes.ts', 'utf8');
   assert.equal(lanes.split('await this.host.toEditor();').length - 1, 2, 'a lane diff and a lane preview switch to the Editor first');
 });
