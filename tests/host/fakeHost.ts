@@ -1,4 +1,4 @@
-import type { Disposable, Host, HostPaths, HostSettings, NoticeLevel } from '../../src/host/host';
+import type { Disposable, Host, HostPaths, HostSettings, HostState, NoticeLevel, PickItem } from '../../src/host/host';
 
 /**
  * A Host for tests (docs/internal/hydra-app/G2-host-split.md): no editor, no window. It records what the controller
@@ -10,6 +10,14 @@ export class FakeHost implements Host {
   readonly notices: { level: NoticeLevel; message: string; actions: string[] }[] = [];
   readonly confirms: { message: string; action: string; detail?: string }[] = [];
   readonly posted: unknown[] = [];
+  readonly opened: { file?: string; url?: string; preview?: boolean }[] = [];
+  /** What the next pickMany returns, by its title (a substring match): labels to pick, or undefined to dismiss. */
+  readonly picks = new Map<string, string[] | undefined>();
+  readonly stateValues = new Map<string, unknown>();
+  readonly state: HostState = {
+    get: <T>(key: string, fallback: T) => (this.stateValues.has(key) ? structuredClone(this.stateValues.get(key)) : fallback) as T,
+    update: async (key, value) => { this.stateValues.set(key, structuredClone(value)); },
+  };
   /** What the user picks, by the message's text (a substring match): an action for notify, true or false for confirm. */
   readonly answers = new Map<string, string | boolean>();
   readonly values = new Map<string, unknown>();
@@ -47,5 +55,11 @@ export class FakeHost implements Host {
     this.confirms.push({ message, action, ...(detail !== undefined ? { detail } : {}) });
     return this.answer(message) === true;
   }
+  async pickMany<T extends PickItem>(items: T[], options: { title: string; placeHolder: string }): Promise<T[] | undefined> {
+    for (const [title, labels] of this.picks) if (options.title.includes(title)) return labels && items.filter(item => labels.includes(item.label));
+    return undefined;
+  }
+  async openFile(file: string, options: { preview: boolean }): Promise<void> { this.opened.push({ file, preview: options.preview }); }
+  async openUrl(url: string): Promise<void> { this.opened.push({ url }); }
   async postToUi(message: unknown): Promise<void> { this.posted.push(structuredClone(message)); }
 }
