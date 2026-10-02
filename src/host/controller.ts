@@ -38,7 +38,7 @@ import type { StopSwitch } from '../core/stopSwitch';
 import type { AuditLog } from '../core/audit';
 import type { Disposable, Host } from './host';
 
-/** The lanes the controller drives (src/extensionLanes.ts's LanesController in the IDE). */
+/** The lanes the controller drives (src/host/lanes.ts's LanesController). */
 export interface ControllerLanes {
   readonly available: boolean;
   state(): { lanes: LaneView[]; terminals: boolean };
@@ -1098,7 +1098,7 @@ export class HydraController {
       await this.ide.refreshSettingsPages(['gates']).catch(() => undefined);
     } catch { /* gates aren't available in this window; say nothing, and never block acceptance or the merge */ }
   }
-  // ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md). The editor side is LanesController (src/extensionLanes.ts). ----
+  // ---- Lanes (docs/internal/Lanes_And_Planner_Plan.md). The editor side is LanesController (src/host/lanes.ts). ----
   /** Unfinished heads started from a lane. */
   // ---- Step D: a read-only view across projects ----
   /**

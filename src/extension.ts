@@ -32,7 +32,7 @@ import { registerChatLocationController, setChatLocation } from './chatLocationC
 import { registerLimitOffer } from './extensionLimitOffer';
 import { codexLaneFanout } from './core/limitEvents';
 import { LimitOfferTracker } from './core/limitOffer';
-import { LanesController } from './extensionLanes';
+import { LanesController } from './host/lanes';
 import { HydraTreeProvider } from './extensionTree';
 // ---- Packs (docs/internal/Packs_Plan.md). Its own block. ----
 import { createPackService } from './extensionPacks';
@@ -169,7 +169,7 @@ class Manager {
       audit: event => this.audit.record(event),
     });
     this.lanes = new LanesController({
-      context, log: line => this.output.appendLine(line),
+      platform: this.host, log: line => this.output.appendLine(line),
       post: message => { void this.panel?.webview.postMessage(message); },
       openAgents: () => this.openAgents(), toEditor: () => this.toEditor(), webviewReady: () => !!this.panel && this.readyPanel === this.panel,
       helperServerSpec: provider => this.controller.helperServerSpec(provider), runningHeads: id => this.controller.laneHeads(id),
@@ -192,6 +192,7 @@ class Manager {
       audit: event => this.audit.record(event),
       // ---- Step A ----
       offerStarterGates: folder => void this.controller.offerStarterGatesIfNeeded(folder),
+      openEvidence: async laneId => { await vscode.commands.executeCommand('hydra.openEvidence', 'lane', laneId); },
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
     this.controller = new HydraController({

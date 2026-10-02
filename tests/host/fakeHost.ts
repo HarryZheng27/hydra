@@ -1,4 +1,4 @@
-import type { Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, NoticeLevel, PickItem } from '../../src/host/host';
+import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from '../../src/host/host';
 
 /**
  * A Host for tests (docs/internal/hydra-app/G2-host-split.md): no editor, no window. It records what the controller
@@ -64,6 +64,35 @@ export class FakeHost implements Host {
     this.confirms.push({ message, action, ...(detail !== undefined ? { detail } : {}) });
     return this.answer(message) === true;
   }
+  /** What each text box returns, by its title (a substring match); undefined dismisses it. */
+  readonly inputs = new Map<string, string | undefined>();
+  readonly clipboard: string[] = [];
+  readonly textSources = new Map<string, (path: string, query: string) => Promise<string>>();
+  readonly changes: { title: string; resources: [ChangeSide, ChangeSide, ChangeSide][] }[] = [];
+  previews = true;
+  async ask(_level: 'info' | 'warning', message: string, detail: string | undefined, ...actions: string[]): Promise<string | undefined> {
+    this.confirms.push({ message, action: actions.join(' | '), ...(detail !== undefined ? { detail } : {}) });
+    const picked = this.answer(message);
+    return typeof picked === 'string' && actions.includes(picked) ? picked : picked === true ? actions[0] : undefined;
+  }
+  async input(options: InputOptions): Promise<string | undefined> {
+    for (const [title, value] of this.inputs) if ((options.title ?? '').includes(title)) return value;
+    return undefined;
+  }
+  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean }): Promise<T | undefined> {
+    for (const [title, labels] of this.picks) if ((options.title ?? '').includes(title)) return labels && items.find(item => labels.includes(item.label));
+    return undefined;
+  }
+  async copy(text: string): Promise<void> { this.clipboard.push(text); }
+  withProgress<T>(_title: string, task: () => Promise<T>): Promise<T> { return task(); }
+  async openFolder(folder: string, _options: { forceNewWindow: boolean; forceReuseWindow?: boolean }): Promise<void> { this.opened.push({ file: folder }); }
+  async openPreview(url: string): Promise<boolean> { if (this.previews) this.opened.push({ url }); return this.previews; }
+  async openMarkdown(file: string): Promise<void> { this.opened.push({ file }); }
+  registerTextSource(scheme: string, provide: (path: string, query: string) => Promise<string>): Disposable {
+    this.textSources.set(scheme, provide);
+    return { dispose: () => { this.textSources.delete(scheme); } };
+  }
+  async openChanges(title: string, resources: [ChangeSide, ChangeSide, ChangeSide][]): Promise<void> { this.changes.push({ title, resources }); }
   async pickMany<T extends PickItem>(items: T[], options: { title: string; placeHolder: string }): Promise<T[] | undefined> {
     for (const [title, labels] of this.picks) if (options.title.includes(title)) return labels && items.filter(item => labels.includes(item.label));
     return undefined;

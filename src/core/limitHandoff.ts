@@ -1,4 +1,4 @@
-import { open, readdir, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { git as realGit } from './git';
@@ -440,4 +440,31 @@ export async function buildHandoff(input: HandoffInput, deps: HandoffDeps = defa
   if (job) return buildFromHead(job, event, deps);
   if (event.provider === 'codex') return buildFromCodexChat(event, deps);
   return buildFromClaudeChat(event, deps);
+}
+
+/** How many saved handoff files Hydra keeps (the newest). */
+const maxSavedHandoffs = 20;
+
+/** Writes a handoff under `<storageDir>/handoffs` and keeps only the newest `maxSavedHandoffs`. */
+export async function saveHandoff(storageDir: string, event: LimitEvent, markdown: string): Promise<string> {
+  const dir = path.join(storageDir, 'handoffs');
+  await mkdir(dir, { recursive: true });
+  const file = path.join(dir, handoffFileName(event));
+  await writeFile(file, markdown, 'utf8');
+  await pruneHandoffs(dir);
+  return file;
+}
+
+/** Keeps only the newest `maxSavedHandoffs` handoff files. */
+async function pruneHandoffs(dir: string): Promise<void> {
+  let names: string[];
+  try { names = await readdir(dir); } catch { return; }
+  const candidates = names.filter(name => name.startsWith('HANDOFF-') && name.endsWith('.md'));
+  if (candidates.length <= maxSavedHandoffs) return;
+  const withTimes = (await Promise.all(candidates.map(async name => {
+    const full = path.join(dir, name);
+    try { return { full, mtimeMs: (await stat(full)).mtimeMs }; } catch { return undefined; }
+  }))).filter((entry): entry is { full: string; mtimeMs: number } => !!entry);
+  withTimes.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const stale of withTimes.slice(maxSavedHandoffs)) await rm(stale.full, { force: true });
 }

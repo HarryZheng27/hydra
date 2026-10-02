@@ -95,7 +95,7 @@ test('rotation at a tiny maxBytes keeps exactly one previous file', async () => 
   } finally { await f.close(); }
 });
 
-// ---- laneOverrideEvent: the pure helper factored out of extensionLanes.ts's dialogs ----
+// ---- laneOverrideEvent: the pure helper factored out of src/host/lanes.ts's dialogs ----
 
 test('laneOverrideEvent: an approval naming the lane and, when given, a detail', () => {
   assert.deepEqual(laneOverrideEvent('Merge anyway', 'b'.repeat(12)), { kind: 'approval', what: 'Merge anyway', laneId: 'b'.repeat(12) });

@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
-import type { Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, NoticeLevel, PickItem } from './host/host';
+import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from './host/host';
 
 /**
  * The IDE's Host (docs/internal/hydra-app/G2-host-split.md): each method does exactly what the extension did before
@@ -29,12 +29,44 @@ export class VsCodeHost implements Host {
     };
     this.state = { get: <T>(key: string, fallback: T) => context.workspaceState.get<T>(key, fallback), update: async (key, value) => { await context.workspaceState.update(key, value); } };
     this.development = context.extensionMode !== vscode.ExtensionMode.Production;
-    this.paths = { storage: context.globalStorageUri.fsPath, dist: vscode.Uri.joinPath(context.extensionUri, 'dist').fsPath };
+    this.paths = { storage: context.globalStorageUri.fsPath, dist: vscode.Uri.joinPath(context.extensionUri, 'dist').fsPath, appRoot: vscode.env.appRoot };
   }
   log(line: string): void { this.output.appendLine(line); }
   notify(level: NoticeLevel, message: string, ...actions: string[]): Promise<string | undefined> { return notices[level](message, ...actions); }
   async confirm(message: string, action: string, detail?: string): Promise<boolean> {
     return await vscode.window.showWarningMessage(message, { modal: true, ...(detail !== undefined ? { detail } : {}) }, action) === action;
+  }
+  async ask(level: 'info' | 'warning', message: string, detail: string | undefined, ...actions: string[]): Promise<string | undefined> {
+    const options = { modal: true, ...(detail !== undefined ? { detail } : {}) };
+    return level === 'info' ? await vscode.window.showInformationMessage(message, options, ...actions) : await vscode.window.showWarningMessage(message, options, ...actions);
+  }
+  async input(options: InputOptions): Promise<string | undefined> { return await vscode.window.showInputBox(options); }
+  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean }): Promise<T | undefined> { return await vscode.window.showQuickPick(items, options); }
+  async copy(text: string): Promise<void> { await vscode.env.clipboard.writeText(text); }
+  withProgress<T>(title: string, task: () => Promise<T>): Promise<T> { return notices.withProgress({ title }, () => task()); }
+  async openFolder(folder: string, options: { forceNewWindow: boolean; forceReuseWindow?: boolean }): Promise<void> {
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(folder), options);
+  }
+  /** VS Code's built-in Simple Browser (decision 4): untrusted content, no Hydra access. */
+  async openPreview(url: string): Promise<boolean> {
+    // simpleBrowser.api.open is Simple Browser's own API command and its activation event, so it works
+    // before the extension has loaded (getCommands() doesn't list an unactivated extension's commands).
+    try {
+      await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url, true), { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+      return true;
+    } catch { return false; }
+  }
+  async openMarkdown(file: string): Promise<void> {
+    const uri = vscode.Uri.file(file);
+    try { await vscode.commands.executeCommand('markdown.showPreview', uri); }
+    catch { const doc = await vscode.workspace.openTextDocument(uri); await vscode.window.showTextDocument(doc, { preview: true }); }
+  }
+  registerTextSource(scheme: string, provide: (path: string, query: string) => Promise<string>): Disposable {
+    return vscode.workspace.registerTextDocumentContentProvider(scheme, { provideTextDocumentContent: uri => provide(uri.path, uri.query) });
+  }
+  async openChanges(title: string, resources: [ChangeSide, ChangeSide, ChangeSide][]): Promise<void> {
+    const uri = (side: ChangeSide) => 'file' in side ? vscode.Uri.file(side.file) : vscode.Uri.from({ scheme: side.scheme, path: side.path, query: side.query });
+    await vscode.commands.executeCommand('vscode.changes', title, resources.map(resource => resource.map(uri)));
   }
   async pickMany<T extends PickItem>(items: T[], options: { title: string; placeHolder: string }): Promise<T[] | undefined> {
     return await vscode.window.showQuickPick(items, { canPickMany: true, title: options.title, placeHolder: options.placeHolder });

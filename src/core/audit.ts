@@ -95,7 +95,7 @@ function rotatedPath(file: string): string {
 /**
  * The audit event for an override picked at a lane's git-settings or gates prompt (Merge with
  * these changes / Mark done with these changes / Merge anyway / Mark done anyway). Factored out
- * as a pure function because the dialogs themselves (extensionLanes.ts) need vscode to test.
+ * as a pure function because the dialogs themselves (src/host/lanes.ts) need a host to test.
  */
 export function laneOverrideEvent(what: string, laneId: string, detail?: string): AuditEvent {
   return { kind: 'approval', what, laneId, ...(detail ? { detail } : {}) };

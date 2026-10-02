@@ -1,35 +1,33 @@
-import * as vscode from 'vscode';
-import { machineSetting } from './core/machineSetting';
-import { notices } from './notices';
 import path from 'node:path';
-import { git, gitMetaChanges, gitMetaFingerprint } from './core/git';
-import { findProvider } from './core/providers';
-import { claudeStatus, codexStatus, providerPaths, type HelperServerSpec } from './core/helperRegistration';
-import { loadNodePty, terminalText, terminalsUnavailable, type PtyModule } from './core/lanePty';
-import { LaneStore, isLaneId, laneGoalMax, parseLaneName, type Lane } from './core/lanes';
-import { LaneService, gatesPassNote, maxOpenLanes } from './core/laneService';
-import { defaultCommitMessage, laneDiffFiles, type CloseMode } from './core/laneFinish';
-import { flattenGateFailureMessage, summarizeGateFailures, type GatesLoader, type GatesOutcome } from './core/gates';
-import { parsePreviewConfig, savePreviewConfig, splitPreviewCommand, type PreviewConfig } from './core/lanePreview';
-import type { EvidenceStatus, JobCheckResult } from './core/jobs';
-import { laneActions, type AgentsView, type LaneAction, type LaneClientMessage, type LaneLimitOfferView, type LaneOfferButtonId, type LaneServerMessage, type LaneView, type Provider } from './core/model';
-import { otherProvider, type LimitEvent } from './core/limitEvents';
-import { buildHandoff } from './core/limitHandoff';
-import { laneOfferButtons, laneOfferMessage, laneSwitchCountdownSeconds, LimitOfferTracker } from './core/limitOffer';
-import { openHandoffPreview, saveHandoff } from './extensionLimitOffer';
+import type { ChangeSide, Disposable, Host } from './host';
+import { git, gitMetaChanges, gitMetaFingerprint } from '../core/git';
+import { findProvider } from '../core/providers';
+import { claudeStatus, codexStatus, providerPaths, type HelperServerSpec } from '../core/helperRegistration';
+import { loadNodePty, terminalText, terminalsUnavailable, type PtyModule } from '../core/lanePty';
+import { LaneStore, isLaneId, laneGoalMax, parseLaneName, type Lane } from '../core/lanes';
+import { LaneService, gatesPassNote, maxOpenLanes } from '../core/laneService';
+import { defaultCommitMessage, laneDiffFiles, type CloseMode } from '../core/laneFinish';
+import { flattenGateFailureMessage, summarizeGateFailures, type GatesLoader, type GatesOutcome } from '../core/gates';
+import { parsePreviewConfig, savePreviewConfig, splitPreviewCommand, type PreviewConfig } from '../core/lanePreview';
+import type { EvidenceStatus, JobCheckResult } from '../core/jobs';
+import { laneActions, type AgentsView, type LaneAction, type LaneClientMessage, type LaneLimitOfferView, type LaneOfferButtonId, type LaneServerMessage, type LaneView, type Provider } from '../core/model';
+import { otherProvider, type LimitEvent } from '../core/limitEvents';
+import { buildHandoff } from '../core/limitHandoff';
+import { laneOfferButtons, laneOfferMessage, laneSwitchCountdownSeconds, LimitOfferTracker } from '../core/limitOffer';
+import { saveHandoff } from '../core/limitHandoff';
 // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md). Their own block. ----
-import { laneNameFromTitle, type LanePlanLink } from './core/lanes';
-import type { LanePlanJobView } from './core/model';
-import type { Plan, PlanJob } from './core/plans';
-import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from './core/planRunner';
+import { laneNameFromTitle, type LanePlanLink } from '../core/lanes';
+import type { LanePlanJobView } from '../core/model';
+import type { Plan, PlanJob } from '../core/plans';
+import { planLaneBrief, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart } from '../core/planRunner';
 // ---- Auto-dispatch (Step C) ----
-import { LaneDispatch, type DispatchCheck, type DispatchRunner } from './core/laneDispatch';
+import { LaneDispatch, type DispatchCheck, type DispatchRunner } from '../core/laneDispatch';
 // ---- Packs (docs/internal/Packs_Plan.md) ----
-import type { RoleSource } from './core/packs/launch';
+import type { RoleSource } from '../core/packs/launch';
 // ---- Stop all (5.3) ----
-import type { StopSwitch } from './core/stopSwitch';
+import type { StopSwitch } from '../core/stopSwitch';
 // ---- Audit log (5.2) ----
-import { laneOverrideEvent, type AuditEvent } from './core/audit';
+import { laneOverrideEvent, type AuditEvent } from '../core/audit';
 
 /**
  * The editor side of Hydra lanes (docs/internal/Lanes_And_Planner_Plan.md): commands,
@@ -37,7 +35,8 @@ import { laneOverrideEvent, type AuditEvent } from './core/audit';
  * multi-file diff. The lanes themselves live in LaneService.
  */
 export interface LanesHost {
-  context: vscode.ExtensionContext;
+  /** The program Hydra runs in (src/host/host.ts): dialogs, settings, paths, the clipboard, opening things. */
+  platform: Host;
   log(line: string): void;
   /** Post to the Agents panel, if it is open. */
   post(message: LaneServerMessage): void;
@@ -76,6 +75,8 @@ export interface LanesHost {
   // ---- Stop all (5.3) ----
   /** Without it, a lane always may launch or relaunch. */
   stop?: StopSwitch;
+  /** View evidence for a lane (the IDE's hydra.openEvidence). */
+  openEvidence(laneId: string): Promise<void>;
   // ---- 5.2: the audit log ----
   /** Without it, a "Merge with these changes"/"Merge anyway" override and similar aren't recorded. */
   audit?: (event: AuditEvent) => void;
@@ -88,7 +89,7 @@ export interface LanesHost {
 export interface LaneActionOptions { message?: string; close?: CloseMode }
 
 
-export { isLaneMessage } from './core/model';
+export { isLaneMessage } from '../core/model';
 const baseScheme = 'hydra-lane';
 const providerLabel = (provider: Provider) => provider === 'codex' ? 'Codex' : 'Claude Code';
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -103,14 +104,14 @@ function parseActionOptions(value: unknown): LaneActionOptions {
   return { ...(message !== undefined ? { message } : {}), ...(close !== undefined ? { close } : {}) };
 }
 
-export class LanesController implements vscode.Disposable {
+export class LanesController implements Disposable {
   private service?: LaneService;
   private pty?: { module?: PtyModule };
   private pendingShow?: LaneServerMessage;
   /** The view the webview last reported (Canvas or Lanes), and what it focused. */
   private view: { view: AgentsView; focus?: string } = { view: 'canvas' };
   private posted = '';
-  private readonly disposables: vscode.Disposable[] = [];
+  private readonly disposables: Disposable[] = [];
   private storageDirectory?: string;
   /** The main checkout lanes branch from: where the active packs are read. */
   private repository?: string;
@@ -123,11 +124,12 @@ export class LanesController implements vscode.Disposable {
   private dispatch?: LaneDispatch;
   /** Shared with registerLimitOffer's chat/head notifications, so "the other provider is limited too" sees every source. */
   constructor(private readonly host: LanesHost, private readonly limitTracker = new LimitOfferTracker()) {}
+  private get platform(): Host { return this.host.platform; }
 
   /** node-pty from the host, loaded once on first use. */
   private ptyModule(): PtyModule | undefined {
     if (!this.pty) {
-      const loaded = loadNodePty(vscode.env.appRoot);
+      const loaded = loadNodePty(this.platform.paths.appRoot);
       this.pty = loaded;
       if (!loaded.module) this.host.log(`[lanes] ${terminalsUnavailable} ${loaded.errors.join('; ')}`);
     }
@@ -152,13 +154,13 @@ export class LanesController implements vscode.Disposable {
     this.repository = repository;
     const store = new LaneStore(storageDirectory, line => this.host.log(line));
     await store.load();
-    const config = () => vscode.workspace.getConfiguration('hydra');
+    const settings = this.platform.settings;
     this.service = new LaneService({
       store, repository,
-      worktreeRoot: () => machineSetting<string>(config(), 'worktreeRoot') || undefined,
+      worktreeRoot: () => settings.machine<string>('worktreeRoot') || undefined,
       pty: this.ptyModule(),
       executable: async provider => {
-        const info = await findProvider(provider, machineSetting<string>(config(), `${provider}Path`) || undefined);
+        const info = await findProvider(provider, settings.machine<string>(`${provider}Path`) || undefined);
         if (!info.executable) throw new Error(`${providerLabel(provider)} CLI not found. Install it or set Hydra's ${provider} path.`);
         return info.executable;
       },
@@ -166,7 +168,7 @@ export class LanesController implements vscode.Disposable {
         ? (await claudeStatus(providerPaths(), this.host.helperServerSpec('claude'))).connected
         : (await codexStatus(providerPaths().codexConfig, this.host.helperServerSpec('codex'))).connected,
       bridge: provider => this.host.helperServerSpec(provider),
-      helpersDir: path.join(this.host.context.globalStorageUri.fsPath, 'helpers'),
+      helpersDir: path.join(this.platform.paths.storage, 'helpers'),
       configDirectory: path.join(storageDirectory, 'lanes'),
       testCommand: () => process.env.HYDRA_TEST_LANE_COMMAND || undefined,
       runningHeads: id => this.host.runningHeads(id),
@@ -183,7 +185,7 @@ export class LanesController implements vscode.Disposable {
       ...(this.host.hydraStorage ? { hydraStorage: this.host.hydraStorage } : {}),
       ...(this.host.stop ? { stop: this.host.stop } : {}),
     });
-    this.disposables.push(vscode.workspace.registerTextDocumentContentProvider(baseScheme, { provideTextDocumentContent: uri => this.baseContent(uri) }));
+    this.disposables.push(this.platform.registerTextSource(baseScheme, (file, query) => this.baseContent(file, query)));
     this.dispatch = new LaneDispatch({
       lanes: this.service, runner: () => this.host.planRunner?.(),
       onGatesProgress: (id, progress) => this.host.post({ type: 'laneGates', id, done: progress.done, ...(progress.running ? { running: progress.running } : {}) }),
@@ -284,10 +286,10 @@ export class LanesController implements vscode.Disposable {
     const considered = this.limitTracker.consider(event, new Date());
     if (!considered) return; // a repeat of the same lane within the dedupe window
     // The choice lives on the tile; a notification makes sure it isn't missed when the Lanes view is out of sight.
-    void notices.warning(`Lane ${this.laneName(laneId) ?? laneId}: ${laneOfferMessage(event, new Date())}`, 'Show lane')
+    void this.platform.notify('warning', `Lane ${this.laneName(laneId) ?? laneId}: ${laneOfferMessage(event, new Date())}`, 'Show lane')
       .then(choice => { if (choice) void this.show('lanes', laneId); });
     if (considered.otherAlsoLimited) { this.setOffer(laneId, event, true); return; }
-    const onLimit = vscode.workspace.getConfiguration('hydra').get<string>('lanes.onLimit', 'ask');
+    const onLimit = this.platform.settings.get<string>('lanes.onLimit', 'ask');
     if (onLimit === 'switch') { this.startSwitchCountdown(laneId, event); return; }
     this.setOffer(laneId, event, false);
   }
@@ -332,7 +334,7 @@ export class LanesController implements vscode.Disposable {
           const event = offer?.event ?? { provider: offer?.provider ?? 'claude', source: 'lane' as const, laneId, at: new Date().toISOString(), cwd: this.service?.get(laneId)?.worktree };
           const handoff = await buildHandoff({ event });
           const file = await saveHandoff(this.storageDirectory ?? '', event, handoff.markdown);
-          await openHandoffPreview(file);
+          await this.platform.openMarkdown(file);
           return;
         }
         case 'continueOther':
@@ -342,7 +344,7 @@ export class LanesController implements vscode.Disposable {
       }
     } catch (error) {
       this.host.log(`[lanes] ${laneId} ${action}: ${describe(error)}`);
-      void notices.error(`Hydra: ${describe(error)}`);
+      void this.platform.notify('error', `Hydra: ${describe(error)}`);
     }
   }
 
@@ -418,7 +420,7 @@ export class LanesController implements vscode.Disposable {
     if (this.dispatch?.handles(laneId)) return this.dispatch.ready(laneId, note);
     if (this.readyAsked.has(laneId)) return { asked: true, message: 'The user already has a prompt to mark this job done. Wait for them.' };
     this.readyAsked.add(laneId);
-    void notices.info(`Lane ${lane.name} says job ${job.jobTitle} of plan ${job.planTitle} is ready.`, 'Mark job done', 'Show lane').then(async pick => {
+    void this.platform.notify('info', `Lane ${lane.name} says job ${job.jobTitle} of plan ${job.planTitle} is ready.`, 'Mark job done', 'Show lane').then(async pick => {
       this.readyAsked.delete(laneId);
       if (pick === 'Mark job done') await this.action(laneId, 'markJobDone', true, note ? { message: note } : {});
       else if (pick === 'Show lane') await this.show('lanes', laneId);
@@ -433,20 +435,20 @@ export class LanesController implements vscode.Disposable {
     const showLane = (pick: string | undefined) => { if (pick) void this.show('lanes', laneId); };
     switch (check.kind) {
       case 'passed':
-        void notices.info(`Job ${job.jobTitle} of plan ${job.planTitle} passed its gates and is done at ${check.commit.slice(0, 7)}.`, 'Show lane').then(showLane);
+        void this.platform.notify('info', `Job ${job.jobTitle} of plan ${job.planTitle} passed its gates and is done at ${check.commit.slice(0, 7)}.`, 'Show lane').then(showLane);
         return;
       case 'failed':
-        void notices.warning(`Job ${job.jobTitle} of plan ${job.planTitle} failed. ${check.reason}`, 'Show lane').then(showLane);
+        void this.platform.notify('warning', `Job ${job.jobTitle} of plan ${job.planTitle} failed. ${check.reason}`, 'Show lane').then(showLane);
         return;
       case 'error':
-        void notices.warning(`Hydra couldn't check job ${job.jobTitle} in lane ${name}: ${check.message} Mark it done yourself when it's ready.`, 'Show lane').then(showLane);
+        void this.platform.notify('warning', `Hydra couldn't check job ${job.jobTitle} in lane ${name}: ${check.message} Mark it done yourself when it's ready.`, 'Show lane').then(showLane);
         return;
       case 'retry':
         if (check.sent) return;
         // Its session has ended (Stop all, or it exited). Nothing ran unasked: the clipboard is yours, so copying waits for you.
-        void notices.warning(`Gates failed for job ${job.jobTitle} (attempt ${check.failures}${check.attempts ? ` of ${check.attempts}` : ''}), but lane ${name} isn't running, so the failures weren't sent.`, 'Copy failures', 'Resume')
+        void this.platform.notify('warning', `Gates failed for job ${job.jobTitle} (attempt ${check.failures}${check.attempts ? ` of ${check.attempts}` : ''}), but lane ${name} isn't running, so the failures weren't sent.`, 'Copy failures', 'Resume')
           .then(async pick => {
-            if (pick === 'Copy failures') await vscode.env.clipboard.writeText(terminalText(check.text));
+            if (pick === 'Copy failures') await this.platform.copy(terminalText(check.text));
             else if (pick === 'Resume') { await this.service?.resume(laneId); await this.show('lanes', laneId); }
           });
         return;
@@ -467,39 +469,39 @@ export class LanesController implements vscode.Disposable {
   /** `hydra.newLane`: a Role step first when roles are active, then provider, name and goal (docs/internal/Packs_Plan.md, "Picking a role"). */
   private async newLane(): Promise<void> {
     const service = this.requireService();
-    if (!service.terminalsAvailable) { void notices.error(`Hydra: ${terminalsUnavailable}`); return; }
-    const config = vscode.workspace.getConfiguration('hydra');
-    const preferred = config.get<Provider>('defaultProvider', 'claude') === 'codex' ? 'codex' : 'claude';
+    if (!service.terminalsAvailable) { void this.platform.notify('error', `Hydra: ${terminalsUnavailable}`); return; }
+    const settings = this.platform.settings;
+    const preferred = settings.get<Provider>('defaultProvider', 'claude') === 'codex' ? 'codex' : 'claude';
     const roles = await this.host.roles?.roles(this.repository ?? '').catch(() => []) ?? [];
     const steps = roles.length ? 4 : 3;
     let role: { ref: string; provider: Provider } | undefined;
     if (roles.length) {
       const roleItems = [{ label: 'No role', role: undefined as { ref: string; provider: Provider } | undefined },
         ...roles.map(candidate => ({ label: candidate.title, description: candidate.packTitle, role: { ref: candidate.ref, provider: candidate.provider } }))];
-      const pickedRole = await vscode.window.showQuickPick(roleItems, { title: `New lane (1/${steps})`, placeHolder: 'Role, optional', ignoreFocusOut: true });
+      const pickedRole = await this.platform.pick(roleItems, { title: `New lane (1/${steps})`, placeHolder: 'Role, optional', ignoreFocusOut: true });
       if (!pickedRole) return;
       role = pickedRole.role;
     }
-    const providers = await Promise.all((['claude', 'codex'] as const).map(async provider => ({ provider, available: (await findProvider(provider, machineSetting<string>(config, `${provider}Path`) || undefined).catch(() => ({ available: false }))).available })));
+    const providers = await Promise.all((['claude', 'codex'] as const).map(async provider => ({ provider, available: (await findProvider(provider, settings.machine<string>(`${provider}Path`) || undefined).catch(() => ({ available: false }))).available })));
     const defaultProvider = role?.provider ?? preferred;
     const items = providers.sort((a, b) => Number(b.provider === defaultProvider) - Number(a.provider === defaultProvider))
       .map(({ provider, available }) => ({ label: providerLabel(provider), description: available ? (provider === defaultProvider ? 'Default' : '') : 'Not installed', provider }));
-    const picked = await vscode.window.showQuickPick(items, { title: `New lane (${roles.length ? 2 : 1}/${steps})`, placeHolder: 'Which agent runs in this lane?', ignoreFocusOut: true });
+    const picked = await this.platform.pick(items, { title: `New lane (${roles.length ? 2 : 1}/${steps})`, placeHolder: 'Which agent runs in this lane?', ignoreFocusOut: true });
     if (!picked) return;
     const taken = new Set(service.lanes().map(lane => lane.name.toLowerCase()));
     let number = service.lanes().length + 1;
     while (taken.has(`lane ${number}`)) number++;
-    const name = await vscode.window.showInputBox({
+    const name = await this.platform.input({
       title: `New lane (${roles.length ? 3 : 2}/${steps})`, prompt: 'Name the lane', value: `Lane ${number}`, ignoreFocusOut: true,
       validateInput: value => { try { parseLaneName(value); return undefined; } catch (error) { return describe(error); } },
     });
     if (name === undefined) return;
-    const goal = await vscode.window.showInputBox({
+    const goal = await this.platform.input({
       title: `New lane (${steps}/${steps})`, prompt: `Goal, optional: what should ${picked.label} do? Leave it empty to start without a prompt.`, ignoreFocusOut: true,
       validateInput: value => value.length <= laneGoalMax ? undefined : `Keep the goal under ${laneGoalMax} characters.`,
     });
     if (goal === undefined) return;
-    const lane = await notices.withProgress({ title: `Starting lane ${name.trim()}…` },
+    const lane = await this.platform.withProgress(`Starting lane ${name.trim()}…`,
       () => service.create({ name, provider: picked.provider, goal, ...(role ? { role: role.ref } : {}) }));
     await this.show('lanes', lane.id);
   }
@@ -517,19 +519,19 @@ export class LanesController implements vscode.Disposable {
     catch (error) {
       this.host.log(`[lanes] ${lane.id} ${action}: ${describe(error)}`);
       if (!interactive) throw error;
-      void notices.error(`Hydra: ${describe(error)}`);
+      void this.platform.notify('error', `Hydra: ${describe(error)}`);
       return undefined;
     }
   }
 
   private async run(service: LaneService, lane: Lane, action: LaneAction, interactive: boolean, options: LaneActionOptions): Promise<unknown> {
-    const info = (message: string, ...items: string[]) => interactive ? notices.info(message, ...items) : Promise.resolve(undefined);
+    const info = (message: string, ...items: string[]) => interactive ? this.platform.notify('info', message, ...items) : Promise.resolve(undefined);
     switch (action) {
       case 'refresh': await service.sync(); this.postState(true); return this.viewOf(lane.id);
       case 'resume': await service.resume(lane.id); return this.viewOf(lane.id);
       case 'restart': {
         if (interactive && this.viewOf(lane.id)?.running) {
-          const pick = await vscode.window.showWarningMessage(`Start lane ${lane.name} fresh?`, { modal: true, detail: 'Its current session ends and a new conversation starts in the same worktree.' }, 'Start fresh');
+          const pick = await this.platform.ask('warning', `Start lane ${lane.name} fresh?`, 'Its current session ends and a new conversation starts in the same worktree.', 'Start fresh');
           if (pick !== 'Start fresh') return undefined;
         }
         await service.restart(lane.id);
@@ -539,7 +541,7 @@ export class LanesController implements vscode.Disposable {
         const to = otherProvider(lane.provider);
         if (interactive) {
           const label = `Switch to ${providerLabel(to)}`;
-          const pick = await vscode.window.showWarningMessage(`Switch lane ${lane.name} to ${providerLabel(to)}?`, { modal: true, detail: 'Its current session ends and a handoff opens the new CLI in the same worktree. Uncommitted work is untouched.' }, label);
+          const pick = await this.platform.ask('warning', `Switch lane ${lane.name} to ${providerLabel(to)}?`, 'Its current session ends and a handoff opens the new CLI in the same worktree. Uncommitted work is untouched.', label);
           if (pick !== label) return undefined;
         }
         await this.performSwitch(lane.id, 'manual');
@@ -548,7 +550,7 @@ export class LanesController implements vscode.Disposable {
       case 'commit': {
         let message = options.message;
         if (interactive) {
-          message = await vscode.window.showInputBox({ title: `Commit lane ${lane.name}`, prompt: 'Commit message (all changes in the lane are committed)', value: defaultCommitMessage(lane), ignoreFocusOut: true, validateInput: value => value.trim() && value.length <= 5000 ? undefined : 'Write a commit message.' });
+          message = await this.platform.input({ title: `Commit lane ${lane.name}`, prompt: 'Commit message (all changes in the lane are committed)', value: defaultCommitMessage(lane), ignoreFocusOut: true, validateInput: value => value.trim() && value.length <= 5000 ? undefined : 'Write a commit message.' });
           if (message === undefined) return undefined;
         }
         const commit = await service.commit(lane.id, message);
@@ -559,7 +561,7 @@ export class LanesController implements vscode.Disposable {
         const planRefusal = this.host.planLaneMergeRefusal?.(lane.id);
         if (planRefusal) {
           if (!interactive) throw new Error(planRefusal);
-          void notices.warning(planRefusal);
+          void this.platform.notify('warning', planRefusal);
           return undefined;
         }
         const check = await service.checkMerge(lane.id);
@@ -567,14 +569,14 @@ export class LanesController implements vscode.Disposable {
           if (!interactive) throw new Error(check.message);
           if (check.reason === 'nothing') { void info(check.message); return undefined; }
           if (check.reason === 'dirty') {
-            const pick = await vscode.window.showWarningMessage(check.message, { modal: true }, 'Commit…');
+            const pick = await this.platform.ask('warning', check.message, undefined, 'Commit…');
             if (pick !== 'Commit…') return undefined;
             const committed = await this.run(service, lane, 'commit', true, {}) as { commit?: string } | undefined;
             return committed?.commit ? this.run(service, service.get(lane.id) ?? lane, 'merge', true, {}) : undefined;
           }
           if (check.reason === 'conflicts') {
             const update = `Update from ${lane.target}`;
-            const pick = await vscode.window.showWarningMessage(check.message, { modal: true }, update);
+            const pick = await this.platform.ask('warning', check.message, undefined, update);
             return pick === update ? this.run(service, lane, 'update', true, {}) : undefined;
           }
           throw new Error(check.message);
@@ -587,13 +589,13 @@ export class LanesController implements vscode.Disposable {
         if (!gated) return undefined; // cancelled, sent to the lane, or gates couldn't run and this was interactive
         const gatesNote = gated.note;
         if (interactive) {
-          const pick = await vscode.window.showInformationMessage(`Merge lane ${lane.name} into ${lane.target}?`, { modal: true, detail: `${plural(check.commits, 'commit')}, ${plural(check.files, 'file')}. Merges cleanly.${gatesNote}` }, 'Merge');
+          const pick = await this.platform.ask('info', `Merge lane ${lane.name} into ${lane.target}?`, `${plural(check.commits, 'commit')}, ${plural(check.files, 'file')}. Merges cleanly.${gatesNote}`, 'Merge');
           if (pick !== 'Merge') return undefined;
         }
         const commit = await service.merge(lane.id);
         this.host.offerStarterGates?.(lane.repository);
         if (interactive) {
-          const next = await notices.info(`Merged lane ${lane.name} into ${lane.target}.`, 'Close lane');
+          const next = await this.platform.notify('info', `Merged lane ${lane.name} into ${lane.target}.`, 'Close lane');
           if (next === 'Close lane' && service.get(lane.id)) await this.run(service, service.get(lane.id)!, 'close', true, {});
         }
         return { commit };
@@ -601,19 +603,19 @@ export class LanesController implements vscode.Disposable {
       case 'update': {
         const result = await service.update(lane.id);
         if (interactive) {
-          if (result.conflicts.length) void notices.warning(`Conflicts in ${plural(result.conflicts.length, 'file')}. Resolve them in the lane.`);
+          if (result.conflicts.length) void this.platform.notify('warning', `Conflicts in ${plural(result.conflicts.length, 'file')}. Resolve them in the lane.`);
           else void info(result.upToDate ? `Lane ${lane.name} is already up to date with ${lane.target}.` : `Updated lane ${lane.name} from ${lane.target}.`);
         }
         return result;
       }
       case 'pr': {
         if (interactive) {
-          const pick = await vscode.window.showInformationMessage(`Push ${lane.branch} to origin?`, { modal: true, detail: 'For a GitHub repository, Hydra then opens the page to create the pull request.' }, 'Push');
+          const pick = await this.platform.ask('info', `Push ${lane.branch} to origin?`, 'For a GitHub repository, Hydra then opens the page to create the pull request.', 'Push');
           if (pick !== 'Push') return undefined;
         }
         const pushed = await service.push(lane.id);
         if (interactive) {
-          if (pushed.compareUrl) await vscode.env.openExternal(vscode.Uri.parse(pushed.compareUrl, true));
+          if (pushed.compareUrl) await this.platform.openUrl(pushed.compareUrl);
           else void info(`Pushed ${pushed.branch}.`);
         }
         return pushed;
@@ -630,11 +632,11 @@ export class LanesController implements vscode.Disposable {
           else if (kind === 'merged') mode = 'merged';
           else throw new Error(`Lane ${lane.name} isn't merged: pass close "keep" or "delete".`);
         } else if (kind === 'merged') {
-          const pick = await vscode.window.showInformationMessage(`Close lane ${lane.name}?`, { modal: true, detail: `${planWarning}Its terminal session ends, and its worktree and branch ${lane.branch} are removed. Its work is already in ${lane.target}.` }, 'Close lane');
+          const pick = await this.platform.ask('info', `Close lane ${lane.name}?`, `${planWarning}Its terminal session ends, and its worktree and branch ${lane.branch} are removed. Its work is already in ${lane.target}.`, 'Close lane');
           if (pick !== 'Close lane') return undefined;
           mode = 'merged';
         } else {
-          const pick = await vscode.window.showWarningMessage(`Close lane ${lane.name}? Its work isn't merged.`, { modal: true, detail: `${planWarning}Keep branch: commits any changes as "WIP: ${lane.name}", removes the worktree and keeps ${lane.branch}.\nDelete everything: removes the worktree and the branch, with all their changes.` }, 'Keep branch', 'Delete everything');
+          const pick = await this.platform.ask('warning', `Close lane ${lane.name}? Its work isn't merged.`, `${planWarning}Keep branch: commits any changes as "WIP: ${lane.name}", removes the worktree and keeps ${lane.branch}.\nDelete everything: removes the worktree and the branch, with all their changes.`, 'Keep branch', 'Delete everything');
           if (!pick) return undefined;
           mode = pick === 'Keep branch' ? 'keep' : 'delete';
         }
@@ -644,11 +646,11 @@ export class LanesController implements vscode.Disposable {
         return { closed: true, mode };
       }
       case 'diff': return this.openDiff(lane);
-      case 'openWindow': await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(lane.worktree), { forceNewWindow: true }); return undefined;
+      case 'openWindow': await this.platform.openFolder(lane.worktree, { forceNewWindow: true }); return undefined;
       case 'runGates': {
         const outcome = await this.runGatesFlow(service, lane, interactive);
         if (outcome && interactive) {
-          if (outcome.failed.length) void vscode.window.showWarningMessage(`Gates failed for lane ${lane.name}.`, { modal: true, detail: summarizeGateFailures(outcome.results) }, 'View evidence')
+          if (outcome.failed.length) void this.platform.ask('warning', `Gates failed for lane ${lane.name}.`, summarizeGateFailures(outcome.results), 'View evidence')
             .then(pick => { if (pick === 'View evidence') void this.run(service, service.get(lane.id) ?? lane, 'evidence', true, {}); });
           else void info(`Gates passed for lane ${lane.name}.`);
         }
@@ -656,7 +658,7 @@ export class LanesController implements vscode.Disposable {
       }
       case 'evidence': {
         if (!service.get(lane.id)?.lastGates?.results.length) { void info(`Lane ${lane.name} has no gate results yet.`); return undefined; }
-        await vscode.commands.executeCommand('hydra.openEvidence', 'lane', lane.id);
+        await this.host.openEvidence(lane.id);
         return undefined;
       }
       // ---- Step E: a preview for each lane ----
@@ -669,7 +671,7 @@ export class LanesController implements vscode.Disposable {
         if (!job) throw new Error(`Lane ${lane.name} doesn't run a plan job.`);
         if (interactive) {
           const waiting = job.dependents ? ` ${plural(job.dependents, 'job')} that depend on it won't start.` : '';
-          const pick = await vscode.window.showWarningMessage(`Cancel job ${job.jobTitle} of plan ${job.planTitle}?`, { modal: true, detail: `The lane stays open, as an ordinary lane.${waiting}` }, 'Cancel job');
+          const pick = await this.platform.ask('warning', `Cancel job ${job.jobTitle} of plan ${job.planTitle}?`, `The lane stays open, as an ordinary lane.${waiting}`, 'Cancel job');
           if (pick !== 'Cancel job') return undefined;
         }
         if (!this.host.cancelPlanJob) throw new Error('Plans aren\'t ready in this window yet.');
@@ -703,8 +705,8 @@ export class LanesController implements vscode.Disposable {
     const work = await service.handOn(lane.id);
     if (!work.ok) {
       if (!interactive) throw new Error(work.message);
-      if (work.reason === 'nothing') { void notices.info(work.message); return undefined; }
-      const pick = await vscode.window.showWarningMessage(work.message, { modal: true }, 'Commit…');
+      if (work.reason === 'nothing') { void this.platform.notify('info', work.message); return undefined; }
+      const pick = await this.platform.ask('warning', work.message, undefined, 'Commit…');
       if (pick !== 'Commit…') return undefined;
       const committed = await this.run(service, lane, 'commit', true, {}) as { commit?: string } | undefined;
       return committed?.commit ? this.markJobDone(service, service.get(lane.id) ?? lane, true, options) : undefined;
@@ -714,7 +716,7 @@ export class LanesController implements vscode.Disposable {
     if (!gated) return undefined;
     let note = options.message;
     if (interactive) {
-      note = await vscode.window.showInputBox({
+      note = await this.platform.input({
         title: `Mark job ${job.jobTitle} done`, prompt: 'What should the next jobs know? (optional)', value: options.message ?? work.subjects.join('; ').slice(0, 2000), ignoreFocusOut: true,
         validateInput: value => value.length <= 2000 && !value.includes('\0') ? undefined : 'Keep the note under 2000 characters.',
       });
@@ -724,7 +726,7 @@ export class LanesController implements vscode.Disposable {
     const status = current?.lastGates?.commit === work.commit ? current.lastGates.status : undefined;
     await this.host.markJobDone(lane.id, { commit: work.commit, ...(note?.trim() ? { note: note.trim() } : {}), changedFiles: work.changedFiles, ...(status ? { status } : {}) });
     this.postState(true);
-    if (interactive) void notices.info(`Job ${job.jobTitle} is done at ${work.commit.slice(0, 7)}.${gated.note} The jobs after it can start.`);
+    if (interactive) void this.platform.notify('info', `Job ${job.jobTitle} is done at ${work.commit.slice(0, 7)}.${gated.note} The jobs after it can start.`);
     return { commit: work.commit };
   }
 
@@ -742,7 +744,7 @@ export class LanesController implements vscode.Disposable {
     if (!changed.length) return true;
     const message = `Your repository's git configuration or hooks changed since this lane started (${changed.join(', ')}). ${reason}`;
     if (!interactive) throw new Error(message);
-    const pick = await vscode.window.showWarningMessage(message, { modal: true }, anyway);
+    const pick = await this.platform.ask('warning', message, undefined, anyway);
     // 5.2: an approval — "Merge with these changes" / "Mark done with these changes".
     if (pick === anyway) this.host.audit?.(laneOverrideEvent(anyway, lane.id, changed.join(', ')));
     return pick === anyway;
@@ -764,7 +766,7 @@ export class LanesController implements vscode.Disposable {
     if (!outcome) return undefined; // cancelled, or gates couldn't run and this was interactive
     if (!outcome.failed.length) return { note: gatesPassNote(outcome.results) };
     if (!interactive) throw new Error(`Gates failed for lane ${lane.name}:\n${summarizeGateFailures(outcome.results)}`);
-    const choice = await vscode.window.showWarningMessage(`Gates failed for lane ${lane.name}. ${question}`, { modal: true, detail: summarizeGateFailures(outcome.results) }, 'Send to lane', anyway);
+    const choice = await this.platform.ask('warning', `Gates failed for lane ${lane.name}. ${question}`, summarizeGateFailures(outcome.results), 'Send to lane', anyway);
     if (choice === 'Send to lane') { this.sendGatesToLane(service, lane, outcome.results); return undefined; }
     // 5.2: an approval — "Merge anyway" / "Mark done anyway" after a failed gate.
     if (choice === anyway) {
@@ -784,13 +786,13 @@ export class LanesController implements vscode.Disposable {
    * gets a heads-up, since a lead's gates always run on a commit.
    */
   private async runGatesFlow(service: LaneService, lane: Lane, interactive: boolean): Promise<GatesOutcome | undefined> {
-    if (interactive && this.viewOf(lane.id)?.sync?.dirty) void notices.info(`Lane ${lane.name} has uncommitted changes; the gates run against them too.`);
+    if (interactive && this.viewOf(lane.id)?.sync?.dirty) void this.platform.notify('info', `Lane ${lane.name} has uncommitted changes; the gates run against them too.`);
     try {
       return await service.runGates(lane.id, progress => this.host.post({ type: 'laneGates', id: lane.id, done: progress.done, ...(progress.running ? { running: progress.running } : {}) }));
     } catch (error) {
       this.host.post({ type: 'laneGates', id: lane.id, done: [] });
       if (!interactive) throw error;
-      void notices.error(`Hydra: ${describe(error)}`);
+      void this.platform.notify('error', `Hydra: ${describe(error)}`);
       return undefined;
     }
   }
@@ -801,26 +803,26 @@ export class LanesController implements vscode.Disposable {
     // (or a command it ran) produced, so it goes through typeText rather than input.
     if (service.typeText(lane.id, text)) {
       void this.show('lanes', lane.id);
-      void notices.info(`The gate failures are typed into lane ${lane.name}. Press Enter there to send them.`);
+      void this.platform.notify('info', `The gate failures are typed into lane ${lane.name}. Press Enter there to send them.`);
       return;
     }
     // Its session has ended: nothing to type into. Keep the text for when it's resumed.
-    void vscode.env.clipboard.writeText(terminalText(text));
-    void notices.info(`Lane ${lane.name} isn't running, so the gate failures are on the clipboard. Resume it and paste them.`, 'Resume')
+    void this.platform.copy(terminalText(text));
+    void this.platform.notify('info', `Lane ${lane.name} isn't running, so the gate failures are on the clipboard. Resume it and paste them.`, 'Resume')
       .then(async pick => { if (pick) { await service.resume(lane.id); await this.show('lanes', lane.id); } });
   }
 
   /** The multi-file diff of the lane against where it meets its target, uncommitted work included. */
   private async openDiff(lane: Lane): Promise<unknown> {
     const { base, files } = await laneDiffFiles(lane);
-    if (!files.length) { void notices.info(`Lane ${lane.name} has no changes yet.`); return { files: 0 }; }
-    const baseUri = (commit: string, file: string) => vscode.Uri.from({ scheme: baseScheme, path: `/${file}`, query: `${lane.id}.${commit}` });
-    const resources = files.map(file => {
-      const onDisk = vscode.Uri.file(path.join(lane.worktree, ...file.path.split('/')));
+    if (!files.length) { void this.platform.notify('info', `Lane ${lane.name} has no changes yet.`); return { files: 0 }; }
+    const baseUri = (commit: string, file: string): ChangeSide => ({ scheme: baseScheme, path: `/${file}`, query: `${lane.id}.${commit}` });
+    const resources = files.map((file): [ChangeSide, ChangeSide, ChangeSide] => {
+      const onDisk: ChangeSide = { file: path.join(lane.worktree, ...file.path.split('/')) };
       return [onDisk, file.status === 'A' ? baseUri('empty', file.path) : baseUri(base, file.path), file.status === 'D' ? baseUri('empty', file.path) : onDisk];
     });
     await this.host.toEditor();
-    await vscode.commands.executeCommand('vscode.changes', `Lane ${lane.name} (${lane.branch})`, resources);
+    await this.platform.openChanges(`Lane ${lane.name} (${lane.branch})`, resources);
     return { files: files.length };
   }
 
@@ -832,7 +834,7 @@ export class LanesController implements vscode.Disposable {
   private async previewLane(service: LaneService, lane: Lane, interactive: boolean): Promise<unknown> {
     let config: PreviewConfig | undefined;
     try { config = await service.previewConfig(lane.id); }
-    catch (error) { if (!interactive) throw error; void notices.error(`Hydra: ${describe(error)}`); return undefined; }
+    catch (error) { if (!interactive) throw error; void this.platform.notify('error', `Hydra: ${describe(error)}`); return undefined; }
     if (!config) {
       if (!interactive) throw new Error(`Lane ${lane.name} has no preview command yet; set .hydra/preview.json or a screenshots gate.`);
       config = await this.askPreviewConfig(lane);
@@ -840,25 +842,25 @@ export class LanesController implements vscode.Disposable {
     }
     const already = service.previewOf(lane.id);
     try {
-      const entry = already ?? await notices.withProgress({ title: `Starting the preview for lane ${lane.name}…` }, () => service.startPreview(lane.id, config!));
+      const entry = already ?? await this.platform.withProgress(`Starting the preview for lane ${lane.name}…`, () => service.startPreview(lane.id, config!));
       await this.openPreview(entry.url);
       return entry;
     } catch (error) {
       if (!interactive) throw error;
-      void notices.error(`Hydra: the preview didn't start. ${describe(error)}`);
+      void this.platform.notify('error', `Hydra: the preview didn't start. ${describe(error)}`);
       return undefined;
     }
   }
 
   /** Asked once, per project, when there's neither a screenshots gate nor `.hydra/preview.json` yet. */
   private async askPreviewConfig(lane: Lane): Promise<PreviewConfig | undefined> {
-    const command = await vscode.window.showInputBox({
+    const command = await this.platform.input({
       title: 'Preview command', prompt: 'The command that starts the dev server; use {port} for the port Hydra picks',
       placeHolder: 'npm run dev -- --port {port}', ignoreFocusOut: true,
       validateInput: value => splitPreviewCommand(value).length ? undefined : 'Enter a command.',
     });
     if (command === undefined) return undefined;
-    const url = await vscode.window.showInputBox({
+    const url = await this.platform.input({
       title: 'Preview URL', prompt: 'Where the app answers once it is ready', value: 'http://127.0.0.1:{port}/', ignoreFocusOut: true,
       validateInput: value => { try { parsePreviewConfig({ command: ['x'], url: value }); return undefined; } catch (error) { return describe(error); } },
     });
@@ -873,20 +875,17 @@ export class LanesController implements vscode.Disposable {
     // simpleBrowser.api.open is Simple Browser's own API command and its activation event, so it works
     // before the extension has loaded (getCommands() doesn't list an unactivated extension's commands).
     await this.host.toEditor();
-    try {
-      await vscode.commands.executeCommand('simpleBrowser.api.open', vscode.Uri.parse(url, true), { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
-      return;
-    } catch { /* not in this build: offer the browser below, never open one unasked */ }
-    const pick = await notices.info(`Hydra: the preview is running at ${url}, but Simple Browser isn't available in this build.`, 'Open in browser');
-    if (pick === 'Open in browser') await vscode.env.openExternal(vscode.Uri.parse(url, true));
+    if (await this.platform.openPreview(url)) return; // not in this build: offer the browser below, never open one unasked
+    const pick = await this.platform.notify('info', `Hydra: the preview is running at ${url}, but Simple Browser isn't available in this build.`, 'Open in browser');
+    if (pick === 'Open in browser') await this.platform.openUrl(url);
   }
 
   /** A file's content at the lane's base commit, for the diff's left side. Only an open lane's files, at a full commit id. */
-  private async baseContent(uri: vscode.Uri): Promise<string> {
-    const [id, commit] = uri.query.split('.');
+  private async baseContent(uriPath: string, query: string): Promise<string> {
+    const [id, commit] = query.split('.');
     const lane = id && isLaneId(id) ? this.service?.get(id) : undefined;
     if (!lane || commit === 'empty') return '';
-    const file = uri.path.replace(/^\/+/, '');
+    const file = uriPath.replace(/^\/+/, '');
     if (!commit || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit) || !file || file.includes('\0') || file.split('/').some(part => part === '..' || part === '')) return '';
     try { return await git(lane.worktree, ['cat-file', 'blob', `${commit}:${file}`]); } catch { return ''; }
   }

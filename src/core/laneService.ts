@@ -319,7 +319,7 @@ export class LaneService {
 
   // ---- Step E: a preview for each lane ----
 
-  /** The project's screenshots gate wins; else `.hydra/preview.json`; else undefined (extensionLanes.ts then asks once). */
+  /** The project's screenshots gate wins; else `.hydra/preview.json`; else undefined (src/host/lanes.ts then asks once). */
   async previewConfig(id: unknown): Promise<PreviewConfig | undefined> {
     const lane = this.openLane(id);
     const gatesConfig = await (this.options.gates ?? loadGates)(lane.repository).catch(() => undefined);
@@ -506,7 +506,7 @@ export class LaneService {
    * "Lanes"): "⋯ → Run gates" at any time, or Merge when gates.json says
    * "onMerge". The lane need not be committed — gates run on whatever is on
    * disk now, since a command or review gate reads the worktree directly; the
-   * caller (extensionLanes.ts) tells the user when that's uncommitted work, not
+   * caller (src/host/lanes.ts) tells the user when that's uncommitted work, not
    * this method. Runs outside `exclusive` so input/diff/etc. stay usable while
    * it works; a new call or `cancelGates` aborts a run already in progress.
    */
