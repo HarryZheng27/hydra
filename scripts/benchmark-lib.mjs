@@ -258,13 +258,15 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
   const landedTimes = Object.entries(landedAtSeconds).filter(([key]) => !isFixJob(key)).map(([, seconds]) => seconds);
   const ended = timedOut ? { seconds: wallClockSeconds, from: 'polling' } : endOfRun(landing?.end, wallClockSeconds, landedTimes.length ? Math.max(...landedTimes) : 0);
   const firstReview = firstReviewOf({ jobKeys: jobs.map(job => job.key), fixBrief: storedPlan?.jobs?.find(job => job.key === 'integration-fix-1')?.brief, finalReview });
+  const retriedReviews = hydraReviewsRetried((storedPlan?.jobs ?? []).filter(job => isFixJob(job.key)).map(job => job.brief), review);
   return {
     version: resultsVersion, kind: 'hydra', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), planId: view.plan_id, planState: view.state,
     ...(startedAt ? { startedAt } : {}), wallClockSeconds: ended.seconds, wallClockFrom: ended.from, timedOut: !!timedOut,
     timeToWorkingCodeSeconds: workDoneSeconds(jobs.map(job => job.key), landedAtSeconds),
     landedAtSeconds, landingTimesFrom: landing ? 'plan store' : 'watching',
     integrationGate: integration ? { label: integration.gate?.label, passed: !!passed, checks: (integration.gate?.checks ?? []).map(check => ({ id: check.id, ...(check.kind ? { kind: check.kind } : {}), state: check.state })) } : null,
-    review: review ? { id: review.id, state: review.state, ...(reviewOutcome(review.state) !== undefined ? { passed: reviewOutcome(review.state) } : { ran: false, ...(usageLimited(review.summary) ? { usageLimit: true } : {}) }), ...(review.summary ? { summary: String(review.summary).slice(0, 1000) } : {}), ...(reviewRetried(review) ? { retried: true } : {}) } : null,
+    review: review ? { id: review.id, state: review.state, ...(reviewOutcome(review.state) !== undefined ? { passed: reviewOutcome(review.state) } : { ran: false, ...(usageLimited(review.summary) ? { usageLimit: true } : {}) }), ...(review.summary ? { summary: String(review.summary).slice(0, 1000) } : {}) } : null,
+    ...(retriedReviews ? { reviewsRetried: retriedReviews } : {}),
     ...(firstReview ? { firstReview } : {}),
     fixRounds: jobs.filter(job => isFixJob(job.key)).length,
     landed: integration?.landed ?? [],
@@ -362,10 +364,16 @@ export const reviewOutcome = state => state === 'passed' ? true : state === 'fai
 /** Whether a review that didn't run was stopped by a usage limit, from its reason (the review gate says "hit its usage limit"). */
 export const usageLimited = text => /usage limit|rate limit|\b429\b/i.test(String(text ?? ''));
 /**
- * Whether a review check was run a second time because its first try didn't run (the reviewer crashed or replied
- * unreadably): the review gate's `retriedAfter`, or its summary's note for a plan view that leaves the field out.
+ * Whether a review was run a second time because its first try didn't run (the reviewer crashed or replied
+ * unreadably): the review gate's `retriedAfter`, or the note its summary starts with (src/core/gates/review.ts's
+ * reviewRetriedNote), which plan views and fix briefs keep.
  */
-export const reviewRetried = check => !!check && (typeof check.retriedAfter === 'string' || /\(The review was retried once:/.test(String(check.summary ?? '')));
+export const reviewRetriedNote = 'Retried once: the first review didn\'t run.';
+export const reviewRetried = check => !!check && (typeof check.retriedAfter === 'string' || String(check.summary ?? '').includes(reviewRetriedNote));
+/** How many of a Hydra plan's reviews were retried (pure): each fix job's brief quotes the review it fixes, and the final review. */
+export function hydraReviewsRetried(fixBriefs, finalReview) {
+  return fixBriefs.filter(brief => String(brief ?? '').includes(reviewRetriedNote)).length + (reviewRetried(finalReview) ? 1 : 0);
+}
 
 /**
  * The review of a single agent's result (benchmark.mjs review) from the checks run on it (pure): the project's
@@ -504,7 +512,7 @@ export function runRows(result, folder, fallback) {
       firstReviewPassed: first?.ran === false ? undefined : first?.passed, firstReviewNotRun: first?.ran === false,
       fixRoundsAllowed: defaultFixRounds, passedWithin: reviewPassed === undefined ? undefined : reviewPassed && fixRounds <= defaultFixRounds,
       checkPassed,
-      ...(result.review?.retried || reviewRetried(reviewCheckOf(result.integrationGate?.checks)) ? { reviewRetried: 1 } : {}),
+      ...(result.reviewsRetried ? { reviewRetried: result.reviewsRetried } : {}),
     }];
   }
   return [];

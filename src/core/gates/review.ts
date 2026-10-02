@@ -29,6 +29,8 @@ import { clip, notRun, providerName, type GateRun, type ReviewerSpec } from './t
  * usage limit doesn't, since trying again wouldn't change it.
  */
 export const reviewTimeoutMs = 5 * 60_000;
+/** How a review gate's summary starts when its first try didn't run and it ran again (benchmark-lib.mjs's reviewRetried reads it). */
+export const reviewRetriedNote = 'Retried once: the first review didn\'t run.';
 export const maxReviewDiffBytes = 60 * 1024;
 const maxReplyBytes = 4 * 1024 * 1024;
 const other = (provider: Provider): Provider => provider === 'claude' ? 'codex' : 'claude';
@@ -290,7 +292,8 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
   }
   run.log?.(`[gates] ${gate.id}: ${name} is reviewing${pick.note ? ` (${pick.note})` : ''}`);
   // One reviewer run, sorted into a verdict, or "not run" with whether a second try could help: a crash, a
-  // failed launch or an unreadable reply can; a timeout, a usage limit or a cancel can't.
+  // failed launch or an unreadable reply can; a timeout, a usage limit (even one only on stderr), a reply over
+  // the size limit or a cancel can't.
   const attempt = async (file: string, evidence: string[]): Promise<{ result: JobCheckResult; retry?: true }> => {
     const output = await run.runtime.runReviewer({
       provider: pick.provider, executable: pick.executable,
@@ -299,7 +302,7 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
     });
     await writeFile(file, redact(`${output.stdout}${output.stderr ? `\n--- stderr ---\n${output.stderr}` : ''}`), 'utf8');
     const reviewer = { reviewer: pick.provider, evidence };
-    const retry = run.signal?.aborted ? {} : { retry: true as const };
+    const retry = run.signal?.aborted || /usage limit|rate limit|\b429\b|output limit/i.test(`${output.error ?? ''}\n${output.stderr}`) ? {} : { retry: true as const };
     if (output.timedOut) return { result: notRun(gate, `${name} didn't finish its review in ${Math.round(reviewTimeoutMs / 60_000)} minutes.`, elapsed(), reviewer) };
     const limit = reviewerLimit(pick.provider, output.stdout);
     if (limit) return { result: notRun(gate, `${name} hit its usage limit${limit.resetsAt ? ` (resets ${limit.resetsAt})` : ''}.`, elapsed(), reviewer) };
@@ -321,12 +324,14 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
   const first = await attempt(replyFile, [replyFile, promptFile]);
   if (!first.retry) return first.result;
   // A review that didn't run for a passing reason (Codex exiting with code 1, say) gets one more try, the same
-  // review on the same diff; the first reply is kept as evidence and the result says it was retried.
-  const firstReason = first.result.summary ?? 'the reviewer failed';
-  run.log?.(`[gates] ${gate.id}: ${firstReason} Retrying the review once.`);
+  // review on the same diff. The first reply is kept as evidence, and why it didn't run is in retriedAfter
+  // (redacted with the rest of the result). The summary starts with a fixed note, so it survives being clipped
+  // into a fix job's brief, and carries none of the reviewer's own output.
+  const firstReason = redact(first.result.summary ?? 'the reviewer failed');
+  run.log?.(`[gates] ${gate.id}: ${firstReason.replace(/\s+/g, ' ')} Retrying the review once.`);
   const retryFile = path.join(run.logDirectory, `${gate.id}-reply-retry.txt`);
   const second = (await attempt(retryFile, [retryFile, replyFile, promptFile])).result;
-  return { ...second, retriedAfter: clip(firstReason, 300), summary: `${second.summary ?? ''} (The review was retried once: the first try didn't run. ${clip(firstReason, 300)})`.trim() };
+  return { ...second, retriedAfter: clip(firstReason, 300), summary: `${reviewRetriedNote} ${second.summary ?? ''}`.trim() };
 }
 
 /** The real reviewer: the CLI through runProbe (processLaunch, the timeout, cancel on abort), with the prompt on stdin. */

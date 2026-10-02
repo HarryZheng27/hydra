@@ -416,12 +416,21 @@ test('review: "not run" with the reason when it can\'t run, and that never fails
     const timedOut = await run({ timedOut: true, exitCode: null, error: 'Provider check timed out.' });
     assert.match(timedOut.result.summary!, /^Codex didn't finish its review in 5 minutes\.$/); assert.equal(timedOut.reviewer.specs.length, 1);
     const unreadable = await run({ stdout: 'I think it is fine.' });
-    assert.match(unreadable.result.summary!, /^Codex's reply wasn't the JSON Hydra asked for \(the reply had no JSON object\)\. \(The review was retried once: the first try didn't run\. Codex's reply wasn't/);
+    assert.equal(unreadable.result.summary, 'Retried once: the first review didn\'t run. Codex\'s reply wasn\'t the JSON Hydra asked for (the reply had no JSON object).');
     assert.equal(unreadable.reviewer.specs.length, 2);
     const limited = await run({ stdout: `${JSON.stringify({ type: 'error', message: "You've hit your usage limit. Try again at 3:40 PM." })}\n`, exitCode: 1 });
     assert.match(limited.result.summary!, /^Codex hit its usage limit\.$/); assert.equal(limited.reviewer.specs.length, 1);
     const crashed = await run({ exitCode: 2, stderr: 'config error' });
-    assert.match(crashed.result.summary!, /^Codex exited with code 2: config error \(The review was retried once: the first try didn't run\. Codex exited with code 2: config error\)$/);
+    assert.equal(crashed.result.summary, 'Retried once: the first review didn\'t run. Codex exited with code 2: config error');
+    // A limit only on stderr, a reply over the size limit, or a cancel isn't tried again either.
+    const stderrLimit = await run({ exitCode: 1, stderr: 'ERROR: 429 Too Many Requests' });
+    assert.equal(stderrLimit.reviewer.specs.length, 1); assert.equal(stderrLimit.result.retriedAfter, undefined);
+    assert.equal((await run({ exitCode: null, error: 'Provider check exceeded its output limit.' })).reviewer.specs.length, 1);
+    // Cancelled while the reviewer ran: not tried again.
+    const cancelled = new AbortController();
+    const stopping = fakeReviewer(() => { cancelled.abort(); return { exitCode: 1, error: 'Provider check cancelled.' }; });
+    const [aborted] = await runGateList([gate], f.worktree, f.base, context(f.root, { runReviewer: stopping.runReviewer }, { signal: cancelled.signal }));
+    assert.equal(stopping.specs.length, 1); assert.equal(aborted?.retriedAfter, undefined);
     assert.equal(crashed.result.retriedAfter, 'Codex exited with code 2: config error'); assert.equal(crashed.reviewer.specs.length, 2);
     const missing = await run({}, { executable: async provider => { throw new Error(`${provider === 'claude' ? 'Claude Code' : 'Codex'} CLI not found. Install it or set Hydra's ${provider} path.`); } });
     assert.equal(missing.reviewer.specs.length, 0);
@@ -441,9 +450,21 @@ test('review: a reviewer that crashed is retried once, and a retry that reviews 
     assert.equal(reviewer.specs.length, 2);
     assert.equal(result!.state, 'passed', result!.summary);
     assert.equal(result!.retriedAfter, 'Codex exited with code 1: stream disconnected');
-    assert.match(result!.summary!, /Looks right\. \(The review was retried once: the first try didn't run\. Codex exited with code 1: stream disconnected\)$/);
+    assert.equal(result!.summary, 'Retried once: the first review didn\'t run. Reviewed by Codex. Looks right.');
     // Both replies are kept as evidence: the retry's first.
     assert.deepEqual(result!.evidence!.map(file => path.basename(file)), ['review-reply-retry.txt', 'review-reply.txt', 'review-prompt.md']);
+    // A launch failure is retried too; a retry that fails again is "not run", still saying it was retried.
+    const twice = fakeReviewer(() => ({ exitCode: null, error: 'spawn EPERM' }));
+    const [again] = await runGateList([gate], f.worktree, f.base, context(f.root, { runReviewer: twice.runReviewer }));
+    assert.equal(twice.specs.length, 2);
+    assert.deepEqual([again!.state, again!.retriedAfter, again!.summary], ['notRun', 'Codex couldn\'t review: spawn EPERM', 'Retried once: the first review didn\'t run. Codex couldn\'t review: spawn EPERM']);
+    // The first try's reason is redacted in the result and in the log, like everything else a gate keeps.
+    const lines: string[] = [];
+    const leaky = fakeReviewer(() => ({ exitCode: 1, stderr: 'auth failed for token SECRET123' }));
+    const [masked] = await runGateList([gate], f.worktree, f.base, context(f.root, { runReviewer: leaky.runReviewer }, { redact: text => text.replace(/SECRET123/g, '***'), log: line => lines.push(line) }));
+    assert.equal(masked!.retriedAfter, 'Codex exited with code 1: auth failed for token ***');
+    assert.ok(lines.some(line => line.includes('Retrying the review once')), lines.join('\n'));
+    assert.ok(!lines.some(line => line.includes('SECRET123')), lines.join('\n'));
   } finally { await f.close(); }
 });
 

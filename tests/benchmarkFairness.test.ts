@@ -8,7 +8,7 @@ import { planFromLeadInput, writeScopeOverlap } from '../src/core/plans';
 import { planFileArguments } from '../src/core/hydraCli';
 import { integrationFixJob, defaultIntegrationFixRounds } from '../src/core/integration';
 // @ts-expect-error: a plain .mjs module with no type declarations.
-import { defaultFixRounds, defaultPollSeconds, defaultToolLocations, defaultUsd, firstReviewOf, jobCostUsd, parseCheckOutput, planSignature, pollDelayMs, registerFunctions, renderSummary, resolveTool, runRows, singleClaudeArgs, singleFixBrief, summarizeHydra, summarizeReview, summarizeSingle, withReviewLoop } from '../scripts/benchmark-lib.mjs';
+import { defaultFixRounds, defaultPollSeconds, hydraReviewsRetried, defaultToolLocations, defaultUsd, firstReviewOf, jobCostUsd, parseCheckOutput, planSignature, pollDelayMs, registerFunctions, renderSummary, resolveTool, runRows, singleClaudeArgs, singleFixBrief, summarizeHydra, summarizeReview, summarizeSingle, withReviewLoop } from '../scripts/benchmark-lib.mjs';
 
 /**
  * The fairness fixes to the benchmark (docs/Benchmark.md): Hydra's first-pass review, the single agent's fix loop,
@@ -354,15 +354,17 @@ test('benchmark.mjs summarize fills an old Hydra result\'s first-pass review fro
 });
 
 test('a review the gate retried once is recorded on both sides and listed under the summary', () => {
-  const retriedCheck = { id: 'rigor-review', kind: 'review', state: 'passed', required: true, durationMs: 1000, summary: 'Reviewed by Codex. Fine. (The review was retried once: the first try didn\'t run. Codex exited with code 1.)', retriedAfter: 'Codex exited with code 1.' };
+  const retriedCheck = { id: 'rigor-review', kind: 'review', state: 'passed', required: true, durationMs: 1000, summary: 'Retried once: the first review didn\'t run. Reviewed by Codex. Fine.', retriedAfter: 'Codex exited with code 1.' };
   const reviewed = summarizeReview({ checks: [retriedCheck], durationMs: 1000, startedAt: 'x', base: 'b', head: 'h' });
   assert.equal(reviewed.retried, true);
   assert.equal(summarizeReview({ checks: [{ ...retriedCheck, retriedAfter: undefined, summary: 'Reviewed by Codex. Fine.' }], durationMs: 1000, startedAt: 'x', base: 'b', head: 'h' }).retried, undefined);
   const looped = withReviewLoop({ kind: 'single', wallClockSeconds: 100, cost: { usd: 1 } }, { rounds: [{ review: reviewed }] });
   assert.equal(looped.review.retried, 1);
   const single = { kind: 'single', task: 'cli', wallClockSeconds: 600, gate: { passed: true }, check: { passed: true }, cost: { usd: 3 }, review: looped.review };
-  // A Hydra result keeps the field; one from a plan view without it still has the summary's note.
-  const hydra = { kind: 'hydra', task: 'cli', wallClockSeconds: 900, timeToWorkingCodeSeconds: 300, integrationGate: { passed: true, checks: [{ id: 'rigor-review', kind: 'review', state: 'passed', summary: retriedCheck.summary }] }, review: { state: 'passed' }, jobs: [{ key: 'a' }], cost: { usd: 1, usdJobs: 1 } };
+  // Hydra: every round's review counts, the earlier ones read from the fix briefs that quote them (plan views keep only the summary).
+  assert.equal(hydraReviewsRetried([`### rigor-review (review) failed: ${retriedCheck.summary.replace('Fine.', 'Broken.')}`, '### rigor-review (review) failed: Reviewed by Codex. Broken.'], { summary: retriedCheck.summary }), 2);
+  assert.equal(hydraReviewsRetried([], { summary: 'Reviewed by Codex. Fine.' }), 0);
+  const hydra = { kind: 'hydra', task: 'cli', wallClockSeconds: 900, timeToWorkingCodeSeconds: 300, integrationGate: { passed: true, checks: [] }, review: { state: 'passed' }, reviewsRetried: 1, jobs: [{ key: 'a' }], cost: { usd: 1, usdJobs: 1 } };
   const rows = [...runRows(single, 'r1-single'), ...runRows(hydra, 'r1-hydra')];
   assert.deepEqual(rows.map((row: { setup: string; reviewRetried?: number }) => [row.setup, row.reviewRetried]), [['single', undefined], ['single+review', 1], ['hydra', 1]]);
   assert.match(renderSummary(rows), /^Reviews retried once after the reviewer failed to run: r1-single \(single\+review\), r1-hydra \(hydra\)\.$/m);
