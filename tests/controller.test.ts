@@ -12,6 +12,7 @@ import { JobStore } from '../src/core/jobs';
 import type { HelperService } from '../src/core/helperService';
 import type { PackService } from '../src/core/packs/service';
 import type { HeadSandbox } from '../src/core/headSandbox';
+import { LimitOfferTracker } from '../src/core/limitOffer';
 import { FakeHost } from './host/fakeHost';
 
 /** The controller with no editor (docs/internal/hydra-app/G2-host-split.md): a FakeHost, fake lanes and a temporary plan store. */
@@ -33,7 +34,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }) {
     refreshSettingsPages: async () => {},
     showSettings: () => {},
     accounts: () => ({ claude: { status: 'unchecked' }, codex: { status: 'unchecked' } }),
-    connectOnFirstRun: async () => {},
+    connectionsChanged: () => {}, desktop: () => false, openOfficial: async () => {},
     report: error => { throw error; },
   };
   const laneMessages: unknown[] = [];
@@ -42,7 +43,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }) {
     startPlanLane: async () => ({ wait: 'no lanes' }), unlinkPlan: async () => {}, laneName: () => undefined, show: async () => {},
     planStatesChanged: () => {}, handle: async message => { laneMessages.push(message); }, webviewReady: () => {},
     start: async () => {}, stop: async () => {}, stopProcesses: async () => 0, exists: () => false, describe: async () => ({ lanes: [] }),
-    jobReady: async () => ({}), openWorktrees: () => [], activeRolesChanged: async () => {},
+    jobReady: async () => ({}), openWorktrees: () => [], activeRolesChanged: async () => {}, onLimitEvent: async () => {}, laneWorktreeEntries: () => [], runningLanes: () => [], laneEvidence: () => undefined, laneGatesLogRoot: () => undefined,
   };
   const store = new PlanStore(path.join(root, 'plans'));
   await store.load();
@@ -50,7 +51,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }) {
   const stop = new StopSwitch({ get: <T>(key: string, fallback: T) => (stopValues.has(key) ? stopValues.get(key) : fallback) as T, update: async (key, value) => { stopValues.set(key, value); } });
   const packs = { gates: undefined, roles: async () => [], places: () => ({}), state: async () => ({ packs: [] }) } as unknown as PackService;
   const headSandbox = { shell: async () => ({ kind: 'unconfined' }), reset: () => {} } as unknown as HeadSandbox;
-  const controller = new HydraController({ host, ide, lanes, stop, audit: new AuditLog({ file: path.join(root, 'audit', 'audit.jsonl') }), packs, headSandbox, storageDirectory: path.join(root, 'workspaces', 'lead'), leadKey: 'lead' });
+  const controller = new HydraController({ host, ide, lanes, stop, audit: new AuditLog({ file: path.join(root, 'audit', 'audit.jsonl') }), packs, headSandbox, storageDirectory: path.join(root, 'workspaces', 'lead'), leadKey: 'lead', quota: { refresh: async () => {}, snapshot: () => ({ status: 'unchecked', text: '' }) }, limitOfferTracker: new LimitOfferTracker() });
   controller.plans = { store, planning: new Map() };
   return { host, controller, store, ideMessages, trees, laneMessages, closeAgents: () => { agentsOpen = false; }, counts: () => ({ opened, ready }) };
 }

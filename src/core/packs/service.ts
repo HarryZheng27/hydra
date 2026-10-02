@@ -19,7 +19,7 @@ import type { AuditEvent } from '../audit';
  * Packs for one Hydra window (docs/internal/Packs_Plan.md): where they live, each
  * project's state, the gates loader for heads and lanes, and the few writes
  * the Packs page makes. No editor API here, so it is tested directly;
- * src/extensionPacks.ts builds it from the extension's paths and settings.
+ * src/host/packs.ts builds it from the extension's paths and settings.
  *
  * Nothing here decides on its own to allow a pack: `allow` and `turnOn` are for
  * the button at the end of a pack's review panel, and take the hash that panel

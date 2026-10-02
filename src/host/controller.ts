@@ -6,8 +6,10 @@ import { repositoryRoot } from '../core/worktrees';
 import { HelperEndpoint } from '../core/helperEndpoint';
 import { HelperService, userPlanSession, type HelperServiceOptions } from '../core/helperService';
 import { removeUserHandshake, sweepStaleHandshakes, writeUserHandshake } from '../core/userHandshake';
-import { discoveryDirectory, removeWindowRecord, writeWindowRecord } from '../core/helperDiscovery';
-import { buildProjectSummary, startProjectSummaryPublisher, type ProjectSummaryPublisher } from '../core/projectSummary';
+import { alive as isWindowAlive, discoveryDirectory, removeWindowRecord, writeWindowRecord } from '../core/helperDiscovery';
+import { buildProjectSummary, readProjectSummaries, startProjectSummaryPublisher, type ProjectSummaryPublisher } from '../core/projectSummary';
+import { buildEvidenceMarkdown } from '../core/evidence';
+import { firstRunConnectKey, firstRunProviders, shouldConnectOnFirstRun } from '../core/onboarding';
 import { startHelperRun } from '../core/helperRunner';
 import type { HeadSandbox } from '../core/headSandbox';
 import { createLeadVerifier, createUserVerifier } from '../core/leadVerification';
@@ -16,9 +18,13 @@ import { installWithFallback } from '../core/openVsx';
 import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
 import { claudeSupportsLimitHook, limitHookGroup, limitHookState, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
-import { maskSecret } from '../core/mcpServers';
+import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
+import { headShellSentence } from '../core/confine';
 import { claudeForRegistration as claudeFor } from './claudeExecutable';
-import { otherStillLimited } from '../core/limitOffer';
+import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
+import { codexLaneFanout } from '../core/limitEvents';
+import { ClaudeChatLimits, CodexChatLimits, type QuotaSource } from './chatLimits';
+import { registerLimitOffer } from './limitOffer';
 import { loadGates } from '../core/gates';
 import { detectTestScript, noGatesFile, starterTestGatesFile } from '../core/starterGates';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from '../core/windowClose';
@@ -26,10 +32,11 @@ import type { PackService } from '../core/packs/service';
 import { Emitter } from './emitter';
 import { selfCheckCli } from '../core/cliSelfCheck';
 import { git } from '../core/worktrees';
-import { JobStore, finalJobStates, resolveHeadDefaults, toHeadCheckView } from '../core/jobs';
+import type { JobCheckResult } from '../core/jobs';
+import { JobStore, evidenceLabel, finalJobStates, resolveHeadDefaults, toHeadCheckView, type EvidenceStatus } from '../core/jobs';
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from '../core/helperService';
 import { isLaneMessage, parseMessage, type ClientMessage, type HelperJobView, type LaneClientMessage, type LanePlanJobView, type LaneView, type ProviderConnectionView, type Provider, type Snapshot, type SnapshotRole } from '../core/model';
-import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, createPlan, cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, maxPlanJobs, buildPlanReport, type Plan, type PlanJob, type PlanJobRunAs, type PlanReportJobDetail, PlanStore } from '../core/plans';
+import { planIdPattern, planJobKeyPattern, type PlanDispatch, appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, createPlan, cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, maxPlanJobs, buildPlanReport, type Plan, type PlanJob, type PlanJobRunAs, type PlanReportJobDetail, PlanStore } from '../core/plans';
 import { planBrief } from '../core/planner';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart, type PlanMergeVia } from '../core/planRunner';
 import { defaultIntegrationFixRounds, integrationLeadView, integrationSettled, isIntegrationFixKey, laneMergeRefusal, mergeRefusal } from '../core/integration';
@@ -59,6 +66,11 @@ export interface ControllerLanes {
   jobReady(laneId: string, note?: string): Promise<unknown>;
   openWorktrees(): string[];
   activeRolesChanged(): Promise<void>;
+  onLimitEvent(event: LimitEvent): Promise<void>;
+  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean } | undefined;
+  laneGatesLogRoot(): string | undefined;
+  laneWorktreeEntries(): { id: string; worktree: string }[];
+  runningLanes(provider: Provider): { id: string; worktree: string }[];
 }
 
 /** What the tree of lanes, heads and plans shows (the IDE's Hydra panel). */
@@ -87,8 +99,12 @@ export interface ControllerIde {
   showSettings(page: string): void;
   /** Each provider's sign-in, as the Accounts page last saw it. */
   accounts(): Record<'claude' | 'codex', { status: NonNullable<ProviderConnectionView['signedIn']> }>;
-  /** The installed app's first run: connect the agents already on this computer. */
-  connectOnFirstRun(): Promise<void>;
+  /** Providers were connected or disconnected here: what shows connections (onboarding) refreshes. */
+  connectionsChanged(): void;
+  /** The local Hydra desktop build (not a development host, a remote window or another editor). */
+  desktop(): boolean;
+  /** Opens a provider's official chat, following Docked/Tabs: where a chat continues after a usage limit. */
+  openOfficial(provider: Provider): Promise<void>;
   /** Shows an error to the user and republishes. */
   report(error: unknown): void;
 }
@@ -104,10 +120,17 @@ export interface ControllerOptions {
   /** This window's own storage folder (under Hydra's storage, keyed by its folders), and the key heads group under. */
   storageDirectory: string;
   leadKey: string;
+  /** Codex's usage limits (src/host/quota.ts), polled for its chats' limits. */
+  quota: QuotaSource;
+  /** Shared with every lane's tile banner, so "the other provider is limited too" sees chats, heads and lanes. */
+  limitOfferTracker: LimitOfferTracker;
   /** Tests only: stand-ins (head processes, executables, isolation) laid over the heads service's real options. */
   helperService?: Partial<HelperServiceOptions>;
 }
 
+// ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
+const planIdArgument = (value: unknown): string => { if (typeof value !== 'string' || !planIdPattern.test(value)) throw new Error('Pass a plan id.'); return value; };
+const jobKeyArgument = (value: unknown): string => { if (typeof value !== 'string' || !planJobKeyPattern.test(value)) throw new Error('Pass a job key.'); return value; };
 const describe = (error: unknown): string => error instanceof Error ? error.message : String(error);
 // ---- Canvas tidy-up (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): the Finished tray's Clear button, kept across reloads. ----
 const dismissedTrayKey = 'hydra.tray.dismissed.v1';
@@ -249,6 +272,7 @@ export class HydraController {
     }
     if (isLaneMessage(message)) { await this.lanes.handle(message); return; }
     if (message.type === 'trayClear') { await this.trayClear(message.ids); return; }
+    if (message.type === 'helperReview' || message.type === 'helperLog' || message.type === 'helperCancel' || message.type === 'helperAnswer' || message.type === 'helperEvidence') { await this.helperAction(message.type, message.jobId); return; }
     // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
     if (message.type === 'planCreate') { await this.planCreate(message.title, message.brief); return; }
     if (message.type === 'planCreateEmpty') { await this.planCreateEmpty(message.title); return; }
@@ -847,6 +871,47 @@ export class HydraController {
 
   // ---- The window's lifecycle: ownership, heads, discovery, connections, Stop all ----
 
+  /** Chats in the official extensions: Claude's hook events and Codex's polled limits. Heads report through their service. */
+  startLimitDetection(): void {
+    if (this.ide.inHandoff() || !this.host.trusted() || this.host.remote) return;
+    const fire = (event: LimitEvent) => this.limitEvents.fire(event);
+    // Lanes (docs/internal/Gates_Plan.md, section 2): Claude's hook already tags its own lane's
+    // events with HYDRA_LANE_ID; its worktree also counts as an owned folder like any
+    // workspace folder. Codex has no per-session hook, so its account-limit event is
+    // fanned out here to one lane event per running Codex lane.
+    const claude = new ClaudeChatLimits(this.host, this.limitEventsDirectory, providerPaths().claudeProjects, fire, () => this.lanes.laneWorktreeEntries());
+    this.host.keep(claude);
+    void claude.start().catch(error => this.host.log(`[limits] Claude chat limits not watched: ${describe(error)}`));
+    const fireCodex = (event: LimitEvent) => {
+      fire(event);
+      for (const laneEvent of codexLaneFanout(event, this.lanes.runningLanes('codex'))) fire(laneEvent);
+    };
+    this.host.keep(new CodexChatLimits(this.host, this.options.quota, async () =>
+      this.ide.desktop() && this.host.trusted() && !!this.host.extension('openai.chatgpt') && (await codexStatus(providerPaths().codexConfig, this.helperServerSpec('codex'))).connected,
+    fireCodex, line => this.host.log(line)));
+  }
+  /** What to offer when a chat or head hits its usage limit (docs/internal/Hydra_Agent_Plan.md, Phase 3), and each lane's tile banner. */
+  startLimitOffer(): void {
+    const settings = this.host.settings;
+    this.host.keep(registerLimitOffer({
+      host: this.host, openOfficial: provider => this.ide.openOfficial(provider),
+      limitEvents: this.limitEvents.event,
+      storageDir: this.host.paths.storage,
+      offerEnabled: () => settings.get<boolean>('limits.offerHandoff', true),
+      job: jobId => this.helpers?.store.get(jobId),
+      otherReady: async provider => (await this.helperConnections()).find(connection => connection.provider === provider)?.connected ?? false,
+      continueWith: async (jobId, provider, markdown) => {
+        if (!this.helpers) throw new Error('Hydra heads are still starting.');
+        await this.helpers.service.continueWith(jobId, provider, markdown);
+      },
+      // O6: a plan job fails over on its own, unless turned off.
+      autoContinuePlan: jobId => settings.get<boolean>('limits.autoContinuePlans', true) && !!this.jobPlanFor(jobId),
+      log: line => this.host.log(line),
+      tracker: this.options.limitOfferTracker,
+    }));
+    // Lanes (docs/internal/Gates_Plan.md, section 2): a lane's own tile banner, never a notification.
+    this.host.keep(this.limitEvents.event(event => { void this.lanes.onLimitEvent(event).catch(error => this.host.log(`[lanes] limit offer: ${describe(error)}`)); }));
+  }
   /** Lock each canonical repository, so different workspace configurations cannot own the same repo. */
   async acquireOwnership(): Promise<void> {
     await this.refreshRepositories();
@@ -994,7 +1059,7 @@ export class HydraController {
     await this.planRunner.advanceAll({ startup: true }).catch(error => this.host.log(`[plans] ${describe(error)}`));
     this.ide.tree({ lanes: this.lanes.state().lanes, heads: this.headViews() ?? [], plans: planStore.list(), planJobs: this.planJobViews() });
     this.host.log(`[heads] ready for ${leadFolder}`);
-    void this.refreshHelperConnections().then(() => this.ide.connectOnFirstRun()).catch(error => this.host.log(`[heads] first run: ${describe(error)}`));
+    void this.refreshHelperConnections().then(() => this.connectOnFirstRun()).catch(error => this.host.log(`[heads] first run: ${describe(error)}`));
     // ---- Packs (docs/internal/Packs_Plan.md): the active roles for the pickers, and the notification for a ----
     // ---- project whose packs.json lists a pack that still needs your OK on this machine. ----
     this.packsLeadFolder = leadFolder;
@@ -1313,5 +1378,206 @@ export class HydraController {
       catch { /* Non-Git folders remain ordinary editor workspaces. */ }
     }
     this.repositories = [...new Set(repositories)];
+  }
+
+  /**
+   * Hydra's commands that drive the controller: heads, Stop all, plans, packs, connections and MCP servers. The IDE
+   * registers them as VS Code commands (with its own error reporting); the app maps them to its own calls.
+   */
+  registerCommands(command: (name: string, callback: (...args: any[]) => unknown) => void): void {
+    command('hydra.stopAllHelpers', async () => {
+      const stopped = await this.helpers?.service.stopAll() ?? 0;
+      void this.host.notify('info', stopped ? `Stopped ${stopped} Hydra head${stopped === 1 ? '' : 's'}.` : 'No Hydra heads are running.');
+      return stopped;
+    });
+    command('hydra.listHelpers', () => structuredClone(this.helpers?.service.list() ?? []));
+    // ---- Stop all (5.3) ----
+    command('hydra.stopAllAgents', async (options?: { confirm?: boolean }) => {
+      if (options?.confirm !== false) {
+        if (!await this.host.confirm('Stop every head and lane in this window?', 'Stop all')) return false;
+      }
+      await this.stopAllAgents('Stopped with "Hydra: Stop All Agents".', 'Stop all agents');
+      return true;
+    });
+    command('hydra.resumeAgents', async () => {
+      await this.resumeAgents('Resume agents');
+      return true;
+    });
+    // Not contributed: Settings → Heads asks it, to show whether Hydra is stopped now.
+    command('hydra.getStopState', () => ({ stopped: this.stop.isStopped(), since: this.stop.since(), reason: this.stop.reason() }));
+    // Not contributed: Settings → Heads asks it. Checks the head sandbox once per window if it hasn't been yet.
+    command('hydra.headShellStatus', async () => { const shell = await this.headSandbox.shell(); return { kind: shell.kind, text: headShellSentence(shell) }; });
+    // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4). newPlan is public; the plans.* commands are test-only, not in menus. ----
+    command('hydra.newPlan', () => this.newPlan());
+    command('hydra.plans.list', () => structuredClone(this.plans?.store.list() ?? []));
+    command('hydra.plans.save', async (plan: unknown) => { const saved = await this.requirePlans().store.save(plan as Plan); this.plansChanged(); return saved; });
+    command('hydra.plans.run', async (id: unknown) => { await this.runPlanById(String(id)); return structuredClone(this.requirePlans().store.get(String(id))); });
+    // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): test and automation commands, never asking anything ----
+    command('hydra.plans.status', (id: unknown) => structuredClone(this.requirePlanRunner().statuses(planIdArgument(id)) ?? []));
+    command('hydra.plans.retry', async (id: unknown) => { await this.requirePlanRunner().retry(planIdArgument(id)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    command('hydra.plans.cancelJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().cancelJob(planIdArgument(id), jobKeyArgument(key), 'Cancelled.'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    command('hydra.plans.startJob', async (id: unknown, key: unknown) => { await this.requirePlanRunner().startJob(planIdArgument(id), jobKeyArgument(key)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    // Step C: Auto-dispatch to lanes; null or nothing turns it off. setDispatch validates the settings.
+    // O3: the integration gate and Merge plan, for tests and automation (never asking anything; no override here).
+    command('hydra.plans.integrate', async (id: unknown) => { await this.requirePlanRunner().integrate(planIdArgument(id)); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    command('hydra.plans.merge', async (id: unknown, via?: unknown) => { await this.requirePlanRunner().merge(planIdArgument(id), via === 'pr' ? 'pr' : 'merge'); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    command('hydra.plans.dispatch', async (id: unknown, dispatch?: unknown) => { await this.requirePlanRunner().setDispatch(planIdArgument(id), dispatch == null ? undefined : dispatch as PlanDispatch); this.plansChanged(); return structuredClone(this.requirePlans().store.get(planIdArgument(id))); });
+    // ---- Packs (docs/internal/Packs_Plan.md, section 6). The Packs page and smoke tests call these; there is ----
+    // ---- no hydra.packs.allow command — allowing a pack only ever happens from the review panel's   ----
+    // ---- own button (src/settings/pages/packs.ts), never through a command any extension could call. ----
+    command('hydra.packs.state', async (folder?: unknown) => structuredClone(await this.packs.state(await this.packsFolder(folder))));
+    command('hydra.packs.setEnabled', async (folder: unknown, id: unknown, on: unknown) => {
+      const root = await this.packsFolder(folder);
+      const packId = String(id), enable = !!on;
+      // Turning on here never allows a pack: an off pack that isn't already allowed for this project stays "Needs your OK".
+      if (enable && !(await this.packs.isAllowed(root, packId))) throw new Error(`The ${packId} pack needs your review first. Turn it on from Settings → Packs.`);
+      await this.packs.setEnabled(root, packId, enable);
+      await this.rolesChanged();
+      return structuredClone(await this.packs.state(root));
+    });
+    command('hydra.packs.skipGate', async (folder: unknown, id: unknown, gate: unknown, skip: unknown) => {
+      const root = await this.packsFolder(folder);
+      await this.packs.skipGate(root, String(id), String(gate), !!skip);
+      return structuredClone(await this.packs.state(root));
+    });
+    command('hydra.packs.addFolder', async (source: unknown) => {
+      if (typeof source !== 'string' || !source) throw new Error('Pass the folder to add.');
+      const installed = await this.packs.addFolder(source);
+      // addFolder makes your packs folder if it didn't exist yet, so the watcher may need to start now.
+      await this.setupPacksFolderWatcher();
+      return structuredClone(installed);
+    });
+    command('hydra.packs.reload', async () => { await this.setupPacksFolderWatcher(); await this.rolesChanged(); return true; });
+    command('hydra.helperConnections', () => this.helperConnections());
+    command('hydra.connectHelpers', async (provider: ConnectableProvider) => ({ warning: await this.connectHelpers(provider), connections: await this.helperConnections() }));
+    command('hydra.disconnectHelpers', async (provider: ConnectableProvider) => { await this.disconnectHelpers(provider); return this.helperConnections(); });
+    command('hydra.installProviderExtension', async (provider: ConnectableProvider) => { await this.installProviderExtension(provider); return this.helperConnections(); });
+    command('hydra.repairClaudeMem', () => this.repairClaudeMem());
+    command('hydra.helperWrittenEntries', () => this.helperWrittenEntries());
+    // MCP servers (Settings plan, Phase 4). Lists come back with secrets masked; changes return the fresh list.
+    const mcp = async () => defaultMcpContext(await this.claudeForRegistration());
+    command('hydra.mcpServers.list', async () => listMcpServers(await mcp()));
+    command('hydra.mcpServers.add', async (name: unknown, spec: unknown, agents: unknown) => { const context = await mcp(); await addMcpServer(context, name, spec, agents); return listMcpServers(context); });
+    command('hydra.mcpServers.remove', async (name: unknown, agent: unknown) => { const context = await mcp(); await removeMcpServer(context, name, agent); return listMcpServers(context); });
+    command('hydra.mcpServers.enable', async (name: unknown, agent: unknown) => { const context = await mcp(); await enableMcpServerFor(context, name, agent); return listMcpServers(context); });
+    command('hydra.mcpServers.test', async (target: unknown, agent?: McpAgent) => testMcpServer(typeof target === 'string' ? await configuredSpec(await mcp(), target, agent) : validateServerSpec(target)));
+  }
+
+  // ---- Show all projects, the first run's connections, head actions and evidence ----
+
+  /**
+   * "Hydra: Show All Projects" (Step D): every open window's summary, read-only. Selecting a
+   * live entry opens its folder — VS Code focuses that folder's window if it already has one
+   * open, rather than opening a second window on it, so this passes forceNewWindow: false,
+   * forceReuseWindow: false (neither "always a new window" nor "always reuse this one"). A
+   * closed or not-responding entry has nothing to focus, so it only explains itself.
+   */
+  async showAllProjects(): Promise<void> {
+    const dir = discoveryDirectory(path.join(this.host.paths.storage, 'helpers'));
+    const summaries = await readProjectSummaries(dir, new Date(), isWindowAlive);
+    if (!summaries.length) { void this.host.notify('info', 'No Hydra projects found.'); return; }
+    const livenessLabel = { running: undefined, 'not-responding': 'Not responding', closed: 'Closed' } as const;
+    const items = summaries
+      .slice()
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map(summary => {
+        const isThisWindow = summary.pid === process.pid && summary.folder === this.helpers?.service.leadFolder;
+        const counts = [
+          summary.heads.running ? `${summary.heads.running} head${summary.heads.running === 1 ? '' : 's'} running` : undefined,
+          summary.lanes.running ? `${summary.lanes.running} lane${summary.lanes.running === 1 ? '' : 's'}` : undefined,
+          summary.blocked.length ? `${summary.blocked.length} blocked` : undefined,
+        ].filter(Boolean).join(' · ') || 'Nothing running';
+        const label = livenessLabel[summary.liveness];
+        const detail = summary.liveness === 'closed' ? 'This window has closed.'
+          : summary.liveness === 'not-responding' ? 'No update from this window in over 3 minutes.'
+          : summary.blocked.length ? summary.blocked.map(item => `${item.title}: ${item.reason}`).join(' · ')
+          : Object.entries(summary.evidence).filter(([, count]) => count).map(([status, count]) => `${count} ${evidenceLabel(status as EvidenceStatus)}`).join(' · ') || 'No evidence recorded yet.';
+        return { label: summary.name, description: [isThisWindow ? 'This window' : undefined, label, counts].filter(Boolean).join(' · '), detail, summary, isThisWindow };
+      });
+    const pick = await this.host.pick(items, { placeHolder: 'Every Hydra project window (read-only)', matchOnDetail: true });
+    if (!pick || pick.isThisWindow) return;
+    if (pick.summary.liveness === 'closed') { void this.host.notify('info', `${pick.summary.name}'s window has closed.`); return; }
+    await this.host.openFolder(pick.summary.folder, { forceNewWindow: false, forceReuseWindow: false });
+  }
+  /**
+   * First run (docs/Heads.md, "Connecting Claude Code and Codex"): once, in an installed desktop Hydra, connect the
+   * agents whose command-line tools are already on this computer (installing their extensions), so a new user
+   * doesn't have to find Connect. Anything that fails says so, with a way to Settings → Connectors.
+   */
+  async connectOnFirstRun(): Promise<void> {
+    const startup = await this.host.command<{ development: boolean }>('hydra.desktop.startupContext').catch(() => undefined);
+    if (!shouldConnectOnFirstRun({ desktop: this.ide.desktop(), production: !this.host.development,
+      development: startup?.development !== false, test: !!process.env.HYDRA_TEST_REPOSITORY, handoff: this.ide.inHandoff(), done: !!this.host.globalState.get(firstRunConnectKey, undefined) })) return;
+    await this.host.globalState.update(firstRunConnectKey, true);
+    const connections = await this.helperConnections();
+    const row = (provider: ConnectableProvider) => connections.find(item => item.provider === provider);
+    const cli = async (provider: 'claude' | 'codex') => !!(await findProvider(provider, this.host.settings.machine<string>(provider === 'claude' ? 'claudePath' : 'codexPath') || undefined).catch(() => undefined))?.executable;
+    const wanted = firstRunProviders({
+      claude: { cli: await cli('claude'), connected: !!row('claude')?.connected, extension: !!row('claude')?.extensionInstalled },
+      codex: { cli: await cli('codex'), connected: !!row('codex')?.connected, extension: !!row('codex')?.extensionInstalled },
+    });
+    if (!wanted.length) return;
+    const done: string[] = [], failed: string[] = [];
+    await this.host.withProgress('Hydra: connecting your agents', async progress => {
+      for (const provider of wanted) {
+        const name = provider === 'claude' ? 'Claude Code' : 'Codex';
+        progress.report({ message: `${name}…` });
+        try { await this.connectHelpers(provider); done.push(name); }
+        catch (error) { failed.push(`${name} (${describe(error)})`); this.host.log(`[heads] first run: couldn't connect ${provider}: ${describe(error)}`); }
+      }
+    });
+    this.ide.connectionsChanged();
+    if (failed.length) {
+      const pick = await this.host.notify('warning', `Hydra couldn't connect ${failed.join(', ')}.${done.length ? ` ${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected.` : ''}`, 'Open Connectors');
+      if (pick) await this.host.command('hydra.openSettings', 'connectors');
+    } else void this.host.notify('info', `${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected to Hydra: chat in ${done.length === 1 ? 'its extension' : 'their extensions'}, and they can start Hydra heads.`);
+  }
+  /** Dashboard actions: review a helper's changes as a diff, open its log, view its gate evidence, or cancel it. */
+  private async helperAction(action: 'helperReview' | 'helperLog' | 'helperCancel' | 'helperAnswer' | 'helperEvidence', jobId: string): Promise<void> {
+    const helpers = this.helpers;
+    const job = helpers?.store.get(jobId);
+    if (!helpers || !job) throw new Error('That head is not in this window.');
+    if (action === 'helperCancel') { await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_cancel_head', { job_id: jobId, reason: 'Cancelled from the Agents view.' }, new AbortController().signal); return; }
+    if (action === 'helperEvidence') { await this.openEvidence('head', jobId); return; }
+    if (action === 'helperAnswer') {
+      // The head is waiting on the lead; you can answer in its place from the Agents view.
+      if (job.state !== 'blocked') throw new Error('That head is not waiting for an answer.');
+      const message = await this.host.input({ title: `Answer "${job.title}"`, prompt: job.question || 'The head is waiting for an answer.', placeHolder: 'Your answer', ignoreFocusOut: true, validateInput: value => value.trim() && value.length <= 8000 ? undefined : 'Write an answer (up to 8000 characters).' });
+      if (message === undefined) return;
+      await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, message }, new AbortController().signal);
+      return;
+    }
+    if (action === 'helperLog') {
+      const log = path.join(this.storageDirectory, 'helpers', 'logs', `${jobId}.jsonl`);
+      await this.host.openFileBeside(log);
+      return;
+    }
+    if (!job.worktree || !job.baseCommit) throw new Error('This head has no changes yet.');
+    const head = job.result?.commit || (await git(job.worktree, ['rev-parse', 'HEAD'])).trim();
+    const diff = await git(job.worktree, ['diff', '--stat', '--patch', '--no-color', job.baseCommit, head, '--']);
+    await this.host.openText(`# ${job.title} (Hydra head ${job.id})\n# ${job.branch} ${job.baseCommit.slice(0, 12)}..${head.slice(0, 12)}\n# Merge it yourself with git when you're happy: git merge ${job.branch}\n\n${diff || '(no changes)'}`, 'diff');
+  }
+  /**
+   * View evidence: the Markdown is written next to the evidence (in the run's log root) and
+   * previewed from there, because the preview follows links and shows images relative to the
+   * document but refuses `file:` links.
+   */
+  async openEvidence(kind: 'head' | 'lane', id: string): Promise<void> {
+    let base: string, markdown: string;
+    if (kind === 'head') {
+      const job = this.helpers?.store.get(id);
+      if (!job?.result?.checks.length) throw new Error('This head has no gate results yet.');
+      base = path.join(this.storageDirectory, 'helpers', 'logs');
+      markdown = buildEvidenceMarkdown({ title: job.title, worktree: job.worktree ?? this.helpers!.service.leadFolder, logDirectories: [base], baseDirectory: base, results: job.result.checks, ...(job.result.status ? { status: job.result.status, commit: job.result.commit } : {}) });
+    } else {
+      const evidence = this.lanes.laneEvidence(id), root = this.lanes.laneGatesLogRoot();
+      if (!evidence || !root) throw new Error('This lane has no gate results yet.');
+      base = root;
+      markdown = buildEvidenceMarkdown({ title: evidence.title, worktree: evidence.worktree, logDirectories: [root], baseDirectory: root, results: evidence.results, ...(evidence.status ? { status: evidence.status, commit: evidence.commit, stale: evidence.stale } : {}) });
+    }
+    await mkdir(base, { recursive: true });
+    const file = path.join(base, `${id}-evidence.md`);
+    await writeFile(file, markdown, 'utf8');
+    await this.host.openMarkdown(file, { fallback: false });
   }
 }

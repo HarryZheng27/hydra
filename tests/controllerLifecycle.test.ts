@@ -13,6 +13,7 @@ import { AuditLog } from '../src/core/audit';
 import type { Snapshot } from '../src/core/model';
 import type { PackService } from '../src/core/packs/service';
 import type { HeadSandbox } from '../src/core/headSandbox';
+import { LimitOfferTracker } from '../src/core/limitOffer';
 import { FakeHost } from './host/fakeHost';
 
 /**
@@ -47,14 +48,14 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
     view: () => ({ mode: 'agents', busy: false }), handle: async () => {}, uiReady: () => {}, agentsOpen: () => true, showingAgents: () => true,
     openAgents: async () => {}, tree: () => {}, report: error => { host.log(`[report] ${error instanceof Error ? error.message : String(error)}`); },
     inHandoff: () => false, refreshSettingsPages: async () => {}, showSettings: () => {},
-    accounts: () => ({ claude: { status: 'unchecked' }, codex: { status: 'unchecked' } }), connectOnFirstRun: async () => {},
+    accounts: () => ({ claude: { status: 'unchecked' }, codex: { status: 'unchecked' } }), connectionsChanged: () => {}, desktop: () => false, openOfficial: async () => {},
   };
   const lanes: ControllerLanes = {
     available: false, state: () => ({ lanes: [], terminals: false }), laneLook: () => undefined, planLanes: () => [],
     startPlanLane: async () => ({ wait: 'no lanes' }), unlinkPlan: async () => {}, laneName: () => undefined, show: async () => {},
     planStatesChanged: () => {}, handle: async () => {}, webviewReady: () => {}, start: async () => {}, stop: async () => {},
     stopProcesses: async () => 0, exists: () => false, describe: async () => ({ lanes: [] }), jobReady: async () => ({}), openWorktrees: () => [],
-    activeRolesChanged: async () => {},
+    activeRolesChanged: async () => {}, onLimitEvent: async () => {}, laneWorktreeEntries: () => [], runningLanes: () => [], laneEvidence: () => undefined, laneGatesLogRoot: () => undefined,
   };
   const stopValues = new Map<string, unknown>();
   const stop = new StopSwitch({ get: <T>(key: string, fallback: T) => (stopValues.has(key) ? stopValues.get(key) : fallback) as T, update: async (key, value) => { stopValues.set(key, value); } });
@@ -62,7 +63,7 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   const runs: HelperRunSpec[] = [];
   const controller = new HydraController({
     host, ide, lanes, stop, audit: new AuditLog({ file: path.join(storage, 'audit', 'audit.jsonl') }), packs,
-    headSandbox: {} as HeadSandbox, storageDirectory: path.join(storage, 'workspaces', 'e2e'), leadKey: 'e2e',
+    headSandbox: {} as HeadSandbox, storageDirectory: path.join(storage, 'workspaces', 'e2e'), leadKey: 'e2e', quota: { refresh: async () => {}, snapshot: () => ({ status: 'unchecked', text: '' }) }, limitOfferTracker: new LimitOfferTracker(),
     helperService: {
       sandbox: undefined, gateRuntime: { isolation: noIsolation }, agentIsolation: noIsolation, watchdogMs: 20,
       executable: async provider => `fake-${provider}`,

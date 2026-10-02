@@ -1,30 +1,21 @@
 import * as vscode from 'vscode';
-import { machineSetting } from './core/machineSetting';
-import { mkdir } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { accountRpc, supportedAccountVersion } from './core/accountSetup';
-import { supportedCliDescription } from './core/cliVersions';
-import { readCodexQuota, type QuotaState } from './core/quota';
-import { findProvider } from './core/providers';
-import { runProbe } from './core/process';
+import type { QuotaState } from './core/quota';
 import type { Provider } from './core/model';
+import { QuotaService } from './host/quota';
+import { VsCodeHost } from './vscodeHost';
 
+/** The IDE's Usage limits panel over src/host/quota.ts's QuotaService. */
 export class ProviderQuota implements vscode.Disposable {
   private panel?: vscode.WebviewPanel;
-  private state: QuotaState = { status: 'unchecked', text: 'Not checked. Refresh when ready.' };
-  private controller?: AbortController;
-  private pending?: Promise<void>;
-  private disposed = false;
-  private readonly configuration: vscode.Disposable;
-  constructor(private readonly context: vscode.ExtensionContext, private readonly available: boolean) {
-    this.configuration = vscode.workspace.onDidChangeConfiguration(event => {
-      if (!event.affectsConfiguration('hydra.codexPath') && !event.affectsConfiguration('hydra.handoff')) return;
-      this.controller?.abort(); this.controller = undefined;
-      this.update({ status: 'unchecked', text: 'Provider configuration changed. Refresh to read its usage limits.' });
-    });
+  /** The limits themselves, which Codex chat limits poll too. */
+  readonly service: QuotaService;
+  private readonly updates: vscode.Disposable;
+  constructor(context: vscode.ExtensionContext, private readonly available: boolean) {
+    this.service = new QuotaService(new VsCodeHost(context, { appendLine: () => undefined }, () => undefined), available);
+    this.updates = this.service.onUpdate(state => { void this.panel?.webview.postMessage({ type: 'quota', state }); });
   }
-  snapshot(): QuotaState { return structuredClone(this.state); }
-  private update(state: QuotaState): void { if (this.disposed) return; this.state = state; void this.panel?.webview.postMessage({ type: 'quota', state: this.snapshot() }); }
+  snapshot(): QuotaState { return this.service.snapshot(); }
   show(): void {
     if (!this.available) throw new Error('Usage limits are available in the local Hydra desktop IDE.');
     if (this.panel) { this.panel.reveal(); return; }
@@ -35,41 +26,16 @@ export class ProviderQuota implements vscode.Disposable {
       if (!value || typeof value !== 'object') return;
       const message = value as Record<string, unknown>;
       if (message.type === 'ready') { void panel.webview.postMessage({ type: 'quota', state: this.snapshot() }); return; }
-      if (message.type === 'refresh') void this.refresh().catch(() => this.update({ status: 'error', text: 'Use usage limits in your trusted local Hydra window.', snapshot: this.state.snapshot }));
+      if (message.type === 'refresh') void this.refresh().catch(() => this.service.failed('Use usage limits in your trusted local Hydra window.'));
       if (message.type === 'cancel') void this.cancel();
       if (message.type === 'guide' && (message.provider === 'claude' || message.provider === 'codex')) void this.guide(message.provider);
     });
   }
-  async guide(provider: Provider): Promise<void> {
-    await vscode.env.openExternal(vscode.Uri.parse(provider === 'claude' ? 'https://code.claude.com/docs/en/costs#using-the-usage-command' : 'https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt'));
-  }
-  refresh(): Promise<void> {
-    if (!this.available || !vscode.workspace.isTrusted || this.disposed || vscode.env.remoteName || vscode.workspace.getConfiguration('hydra').get('handoff')) return Promise.reject(new Error('Use usage limits in your trusted local Hydra window.'));
-    if (this.pending) return this.pending;
-    const controller = new AbortController(); this.controller = controller;
-    const previous = this.state.snapshot;
-    this.update({ status: 'checking', text: 'Checking the installed Codex CLI…', snapshot: previous });
-    const action = async () => {
-      try {
-        const found = await findProvider('codex', machineSetting<string>(vscode.workspace.getConfiguration('hydra'), 'codexPath'));
-        if (controller.signal.aborted) return;
-        if (!found.executable) throw new Error(`Install ${supportedCliDescription('codex')} or set its executable path in Hydra settings.`);
-        const cwd = this.context.globalStorageUri.fsPath; await mkdir(cwd, { recursive: true });
-        const version = await runProbe(found.executable, ['--version'], cwd, { signal: controller.signal, timeoutMs: 8000, maxBytes: 16384 });
-        if (controller.signal.aborted) return;
-        if (version.error || version.exitCode !== 0 || !supportedAccountVersion('codex', version.stdout)) throw new Error(`Usage-limit refresh needs ${supportedCliDescription('codex')}. Update Codex, or use its official client.`);
-        const snapshot = await readCodexQuota(() => accountRpc(found.executable!, cwd, () => {}, () => {}, 'quota'), controller.signal);
-        if (!controller.signal.aborted && this.controller === controller) this.update({ status: 'checked', text: 'Provider-reported Codex usage limits. These are shared across the signed-in account.', snapshot });
-      } catch {
-        if (!controller.signal.aborted && this.controller === controller) this.update({ status: 'error', text: 'Codex could not report usage limits. Check its executable version and ChatGPT sign-in in the official client, then retry. No model turn was submitted.', snapshot: previous });
-      }
-    };
-    this.pending = action().finally(() => { if (this.controller === controller) this.controller = undefined; this.pending = undefined; });
-    return this.pending;
-  }
-  async cancel(): Promise<void> { this.controller?.abort(); this.controller = undefined; this.update({ status: 'cancelled', text: 'Local refresh stopped. No sign-in or account limits were changed.', snapshot: this.state.snapshot }); await this.pending; }
-  async shutdown(): Promise<void> { this.disposed = true; this.controller?.abort(); await this.pending; }
-  dispose(): void { this.configuration.dispose(); this.panel?.dispose(); void this.shutdown(); }
+  guide(provider: Provider): Promise<void> { return this.service.guide(provider); }
+  refresh(): Promise<void> { return this.service.refresh(); }
+  cancel(): Promise<void> { return this.service.cancel(); }
+  shutdown(): Promise<void> { return this.service.shutdown(); }
+  dispose(): void { this.updates.dispose(); this.service.dispose(); this.panel?.dispose(); }
   private html(): string {
     const nonce = randomBytes(24).toString('base64');
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'"><style nonce="${nonce}">

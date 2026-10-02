@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { machineSetting } from './core/machineSetting';
 import { notices } from './notices';
-import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, InputOptions, NoticeLevel, PickItem } from './host/host';
+import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, HostTerminal, InputOptions, NoticeLevel, PickItem } from './host/host';
 
 /**
  * The IDE's Host (docs/internal/hydra-app/G2-host-split.md): each method does exactly what the extension did before
@@ -14,6 +14,7 @@ export class VsCodeHost implements Host {
   readonly globalState: HostState;
   readonly paths: HostPaths;
   readonly development: boolean;
+  readonly version: string;
   /**
    * `toEditor` leaves the Agent Manager first when a file is about to open, since the Agent Manager is the whole window.
    */
@@ -31,7 +32,8 @@ export class VsCodeHost implements Host {
     this.state = { get: <T>(key: string, fallback: T) => context.workspaceState.get<T>(key, fallback), update: async (key, value) => { await context.workspaceState.update(key, value); } };
     this.globalState = { get: <T>(key: string, fallback: T) => context.globalState.get<T>(key, fallback), update: async (key, value) => { await context.globalState.update(key, value); } };
     this.development = context.extensionMode !== vscode.ExtensionMode.Production;
-    this.paths = { storage: context.globalStorageUri.fsPath, dist: vscode.Uri.joinPath(context.extensionUri, 'dist').fsPath, appRoot: vscode.env.appRoot };
+    this.version = String((context.extension.packageJSON as { version?: unknown } | undefined)?.version ?? '0.0.0');
+    this.paths = { storage: context.globalStorageUri.fsPath, dist: vscode.Uri.joinPath(context.extensionUri, 'dist').fsPath, appRoot: vscode.env.appRoot, extension: context.extensionPath };
   }
   log(line: string): void { this.output.appendLine(line); }
   notify(level: NoticeLevel, message: string, ...actions: string[]): Promise<string | undefined> { return notices[level](message, ...actions); }
@@ -70,9 +72,9 @@ export class VsCodeHost implements Host {
     return level === 'info' ? await vscode.window.showInformationMessage(message, options, ...actions) : await vscode.window.showWarningMessage(message, options, ...actions);
   }
   async input(options: InputOptions): Promise<string | undefined> { return await vscode.window.showInputBox(options); }
-  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean }): Promise<T | undefined> { return await vscode.window.showQuickPick(items, options); }
+  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string; ignoreFocusOut?: boolean; matchOnDetail?: boolean }): Promise<T | undefined> { return await vscode.window.showQuickPick(items, options); }
   async copy(text: string): Promise<void> { await vscode.env.clipboard.writeText(text); }
-  withProgress<T>(title: string, task: () => Promise<T>): Promise<T> { return notices.withProgress({ title }, () => task()); }
+  withProgress<T>(title: string, task: (progress: { report(value: { message?: string }): void }) => Promise<T>): Promise<T> { return notices.withProgress({ title }, progress => task(progress)); }
   async openFolder(folder: string, options: { forceNewWindow: boolean; forceReuseWindow?: boolean }): Promise<void> {
     await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(folder), options);
   }
@@ -85,8 +87,9 @@ export class VsCodeHost implements Host {
       return true;
     } catch { return false; }
   }
-  async openMarkdown(file: string): Promise<void> {
+  async openMarkdown(file: string, options: { fallback?: boolean } = {}): Promise<void> {
     const uri = vscode.Uri.file(file);
+    if (options.fallback === false) { await vscode.commands.executeCommand('markdown.showPreview', uri); return; }
     try { await vscode.commands.executeCommand('markdown.showPreview', uri); }
     catch { const doc = await vscode.workspace.openTextDocument(uri); await vscode.window.showTextDocument(doc, { preview: true }); }
   }
@@ -104,7 +107,27 @@ export class VsCodeHost implements Host {
     await this.toEditor();
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: options.preview });
   }
-  async openUrl(url: string): Promise<void> { await vscode.env.openExternal(vscode.Uri.parse(url, true)); }
+  async openUrl(url: string): Promise<boolean> { return await vscode.env.openExternal(vscode.Uri.parse(url, true)); }
+  get remote(): boolean { return !!vscode.env.remoteName; }
+  focused(): boolean { return vscode.window.state.focused; }
+  onFocusChange(listener: (focused: boolean) => void): Disposable { return vscode.window.onDidChangeWindowState(state => listener(state.focused)); }
+  openTerminal(options: { name: string; cwd: string; shellPath: string; shellArgs: string[] }): HostTerminal {
+    const terminal = vscode.window.createTerminal({ ...options, isTransient: true });
+    terminal.show(false);
+    return {
+      dispose: () => terminal.dispose(),
+      onClose: listener => vscode.window.onDidCloseTerminal(closed => { if (closed === terminal) listener(); }),
+    };
+  }
+  async openText(content: string, language: string): Promise<void> {
+    await this.toEditor();
+    const document = await vscode.workspace.openTextDocument({ language, content });
+    await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+  }
+  async openFileBeside(file: string): Promise<void> {
+    await this.toEditor();
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: true, viewColumn: vscode.ViewColumn.Beside });
+  }
   folders(): HostFolder[] { return (vscode.workspace.workspaceFolders || []).map(folder => ({ path: folder.uri.fsPath, uri: folder.uri.toString() })); }
   trusted(): boolean { return vscode.workspace.isTrusted; }
   /** This window's extension host and its main process start the official extensions' CLIs and Hydra's terminals. */
