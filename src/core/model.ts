@@ -232,6 +232,8 @@ export type LaneClientMessage =
   | { type: 'laneCancelSwitch'; id: string }
   /** Remember the view; focus a lane or head. */
   | { type: 'view'; view: AgentsView; focus?: string };
+const laneMessages: ReadonlySet<string> = new Set(['laneNew', 'laneAttach', 'laneInput', 'laneResize', 'laneAction', 'laneLimitAction', 'laneCancelSwitch', 'view']);
+export const isLaneMessage = (message: { type: string }): message is LaneClientMessage => laneMessages.has(message.type);
 
 /** Extension to webview. A `laneReplay` replaces what the terminal shows; `laneData` appends to it. */
 export type LaneServerMessage =

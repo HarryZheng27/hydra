@@ -23,6 +23,15 @@ export interface HostSettings {
   onChange(listener: (affects: (key: string) => boolean) => void): Disposable;
 }
 
+/** Small values kept for this window's folders across restarts (the IDE's workspace state). */
+export interface HostState {
+  get<T>(key: string, fallback: T): T;
+  update(key: string, value: unknown): Promise<void>;
+}
+
+/** One choice in a list the user picks from. */
+export interface PickItem { label: string; description?: string; picked?: boolean }
+
 /** Folders Hydra reads or writes outside the user's projects. */
 export interface HostPaths {
   /** Hydra's own storage (the IDE's global storage folder): workspaces, helpers, audit, ownership locks. */
@@ -38,7 +47,14 @@ export interface Host {
   notify(level: NoticeLevel, message: string, ...actions: string[]): Promise<string | undefined>;
   /** A modal warning with one action. True only when that action was chosen. */
   confirm(message: string, action: string, detail?: string): Promise<boolean>;
+  /** A list the user picks any number of items from. Undefined when they dismissed it, so nothing should change. */
+  pickMany<T extends PickItem>(items: T[], options: { title: string; placeHolder: string }): Promise<T[] | undefined>;
+  /** Opens a text file for reading or editing; `preview: false` keeps its tab open. */
+  openFile(file: string, options: { preview: boolean }): Promise<void>;
+  /** Opens a web page in the user's browser. */
+  openUrl(url: string): Promise<void>;
   readonly settings: HostSettings;
+  readonly state: HostState;
   readonly paths: HostPaths;
   /** Sends a message to the UI (the Agents view). Dropped when no UI is open. */
   postToUi(message: unknown): Promise<void>;
