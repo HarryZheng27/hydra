@@ -871,6 +871,21 @@ export class HydraController {
 
   // ---- The window's lifecycle: ownership, heads, discovery, connections, Stop all ----
 
+  /**
+   * The window's startup in one call, for a host with nothing of its own to do in between (the Hydra app): take
+   * ownership of its repositories (an error turns Hydra off here, as in the IDE), then start heads, lanes and plans.
+   * The IDE runs these steps itself, with its handoff check between them. Limit detection and the limit offer start
+   * separately (startLimitDetection, startLimitOffer).
+   */
+  async start(): Promise<void> {
+    try { await this.acquireOwnership(); } catch (error) { this.disabled = true; this.ide.report(error); }
+    await this.startHelpers().catch(error => { this.host.log(`[heads] not started: ${describe(error)}`); });
+  }
+  /** The window's shutdown in one call: heads, lanes, plans and the endpoint stop, then ownership is released. */
+  async shutdown(): Promise<void> {
+    await this.stopHelpers().catch(error => this.ide.report(error));
+    await this.releaseOwnership();
+  }
   /** Chats in the official extensions: Claude's hook events and Codex's polled limits. Heads report through their service. */
   startLimitDetection(): void {
     if (this.ide.inHandoff() || !this.host.trusted() || this.host.remote) return;

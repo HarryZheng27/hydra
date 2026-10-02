@@ -87,9 +87,8 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   let shutDown = false;
   t.after(async () => { if (!shutDown) await controller.stopHelpers().catch(() => undefined); });
 
-  await controller.acquireOwnership();
+  await controller.start();
   assert.deepEqual(controller.repositories.length, 1, 'the fixture repository is this window\'s');
-  await controller.startHelpers();
   assert.ok(controller.helpers, `heads started (log: ${host.logs.join(' | ')})`);
   assert.ok(host.logs.some(line => line.startsWith('[heads] ready for ')));
   const records = await readdir(path.join(storage, 'helpers', 'windows'));
@@ -123,8 +122,7 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
   assert.ok(host.notices.some(notice => notice.message.startsWith('Hydra stopped')) && host.notices.some(notice => notice.message.startsWith('Hydra resumed')));
 
   // Shutting down removes the discovery record and the handshake for scripts.
-  await controller.stopHelpers();
-  await controller.releaseOwnership();
+  await controller.shutdown();
   shutDown = true;
   assert.equal(controller.helpers, undefined);
   assert.deepEqual((await readdir(path.join(storage, 'helpers', 'windows'))).filter(name => name.endsWith('.json') && !name.includes('summary')), []);
