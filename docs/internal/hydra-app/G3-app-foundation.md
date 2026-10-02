@@ -15,7 +15,7 @@ app/src/shared/ipc.ts   channel names, payload types and validators
 app/tests/, app/smoke/
 .github/workflows/app.yml
 ```
-**Identity** (`identity.ts`, one source of truth): product name "Hydra"; user data `%APPDATA%\Hydra App`; AppUserModelId `Hydra.App`; single-instance lock `hydra-app`. Nothing may resolve to the IDE's `%APPDATA%\Hydra`, except the shared storage root G5 adds on purpose.
+**Identity** (`identity.ts`, one source of truth): product name "Hydra"; user data `%APPDATA%\Hydra App`; AppUserModelId `Hydra.App`; the single-instance lock, which Electron keys on the user-data folder (G1), so set user data first, as main's first statement. Nothing may resolve to the IDE's `%APPDATA%\Hydra`, except the shared storage root G5 adds on purpose. A test proves it; G1's spike wrote into the IDE's folder before it set user data.
 
 ## Milestones (one PR each, in order)
 1. **Skeleton:** the package, build, window, identity, single instance (a second launch focuses the first), and `app.yml` on `windows-2022`. It triggers on `app/**`, `src/core/**`, `src/host/**`, `webview/**` and itself, and runs root `npm ci`, `npm ci --prefix app`, then `check`, `test`, `build` and `smoke` in `app/`.

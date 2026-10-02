@@ -5,7 +5,7 @@ A chat-first desktop app named **Hydra**, shipped beside the Hydra IDE on the sa
 **Naming:** "desktop" in this repo already means the IDE's standalone build (`desktop/`, `desktop:*`, `desktop.yml`), so docs and code say "the app" (`app/`, `app:*`) and "the IDE". On one PC the two must stay distinct:
 - **Shown names:** the app is "Hydra". The IDE becomes "Hydra IDE" through `nameLong` in `desktop/product.json`: Start menu, Apps list, desktop shortcut, window title. Its `nameShort` stays "Hydra", because it names the IDE's data folder (`%APPDATA%\Hydra`), which the installer tests guard.
 - **Shortcut handover:** an IDE release renames its shortcuts to "Hydra IDE" and deletes its old `Hydra.lnk` files before the app ships. Its uninstaller must never delete the app's `Hydra.lnk` later, since Inno's uninstall log keeps entries from earlier installs.
-- **App identity:** user data `%APPDATA%\Hydra App`, install folder `%LOCALAPPDATA%\Programs\Hydra App`, AppUserModelId `Hydra.App`, single-instance lock `hydra-app`. The IDE's are `%APPDATA%\Hydra`, `%LOCALAPPDATA%\Programs\Hydra`, `Hydra.IDE` and `hydra-ide`. Electron would default the app's user data to `%APPDATA%\Hydra`, so set it explicitly.
+- **App identity:** user data `%APPDATA%\Hydra App`, install folder `%LOCALAPPDATA%\Programs\Hydra App`, AppUserModelId `Hydra.App`. The IDE's are `%APPDATA%\Hydra`, `%LOCALAPPDATA%\Programs\Hydra` and `Hydra.IDE`. Electron would default the app's user data to `%APPDATA%\Hydra`, so set it explicitly, as main's first statement: G1's spike wrote into the IDE's folder before it did. Electron's single-instance lock takes no name; it is keyed on the user-data folder, so the app's own folder keeps it apart from the IDE's (G1). The IDE's `hydra-ide` is a Windows mutex (`win32MutexName`) for Inno's `AppMutex` check. G6 decides whether the app makes a `hydra-app` mutex the same way or relies on the Restart Manager.
 - **Installers:** `HydraSetup.exe` stays the IDE's, because installed IDEs update from that exact file. The app's is `HydraAppSetup.exe`.
 - **`hydra` command:** plan commands work with either app, since storage is shared. G6 settles which app `hydra <folder>` opens.
 
@@ -65,14 +65,18 @@ Main starts every process: chat CLIs, heads, gates, node-pty lanes, Edge for scr
 | Process | `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --session-id <uuid>`; later `--resume <id>` | `codex app-server`, JSON-RPC over stdio |
 | Turn | user message on stdin | `thread/start` or `thread/resume`, then `turn/start` |
 | Stream | stream-json events | `item/started`, `item/agentMessage/delta`, `item/completed`, `turn/completed`, `thread/tokenUsage/updated` |
-| Approvals | **Route A:** `control_request` `can_use_tool` on stdio, answered by `control_response`; used by unreleased Hydra 0.22 with `--permission-prompts host` | `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` |
-| Questions, plan approval | Route A only: `AskUserQuestion` answered through `updatedInput` answers, the shape the Agent SDK documents for `canUseTool` ([user input](https://code.claude.com/docs/en/agent-sdk/user-input)); `ExitPlanMode` allowed or denied | per G1 |
-| Stop | `interrupt` control request (heads already send it: `src/core/helperRunner.ts`) | `turn/interrupt` |
-| Model, effort | `/model`, `/effort` messages (documented headless) | turn parameters |
+| Approvals | **Route A:** `control_request` `can_use_tool` on stdio, answered by `control_response`. Needs `--permission-prompt-tool stdio`, as the Agent SDK passes it: with only `--permission-prompts host`, which unreleased Hydra 0.22 used, 2.1.282 turns every prompt into `system/permission_denied` (G1) | `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`: `accept`, `acceptForSession`, `decline` (seen live), and `cancel`. Always send `approvalsReviewer: "user"`, or a user's `auto_review` setting hides approvals from the app (G1) |
+| Questions, plan approval | `AskUserQuestion` answered through `updatedInput` answers, the shape the Agent SDK documents for `canUseTool` ([user input](https://code.claude.com/docs/en/agent-sdk/user-input)); `ExitPlanMode` allowed, or denied with feedback | none in v1: other server requests (`item/tool/requestUserInput`, elicitation) are refused |
+| Stop | `interrupt` control request (heads already send it: `src/core/helperRunner.ts`); one message can yield more than one `result` | `turn/interrupt` |
+| Model, effort | `/model`, `/effort` messages (documented headless), or the `set_model` control request | turn parameters, checked against `model/list`: Codex accepts an unknown effort |
+| Images | base64 `image` content block beside the text | `localImage` or `image` `UserInput` |
+| Sandbox | the CLI's own | threads start `read-only`: `workspace-write` on `thread/start` writes the folder into the user's `config.toml` as trusted (G1). Approved patches still apply. **Open for G4:** letting commands write. The user's `elevated` Windows sandbox failed every command from a spawned app-server, and `unelevated` refuses `workspace-write` in a git repository (G1) |
+| Processes | one per chat while it's active, ended when idle, `--resume` on the next message | one app-server per chat: `turn/interrupt` ends the turn but leaves its command running until the app-server exits (G1) |
 | Hydra tools | the IDE's user-level `hydra` MCP registration | same, in `config.toml` |
 
-- **Route B** is the documented fallback: `--permission-prompt-tool mcp__hydra__approve`. It can't carry questions or plan approval: since 2.1.199 it turns an allow for tools that need user interaction into a deny ([CLI reference](https://code.claude.com/docs/en/cli-reference)). G1 confirms route A, or falls back to B with questions handed to a terminal.
-- Regenerate Codex types for the pinned version (`codex app-server generate-ts`), as `src/core/generated/` does.
+- **Route A is chosen (G1).** Route B, `--permission-prompt-tool mcp__hydra__approve`, stays the fallback. The docs say it can't carry questions or plan approval, but on 2.1.282 it did carry both, and its tool was hidden from the model. Treat that as undocumented behaviour.
+- Regenerate Codex types for the pinned version (`codex app-server generate-ts`), as `src/core/generated/` does. 0.157.1's are in `src/core/generated/codex-0.157.1/`.
+- The live checks `scripts/app-live/claude.mjs` and `codex.mjs` drive both CLIs through these flows. Rerun them on every CLI update; G4's stand-in CLIs replay their fixtures.
 - Anything an adapter can't render is denied, never allowed by default.
 
 ## Orchestration
@@ -94,14 +98,16 @@ Cloud agents can't reach Hydra's endpoint (loopback only). Their work is checked
 - **Cloud head** (plan job `where: "cloud"`): Codex only, because it reports status and diffs. Hydra polls, applies the diff to the job's branch, then runs gates and cross-review locally before it can land. Claude cloud heads wait until its CLI reports status.
 
 ## Security for new surfaces
-- **Renderer:** context isolation, sandbox, no Node integration, strict CSP with no remote scripts, no `webview` tag, navigation blocked. External links need a confirm, then `shell.openExternal`.
+- **Renderer:** context isolation, sandbox, no Node integration, strict CSP with no remote scripts, no `webview` tag, navigation blocked. External links need a confirm, then `shell.openExternal`. The CSP G1 proved, sent as a response header from a custom `app://` scheme so workers get it too, is in [G1's result](hydra-app/G1-spikes.md#result-2026-10-02). It needs `style-src 'unsafe-inline'`, because Monaco and xterm insert `<style>` elements, and makes up for it with Trusted Types.
+- **Electron fuses:** RunAsNode stays on, since the MCP bridge, `hydra` CLI and limit hook need it. NODE_OPTIONS, `--inspect` arguments and the file protocol's extra privileges are off. Cookie encryption, embedded ASAR integrity and only-load-from-ASAR are on. Ship the bridge scripts inside `app.asar` so integrity covers them. Under RunAsNode, `--inspect` still works, which is no worse than RunAsNode itself.
+- **Codex trust:** never start a Codex thread with `workspace-write`; it writes the folder into the user's `config.toml` as trusted, which turns on that project's config, hooks and MCP servers.
 - **Untrusted output:** render model and tool output as sanitized markdown, no raw HTML. Draw approval cards only from structured requests. If G1 falls back to route B, a model-made call to `approve` must be detected and denied.
 - **IPC:** the preload exposes a fixed, typed call set; main validates every message, as `parseMessage` does today.
 - **Chat logs:** local, with a user-only access list like handshakes. The redactor covers diagnostics and evidence, not the chat.
 - **Updates:** the IDE's check (SHA256SUMS, allowed hosts) with the app's own asset. Unsigned until HR-14 is solved, like the IDE.
 
 ## Repo, build, release
-- `app/` has its own `package.json` and lockfile: Electron, Monaco, xterm, node-pty rebuilt for its Electron. esbuild bundles `../src/core`, `../src/host` and `../webview`. The root package and IDE build stay untouched.
+- `app/` has its own `package.json` and lockfile: Electron 44.x, pinned exactly (the IDE's 39 is end of life; G1), Monaco, xterm, and node-pty 1.2.0-beta.12 from its N-API prebuilds. Never rebuild node-pty: no `build_from_source`, and keep it out of electron-rebuild. Unpack `*.{node,dll,exe}` from `app.asar`. esbuild bundles `../src/core`, `../src/host` and `../webview`. The root package and IDE build stay untouched.
 - **CI:** new Windows workflow `app.yml`: typecheck, unit tests, build, and a smoke test with stand-in CLIs.
 - **Previews:** prereleases tagged `v<version>-app.<n>` with only `HydraAppSetup.exe`. `releases/latest` skips prereleases and the IDE's updater ignores suffixed versions, so IDE users keep getting the IDE. Previews don't update themselves.
 - **Stable:** versions in lockstep with the IDE. One release carries `HydraSetup.exe` and `HydraAppSetup.exe`, with one `SHA256SUMS` for both. `installerName` in `updateCheck.ts` becomes per product; `scripts/install.ps1` gains `-App`.

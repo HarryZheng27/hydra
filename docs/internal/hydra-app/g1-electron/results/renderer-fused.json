@@ -1,0 +1,72 @@
+{
+  "electron": "44.5.1",
+  "csp": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify",
+  "state": {
+    "violations": [],
+    "steps": [
+      {
+        "xterm": "opened"
+      },
+      {
+        "worker": "editorWorkerService"
+      },
+      {
+        "diffUpdated": 2
+      }
+    ],
+    "done": true,
+    "lineChanges": 2
+  },
+  "probes": {
+    "hasRequire": "undefined",
+    "hasProcess": "undefined",
+    "diffEditorDom": true,
+    "insertedLines": 7,
+    "deletedLines": 4,
+    "xtermRows": "hello from xterm.js in a sandboxed renderer\n$  ",
+    "styleElements": 5
+  },
+  "workers": [
+    {
+      "type": "worker",
+      "url": "app://hydra/editor.worker.js"
+    }
+  ],
+  "screenshot": {
+    "file": "renderer-fused.png",
+    "width": 1201,
+    "height": 753,
+    "distinctColoursSampled": 86
+  },
+  "violationCount": 0,
+  "violations": [],
+  "blockedRequests": [],
+  "consoleMessages": [],
+  "cdpLog": [],
+  "served": [
+    {
+      "rel": "blank.html",
+      "status": 200
+    },
+    {
+      "rel": "index.html",
+      "status": 200
+    },
+    {
+      "rel": "renderer.css",
+      "status": 200
+    },
+    {
+      "rel": "page.css",
+      "status": 200
+    },
+    {
+      "rel": "renderer.js",
+      "status": 200
+    },
+    {
+      "rel": "editor.worker.js",
+      "status": 200
+    }
+  ]
+}

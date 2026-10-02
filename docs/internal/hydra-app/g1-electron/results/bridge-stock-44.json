@@ -1,0 +1,88 @@
+{
+  "label": "stock-44",
+  "exe": "node_modules\\electron44\\dist\\electron.exe",
+  "script": "app\\bridge.cjs",
+  "results": [
+    {
+      "name": "plain",
+      "code": 0,
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "pong": "round-trip-ok",
+            "electron": "44.5.1",
+            "node": "24.21.0",
+            "electronModuleType": "string",
+            "nodeOptionsEnv": null,
+            "nodeOptionsApplied": false,
+            "execArgv": [],
+            "inspectorUrl": null,
+            "scriptInsideAsar": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "NODE_OPTIONS=--require preload",
+      "code": 0,
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "pong": "round-trip-ok",
+            "electron": "44.5.1",
+            "node": "24.21.0",
+            "electronModuleType": "string",
+            "nodeOptionsEnv": "--require \"<scratch>/g1/electron/node-options-preload.cjs\"",
+            "nodeOptionsApplied": true,
+            "execArgv": [],
+            "inspectorUrl": null,
+            "scriptInsideAsar": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "result": null
+        }
+      ]
+    },
+    {
+      "name": "--inspect=0 arg",
+      "code": 0,
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "pong": "round-trip-ok",
+            "electron": "44.5.1",
+            "node": "24.21.0",
+            "electronModuleType": "string",
+            "nodeOptionsEnv": null,
+            "nodeOptionsApplied": false,
+            "execArgv": [
+              "--inspect=127.0.0.1:0"
+            ],
+            "inspectorUrl": "ws://127.0.0.1:53259/33cc692c-623a-443d-a96b-0f611b56721f",
+            "scriptInsideAsar": false
+          }
+        },
+        {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "result": null
+        }
+      ],
+      "stderr": "Debugger listening on ws://127.0.0.1:53259/33cc692c-623a-443d-a96b-0f611b56721f\r | For help, see: https://nodejs.org/learn/getting-started/debugging"
+    }
+  ]
+}
