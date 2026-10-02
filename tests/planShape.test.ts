@@ -5,13 +5,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { buildPlanReport, createPlan, planFromLeadInput, PlanStore, validatePlan, type Plan, type PlanJob, type PlanLeadJobInput } from '../src/core/plans';
-import { planShape, singleHeadBrief, singleHeadDecision, singleHeadKey, singleHeadMaxAverageWidth, singleHeadOrder, singleHeadPlan } from '../src/core/planShape';
+import { planShape, singleHeadBrief, singleHeadDecision, singleHeadKey, singleHeadLimits, singleHeadMaxAverageWidth, singleHeadOrder, singleHeadPlan } from '../src/core/planShape';
 import { planHeadInput, PlanRunner } from '../src/core/planRunner';
-import { maxBriefLength, parseJobInput } from '../src/core/jobs';
+import { defaultJobLimits, maxBriefLength, parseJobInput } from '../src/core/jobs';
 
 /** Small plans run as one head (docs/Heads.md, src/core/planShape.ts). */
 const job = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, runAs: 'head', dependsOn: [], writeScope: [`src/${key}.js`], rigor: 'standard', ...extra });
-const plan = (jobs: PlanJob[], extra: Partial<Plan> = {}): Plan => ({ ...createPlan({ title: 'Checkout', brief: 'The whole checkout.' }), jobs, ...extra });
+const leadOrigin = { leadSessionId: 's', idempotencyKey: 'k' };
+const plan = (jobs: PlanJob[], extra: Partial<Plan> = {}): Plan => ({ ...createPlan({ title: 'Checkout', brief: 'The whole checkout.' }), jobs, leadOrigin, ...extra });
 
 /** A benchmark fixture's plan, built the way `hydra plan run` builds it (planFromLeadInput). */
 function fixturePlan(file: string): Plan {
@@ -66,6 +67,11 @@ test('only a plan one head could do: no lanes, one provider, no roles, nothing s
   assert.equal(singleHeadDecision(plan(chain({ attempt: 1 }))).reason, 'some of its jobs already ran');
   const long = Array.from({ length: 10 }, (_, i) => job(`j${i}`, { dependsOn: i ? [`j${i - 1}`] : [], brief: 'x'.repeat(3990) }));
   assert.equal(singleHeadDecision(plan(long)).reason, 'its briefs together are too long for one head');
+  // A head takes at most 32 write-scope paths: six jobs of six files each stay apart.
+  const many = Array.from({ length: 6 }, (_, i) => job(`m${i}`, { dependsOn: i ? [`m${i - 1}`] : [], writeScope: Array.from({ length: 6 }, (__, f) => `src/m${i}/f${f}.js`) }));
+  assert.equal(singleHeadDecision(plan(many)).reason, 'its write scopes together list more than 32 paths, more than one head takes');
+  // A plan built on the canvas runs as drawn.
+  assert.deepEqual(singleHeadDecision(plan(chain(), { leadOrigin: undefined })), { single: false, reason: 'it was made on the canvas' });
 });
 
 test('the one job: every write scope, the strictest rigor, the shared provider; the jobs as they were stay on the plan, which still validates', () => {
@@ -84,15 +90,19 @@ test('the one job: every write scope, the strictest rigor, the shared provider; 
   assert.equal(singleHeadPlan(plan([job('a', { writeScope: undefined }), job('b', { dependsOn: ['a'] })]), 'r').jobs[0]!.writeScope, undefined);
   assert.throws(() => validatePlan({ ...after, singleHead: { reason: '', jobs: after.singleHead!.jobs } }), /Invalid singleHead/);
   assert.throws(() => validatePlan({ ...after, singleHead: { reason: 'r', jobs: [job('a')] } }), /Invalid singleHead/);
-  // A board post written to an original job before the plan ran as one head still validates.
-  validatePlan({ ...after, board: [{ id: 'abcdef012345', at: new Date().toISOString(), from: { kind: 'lead' }, to: ['api'], body: 'Use the v2 schema.' }] });
+  // A post the lead wrote to one of the jobs before Run goes to the one head instead; others are kept as they were.
+  const at = new Date().toISOString();
+  const posted = singleHeadPlan({ jobs, board: [{ id: 'abcdef012345', at, from: { kind: 'lead' }, to: ['api', 'ui'], body: 'Use the v2 schema.' }, { id: 'abcdef012346', at, from: { kind: 'lead' }, to: 'all', body: 'Hi.' }] }, 'r');
+  assert.deepEqual(posted.board!.map(post => post.to), [[singleHeadKey], 'all']);
+  validatePlan({ ...before, ...posted });
 });
 
 test('the head\'s brief: why, the plan\'s brief, then each job in dependency order (plan order within a level), with its files', () => {
   const jobs = [job('docs', { dependsOn: ['api', 'ui'], writeScope: ['README.md'] }), job('ui', { dependsOn: ['core'] }), job('core'), job('api', { dependsOn: ['core'] })];
   assert.deepEqual(singleHeadOrder(jobs).map(item => item.key), ['core', 'ui', 'api', 'docs']);
-  const brief = singleHeadBrief({ title: 'Checkout', brief: 'The whole checkout.' }, jobs, 'a reason');
-  assert.ok(brief.startsWith('Hydra runs plan "Checkout" as one head, you: a reason.\n'), brief);
+  const brief = singleHeadBrief({ title: 'Checkout', brief: 'The whole checkout.' }, jobs);
+  assert.ok(brief.startsWith('Hydra runs plan "Checkout" as one head: you do all 4 of its jobs.\n'), brief);
+  assert.match(brief, /where one limits its files or leaves something to another job, that limit no longer applies/);
   assert.ok(brief.includes('\n## The plan\n\nThe whole checkout.\n'), brief);
   assert.ok(brief.includes('## Part 1 of 4: Job core (`core`)\n\nFiles: src/core.js.\n\nDo core.'), brief);
   assert.ok(brief.includes('## Part 4 of 4: Job docs (`docs`)\n\nFiles: README.md. Builds on: api, ui.\n\nDo docs.'), brief);
@@ -106,6 +116,17 @@ test('the head\'s brief: why, the plan\'s brief, then each job in dependency ord
   assert.deepEqual(parseJobInput(input).writeScope, [...new Set(discounts.jobs.flatMap(item => item.writeScope!))]);
   // A plan that didn't run as one head: the job's own brief, as before.
   assert.equal(planHeadInput(discounts, discounts.jobs[0]!, []).brief, discounts.jobs[0]!.brief);
+  // A brief the lead gave the one job since (a retry or an edit) follows the jobs' briefs instead of being dropped.
+  const retried = planHeadInput(collapsed, { ...collapsed.jobs[0]!, brief: 'Keep the rounding in cents.', attempt: 1 }, []).brief as string;
+  assert.ok(retried.endsWith('\n\n## From the lead, for this try\n\nKeep the rounding in cents.'), retried.slice(-200));
+  assert.ok(!(input.brief as string).includes('From the lead'), 'the stored placeholder isn\'t repeated');
+  // Limits: given your per-head defaults, the jobs' worth together, capped by parseJobInput.
+  const limited = planHeadInput(collapsed, collapsed.jobs[0]!, [], defaultJobLimits);
+  assert.deepEqual(limited.limits, { wall_clock_minutes: 180, max_turns: 360, max_budget_usd: 30 });
+  assert.deepEqual(parseJobInput(limited).limits, { wallClockMs: 180 * 60_000, maxTurns: 360, maxBudgetUsd: 30 });
+  assert.deepEqual(parseJobInput(planHeadInput(collapsed, collapsed.jobs[0]!, [], { wallClockMs: 60 * 60_000, maxTurns: 200, maxBudgetUsd: 25 })).limits, { wallClockMs: 4 * 3600_000, maxTurns: 500, maxBudgetUsd: 100 });
+  assert.equal(planHeadInput(discounts, discounts.jobs[0]!, [], defaultJobLimits).limits, undefined, 'a job of a split plan keeps the defaults');
+  assert.deepEqual(singleHeadLimits(defaultJobLimits, 2), { wall_clock_minutes: 60, max_turns: 120, max_budget_usd: 10 });
 });
 
 test('the report says the plan ran as one head, and why', () => {
@@ -118,7 +139,7 @@ async function runnerFixture(jobs: PlanJob[], singleHead: (() => boolean) | unde
   const directory = await mkdtemp(path.join(tmpdir(), 'hydra-plan-shape-'));
   const store = new PlanStore(directory);
   await store.load();
-  const saved = await store.save({ ...createPlan({ title: 'Discounts', brief: 'Add discounts.' }), jobs });
+  const saved = await store.save({ ...createPlan({ title: 'Discounts', brief: 'Add discounts.' }), jobs, leadOrigin });
   const started: { key: string; brief: string }[] = [];
   const logs: string[] = [];
   let counter = 0;

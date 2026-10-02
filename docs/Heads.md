@@ -281,8 +281,8 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
 
 **Small plans run as one head.** Each job costs a worktree, its own gates and a landing. When most of a plan's jobs wait on each other, that overhead buys little parallel work, so the first time such a plan runs, Hydra runs it as one head instead:
 - **When:** the plan's jobs form a dependency chain, and on average fewer than 2.5 of them could run at once (its job count over its longest chain). For example, 6 jobs in a chain of 3 runs as one head. 10 jobs in a chain of 3, or 8 jobs that all feed one final job, still run one head per job.
-- **Only plans one head could do:** every job a head, one provider, no pack roles, nothing started yet. Lane jobs, auto-dispatch and retried plans always run as they are.
-- **What the head gets:** the plan's brief, then every job's own brief in dependency order, with all their write scopes and the strictest rigor among them. The plan then shows one job, `whole-plan`. The same integration gate, review and fix rounds follow.
+- **Only plans one head could do:** a lead's plan (or `hydra plan run`'s), every job a head, one provider, no pack roles, nothing started yet, and at most 32 write-scope paths together. Plans you build on the canvas, lane jobs, auto-dispatch and retried plans always run as they are.
+- **What the head gets:** the plan's brief, then every job's own brief in dependency order, with all their write scopes and the strictest rigor among them. It also gets your per-head time, turn and budget defaults times the number of jobs, up to a head's caps (4 hours, 500 turns, $100). The plan then shows one job, `whole-plan`. Board posts addressed to the old jobs go to it, and a brief the lead gives it on a retry follows the jobs' briefs. The same integration gate, review and fix rounds follow.
 - **Said plainly:** the plan's report and `hydra_plan_get` (`mode: "single-head"`, `mode_reason`, `single_head_jobs`) say it ran as one head, and why. Hydra's output log records the decision for every plan, either way.
 - **Off switch:** turn off `hydra.plans.singleHeadForSmallPlans` to always run one head per job.
 

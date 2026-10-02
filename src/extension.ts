@@ -1583,7 +1583,9 @@ class Manager {
       // A plan's heads group under its lead `plan-<id>`; a retried head gets a new idempotency key.
       // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then hydra.defaultProvider.
       startHead: async (plan, job, dependsOn, inputs, start) => {
-        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
+        const config = vscode.workspace.getConfiguration('hydra');
+        const headDefaults = resolveHeadDefaults({ minutes: config.get<number>('heads.defaultMinutes'), maxTurns: config.get<number>('heads.defaultMaxTurns'), budgetUsd: config.get<number>('heads.defaultBudgetUsd') });
+        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
         return { jobId: result.job_id };
       },
       startLane: (plan, job, start) => this.lanes.startPlanLane(plan, job, start, defaultProvider()),

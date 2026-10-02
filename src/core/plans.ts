@@ -576,8 +576,7 @@ export function validatePlan(plan: Plan): void {
     if (!single || typeof single !== 'object' || !trimmed(single.reason) || single.reason.length > singleHeadReasonMax || !Array.isArray(single.jobs) || single.jobs.length < 2) throw new Error('Invalid singleHead.');
     validatePlanJobs(single.jobs);
   }
-  // A post written to a job before its plan ran as one head still names a job the plan had.
-  if (plan.board !== undefined) validateBoard(plan.board, new Set([...plan.jobs, ...plan.singleHead?.jobs ?? []].map(job => job.key)));
+  if (plan.board !== undefined) validateBoard(plan.board, new Set(plan.jobs.map(job => job.key)));
   if (plan.amendments !== undefined) validateAmendments(plan.amendments);
   if (plan.unattended !== undefined) validateBudget(plan.unattended);
   if (plan.startedAt !== undefined && !isTime(plan.startedAt)) throw new Error('Invalid startedAt.');

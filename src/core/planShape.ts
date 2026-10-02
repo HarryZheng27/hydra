@@ -2,7 +2,7 @@
 // worktree, its own gates and a landing on the integration branch; on a small or tightly coupled plan that
 // overhead buys no parallel work. Hydra notices that from the plan's shape when it first runs, and runs the
 // whole plan as one head with every job's write scope, then the same integration gate and review.
-import { maxBriefLength } from './jobs';
+import { maxBriefLength, type JobLimits } from './jobs';
 import type { PlanRigor } from './gates/config';
 import type { Plan, PlanJob } from './plans';
 
@@ -15,6 +15,10 @@ export const singleHeadKey = 'whole-plan';
  * cli-toolkit (9 over 2: 4.5) don't.
  */
 export const singleHeadMaxAverageWidth = 2.5;
+/** A head's write scope lists at most this many paths (parseWriteScope). */
+export const singleHeadMaxScope = 32;
+/** Room left in the head's brief for what a later try adds (a landing conflict's section, a lead's retry brief). */
+const briefMargin = 4000;
 
 export interface PlanShape {
   jobs: number;
@@ -65,7 +69,7 @@ const rigorRank: Record<PlanRigor, number> = { quick: 0, standard: 1, strict: 2 
 const round = (value: number) => (Math.round(value * 10) / 10).toFixed(1);
 
 /** One head's whole brief for a plan run as one head: the plan, then each job in order (pure). */
-export function singleHeadBrief(plan: Pick<Plan, 'title' | 'brief'>, jobs: readonly PlanJob[], reason: string): string {
+export function singleHeadBrief(plan: Pick<Plan, 'title' | 'brief'>, jobs: readonly PlanJob[]): string {
   const ordered = singleHeadOrder(jobs);
   const parts = ordered.map((job, index) => [
     `## Part ${index + 1} of ${ordered.length}: ${job.title} (\`${job.key}\`)`,
@@ -75,8 +79,8 @@ export function singleHeadBrief(plan: Pick<Plan, 'title' | 'brief'>, jobs: reado
     job.brief.trim(),
   ].join('\n'));
   return [
-    `Hydra runs plan "${plan.title}" as one head, you: ${reason}.`,
-    `Do every part below yourself, in this order, in this one worktree. Where a part's brief mentions another job, that job is one of these parts, so you build both sides of it. Your write scope is every part's files together. Run the project's tests before you finish.`,
+    `Hydra runs plan "${plan.title}" as one head: you do all ${ordered.length} of its jobs.`,
+    `Do every part below yourself, in this order, in this one worktree. Each part was written as a separate job: where one mentions another job, that job is one of these parts, so you build both sides of it, and where one limits its files or leaves something to another job, that limit no longer applies. Your write scope is every part's files together. Run the project's tests before you finish.`,
     ...(plan.brief?.trim() ? ['', '## The plan', '', plan.brief.trim()] : []),
     '',
     ...parts.flatMap(part => [part, '']),
@@ -91,8 +95,10 @@ export type SingleHeadDecision = { single: true; reason: string } | { single: fa
  * runs as one head when its jobs form a dependency chain (more than one level) and, on average, fewer than
  * singleHeadMaxAverageWidth of them could run at once.
  */
-export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' | 'dispatch'>): SingleHeadDecision {
+export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' | 'dispatch' | 'leadOrigin'>): SingleHeadDecision {
   const jobs = plan.jobs;
+  // A plan you built on the canvas runs as you drew it; only a lead's (or `hydra plan run`'s) plan is reshaped.
+  if (!plan.leadOrigin) return { single: false, reason: 'it was made on the canvas' };
   if (jobs.length < 2) return { single: false, reason: 'it has one job' };
   if (plan.dispatch || jobs.some(job => (job.runAs ?? 'head') !== 'head')) return { single: false, reason: 'it has lane jobs' };
   if (jobs.some(job => job.role)) return { single: false, reason: 'its jobs have pack roles' };
@@ -103,7 +109,8 @@ export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' |
   const shapeText = `${shape.jobs} jobs in a dependency chain of ${shape.depth}, about ${round(shape.averageWidth)} at once on average`;
   if (shape.averageWidth >= singleHeadMaxAverageWidth) return { single: false, reason: `${shapeText} (${singleHeadMaxAverageWidth} or more runs them apart)` };
   const reason = `${shapeText} (under ${singleHeadMaxAverageWidth}), so running them apart would cost a worktree, gates and a landing per job for little parallel work`;
-  if (singleHeadBrief(plan, jobs, reason).length > maxBriefLength) return { single: false, reason: 'its briefs together are too long for one head' };
+  if (singleHeadBrief(plan, jobs).length > maxBriefLength - briefMargin) return { single: false, reason: 'its briefs together are too long for one head' };
+  if (jobs.every(job => job.writeScope?.length) && new Set(jobs.flatMap(job => job.writeScope!)).size > singleHeadMaxScope) return { single: false, reason: `its write scopes together list more than ${singleHeadMaxScope} paths, more than one head takes` };
   return { single: true, reason };
 }
 
@@ -112,7 +119,7 @@ export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' |
  * any job had none), the strictest rigor, and the shared provider. The jobs as they were stay on the plan
  * (`singleHead.jobs`): the head's brief is built from them when it starts (planHeadInput), and the report lists them.
  */
-export function singleHeadPlan(plan: Pick<Plan, 'jobs'>, reason: string): Pick<Plan, 'jobs' | 'singleHead'> {
+export function singleHeadPlan(plan: Pick<Plan, 'jobs' | 'board'>, reason: string): Pick<Plan, 'jobs' | 'singleHead' | 'board'> {
   const jobs = plan.jobs.map(({ draft: _draft, ...job }) => job);
   const scopes = jobs.every(job => job.writeScope?.length) ? [...new Set(jobs.flatMap(job => job.writeScope!))] : undefined;
   const rigors = jobs.map(job => job.rigor).filter((rigor): rigor is PlanRigor => !!rigor);
@@ -121,8 +128,35 @@ export function singleHeadPlan(plan: Pick<Plan, 'jobs'>, reason: string): Pick<P
   const order = singleHeadOrder(jobs).map(job => job.key);
   const whole: PlanJob = {
     key: singleHeadKey, title: `All ${jobs.length} jobs, as one head`, runAs: 'head', dependsOn: [],
-    brief: `Every job of this plan, done by one head in this order: ${order.join(', ')}. Hydra gives the head each job's own brief when it starts.`,
+    brief: singleHeadPlaceholder(order),
     ...(scopes ? { writeScope: scopes } : {}), ...(rigor ? { rigor } : {}), ...(provider ? { provider } : {}),
   };
-  return { jobs: [whole], singleHead: { reason, jobs } };
+  // A post the lead addressed to one of the jobs now goes to the head doing it.
+  const keys = new Set(jobs.map(job => job.key));
+  const board = plan.board?.map(post => post.to === 'all' || !post.to.some(key => keys.has(key)) ? post : { ...post, to: [...new Set(post.to.map(key => keys.has(key) ? singleHeadKey : key))] });
+  return { jobs: [whole], singleHead: { reason, jobs }, ...(board ? { board } : {}) };
+}
+
+/** The one job's stored brief (pure): short, since the head's real brief is built from the jobs when it starts. */
+export const singleHeadPlaceholder = (order: readonly string[]): string =>
+  `Every job of this plan, done by one head in this order: ${order.join(', ')}. Hydra gives the head each job's own brief when it starts.`;
+
+/**
+ * The one head's whole brief (pure): the plan and every job's brief, then a brief the lead gave the job itself
+ * since (hydra_plan_amend's edit or retry), which would otherwise be lost.
+ */
+export function singleHeadJobBrief(plan: Pick<Plan, 'title' | 'brief' | 'singleHead'>, job: Pick<PlanJob, 'brief'>): string {
+  const single = plan.singleHead!;
+  const own = singleHeadBrief(plan, single.jobs);
+  const placeholder = singleHeadPlaceholder(singleHeadOrder(single.jobs).map(item => item.key));
+  return job.brief.trim() && job.brief.trim() !== placeholder ? `${own}\n\n## From the lead, for this try\n\n${job.brief.trim()}` : own;
+}
+
+/**
+ * The one head's limits (pure): your per-head defaults times the number of jobs it does, as the jobs would have had
+ * together. parseJobInput caps them (4 hours, 500 turns, $100).
+ */
+export function singleHeadLimits(defaults: JobLimits, jobCount: number): { wall_clock_minutes: number; max_turns: number; max_budget_usd: number } {
+  const times = Math.max(1, jobCount);
+  return { wall_clock_minutes: Math.round(defaults.wallClockMs / 60_000) * times, max_turns: defaults.maxTurns * times, max_budget_usd: Math.round(defaults.maxBudgetUsd * times * 100) / 100 };
 }

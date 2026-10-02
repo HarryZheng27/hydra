@@ -1,11 +1,11 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
-import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobState } from './jobs';
+import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobLimits, JobState } from './jobs';
 import {
   applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
   newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, type IntegrationGateRecord, type PlanIntegration,
 } from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
-import { singleHeadBrief, singleHeadDecision, singleHeadKey, singleHeadPlan } from './planShape';
+import { singleHeadDecision, singleHeadJobBrief, singleHeadKey, singleHeadLimits, singleHeadPlan } from './planShape';
 import type { StopSwitch } from './stopSwitch';
 import {
   applyPlanAmendment, cycleMessage, findCycle, jobRunAs, jobStarted, planOutcomeReasonMax, planResultFilesMax, planResultNoteMax, topologicalOrder,
@@ -248,9 +248,11 @@ export const planHeadKey = (plan: Pick<Plan, 'id'>, job: Pick<PlanJob, 'key' | '
  * What a plan's head job starts with (`hydra_start_head`'s input). A job with no write scope, such as
  * one added by hand, may change the whole repository: `"."` (an empty entry is refused).
  */
-export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> & Partial<Pick<Plan, 'brief' | 'singleHead'>>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[]): Record<string, unknown> {
-  // A plan run as one head (src/core/planShape.ts): its one job's head gets the plan and every job's own brief.
-  const own = plan.singleHead && job.key === singleHeadKey ? singleHeadBrief(plan, plan.singleHead.jobs, plan.singleHead.reason) : job.brief;
+export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> & Partial<Pick<Plan, 'brief' | 'singleHead'>>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[], headDefaults?: JobLimits): Record<string, unknown> {
+  // A plan run as one head (src/core/planShape.ts): its one job's head gets the plan and every job's own brief,
+  // and, given your per-head defaults, as much time, turns and budget as its jobs would have had together.
+  const single = plan.singleHead && job.key === singleHeadKey ? plan.singleHead : undefined;
+  const own = single ? singleHeadJobBrief({ ...plan, singleHead: single }, job) : job.brief;
   // O3: a try re-queued after a conflict on the integration branch hears which files, and that its old work was carried over.
   const brief = plan.integration && job.conflict ? `${own}\n\n${conflictSection(job.conflict, plan.integration.branch)}` : own;
   return {
@@ -261,6 +263,7 @@ export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> &
     // adds nothing beyond the project's own gates, exactly as it always has.
     ...(job.rigor ? { rigor: job.rigor } : {}),
     depends_on: dependsOn, lead_label: `Plan · ${plan.title}`.slice(0, 60),
+    ...(single && headDefaults ? { limits: singleHeadLimits(headDefaults, single.jobs.length) } : {}),
   };
 }
 
