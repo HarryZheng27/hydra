@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import { testMcpServer, type McpServerSpec } from '../../core/mcpServers';
 import { resolvePlaceholders } from '../../core/packs/format';
 import { leadFolder } from '../leadFolder';
@@ -21,7 +20,7 @@ const guideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md#pack
 
 async function postState(ctx: SettingsContext): Promise<void> {
   try {
-    const root = await leadFolder();
+    const root = await leadFolder(ctx.host);
     const { packs } = await ctx.packs.state(root);
     const cards = packs
       .slice()
@@ -255,7 +254,7 @@ export const packsPage: SettingsPage = {
       case 'packsSetEnabled': {
         const id = String(message.id), on = !!message.on;
         try {
-          await vscode.commands.executeCommand('hydra.packs.setEnabled', undefined, id, on);
+          await ctx.host.command('hydra.packs.setEnabled', undefined, id, on);
           await ctx.post({ type: 'status', text: on ? `Turned on the ${id} pack.` : `Turned off the ${id} pack.` });
         } catch (error) { await ctx.post({ type: 'status', error: true, text: error instanceof Error ? error.message : String(error) }); }
         await postState(ctx);
@@ -264,17 +263,17 @@ export const packsPage: SettingsPage = {
       case 'packsSkipGate': {
         const id = String(message.id), gate = String(message.gate), skip = !!message.skip;
         try {
-          await vscode.commands.executeCommand('hydra.packs.skipGate', undefined, id, gate, skip);
+          await ctx.host.command('hydra.packs.skipGate', undefined, id, gate, skip);
           await ctx.post({ type: 'status', text: skip ? `Skipped "${gate}" in this project.` : `"${gate}" runs again in this project.` });
         } catch (error) { await ctx.post({ type: 'status', error: true, text: error instanceof Error ? error.message : String(error) }); }
         await postState(ctx);
         return true;
       }
       case 'packsAddFolder': {
-        const picked = await vscode.window.showOpenDialog({ canSelectFiles: false, canSelectFolders: true, canSelectMany: false, title: 'Add pack from folder' });
-        if (picked?.[0]) {
+        const picked = await ctx.host.pickFolder('Add pack from folder');
+        if (picked) {
           try {
-            await vscode.commands.executeCommand('hydra.packs.addFolder', picked[0].fsPath);
+            await ctx.host.command('hydra.packs.addFolder', picked);
             await ctx.post({ type: 'status', text: 'Added the pack. Reload to see it.' });
           } catch (error) { await ctx.post({ type: 'status', error: true, text: error instanceof Error ? error.message : String(error) }); }
         }
@@ -282,23 +281,23 @@ export const packsPage: SettingsPage = {
         return true;
       }
       case 'packsOpenFolder': {
-        try { await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(await ctx.packs.userFolder())); }
+        try { await ctx.host.revealInOS(await ctx.packs.userFolder()); }
         catch (error) { await ctx.post({ type: 'status', error: true, text: error instanceof Error ? error.message : String(error) }); }
         return true;
       }
       case 'packsReload':
-        try { await vscode.commands.executeCommand('hydra.packs.reload'); } catch { /* still refresh the page below */ }
+        try { await ctx.host.command('hydra.packs.reload'); } catch { /* still refresh the page below */ }
         await postState(ctx);
         return true;
       case 'packsOpenGuide':
-        await vscode.env.openExternal(vscode.Uri.parse(guideUrl));
+        await ctx.host.openUrl(guideUrl);
         return true;
       // ---- The review panel's own button: turnOn (allow, then setEnabled) is called directly here, ----
       // ---- never through a public command (docs/internal/Packs_Plan.md, section 4; "Security rules" above). ----
       case 'packsTurnOn': {
         const id = String(message.id), hash = String(message.hash ?? '');
         try {
-          const root = await leadFolder();
+          const root = await leadFolder(ctx.host);
           await ctx.packs.turnOn(root, id, hash);
           await ctx.post({ type: 'status', text: savedNote });
           await ctx.post({ type: 'packsTurnOnDone', id });
@@ -310,7 +309,7 @@ export const packsPage: SettingsPage = {
         const id = String(message.id), serverId = String(message.server), token = String(message.token ?? '');
         let result;
         try {
-          const root = await leadFolder();
+          const root = await leadFolder(ctx.host);
           const { packs: found } = await ctx.packs.state(root);
           const pack = found.find(candidate => candidate.id === id);
           const spec = pack?.pack?.valid?.manifest.mcpServers[serverId];

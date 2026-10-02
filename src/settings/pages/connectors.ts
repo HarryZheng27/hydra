@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import type { WrittenEntries } from '../../core/helperRegistration';
 import { handleConnectionsMessage, type ProviderConnectionView } from '../../helperConnectionsView';
 import type { SettingsContext, SettingsPage } from '../types';
@@ -109,57 +108,57 @@ export const connectorsPage: SettingsPage = {
   });
   `,
   async onReady(ctx: SettingsContext): Promise<void> {
-    await handleConnectionsMessage({ type: 'connections' }, value => ctx.post(value));
-    const entries = await vscode.commands.executeCommand<WrittenEntries>('hydra.helperWrittenEntries');
+    await handleConnectionsMessage({ type: 'connections' }, value => ctx.post(value), (id, ...args) => ctx.host.command(id, ...args) as never);
+    const entries = await ctx.host.command<WrittenEntries>('hydra.helperWrittenEntries');
     await ctx.post({ type: 'writtenEntries', entries });
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
     if (message.type === 'claudeMemEnabled') {
-      const config = vscode.workspace.getConfiguration('hydra');
+      const config = ctx.host.settings;
       if (message.value === true) {
-        const choice = await vscode.window.showWarningMessage(
+        const choice = await ctx.host.ask('warning',
           "Install Bun and the claude-mem plugin for Claude Code? They're third-party tools, installed into your user profile.",
-          { modal: true }, 'Install',
+          undefined, 'Install',
         );
         if (choice !== 'Install') {
-          const connections = await vscode.commands.executeCommand<ProviderConnectionView[]>('hydra.helperConnections');
+          const connections = await ctx.host.command<ProviderConnectionView[]>('hydra.helperConnections');
           await ctx.post({ type: 'connections', connections });
           return true;
         }
-        await config.update('claudeMem.enabled', true, vscode.ConfigurationTarget.Global);
+        await config.update('claudeMem.enabled', true);
         try {
-          const result = await vscode.commands.executeCommand<{ installed: string[] }>('hydra.repairClaudeMem');
+          const result = await ctx.host.command<{ installed: string[] }>('hydra.repairClaudeMem');
           await ctx.post({ type: 'status', text: result.installed.length ? `Set up claude-mem: installed ${result.installed.join(' and ')}.` : 'claude-mem is already set up.' });
         } catch (error) {
           await ctx.post({ type: 'status', text: `Turned on Memory, but claude-mem could not be set up: ${error instanceof Error ? error.message : String(error)}` });
         }
       } else {
-        await config.update('claudeMem.enabled', false, vscode.ConfigurationTarget.Global);
+        await config.update('claudeMem.enabled', false);
         await ctx.post({ type: 'status', text: "Hydra won't set it up or repair it; anything already installed stays." });
       }
-      const connections = await vscode.commands.executeCommand<ProviderConnectionView[]>('hydra.helperConnections');
+      const connections = await ctx.host.command<ProviderConnectionView[]>('hydra.helperConnections');
       await ctx.post({ type: 'connections', connections });
       return true;
     }
     if (message.type === 'repairClaudeMem') {
       try {
-        const result = await vscode.commands.executeCommand<{ installed: string[] }>('hydra.repairClaudeMem');
+        const result = await ctx.host.command<{ installed: string[] }>('hydra.repairClaudeMem');
         await ctx.post({ type: 'status', text: result.installed.length ? `Repaired claude-mem: set up ${result.installed.join(' and ')}.` : 'claude-mem is already set up.' });
       } catch (error) {
         await ctx.post({ type: 'status', text: `Could not repair claude-mem: ${error instanceof Error ? error.message : String(error)}` });
       }
-      const connections = await vscode.commands.executeCommand<ProviderConnectionView[]>('hydra.helperConnections');
+      const connections = await ctx.host.command<ProviderConnectionView[]>('hydra.helperConnections');
       await ctx.post({ type: 'connections', connections });
       return true;
     }
     if (message.type === 'writtenEntries') {
-      const entries = await vscode.commands.executeCommand<WrittenEntries>('hydra.helperWrittenEntries');
+      const entries = await ctx.host.command<WrittenEntries>('hydra.helperWrittenEntries');
       await ctx.post({ type: 'writtenEntries', entries });
       return true;
     }
-    const handled = await handleConnectionsMessage(message, value => ctx.post(value));
+    const handled = await handleConnectionsMessage(message, value => ctx.post(value), (id, ...args) => ctx.host.command(id, ...args) as never);
     if (handled && (message.type === 'connectHelpers' || message.type === 'disconnectHelpers')) {
-      const entries = await vscode.commands.executeCommand<WrittenEntries>('hydra.helperWrittenEntries');
+      const entries = await ctx.host.command<WrittenEntries>('hydra.helperWrittenEntries');
       await ctx.post({ type: 'writtenEntries', entries });
     }
     return handled;

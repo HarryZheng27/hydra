@@ -1,9 +1,8 @@
-import * as vscode from 'vscode';
 import { randomBytes } from 'node:crypto';
-import type { SettingsImport } from '../extensionImport';
 import type { PackService } from '../core/packs/service';
+import type { Host } from '../host/host';
 import { settingsStyles } from './styles';
-import type { SettingsContext, SettingsPage } from './types';
+import type { SettingsContext, SettingsImports, SettingsPage } from './types';
 import { settingsPages } from './pages';
 
 /**
@@ -12,90 +11,73 @@ import { settingsPages } from './pages';
  * html/script/handle; this shell composes the nav, search index, appearance
  * (shared with onboarding via setAppearance), and message routing.
  *
- * Exported as AppearanceSettings for extension.ts and extensionOnboarding.ts,
- * which only use the appearance methods and .show()/.dispose().
+ * It reaches its program only through Host (docs/internal/hydra-app/G2-host-split.md), so the IDE
+ * (src/extensionSettings.ts, in a webview panel) and the Hydra app render the same pages. `attach`
+ * names where messages for the open Settings view go; without one, nothing is shown.
  */
-export class AppearanceSettings implements vscode.Disposable {
-  private panel?: vscode.WebviewPanel;
-  private readonly subscription: vscode.Disposable;
-  private readonly pages: SettingsPage[] = settingsPages;
-  constructor(private readonly context: vscode.ExtensionContext, private readonly imports: SettingsImport, private readonly packs: PackService) {
-    this.subscription = vscode.window.onDidChangeActiveColorTheme(() => this.publishAppearance());
-  }
-  show(pageId?: string): void {
-    if (this.panel) {
-      this.panel.reveal();
-      if (pageId) void this.panel.webview.postMessage({ type: 'showPage', id: pageId });
-      return;
-    }
-    const panel = vscode.window.createWebviewPanel('hydra.settings', 'Hydra Settings', vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
-    this.panel = panel;
-    panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, 'hydra-logo.png');
-    panel.webview.html = this.html();
-    panel.onDidDispose(() => { if (this.panel === panel) this.panel = undefined; });
-    panel.webview.onDidReceiveMessage(async (message: unknown) => {
-      try {
-        if (!message || typeof message !== 'object') throw new Error('Invalid settings action.');
-        const action = message as Record<string, unknown>;
-        if (action.type === 'ready') {
-          this.publishAppearance();
-          for (const page of this.pages) await page.onReady?.(this.pageContext(panel));
-          if (pageId) await panel.webview.postMessage({ type: 'showPage', id: pageId });
-          return;
-        }
-        if (action.type === 'appearance') {
-          if (!['dark', 'light'].includes(String(action.mode))) throw new Error('Unknown appearance choice.');
-          await this.setAppearance(action.mode as 'dark' | 'light');
-          return;
-        }
-        for (const page of this.pages) {
-          if (await page.handle?.(action, this.pageContext(panel))) return;
-        }
-        throw new Error('Unknown settings action.');
-      } catch (error) {
-        await panel.webview.postMessage({ type: 'error', text: error instanceof Error ? error.message : 'Could not complete that action.' });
+export class SettingsShell {
+  private post?: (message: unknown) => Thenable<boolean>;
+  readonly pages: SettingsPage[] = settingsPages;
+  constructor(private readonly host: Host, private readonly imports: SettingsImports, private readonly packs: PackService) {}
+  /** The open Settings view's messages go to `post` from now on, until detach. */
+  attach(post: (message: unknown) => Thenable<boolean>): void { this.post = post; }
+  detach(post: (message: unknown) => Thenable<boolean>): void { if (this.post === post) this.post = undefined; }
+  /** One message from the Settings view. `post` answers that view; `pageId` is the page it was opened on. */
+  async receive(message: unknown, post: (message: unknown) => Thenable<boolean>, pageId?: string): Promise<void> {
+    try {
+      if (!message || typeof message !== 'object') throw new Error('Invalid settings action.');
+      const action = message as Record<string, unknown>;
+      if (action.type === 'ready') {
+        this.publishAppearance();
+        for (const page of this.pages) await page.onReady?.(this.context(post));
+        if (pageId) await post({ type: 'showPage', id: pageId });
+        return;
       }
-    });
+      if (action.type === 'appearance') {
+        if (!['dark', 'light'].includes(String(action.mode))) throw new Error('Unknown appearance choice.');
+        await this.setAppearance(action.mode as 'dark' | 'light');
+        return;
+      }
+      for (const page of this.pages) {
+        if (await page.handle?.(action, this.context(post))) return;
+      }
+      throw new Error('Unknown settings action.');
+    } catch (error) {
+      await post({ type: 'error', text: error instanceof Error ? error.message : 'Could not complete that action.' });
+    }
   }
-  /** Re-post some pages' state to an open Settings panel, when something outside it changed (a packs folder or packs.json edit). */
+  /** Re-post some pages' state to an open Settings view, when something outside it changed (a packs folder or packs.json edit). */
   async refreshPages(ids: readonly string[]): Promise<void> {
-    const panel = this.panel;
-    if (!panel) return;
-    for (const page of this.pages) if (ids.includes(page.id)) await page.onReady?.(this.pageContext(panel));
+    const post = this.post;
+    if (!post) return;
+    for (const page of this.pages) if (ids.includes(page.id)) await page.onReady?.(this.context(post));
   }
-  private pageContext(panel: vscode.WebviewPanel): SettingsContext {
-    return {
-      extensionUri: this.context.extensionUri,
-      imports: this.imports,
-      globalState: this.context.globalState,
-      post: value => panel.webview.postMessage(value),
-      packs: this.packs,
-    };
+  private context(post: (message: unknown) => Thenable<boolean>): SettingsContext {
+    return { host: this.host, imports: this.imports, post, packs: this.packs };
   }
   async setAppearance(mode: 'dark' | 'light'): Promise<void> {
     if (mode !== 'dark' && mode !== 'light') throw new Error('Unknown appearance choice.');
     const theme = mode === 'dark' ? 'Hydra Dark' : 'Hydra Light';
-    const workbench = vscode.workspace.getConfiguration('workbench');
+    const workbench = this.host.section('workbench');
     const configured = workbench.inspect<string>('colorTheme');
-    const automatic = vscode.workspace.getConfiguration('window').inspect<boolean>('autoDetectColorScheme');
+    const automatic = this.host.section('window').inspect<boolean>('autoDetectColorScheme');
     if (configured?.workspaceValue !== undefined || configured?.workspaceFolderValue !== undefined || automatic?.workspaceValue !== undefined || automatic?.workspaceFolderValue !== undefined) {
       throw new Error('This workspace overrides appearance. Change its theme in the editor settings before using a user-wide Hydra appearance choice.');
     }
     // Only an explicit appearance click changes the user's native workbench theme.
-    await workbench.update('colorTheme', theme, vscode.ConfigurationTarget.Global);
-    await vscode.workspace.getConfiguration('window').update('autoDetectColorScheme', false, vscode.ConfigurationTarget.Global);
+    await workbench.update('colorTheme', theme);
+    await this.host.section('window').update('autoDetectColorScheme', false);
     this.publishAppearance(`Applied ${theme}.`);
   }
-  private publishAppearance(status = ''): void {
-    const kind = vscode.window.activeColorTheme.kind;
-    void this.panel?.webview.postMessage({ type: 'appearance', mode: kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? 'light' : 'dark', status });
-    if (status) void this.panel?.webview.postMessage({ type: 'status', text: status });
+  publishAppearance(status = ''): void {
+    void this.post?.({ type: 'appearance', mode: this.host.colorTheme(), status });
+    if (status) void this.post?.({ type: 'status', text: status });
   }
-  private html(): string {
+  html(): string {
     const nonce = randomBytes(24).toString('base64');
     const searchIcon = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10" y1="10" x2="14" y2="14"/></svg>';
     const navItems = this.pages.map(page => `<li><button class="nav-item" role="link" data-page="${page.id}" aria-current="false">${page.title}</button></li>`).join('');
-    const sections = this.pages.map(page => `<section class="page" data-page="${page.id}" hidden>${page.html(this.pageContext0())}</section>`).join('');
+    const sections = this.pages.map(page => `<section class="page" data-page="${page.id}" hidden>${page.html(this.context(() => Promise.resolve(true)))}</section>`).join('');
     const pageIndex = JSON.stringify(this.pages.map(page => ({ id: page.id, title: page.title, rows: page.rows })));
     const pageScripts = this.pages.map(page => page.script || '').join('\n');
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -114,7 +96,8 @@ export class AppearanceSettings implements vscode.Disposable {
       </div>
       <p id="status" role="status" aria-live="polite"></p>
       <script nonce="${nonce}">
-        const vscode = acquireVsCodeApi();
+        // The Hydra app injects window.hydraBridge before this runs; the IDE's webview has VS Code's own API.
+        const vscode = window.hydraBridge ?? acquireVsCodeApi();
         const status = document.getElementById('status');
         function send(message) { status.textContent = 'Working…'; vscode.postMessage(message); }
         const pageIndex = ${pageIndex};
@@ -161,9 +144,4 @@ export class AppearanceSettings implements vscode.Disposable {
         vscode.postMessage({type:'ready'});
       </script></body></html>`;
   }
-  /** Page html() only needs extensionUri/imports today (rows are static); webview posts happen on 'ready'. */
-  private pageContext0(): SettingsContext {
-    return { extensionUri: this.context.extensionUri, imports: this.imports, globalState: this.context.globalState, post: () => Promise.resolve(true), packs: this.packs };
-  }
-  dispose(): void { this.subscription.dispose(); this.panel?.dispose(); }
 }

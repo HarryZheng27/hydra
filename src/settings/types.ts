@@ -1,6 +1,6 @@
-import type * as vscode from 'vscode';
-import type { SettingsImport } from '../extensionImport';
+import type { ImportCategory } from '../core/profileImport';
 import type { PackService } from '../core/packs/service';
+import type { Host } from '../host/host';
 
 /** One row's search text: title and description shown left of a row's control. */
 export interface SettingsRow {
@@ -8,11 +8,20 @@ export interface SettingsRow {
   description: string;
 }
 
+/** Settings import (src/extensionImport.ts's SettingsImport in the IDE): what Settings → General uses of it. */
+export interface SettingsImports {
+  readonly available: boolean;
+  status(): Promise<{ available: boolean; interrupted: boolean }>;
+  choose(provider: 'vscode' | 'cursor' | 'folder'): Promise<object | undefined>;
+  apply(token: string, categories: ImportCategory[]): Promise<number>;
+  undo(): Promise<void>;
+}
+
 /** Shared state a page's html/handle needs. Grows as later phases add pages. */
 export interface SettingsContext {
-  extensionUri: vscode.Uri;
-  imports: SettingsImport;
-  globalState: vscode.Memento;
+  /** The program Hydra runs in (src/host/host.ts): settings, commands, dialogs, opening things. */
+  host: Host;
+  imports: SettingsImports;
   post(message: unknown): Thenable<boolean>;
   /**
    * Packs (docs/internal/Packs_Plan.md, section 4): the Packs page calls `turnOn`/`allow`

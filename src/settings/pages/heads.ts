@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import type { SettingsContext, SettingsPage } from '../types';
 
 const headsGuideUrl = 'https://github.com/ndunl075/hydra/blob/main/docs/Heads.md';
@@ -82,7 +81,7 @@ export const headsPage: SettingsPage = {
   });
   `,
   async onReady(ctx: SettingsContext): Promise<void> {
-    const config = vscode.workspace.getConfiguration('hydra');
+    const config = ctx.host.settings;
     const value = Math.max(1, Math.min(8, config.get<number>('maxConcurrentHelpers', 3)));
     await ctx.post({ type: 'maxConcurrentHelpers', value });
     await ctx.post({
@@ -92,9 +91,9 @@ export const headsPage: SettingsPage = {
       budgetUsd: Math.max(0.5, Math.min(100, config.get<number>('heads.defaultBudgetUsd', 5))),
     });
     // Step 2: the head sandbox's check takes a few seconds the first time, so the line fills in when it's done.
-    void vscode.commands.executeCommand<{ text: string }>('hydra.headShellStatus')
+    void ctx.host.command<{ text: string }>('hydra.headShellStatus')
       .then(status => ctx.post({ type: 'headShell', text: status?.text ?? 'Head shells: unknown.' }), (error: unknown) => ctx.post({ type: 'headShell', text: `Head shells: couldn't check (${error instanceof Error ? error.message : String(error)}).` }));
-    const stopState = await vscode.commands.executeCommand<{ stopped: boolean }>('hydra.getStopState');
+    const stopState = await ctx.host.command<{ stopped: boolean }>('hydra.getStopState');
     await ctx.post({ type: 'stopState', stopped: !!stopState?.stopped });
   },
   async handle(message: Record<string, unknown>, ctx: SettingsContext): Promise<boolean> {
@@ -102,46 +101,46 @@ export const headsPage: SettingsPage = {
       case 'setMaxConcurrentHelpers': {
         const value = Math.max(1, Math.min(8, Math.round(Number(message.value))));
         if (!Number.isFinite(value)) throw new Error('Enter a number between 1 and 8.');
-        await vscode.workspace.getConfiguration('hydra').update('maxConcurrentHelpers', value, vscode.ConfigurationTarget.Global);
+        await ctx.host.settings.update('maxConcurrentHelpers', value);
         await ctx.post({ type: 'status', text: `Heads at a time set to ${value}.` });
         return true;
       }
       case 'setDefaultHeadMinutes': {
         const value = Math.max(1, Math.min(480, Math.round(Number(message.value))));
         if (!Number.isFinite(value)) throw new Error('Enter a number between 1 and 480.');
-        await vscode.workspace.getConfiguration('hydra').update('heads.defaultMinutes', value, vscode.ConfigurationTarget.Global);
+        await ctx.host.settings.update('heads.defaultMinutes', value);
         await ctx.post({ type: 'status', text: `Default head time cap set to ${value} minutes.` });
         return true;
       }
       case 'setDefaultHeadMaxTurns': {
         const value = Math.max(1, Math.min(500, Math.round(Number(message.value))));
         if (!Number.isFinite(value)) throw new Error('Enter a number between 1 and 500.');
-        await vscode.workspace.getConfiguration('hydra').update('heads.defaultMaxTurns', value, vscode.ConfigurationTarget.Global);
+        await ctx.host.settings.update('heads.defaultMaxTurns', value);
         await ctx.post({ type: 'status', text: `Default head turn cap set to ${value}.` });
         return true;
       }
       case 'setDefaultHeadBudgetUsd': {
         const value = Math.max(0.5, Math.min(100, Number(message.value)));
         if (!Number.isFinite(value)) throw new Error('Enter a number between 0.5 and 100.');
-        await vscode.workspace.getConfiguration('hydra').update('heads.defaultBudgetUsd', value, vscode.ConfigurationTarget.Global);
+        await ctx.host.settings.update('heads.defaultBudgetUsd', value);
         await ctx.post({ type: 'status', text: `Default head budget cap set to $${value}.` });
         return true;
       }
       case 'stopAllHeads':
-        await vscode.commands.executeCommand('hydra.stopAllHelpers');
+        await ctx.host.command('hydra.stopAllHelpers');
         await ctx.post({ type: 'status', text: 'Stopped all running heads.' });
         return true;
       case 'stopAllAgents': {
-        const stopped = await vscode.commands.executeCommand<boolean>('hydra.stopAllAgents');
+        const stopped = await ctx.host.command<boolean>('hydra.stopAllAgents');
         if (stopped) await ctx.post({ type: 'stopState', stopped: true });
         return true;
       }
       case 'resumeAgents':
-        await vscode.commands.executeCommand('hydra.resumeAgents');
+        await ctx.host.command('hydra.resumeAgents');
         await ctx.post({ type: 'stopState', stopped: false });
         return true;
       case 'openHeadsGuide':
-        await vscode.env.openExternal(vscode.Uri.parse(headsGuideUrl));
+        await ctx.host.openUrl(headsGuideUrl);
         return true;
       default:
         return false;

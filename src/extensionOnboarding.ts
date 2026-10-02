@@ -30,7 +30,7 @@ export class Onboarding implements vscode.Disposable {
   /** The first run connected agents by itself: an open wizard shows their new state. */
   refreshConnections(): void {
     const panel = this.panel;
-    if (panel) void handleConnectionsMessage({ type: 'connections' }, message => panel.webview.postMessage(message)).catch(() => undefined);
+    if (panel) void handleConnectionsMessage({ type: 'connections' }, message => panel.webview.postMessage(message), vscode.commands.executeCommand).catch(() => undefined);
   }
   async show(): Promise<void> {
     if (!this.imports.available) throw new Error('Onboarding is available in the local Hydra desktop IDE.');
@@ -52,7 +52,7 @@ export class Onboarding implements vscode.Disposable {
   private async handle(value: unknown, panel: vscode.WebviewPanel): Promise<void> {
     // Reading connection status changes nothing, so it never waits on (or blocks) a setup action.
     if (value && typeof value === 'object' && (value as { type?: unknown }).type === 'connections') {
-      try { await handleConnectionsMessage(value as Record<string, unknown>, message => panel.webview.postMessage(message)); }
+      try { await handleConnectionsMessage(value as Record<string, unknown>, message => panel.webview.postMessage(message), vscode.commands.executeCommand); }
       catch (error) { await panel.webview.postMessage({ type: 'error', text: error instanceof Error ? error.message : 'Could not read connection status.' }); }
       return;
     }
@@ -89,7 +89,7 @@ export class Onboarding implements vscode.Disposable {
         await this.appearance.setAppearance(message.mode as 'dark' | 'light'); await this.publish(panel, `Applied Hydra ${message.mode}.`); return;
       }
       if (message.type === 'accounts') { await vscode.commands.executeCommand('hydra.openAccounts'); return; }
-      if (await handleConnectionsMessage(message, value => panel.webview.postMessage(value))) return;
+      if (await handleConnectionsMessage(message, value => panel.webview.postMessage(value), vscode.commands.executeCommand)) return;
       if (message.type === 'connectProvider') {
         if (message.provider !== 'claude' && message.provider !== 'codex') throw new Error('Unknown provider.');
         await vscode.commands.executeCommand('hydra.openAccounts', message.provider, true);
