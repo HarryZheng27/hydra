@@ -91,7 +91,7 @@ Running it spends real subscription usage, and the Hydra run is best recorded, s
    - watches the plan until its integration gate has a result: every 10 seconds (`--poll`), less often while nothing changes (15 seconds after 3 quiet looks, 20 after 6, 30 after 9), because each `hydra plan show` makes Hydra check its process table, which takes 2 to 6 seconds on Windows. An interval under 10 seconds is only for tests, and says so;
    - reads when each job landed from Hydra's plan store (`%APPDATA%\Hydra\User\globalStorage\…\plans\plans.json`, or `--plan-store <file>`);
    - runs the fixture's hidden check on the integration branch's tip;
-   - writes `hydra-results.json` and the plan's report;
+   - writes `hydra-results.json` and the plan's report. `mode` is `single-head` when Hydra ran the plan as one head (docs/Heads.md, "Small plans run as one head"), with `modeReason` and `singleHeadJobs`, and `jobs` otherwise. Hydra decides this from the plan's shape; the harness never picks for it. `summarize` says in how many runs of a task it happened;
    - closes the window, if `bench-open.ps1` opened it (below, "Closing the windows").
 4. `node scripts/benchmark.mjs single --repo .bench/run-<time>/single`: runs one agent (`--agent claude` by default, or `codex`) on the same task's brief, then `npm test` and the hidden check, and writes `single-results.json`. The agent, `npm test` and the check each have a time limit (`--minutes`, 10 minutes, 5 minutes); past it the whole process tree is killed, and something a finished command left running can't hold the run open.
 5. `node scripts/benchmark.mjs review --results .bench/run-<time>`: the single agent's review (below).

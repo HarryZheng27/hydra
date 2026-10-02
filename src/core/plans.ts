@@ -137,7 +137,15 @@ export interface Plan {
    * its integration gate. Set on the first Run; a plan that ran before O3 has none and runs as it did.
    */
   integration?: PlanIntegration;
+  /**
+   * Small plans run as one head (docs/Heads.md, src/core/planShape.ts): set on the first Run when Hydra ran the
+   * plan as one head instead of one per job. `jobs` are the plan's jobs as they were; `jobs` on the plan itself
+   * is then the one job that does them all.
+   */
+  singleHead?: PlanSingleHead;
 }
+export interface PlanSingleHead { reason: string; jobs: PlanJob[] }
+export const singleHeadReasonMax = 500;
 
 // ---- O7: unattended plans (docs/Heads.md, "Unattended plans") ----
 
@@ -227,7 +235,7 @@ const reportDuration = (startedAt?: string, finishedAt?: string): string | undef
  * kept with the plan and opened as a tab when the plan ends. Pure and snapshot-testable; the caller (extension.ts)
  * assembles each job's detail from the head store, since this module never reads one itself.
  */
-export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended' | 'startedAt' | 'amendments' | 'integration'>, jobs: readonly PlanReportJobDetail[], defaultHeadBudgetUsd = 5): string {
+export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended' | 'startedAt' | 'amendments' | 'integration'> & Partial<Pick<Plan, 'singleHead'>>, jobs: readonly PlanReportJobDetail[], defaultHeadBudgetUsd = 5): string {
   const lines: string[] = [`# ${plan.title}`, ''];
   const ended = plan.state === 'done' ? 'finished' : plan.state === 'incomplete' ? 'stopped incomplete' : plan.state;
   lines.push(`Unattended plan, ${ended}.`);
@@ -238,6 +246,7 @@ export function buildPlanReport(plan: Pick<Plan, 'title' | 'state' | 'unattended
     if (plan.unattended.maxJobs !== undefined) parts.push(`${plan.unattended.maxJobs} job(s) at once`);
     if (parts.length) lines.push(`Budget: ${parts.join(', ')}.`);
   }
+  if (plan.singleHead) lines.push(`Ran as one head: ${plan.singleHead.reason}. Its jobs: ${plan.singleHead.jobs.map(job => job.key).join(', ')}.`);
   const overall = reportDuration(plan.startedAt, undefined);
   const reported = reportTotals(jobs);
   if (reported) lines.push(`Reported cost: ${reported}.`);
@@ -561,6 +570,11 @@ export function validatePlan(plan: Plan): void {
     if (!origin || typeof origin !== 'object' || !trimmed(origin.leadSessionId) || !trimmed(origin.idempotencyKey) || origin.idempotencyKey.length > planIdempotencyKeyMax) {
       throw new Error('Invalid leadOrigin.');
     }
+  }
+  if (plan.singleHead !== undefined) {
+    const single = plan.singleHead as Partial<PlanSingleHead>;
+    if (!single || typeof single !== 'object' || !trimmed(single.reason) || single.reason.length > singleHeadReasonMax || !Array.isArray(single.jobs) || single.jobs.length < 2) throw new Error('Invalid singleHead.');
+    validatePlanJobs(single.jobs);
   }
   if (plan.board !== undefined) validateBoard(plan.board, new Set(plan.jobs.map(job => job.key)));
   if (plan.amendments !== undefined) validateAmendments(plan.amendments);

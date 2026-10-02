@@ -45,7 +45,11 @@ export interface PlanLeadJobView { key: string; title: string; status: PlanJobSt
 export type PlanLeadIntegration = IntegrationLeadView;
 /** A board post as a lead's hydra_plan_* tools show it: `untrusted` is true for everything but the lead's own posts (boardForLead, plans.ts). */
 export type PlanLeadBoardPost = BoardPost & { untrusted: boolean };
-export interface PlanLeadPlan { planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[]; unattended?: PlanBudget; integration?: PlanLeadIntegration }
+export interface PlanLeadPlan {
+  planId: string; title: string; state: PlanState; error?: string; jobs: PlanLeadJobView[]; board: PlanLeadBoardPost[]; amendments: PlanAmendment[]; unattended?: PlanBudget; integration?: PlanLeadIntegration;
+  /** Small plans run as one head (docs/Heads.md): why, and the keys of the jobs its one job does. */
+  singleHead?: { reason: string; jobs: string[] };
+}
 export interface PlanLeadMessageInput { to: 'all' | string[]; topic?: string; body: string }
 /**
  * The plan runner and store, narrowed to what a lead's hydra_plan_* calls need.
@@ -1351,6 +1355,8 @@ export class HelperService {
       ...(plan.unattended ? { unattended: plan.unattended } : {}),
       // O3: the integration branch, what has landed, the integration gate's label, and whether Merge plan is allowed.
       ...(plan.integration ? { integration: plan.integration } : {}),
+      // Small plans run as one head: the plan's own jobs are done by its one job, `whole-plan`.
+      ...(plan.singleHead ? { mode: 'single-head', mode_reason: plan.singleHead.reason, single_head_jobs: plan.singleHead.jobs } : {}),
     };
   }
 

@@ -1235,6 +1235,7 @@ class Manager {
       amendments: plan.amendments ?? [],
       ...(plan.unattended ? { unattended: plan.unattended } : {}),
       ...(plan.integration ? { integration: integrationLeadView(plan) } : {}),
+      ...(plan.singleHead ? { singleHead: { reason: plan.singleHead.reason, jobs: plan.singleHead.jobs.map(job => job.key) } } : {}),
     };
   }
   /** O3: hydra_plan_integrate — the integration gate on what has landed; waits for its result. */
@@ -1582,7 +1583,9 @@ class Manager {
       // A plan's heads group under its lead `plan-<id>`; a retried head gets a new idempotency key.
       // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then hydra.defaultProvider.
       startHead: async (plan, job, dependsOn, inputs, start) => {
-        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
+        const config = vscode.workspace.getConfiguration('hydra');
+        const headDefaults = resolveHeadDefaults({ minutes: config.get<number>('heads.defaultMinutes'), maxTurns: config.get<number>('heads.defaultMaxTurns'), budgetUsd: config.get<number>('heads.defaultBudgetUsd') });
+        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
         return { jobId: result.job_id };
       },
       startLane: (plan, job, start) => this.lanes.startPlanLane(plan, job, start, defaultProvider()),
@@ -1601,6 +1604,8 @@ class Manager {
       // O7/O3: an unattended plan writes its morning report once there's nothing more to wait for: at once when it
       // ends incomplete (or has no integration branch), else after its integration gate has a result for the tip.
       onSettled: plan => { if (plan.unattended && integrationSettled(plan)) void this.writePlanReport(plan); },
+      // Small plans run as one head (docs/Heads.md): on unless hydra.plans.singleHeadForSmallPlans is off.
+      singleHead: () => vscode.workspace.getConfiguration('hydra').get<boolean>('plans.singleHeadForSmallPlans', true),
       onGateDone: plan => { if (plan.unattended && plan.state === 'done' && integrationSettled(plan)) void this.writePlanReport(plan); },
       log: line => this.output.appendLine(line),
       // ---- Stop all (5.3) ----

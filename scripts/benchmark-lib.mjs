@@ -261,6 +261,8 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
   const retriedReviews = hydraReviewsRetried((storedPlan?.jobs ?? []).filter(job => isFixJob(job.key)).map(job => job.brief), review);
   return {
     version: resultsVersion, kind: 'hydra', ...(fixture ? { fixture } : {}), ...(task ? { task } : {}), planId: view.plan_id, planState: view.state,
+    // Small plans run as one head (docs/Heads.md): Hydra decides from the plan's shape; the harness only records it.
+    mode: view.mode === 'single-head' ? 'single-head' : 'jobs', ...(view.mode === 'single-head' ? { modeReason: view.mode_reason, singleHeadJobs: view.single_head_jobs ?? [] } : {}),
     ...(startedAt ? { startedAt } : {}), wallClockSeconds: ended.seconds, wallClockFrom: ended.from, timedOut: !!timedOut,
     timeToWorkingCodeSeconds: workDoneSeconds(jobs.map(job => job.key), landedAtSeconds),
     landedAtSeconds, landingTimesFrom: landing ? 'plan store' : 'watching',
@@ -512,6 +514,7 @@ export function runRows(result, folder, fallback) {
       firstReviewPassed: first?.ran === false ? undefined : first?.passed, firstReviewNotRun: first?.ran === false,
       fixRoundsAllowed: defaultFixRounds, passedWithin: reviewPassed === undefined ? undefined : reviewPassed && fixRounds <= defaultFixRounds,
       checkPassed,
+      ...(result.mode === 'single-head' ? { singleHead: true } : {}),
       ...(result.reviewsRetried ? { reviewRetried: result.reviewsRetried } : {}),
     }];
   }
@@ -583,6 +586,11 @@ export function renderSummary(rows) {
     lines.push(`| ${task} | ${setup} | ${group.length} | ${spread(group.map(row => row.workSeconds), duration)} | ${spread(group.map(row => row.workAfterSeconds), duration)} | ${spread(group.map(row => row.totalSeconds), duration)} | ${spread(group.map(row => row.usd), dollars)} | ${rate(group.map(row => row.gatePassed))} | ${reviewed ? reviewRate(group, 'firstReviewPassed', 'firstReviewNotRun') : '–'} | ${reviewed ? reviewRate(group) : '–'} | ${reviewed ? rate(group.map(row => row.passedWithin)) : '–'} | ${spread(group.map(row => row.fixRounds), count)} | ${rate(group.map(row => row.checkPassed))} |`);
   }
   lines.push('', summaryNotes, '');
+  // Small plans run as one head: say which Hydra runs did, task by task, so "ran as one head in 5/5 runs" is read off here.
+  for (const group of groups.values()) {
+    if (group[0].setup !== 'hydra' || !group.some(row => row.singleHead)) continue;
+    lines.push(`Hydra ran ${group[0].task} as one head in ${group.filter(row => row.singleHead).length}/${group.length} runs.`, '');
+  }
   const retried = [...groups.values()].flat().filter(row => row.reviewRetried);
   if (retried.length) lines.push(`Reviews retried once after the reviewer failed to run: ${retried.map(row => `${row.folder} (${row.setup}${row.reviewRetried > 1 ? `, ${row.reviewRetried} reviews` : ''})`).join(', ')}.`, '');
   lines.push('| Run | Task | Setup | Working code (before review loop) | Working code (after review loop) | Total | Cost | Gate | First-pass review | Final review | Fix rounds | Check |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |');

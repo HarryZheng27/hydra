@@ -476,6 +476,11 @@
           "default": 2,
           "description": "When a plan's integration gate fails, how many times Hydra adds a job that fixes what it found and runs the gate again, before leaving it to you. 0 turns this off."
         },
+        "hydra.plans.singleHeadForSmallPlans": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run a small, tightly coupled plan as one head instead of one head per job. When it first runs a plan whose jobs mostly wait on each other, Hydra gives one head every job's brief and write scope, then runs the same integration gate and review. The plan's report says when this happened, and why."
+        },
         "hydra.plans.maxAmendments": {
           "type": "integer",
           "minimum": 0,

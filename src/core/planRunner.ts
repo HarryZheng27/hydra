@@ -1,10 +1,11 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
-import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobState } from './jobs';
+import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobLimits, JobState } from './jobs';
 import {
   applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
   newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, type IntegrationGateRecord, type PlanIntegration,
 } from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
+import { singleHeadDecision, singleHeadJobBrief, singleHeadKey, singleHeadLimits, singleHeadPlan } from './planShape';
 import type { StopSwitch } from './stopSwitch';
 import {
   applyPlanAmendment, cycleMessage, findCycle, jobRunAs, jobStarted, planOutcomeReasonMax, planResultFilesMax, planResultNoteMax, topologicalOrder,
@@ -247,9 +248,13 @@ export const planHeadKey = (plan: Pick<Plan, 'id'>, job: Pick<PlanJob, 'key' | '
  * What a plan's head job starts with (`hydra_start_head`'s input). A job with no write scope, such as
  * one added by hand, may change the whole repository: `"."` (an empty entry is refused).
  */
-export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[]): Record<string, unknown> {
+export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> & Partial<Pick<Plan, 'brief' | 'singleHead'>>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[], headDefaults?: JobLimits): Record<string, unknown> {
+  // A plan run as one head (src/core/planShape.ts): its one job's head gets the plan and every job's own brief,
+  // and, given your per-head defaults, as much time, turns and budget as its jobs would have had together.
+  const single = plan.singleHead && job.key === singleHeadKey ? plan.singleHead : undefined;
+  const own = single ? singleHeadJobBrief({ ...plan, singleHead: single }, job) : job.brief;
   // O3: a try re-queued after a conflict on the integration branch hears which files, and that its old work was carried over.
-  const brief = plan.integration && job.conflict ? `${job.brief}\n\n${conflictSection(job.conflict, plan.integration.branch)}` : job.brief;
+  const brief = plan.integration && job.conflict ? `${own}\n\n${conflictSection(job.conflict, plan.integration.branch)}` : own;
   return {
     title: job.title, brief, write_scope: job.writeScope?.length ? job.writeScope : ['.'],
     ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}), idempotency_key: planHeadKey(plan, job),
@@ -258,6 +263,7 @@ export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'>, 
     // adds nothing beyond the project's own gates, exactly as it always has.
     ...(job.rigor ? { rigor: job.rigor } : {}),
     depends_on: dependsOn, lead_label: `Plan · ${plan.title}`.slice(0, 60),
+    ...(single && headDefaults ? { limits: singleHeadLimits(headDefaults, single.jobs.length) } : {}),
   };
 }
 
@@ -308,6 +314,11 @@ export interface PlanRunnerOptions {
   onChange?(planId: string): void;
   /** O7: a plan just left 'running' (done or incomplete) — the morning report and its notification go here. */
   onSettled?(plan: Plan): void;
+  /**
+   * Small plans run as one head (docs/Heads.md, src/core/planShape.ts): read on a plan's first Run. True lets
+   * Hydra run a small, tightly coupled plan as one head (hydra.plans.singleHeadForSmallPlans). Missing means off.
+   */
+  singleHead?(): boolean;
   /** O3: a plan's integration gate run finished (its record is on the plan): the morning report waits for this. */
   onGateDone?(plan: Plan): void;
   /** The runner started a plan's lane (the extension says so, with Show lane). */
@@ -439,12 +450,21 @@ export class PlanRunner {
       // already started jobs before Hydra had integration branches carries on without one, as it began.
       const integration = this.options.integration && !plan.integration && !plan.jobs.some(jobStarted) ? await this.startIntegration(planId) : undefined;
       this.undispatched.delete(planId);
-      await this.options.store.update(planId, current => ({
-        ...(integration && !current.integration ? { integration } : {}),
-        ...current, state: 'running', error: undefined, jobs: current.jobs.map(({ draft: _draft, ...job }) => job),
-        // O7: the wall-clock budget (docs/Heads.md, "Unattended plans") measures from here, set once.
-        ...(current.startedAt ? {} : { startedAt: new Date().toISOString() }),
-      }));
+      // A plan that hasn't started yet may run as one head, decided from its shape once (src/core/planShape.ts).
+      const firstRun = !plan.singleHead && !plan.startedAt && !plan.jobs.some(jobStarted) && !!this.options.singleHead?.();
+      let decided: string | undefined;
+      await this.options.store.update(planId, current => {
+        const decision = firstRun && !current.singleHead && !current.jobs.some(jobStarted) ? singleHeadDecision(current) : undefined;
+        decided = decision ? `${decision.single ? 'runs as one head' : 'runs one head per job'}: ${decision.reason}` : undefined;
+        return {
+          ...(integration && !current.integration ? { integration } : {}),
+          ...current, state: 'running', error: undefined, jobs: current.jobs.map(({ draft: _draft, ...job }) => job),
+          ...(decision?.single ? singleHeadPlan(current, decision.reason) : {}),
+          // O7: the wall-clock budget (docs/Heads.md, "Unattended plans") measures from here, set once.
+          ...(current.startedAt ? {} : { startedAt: new Date().toISOString() }),
+        };
+      });
+      if (decided) this.options.log?.(`[plans] Plan ${plan.title} ${decided}.`);
       await this.pass(planId, {});
     });
   }

@@ -279,6 +279,13 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
 - **Conflicts are predicted against it too.** While a plan's head runs, Hydra also checks its work against the integration branch's tip, which moves as other jobs land (see **Conflict prediction between heads**).
 - Plans that were already running before Hydra had integration branches carry on without one, as they started.
 
+**Small plans run as one head.** Each job costs a worktree, its own gates and a landing. When most of a plan's jobs wait on each other, that overhead buys little parallel work, so the first time such a plan runs, Hydra runs it as one head instead:
+- **When:** the plan's jobs form a dependency chain, and on average fewer than 2.5 of them could run at once (its job count over its longest chain). For example, 6 jobs in a chain of 3 runs as one head. 10 jobs in a chain of 3, or 8 jobs that all feed one final job, still run one head per job.
+- **Only plans one head could do:** a lead's plan (or `hydra plan run`'s), every job a head, one provider, no pack roles, nothing started yet, and at most 32 write-scope paths together. Plans you build on the canvas, lane jobs, auto-dispatch and retried plans always run as they are.
+- **What the head gets:** the plan's brief, then every job's own brief in dependency order, with all their write scopes and the strictest rigor among them. It also gets your per-head time, turn and budget defaults times the number of jobs, up to a head's caps (4 hours, 500 turns, $100). The plan then shows one job, `whole-plan`. Board posts addressed to the old jobs go to it, and a brief the lead gives it on a retry follows the jobs' briefs. The same integration gate, review and fix rounds follow.
+- **Said plainly:** the plan's report and `hydra_plan_get` (`mode: "single-head"`, `mode_reason`, `single_head_jobs`) say it ran as one head, and why. Hydra's output log records the decision for every plan, either way.
+- **Off switch:** turn off `hydra.plans.singleHeadForSmallPlans` to always run one head per job.
+
 **New plan** (in the canvas toolbar, or **Hydra: New Plan**) lets you set the jobs up yourself before any head starts ([Lanes_And_Planner_Plan.md](internal/Lanes_And_Planner_Plan.md), section 4):
 
 - **Plan with Claude or Codex:** give a title and a brief. Your default provider reads the repository in read-only mode and splits the brief into 2–8 jobs. **Start empty** adds the jobs by hand instead.
@@ -288,7 +295,7 @@ Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`
   - Right-click an edge, or select it and press Delete, to remove it.
   - Right-click a job for **Depends on…** and **Delete**.
 - **Cycles are refused.** A plan whose dependencies loop shows the loop, draws it in red, and can't run until you break it.
-- **Run plan** starts one head per job in dependency order, grouped under the plan on the canvas. Running it again after adding jobs starts only the new ones.
+- **Run plan** starts one head per job in dependency order, grouped under the plan on the canvas (or one head for the whole plan, when it's small and tightly coupled: see **Small plans run as one head**). Running it again after adding jobs starts only the new ones.
 
 **Jobs you drive yourself** ([Plan_Lanes_Plan.md](internal/Plan_Lanes_Plan.md)):
 - **Run as:** a job's popover has **Head** (Hydra drives it) or **Lane** (you drive it in a terminal). A lane job's card says "Draft job · Lane".
