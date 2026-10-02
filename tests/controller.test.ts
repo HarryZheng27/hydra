@@ -8,6 +8,8 @@ import { PlanStore, type Plan } from '../src/core/plans';
 import { StopSwitch } from '../src/core/stopSwitch';
 import { AuditLog } from '../src/core/audit';
 import type { ClientMessage, Snapshot } from '../src/core/model';
+import { JobStore } from '../src/core/jobs';
+import type { HelperService } from '../src/core/helperService';
 import { FakeHost } from './host/fakeHost';
 
 /** The controller with no editor (docs/internal/hydra-app/G2-host-split.md): a FakeHost, fake lanes and a temporary plan store. */
@@ -123,4 +125,63 @@ test('a plan report is Markdown built from the plan', async t => {
   await controller.handle({ type: 'planCreateEmpty', title: 'Report me' });
   const markdown = controller.planReportMarkdown(planNamed(store, 'Report me'));
   assert.match(markdown, /Report me/);
+});
+
+// ---- Milestone 3: the lead's plan tools and the plan board, through the controller ----
+
+async function withRunner(t: { after(fn: () => Promise<void>): void }) {
+  const context = await setup(t);
+  const { controller, store, host } = context;
+  const jobs = new JobStore(path.join(host.paths.storage, 'helpers'));
+  await jobs.load();
+  const service = { leadFolder: host.paths.storage, list: () => [], handle: async () => ({}), startForPlan: async () => { throw new Error('no heads in this test'); }, runIntegrationGate: async () => { throw new Error('no gates in this test'); } } as unknown as HelperService;
+  controller.helpers = { store: jobs, endpoint: undefined as never, service, record: '' };
+  controller.planRunner = controller.createPlanRunner(store, service, host.paths.storage, 'lead');
+  t.after(async () => { controller.planRunner?.dispose(); });
+  // Plans a lead makes wait for approval here, so nothing tries to start a head.
+  host.set('plans.leadPlansNeedApproval', true);
+  return context;
+}
+const leadInput = (key: string) => ({ title: 'From the chat', idempotencyKey: key, jobs: [{ key: 'api', title: 'API', brief: 'Build the API.', write_scope: ['src/api'] }, { key: 'ui', title: 'UI', brief: 'Build the UI.', write_scope: ['src/ui'], depends_on: ['api'] }] });
+
+test('a lead creates a plan once per idempotency key, and only its own chat sees it', async t => {
+  const { controller, store } = await withRunner(t);
+  const bridge = controller.createPlanLeadBridge();
+  const first = await bridge.create(leadInput('k1'), 'chat-a');
+  assert.equal(first.created, true);
+  assert.deepEqual(first.plan.jobs.map(job => job.key), ['api', 'ui']);
+  const again = await bridge.create(leadInput('k1'), 'chat-a');
+  assert.equal(again.created, false);
+  assert.equal(again.plan.planId, first.plan.planId);
+  assert.equal(store.list().length, 1);
+  assert.equal(bridge.get(first.plan.planId, 'chat-b'), undefined, 'another chat never sees it');
+  await assert.rejects(bridge.cancel(first.plan.planId, 'chat-b', 'no'), /No plan/);
+  assert.equal(bridge.get(first.plan.planId, 'chat-a')?.title, 'From the chat');
+  assert.match(await bridge.report(first.plan.planId, 'chat-a'), /From the chat/);
+});
+
+test('amendments are capped by the setting, and messages go only to the plan\'s own jobs', async t => {
+  const { controller, host } = await withRunner(t);
+  const bridge = controller.createPlanLeadBridge();
+  const { plan } = await bridge.create(leadInput('k2'), 'chat-a');
+  host.set('plans.maxAmendments', 1);
+  await bridge.amend(plan.planId, 'chat-a', { add: [{ key: 'docs', title: 'Docs', brief: 'Write docs.', write_scope: ['docs'] }] });
+  assert.deepEqual(bridge.get(plan.planId, 'chat-a')?.jobs.map(job => job.key), ['api', 'ui', 'docs']);
+  await assert.rejects(bridge.amend(plan.planId, 'chat-a', { skip: [{ key: 'docs' }] } as never), /1 of 1 amendments/);
+  await assert.rejects(bridge.message(plan.planId, 'chat-a', { to: ['nope'], body: 'hi' }), /No job "nope"/);
+  await bridge.message(plan.planId, 'chat-a', { to: ['api'], body: 'Use token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 for it.' });
+  const board = controller.createPlanBoardBridge().boardFor(plan.planId, 'api');
+  assert.equal(board.length, 1);
+  assert.doesNotMatch(JSON.stringify(board), /abcdefghijklmnopqrstuvwxyz0123456789/, 'board posts are redacted');
+});
+
+test('the board bridge finds a head\'s plan and its integration target', async t => {
+  const { controller, store } = await withRunner(t);
+  const { plan } = await controller.createPlanLeadBridge().create(leadInput('k3'), 'chat-a');
+  await store.update(plan.planId, current => ({ ...current, jobs: current.jobs.map(job => job.key === 'api' ? { ...job, jobId: 'abcdefabcdef' } : job), integration: { branch: `hydra/plan-${plan.planId}`, base: 'a'.repeat(40), tip: 'b'.repeat(40), queue: [], landed: [] } }));
+  const board = controller.createPlanBoardBridge();
+  assert.deepEqual(controller.jobPlanFor('abcdefabcdef'), { planId: plan.planId, jobKey: 'api' });
+  assert.equal(controller.jobPlanFor('000000000000'), undefined);
+  assert.deepEqual(board.integrationTarget?.('abcdefabcdef'), { branch: `hydra/plan-${plan.planId}`, tip: 'b'.repeat(40) });
+  assert.equal(board.unattended?.(plan.planId), false);
 });
