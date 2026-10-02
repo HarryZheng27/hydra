@@ -3,7 +3,8 @@
 A chat-first desktop app named **Hydra**, shipped beside the Hydra IDE on the same engine and canvas. Proposal, 2026-10-02; nothing built. Agents: read this, then the files it names.
 
 **Naming:** "desktop" in this repo already means the IDE's standalone build (`desktop/`, `desktop:*`, `desktop.yml`), so docs and code say "the app" (`app/`, `app:*`) and "the IDE". On one PC the two must stay distinct:
-- **Shown names:** the app is "Hydra". The IDE shows as "Hydra IDE" in the Start menu and the Apps list; display name only (D1).
+- **Shown names:** the app is "Hydra". The IDE becomes "Hydra IDE" through `nameLong` in `desktop/product.json`: Start menu, Apps list, desktop shortcut, window title. Its `nameShort` stays "Hydra", because it names the IDE's data folder (`%APPDATA%\Hydra`), which the installer tests guard.
+- **Shortcut handover:** an IDE release renames its shortcuts to "Hydra IDE" and deletes its old `Hydra.lnk` files before the app ships. Its uninstaller must never delete the app's `Hydra.lnk` later, since Inno's uninstall log keeps entries from earlier installs.
 - **Separate identities:** install folder (the IDE owns `%LOCALAPPDATA%\Programs\Hydra`), user-data folder (Electron defaults to `%APPDATA%\<name>`, which is the IDE's, so set it explicitly), taskbar id (IDE: `Hydra.IDE`), single-instance mutex (IDE: `hydra-ide`).
 - **Installers:** `HydraSetup.exe` stays the IDE's, because installed IDEs update from that exact file. The app's is `HydraAppSetup.exe`.
 - **`hydra` command:** plan commands work with either app, since storage is shared. Which app `hydra <folder>` opens is settled in P4.
@@ -107,12 +108,11 @@ Cloud agents can't reach Hydra's endpoint (loopback only). Their work is checked
 | P1 | Host split: `HydraController` and `Host`; the IDE runs on it | IDE tests and desktop smoke green, no behaviour change |
 | P2 | App shell and local chat, Claude then Codex: stream, approvals, stop, resume, diffs | One person uses it daily |
 | P3 | Orchestration: lead tools, heads, plans, gates, lanes, canvas, limit handoff | The benchmark harness runs a plan through the app |
-| P4 | Ship: installer, updater, release job, docs, THREAT_MODEL entries | Install, upgrade, uninstall tests pass; prerelease out |
+| P4 | Ship: IDE release with the "Hydra IDE" rename and shortcut handover first, then the app's installer, updater, release job, docs, THREAT_MODEL entries | Install, upgrade, uninstall tests pass; prerelease out |
 | P5 | Cloud chats, then Codex cloud heads | A cloud job lands only after local gates pass |
 
 ## Decisions
-- **Name (decided):** Hydra.
+- **Names (decided):** the app is "Hydra", the IDE is "Hydra IDE" (display only; see Naming).
 - **Installer (decided):** Inno Setup, like the IDE: per-user install without admin, uninstall that removes only this install's Claude and Codex entries and asks before deleting data (`/HYDRAREMOVEDATA`), and the in-app update mode. Adapt the IDE's scripts in `desktop/*.iss` and its installer, upgrade and uninstall tests.
-- **D1 (open):** show the IDE as "Hydra IDE" (display name only).
-- **D2 (open):** ask Anthropic, through the contact link on the legal page: (a) does a free, open-source app on the user's own PC, driving the user's own unmodified Claude Code, need their Commercial Terms? (b) do parallel heads and unattended plans count as "ordinary, individual usage" of a Pro or Max plan? This covers the IDE too.
-- **D3 (open):** whether the quality benchmark (`bench/QUALITY_RUN.md`) changes P3's priorities.
+- **D1 (open):** ask Anthropic, through the contact link on the legal page: (a) does a free, open-source app on the user's own PC, driving the user's own unmodified Claude Code, need their Commercial Terms? (b) do parallel heads and unattended plans count as "ordinary, individual usage" of a Pro or Max plan? This covers the IDE too.
+- **D2 (open):** whether the quality benchmark (`bench/QUALITY_RUN.md`) changes P3's priorities.
