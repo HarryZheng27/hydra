@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { app, ipcMain, Menu, protocol } from 'electron';
-import { PRODUCT_NAME } from './identity';
+import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc, type Handlers } from './ipc';
 import { APP_SCHEME, serveAppRequest } from './security';
 import { createMainWindow, focusMainWindow } from './window';
@@ -9,6 +9,13 @@ declare const HYDRA_APP_VERSION: string;
 
 /** Runs after identity.ts has set the app's paths (main.ts). */
 export function start(): void {
+  // Never run with a broken identity: it would write into another folder, possibly the IDE's.
+  const problems = identityProblems(app);
+  if (problems.length) {
+    console.error(`Hydra won't start: ${problems.join('; ')}`);
+    app.exit(1);
+    return;
+  }
   // The lock is keyed on the user-data folder, which is already %APPDATA%\Hydra App, so the IDE's never collides.
   if (!app.requestSingleInstanceLock()) {
     app.quit();

@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { APP_USER_MODEL_ID, applyIdentity, identityProblems, insideIdeUserData, OWNED_PATHS, type IdentityApp } from '../src/main/identity';
 
-const appData = path.join('C:', 'Users', 'someone', 'AppData', 'Roaming');
+const appData = path.join('C:\\', 'Users', 'someone', 'AppData', 'Roaming');
 
 function fakeApp(): IdentityApp & { calls: string[]; paths: Record<string, string> } {
   const paths: Record<string, string> = { appData, userData: path.join(appData, 'Hydra'), sessionData: path.join(appData, 'Hydra'), logs: path.join(appData, 'Hydra', 'logs'), crashDumps: path.join(appData, 'Hydra', 'Crashpad') };
@@ -62,7 +62,7 @@ test('nothing in the app names the IDE\'s data folder except identity.ts', () =>
       if (entry.isDirectory()) walk(full);
       else if (/\.(ts|tsx)$/.test(entry.name) && !full.endsWith(path.join('main', 'identity.ts'))) {
         const code = fs.readFileSync(full, 'utf8').split('\n').filter(line => !/^\s*(\/\/|\/?\*)/.test(line)).join('\n');
-        if (/APPDATA%?\\Hydra(?! App)|IDE_USER_DATA_FOLDER|ideUserData|['"]Hydra['"]\s*\)/.test(code)) hits.push(path.relative(root, full));
+        if (/APPDATA%?\\Hydra(?! App)|IDE_USER_DATA_FOLDER|ideUserData|['"`]Hydra['"`]\s*[,)]|\\Hydra(?! App)/.test(code)) hits.push(path.relative(root, full));
       }
     }
   };

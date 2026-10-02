@@ -1,6 +1,8 @@
 // Smoke harness: the Electron entry smoke/run.mjs starts instead of the app's package. It points the roaming AppData
 // folder at a scratch one, keeps every window hidden (show and focus are recorded, not performed), loads the built
-// app (dist/main.cjs) exactly as packaged, then reports what it finds. Never part of the app's build.
+// main bundle (dist/main.cjs), then reports what it finds. Electron starts it as a loose script, so what Electron
+// itself writes before main.cjs runs isn't covered here; tests/identity.test.ts covers main's ordering. Never part of
+// the app's build.
 const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
@@ -29,6 +31,11 @@ app.on('browser-window-created', (_event, win) => {
 });
 app.on('second-instance', () => event('second-instance'));
 process.on('exit', () => { report.exitedWithLock = app.hasSingleInstanceLock(); write(); });
+
+// A crash must end the run, never leave Electron's error dialog on screen.
+const fail = error => { report.error = String(error && error.stack || error); write(); app.exit(4); };
+process.on('uncaughtException', fail);
+process.on('unhandledRejection', fail);
 
 require(path.join(__dirname, '..', 'dist', 'main.cjs'));
 
