@@ -156,6 +156,13 @@ For each group it gives the median and the range (min–max) of time to working 
 node scripts/benchmark.mjs summarize --runs ".bench/overnight/bench-p1-*"
 ```
 
+### Why a review failed: `benchmark.mjs findings`
+
+`node scripts/benchmark.mjs findings --runs "<folders or globs>" [--out <file>] [--plan-store <plans.json>]` writes `findings.md` beside the runs, a worksheet for sorting review findings by cause:
+- **Counts** by task, setup and round: round 1 is the first-pass review, and the last round is the final one.
+- **Every finding**, with its severity, file, note and an empty **Bucket** column (seam, spec miss, bug in one job, test gap, questionable). The single agent's come from `single-review.json`'s rounds. Hydra's come from its fix jobs' briefs, which quote each failed review (the gate record and reviewer replies are overwritten each round), and from its final integration gate in Hydra's plan store. A fix brief quotes at most 20 findings per gate and is cut at 4,000 characters, so Hydra's counts before its final round are lower bounds, and the worksheet marks them. A Hydra finding also names the plan job whose write scope holds its file. Reviews with no findings are counted too, and folders that couldn't be read are listed.
+- **Where Hydra's time went:** when each job and fix job landed, and when the gate last ran, from the plan record. Head starts, each job's own gates and waits on dependencies are in Hydra's output log.
+
 ### Runs the machine slept through (void runs)
 
 A laptop that sleeps mid-run charges the sleep to the run as "work", and can stall an agent for hours. `single`, `hydra`, `review` (fix rounds included) and `swebench` therefore watch for it:
