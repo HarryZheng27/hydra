@@ -4,12 +4,12 @@ import { Icon } from './Icon';
 export function TitleBar({ sidebarOpen, onToggleSidebar }: { sidebarOpen: boolean; onToggleSidebar: () => void }) {
   return (
     <header className="titlebar">
-      <button className="icon-button no-drag" onClick={onToggleSidebar} aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} aria-pressed={sidebarOpen} title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
+      <button className="icon-button no-drag" onClick={onToggleSidebar} aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
         <Icon name="sidebar" />
       </button>
-      <div className="mode-switch no-drag" role="tablist" aria-label="Mode">
-        <button role="tab" aria-selected="true" className="mode active">Chat</button>
-        <button role="tab" aria-selected="false" className="mode" disabled title="Agents arrive in a later version">Agents</button>
+      <div className="mode-switch no-drag" role="group" aria-label="Mode">
+        <button aria-pressed="true" className="mode active">Chat</button>
+        <button aria-pressed="false" className="mode" disabled title="Agents arrive in a later version">Agents</button>
       </div>
       <div className="titlebar-title">Hydra</div>
     </header>

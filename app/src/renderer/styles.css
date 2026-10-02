@@ -11,6 +11,18 @@
   --error: #FC6B83; --warning: #F1B467; --ok: #70B489;
   --titlebar-height: 40px; --sidebar-width: 264px; --radius: 6px;
 }
+/* Hydra Light's, for a window that starts light, so its first paint matches too. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #FAFBF9; --fg: #18221C; --muted: #566651; --faint: #141414BD;
+    --sidebar-bg: #F1F4EF; --sidebar-fg: #334238; --sidebar-border: #D5DED2; --border: #D5DED2;
+    --hover: #E9EEE7; --selected-bg: #14141414; --selected-fg: #141414; --input-bg: #FFFFFF;
+    --input-fg: #18221C; --input-border: #C5CFC4; --button-bg: #173C2C; --button-fg: #FFFFFF;
+    --button-hover: #24553F; --focus: #14141433; --link: #276342; --titlebar-bg: #FAFBF9;
+    --titlebar-fg: #18221C; --error: #BE1744; --warning: #A46700; --ok: #007041;
+  }
+}
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
@@ -42,7 +54,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .search { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 0 8px; height: 30px; border-radius: var(--radius); background: var(--input-bg); border: 1px solid var(--input-border); color: var(--muted); }
 .search:focus-within { border-color: var(--link); }
 .search input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--input-fg); font: inherit; }
-.section-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.section-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 4px 8px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 .projects { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 0; flex: 1; }
 .project-row { display: flex; align-items: center; border-radius: var(--radius); }
 .project-row:hover, .project-row.selected { background: var(--hover); color: var(--fg); }
@@ -52,15 +64,16 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .chevron.open { transform: rotate(90deg); }
 .project-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; text-align: left; }
 .project-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hover-only { visibility: hidden; }
-.project-row:hover .hover-only, .hover-only:focus-visible { visibility: visible; }
-.chats-empty, .sidebar-note { padding: 2px 8px 6px 46px; font-size: 12px; color: var(--faint); }
+.hover-only { opacity: 0; }
+.project-row:hover .hover-only, .project-row:focus-within .hover-only { opacity: 1; }
+.chats-empty, .sidebar-note { padding: 2px 8px 6px 46px; font-size: 12px; color: var(--muted); }
 .sidebar-note { padding-left: 8px; list-style: none; }
 
 /* Main pane */
 .main { flex: 1; min-width: 0; overflow: auto; position: relative; }
 .banner { margin: 12px 16px 0; padding: 8px 12px; border-radius: var(--radius); border: 1px solid var(--border); }
 .banner.error { color: var(--error); }
+.banner.warning { color: var(--warning); }
 .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
 .empty h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .empty p { margin: 0; color: var(--muted); max-width: 520px; }

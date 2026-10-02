@@ -33,6 +33,7 @@ export function App() {
   const [state, setState] = useState<AppState>();
   const [view, setView] = useState<View>({ kind: 'home' });
   const [error, setError] = useState<string>();
+  const [problems, setProblems] = useState<string[]>([]);
   const systemDark = useSystemDark();
   const theme = resolveTheme(settings?.theme ?? 'system', systemDark);
 
@@ -42,6 +43,7 @@ export function App() {
     void window.hydra.appInfo().then(setInfo, fail);
     void window.hydra.getSettings().then(setSettings, fail);
     void window.hydra.getState().then(setState, fail);
+    void window.hydra.problems().then(list => setProblems(list), fail);
   }, []);
 
   /** Runs a call to main and shows its error, if any, instead of throwing. */
@@ -50,11 +52,16 @@ export function App() {
   };
 
   const sidebarOpen = state?.sidebarOpen ?? true;
-  const toggleSidebar = () => void run(window.hydra.setSidebarOpen(!sidebarOpen), setState);
-  const pickProject = () => void run(window.hydra.pickProject(), next => {
+  // The sidebar follows the click at once; saving it is best effort, and a failed save only shows its error.
+  const toggleSidebar = () => {
+    if (!state) return;
+    const open = !state.sidebarOpen;
+    setState({ ...state, sidebarOpen: open });
+    void window.hydra.setSidebarOpen(open).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  };
+  const pickProject = () => void run(window.hydra.pickProject(), ({ state: next, picked }) => {
     setState(next);
-    const added = next.projects.find(project => !state?.projects.some(old => old.id === project.id));
-    if (added) setView({ kind: 'project', id: added.id });
+    if (picked) setView({ kind: 'project', id: picked });
   });
   const project = view.kind === 'project' ? state?.projects.find(p => p.id === view.id) : undefined;
 
@@ -74,6 +81,7 @@ export function App() {
           />
         )}
         <main className="main">
+          {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}
           {error && <div className="banner error" role="alert">{error}</div>}
           {view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), setSettings)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), setSettings)} />

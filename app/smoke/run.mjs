@@ -70,7 +70,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -135,7 +135,9 @@ try {
     assert.equal(a.afterPick.heading, 'Project One');
     assert.equal(a.sidebarAfterToggle, false);
     assert.equal(a.settingsView.heading, 'Settings');
-    assert.deepEqual(a.pickers, ['folder', 'file']);
+    assert.deepEqual(a.pickers, ['folder', 'folder', 'file']);
+    assert.equal(a.projectsAfterRepick, 1);
+    assert.deepEqual(a.problems, []);
   });
   check('Hydra Dark and Light come from the theme files, with a Dark, Light or System setting', () => {
     assert.equal(a.themes.light.theme, 'light');

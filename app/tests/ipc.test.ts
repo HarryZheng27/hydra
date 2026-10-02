@@ -45,13 +45,30 @@ test('main registers exactly one transport channel', () => {
 });
 
 test('every channel has a validator, and parseCall agrees with it', () => {
-  assert.deepEqual([...channels].sort(), ['app.info', 'projects.pick', 'projects.remove', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen']);
+  assert.deepEqual([...channels].sort(), ['app.info', 'app.problems', 'projects.pick', 'projects.remove', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen']);
   assert.equal(parseCall({ channel: 'app.info', payload: null }).ok, true);
   const good: Array<[string, unknown]> = [
     ['settings.setTheme', { theme: 'system' }], ['settings.pickCliPath', { provider: 'codex' }], ['settings.clearCliPath', { provider: 'claude' }],
     ['state.setSidebarOpen', { open: false }], ['projects.remove', { id: '0f8fad5b-d9cb-469f-a165-70867728950e' }], ['projects.pick', null],
   ];
   for (const [channel, payload] of good) assert.equal(parseCall({ channel, payload }).ok, true, channel);
+});
+
+test('no payload field accepts a path, a command or free text', () => {
+  const samples: Record<string, Record<string, unknown>> = {
+    'settings.setTheme': { theme: 'dark' }, 'settings.pickCliPath': { provider: 'claude' }, 'settings.clearCliPath': { provider: 'codex' },
+    'state.setSidebarOpen': { open: true }, 'projects.remove': { id: '0f8fad5b-d9cb-469f-a165-70867728950e' },
+  };
+  for (const channel of channels) {
+    const sample = samples[channel];
+    if (!sample) { assert.equal(parseCall({ channel, payload: { path: 'C:\\x.exe' } }).ok, false, channel); continue; }
+    assert.equal(parseCall({ channel, payload: sample }).ok, true, channel);
+    for (const key of Object.keys(sample)) {
+      for (const hostile of ['C:\\Windows\\System32\\cmd.exe', '../../x', 'claude --dangerously-skip-permissions', 'x'.repeat(40)]) {
+        assert.equal(parseCall({ channel, payload: { ...sample, [key]: hostile } }).ok, false, `${channel}.${key} took ${hostile}`);
+      }
+    }
+  }
 });
 
 test('no channel takes a path or a command from the renderer', () => {

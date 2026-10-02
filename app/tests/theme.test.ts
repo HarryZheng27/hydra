@@ -32,7 +32,11 @@ test('the title bar overlay takes six-digit colors from the theme', () => {
   }
 });
 
-test('the CSS defaults match Hydra Dark, so the first paint matches the window', () => {
+test('the CSS defaults match Hydra Dark, and Hydra Light under a light preference, so the first paint matches', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'styles.css'), 'utf8');
-  for (const [variable, value] of Object.entries(themeVariables('dark'))) assert.ok(css.includes(`${variable}: ${value};`), `${variable}: ${value}`);
+  const light = css.indexOf('@media (prefers-color-scheme: light)');
+  assert.ok(light > 0);
+  const darkBlock = css.slice(0, light), lightBlock = css.slice(light, css.indexOf('\n}', light));
+  for (const [variable, value] of Object.entries(themeVariables('dark'))) assert.ok(darkBlock.includes(`${variable}: ${value};`), `dark ${variable}: ${value}`);
+  for (const [variable, value] of Object.entries(themeVariables('light'))) assert.ok(lightBlock.includes(`${variable}: ${value};`), `light ${variable}: ${value}`);
 });

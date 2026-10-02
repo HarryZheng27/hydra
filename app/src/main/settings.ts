@@ -23,9 +23,15 @@ export const defaultState = (): AppState => ({ version: 1, sidebarOpen: true, pr
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const onlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(value).every(key => allowed.includes(key));
 const MAX_PATH = 1024;
-/** An absolute Windows or POSIX path with no control characters. */
-export const isAbsolutePath = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && value.length <= MAX_PATH && !/[\u0000-\u001f]/.test(value) && (path.win32.isAbsolute(value) || path.posix.isAbsolute(value)) && !/^[\\/]{2}[?.][\\/]/.test(value);
+/**
+ * A fully qualified path with no control characters: on Windows a drive path (`C:\...`) or a UNC share, never a
+ * drive-relative `\foo`, a `C:foo`, or a `\\?\` or `\\.\` device path.
+ */
+export const isAbsolutePath = (value: unknown, platform: NodeJS.Platform = process.platform): value is string => {
+  if (typeof value !== 'string' || !value.length || value.length > MAX_PATH || /[\u0000-\u001f]/.test(value)) return false;
+  if (platform !== 'win32') return value.startsWith('/');
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+/.test(value);
+};
 
 export function parseSettings(raw: unknown): AppSettings | undefined {
   if (!isRecord(raw) || raw.version !== 1 || !onlyKeys(raw, ['version', 'theme', 'cliPaths'])) return undefined;
@@ -62,46 +68,87 @@ export function parseState(raw: unknown): AppState | undefined {
   return { version: 1, sidebarOpen: raw.sidebarOpen, projects };
 }
 
-/** One JSON file in user data, checked on read and replaced atomically on write. Writes run one at a time. */
+/** Read errors Windows gives while antivirus, backup or sync software holds a file open for a moment. */
+const transient = new Set(['EBUSY', 'EPERM', 'EACCES']);
+
+async function readRetrying(file: string): Promise<string | undefined> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await fs.readFile(file, 'utf8'); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? '';
+      if (code === 'ENOENT') return undefined;
+      if (!transient.has(code) || attempt >= 7) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.min(25 * 2 ** attempt, 250)));
+    }
+  }
+}
+
+/**
+ * One JSON file in user data, checked on read and replaced atomically on write. Writes run one at a time.
+ *
+ * The user's file is never lost: a file that fails its schema is moved aside before the defaults are used, and when
+ * the file can't be read or moved aside, the store keeps the defaults for this session but refuses every write, so
+ * it can't replace a file it never saw.
+ */
 export class JsonStore<T> {
+  private loading: Promise<T> | undefined;
   private value: T | undefined;
   private queue: Promise<unknown> = Promise.resolve();
-  /** Why the file on disk was set aside at load, if it was. */
+  /** What went wrong at load, for the app to show. */
   problem: string | undefined;
+  /** True when the file on disk couldn't be read or set aside: writes are refused so it is never overwritten. */
+  readOnly = false;
 
-  constructor(readonly file: string, private readonly parse: (raw: unknown) => T | undefined, private readonly defaults: () => T) {}
+  constructor(
+    readonly file: string,
+    private readonly parse: (raw: unknown) => T | undefined,
+    private readonly defaults: () => T,
+    private readonly replace: (temporary: string, destination: string) => Promise<void> = replaceAtomic,
+  ) {}
 
-  async load(): Promise<T> {
-    if (this.value) return this.value;
+  /** The current value. The file is read once; every caller shares that read. */
+  load(): Promise<T> {
+    this.loading ??= this.read();
+    return this.loading;
+  }
+
+  private async read(): Promise<T> {
+    const name = path.basename(this.file);
     let text: string | undefined;
-    try { text = await fs.readFile(this.file, 'utf8'); } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.problem = `Couldn't read ${path.basename(this.file)}.`;
+    try { text = await readRetrying(this.file); } catch (error) {
+      this.readOnly = true;
+      this.problem = `Hydra couldn't read ${name} (${(error as NodeJS.ErrnoException).code ?? 'error'}), so it is using defaults and won't save changes until it restarts.`;
+      return (this.value = this.defaults());
     }
+    if (text === undefined) return (this.value = this.defaults());
     let parsed: T | undefined;
-    if (text !== undefined) {
-      try { parsed = this.parse(JSON.parse(text)); } catch { parsed = undefined; }
-      if (!parsed) {
-        this.problem = `${path.basename(this.file)} didn't match its schema; it was set aside and the defaults are used.`;
-        await fs.rename(this.file, `${this.file}.invalid-${Date.now()}`).catch(() => undefined);
-      }
+    try { parsed = this.parse(JSON.parse(text)); } catch { parsed = undefined; }
+    if (parsed) return (this.value = parsed);
+    const aside = `${this.file}.invalid-${Date.now()}`;
+    try {
+      await fs.rename(this.file, aside);
+      this.problem = `${name} didn't match its schema. It was moved to ${path.basename(aside)}, and the defaults are used.`;
+    } catch {
+      this.readOnly = true;
+      this.problem = `${name} didn't match its schema and couldn't be moved aside, so Hydra is using defaults and won't save changes until it restarts.`;
     }
-    this.value = parsed ?? this.defaults();
-    return this.value;
+    return (this.value = this.defaults());
   }
 
   /** Applies `change` to the current value, checks the result against the schema, and writes it. */
   update(change: (current: T) => T): Promise<T> {
     const run = this.queue.then(async () => {
-      const next = change(structuredClone(await this.load()));
-      const checked = this.parse(JSON.parse(JSON.stringify(next)));
+      const current = await this.load();
+      if (this.readOnly) throw new Error(this.problem ?? `Hydra won't overwrite ${path.basename(this.file)}.`);
+      const checked = this.parse(JSON.parse(JSON.stringify(change(structuredClone(current)))));
       if (!checked) throw new Error(`Refused to write an invalid ${path.basename(this.file)}.`);
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       const temporary = `${this.file}.${randomBytes(6).toString('hex')}.tmp`;
       try {
         await fs.writeFile(temporary, `${JSON.stringify(checked, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-        await replaceAtomic(temporary, this.file);
+        await this.replace(temporary, this.file);
       } finally { await fs.rm(temporary, { force: true }).catch(() => undefined); }
       this.value = checked;
+      this.loading = Promise.resolve(checked);
       return checked;
     });
     this.queue = run.catch(() => undefined);
@@ -112,10 +159,16 @@ export class JsonStore<T> {
 export const createSettingsStore = (userData: string): JsonStore<AppSettings> => new JsonStore(path.join(userData, SETTINGS_FILE), parseSettings, defaultSettings);
 export const createStateStore = (userData: string): JsonStore<AppState> => new JsonStore(path.join(userData, STATE_FILE), parseState, defaultState);
 
+/** The project for a folder, matched by resolved path (case-insensitively, as Windows does). */
+export const projectFor = (state: AppState, folder: string): Project | undefined => {
+  const resolved = path.resolve(folder).toLowerCase();
+  return state.projects.find(project => path.resolve(project.path).toLowerCase() === resolved);
+};
+
 /** Adds a folder as a project, once: picking a folder that's already a project returns the state unchanged. */
 export function addProject(state: AppState, folder: string): AppState {
   const resolved = path.resolve(folder);
-  if (state.projects.some(project => path.resolve(project.path).toLowerCase() === resolved.toLowerCase())) return state;
+  if (projectFor(state, resolved)) return state;
   return { ...state, projects: [...state.projects, { id: randomUUID(), path: resolved, name: path.basename(resolved) || resolved }] };
 }
 

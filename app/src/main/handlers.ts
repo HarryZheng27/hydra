@@ -1,7 +1,7 @@
 import type { AppSettings, AppState, CliProvider } from '../shared/ipc';
 import type { ThemeSetting } from '../shared/theme';
 import type { Handlers } from './ipc';
-import { addProject, removeProject, setCliPath, type JsonStore } from './settings';
+import { addProject, projectFor, removeProject, setCliPath, type JsonStore } from './settings';
 
 export interface HandlerDeps {
   info: { name: string; version: string; electron: string; platform: string };
@@ -19,6 +19,10 @@ export interface HandlerDeps {
 export function createHandlers(deps: HandlerDeps): Handlers {
   return {
     'app.info': () => deps.info,
+    'app.problems': async () => {
+      await Promise.all([deps.settings.load(), deps.state.load()]);
+      return [deps.settings.problem, deps.state.problem].filter((problem): problem is string => !!problem);
+    },
     'settings.get': () => deps.settings.load(),
     'settings.setTheme': async ({ theme }) => {
       const next = await deps.settings.update(current => ({ ...current, theme }));
@@ -34,7 +38,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'state.setSidebarOpen': ({ open }) => deps.state.update(current => ({ ...current, sidebarOpen: open })),
     'projects.pick': async () => {
       const folder = await deps.pickFolder();
-      return folder ? deps.state.update(current => addProject(current, folder)) : deps.state.load();
+      if (!folder) return { state: await deps.state.load() };
+      const state = await deps.state.update(current => addProject(current, folder));
+      return { state, picked: projectFor(state, folder)?.id };
     },
     'projects.remove': ({ id }) => deps.state.update(current => removeProject(current, id)),
   };
