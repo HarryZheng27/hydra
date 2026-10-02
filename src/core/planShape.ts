@@ -17,8 +17,8 @@ export const singleHeadKey = 'whole-plan';
 export const singleHeadMaxAverageWidth = 2.5;
 /** A head's write scope lists at most this many paths (parseWriteScope). */
 export const singleHeadMaxScope = 32;
-/** Room left in the head's brief for what a later try adds (a landing conflict's section, a lead's retry brief). */
-const briefMargin = 4000;
+/** Room left in the head's brief for what a later try adds: a lead's retry brief (at most 4,000 characters) and a landing conflict's section. */
+const briefMargin = 6000;
 
 export interface PlanShape {
   jobs: number;
