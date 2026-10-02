@@ -67,7 +67,7 @@ const homeRules = [
   ...['.claude.json', '.git-credentials', '.npmrc', '.netrc'].flatMap(file => [`Read(//c/Users/me/${file})`, `Edit(//c/Users/me/${file})`]),
 ];
 
-test('a Claude head\'s settings: exactly the read block and the deny pairs, and nothing else', () => {
+test('a Claude head\'s settings: the read block, the deny pairs, hooks and claude.ai sync off, and nothing else', () => {
   const settings = headSettings({
     platform: 'win32', env: winHome, storage: 'C:\\Data\\Hydra', storageRead: [{ path: 'C:\\Data\\Hydra', dir: true }],
     worktree: 'C:\\wt\\aaa', addDirs: [], otherWorktrees: ['C:\\wt\\bbb', 'C:\\wt\\lane-ccc'], leadFolder: 'C:\\repo',
@@ -126,7 +126,10 @@ test('a Claude head turns your plugins off, and the checker lets enabledPlugins 
   assert.match(settingsProblems({ ...JSON.parse(JSON.stringify(settings)), syncClaudeAiSkills: true }, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] })[0]!, /a head's syncClaudeAiSkills must be false/);
   const { syncClaudeAiPlugins: _plugins, ...missing } = JSON.parse(JSON.stringify(settings));
   assert.match(settingsProblems(missing, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] })[0]!, /a head's syncClaudeAiPlugins must be false/);
-  assert.match(settingsProblems({ permissions: { deny: ['Read(//home/me/.ssh/**)'] }, disableClaudeAiConnectors: true }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own claude\.ai skills/);
+  for (const key of ['syncClaudeAiSkills', 'syncClaudeAiPlugins', 'disableClaudeAiConnectors']) {
+    assert.match(settingsProblems({ permissions: { deny: ['Read(//home/me/.ssh/**)'] }, [key]: key === 'disableClaudeAiConnectors' }, { platform: 'linux', blockReads: false })[0]!, /a lane keeps your own claude\.ai skills/, key);
+  }
+  for (const wrong of ['false', 0, null]) assert.match(settingsProblems({ ...JSON.parse(JSON.stringify(settings)), syncClaudeAiSkills: wrong }, { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] })[0]!, /must be false/, String(wrong));
   assert.deepEqual(settingsProblems(JSON.parse(JSON.stringify(settings)), { platform: 'win32', blockReads: true, readable: ['C:\\wt\\aaa'] }), []);
 
   const check = (enabledPlugins: unknown, blockReads = true) => settingsProblems({ ...settings, permissions: blockReads ? settings.permissions : { deny: settings.permissions.deny }, enabledPlugins }, { platform: 'win32', blockReads });

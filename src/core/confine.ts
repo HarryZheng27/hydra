@@ -134,9 +134,9 @@ export interface ClaudeSettings {
 /**
  * HSEC-71 (#277 follow-up): what your claude.ai account syncs into Claude Code stays out of heads and reviewers. In a
  * `--settings` file, the two sync switches block and hide your claude.ai skills and plugins for that one run only
- * (nothing of yours is moved or deleted), and no claude.ai connector is fetched. Claude Code 2.1.282 knows all three;
- * an older one ignores keys it doesn't know without dropping the file's deny rules (checked on 2.1.282 with an
- * unknown key, 2026-10-02).
+ * (nothing of yours is moved or deleted), and no claude.ai connector is fetched. Every supported Claude Code (2.1.270
+ * and up) defines all three as booleans with this same `--settings` meaning, so none of them can void the file's deny
+ * rules (R1); checked in the 2.1.270 and 2.1.282 binaries, 2026-10-02.
  */
 export const claudeAiSyncOff = Object.freeze({ syncClaudeAiSkills: false, syncClaudeAiPlugins: false, disableClaudeAiConnectors: true } as const);
 
