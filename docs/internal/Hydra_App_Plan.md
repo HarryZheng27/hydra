@@ -102,7 +102,9 @@ Cloud agents can't reach Hydra's endpoint (loopback only). Their work is checked
 - **Electron fuses:** RunAsNode stays on, since the MCP bridge, `hydra` CLI and limit hook need it. NODE_OPTIONS, `--inspect` arguments and the file protocol's extra privileges are off. Cookie encryption, embedded ASAR integrity and only-load-from-ASAR are on. Ship the bridge scripts inside `app.asar` so integrity covers them. Under RunAsNode, `--inspect` still works, which is no worse than RunAsNode itself.
 - **Codex trust:** never start a Codex thread with `workspace-write`; it writes the folder into the user's `config.toml` as trusted, which turns on that project's config, hooks and MCP servers.
 - **Untrusted output:** render model and tool output as sanitized markdown, no raw HTML. Draw approval cards only from structured requests. If G1 falls back to route B, a model-made call to `approve` must be detected and denied.
-- **IPC:** the preload exposes a fixed, typed call set; main validates every message, as `parseMessage` does today.
+- **IPC:** the preload exposes a fixed, typed call set; main validates every message, as `parseMessage` does today. Built in G3 (HSEC-73 to HSEC-81):
+  - only the main frame of an `app://hydra/` page may call;
+  - no payload carries a path or a command, so CLI paths and project folders come only from main's own pickers.
 - **Chat logs:** local, with a user-only access list like handshakes. The redactor covers diagnostics and evidence, not the chat.
 - **Updates:** the IDE's check (SHA256SUMS, allowed hosts) with the app's own asset. Unsigned until HR-14 is solved, like the IDE.
 
