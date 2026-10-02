@@ -50,8 +50,8 @@ G1 and G2 can run at the same time, in separate sessions. G6 and G7 can too.
 
 | Goal | Status | PRs |
 | --- | --- | --- |
-| G1 | In progress: S1 and S4 done; S2 turn scenarios wait for the Codex limit reset (2026-10-03) | |
-| G2 | Not started | |
+| G1 | In review | |
+| G2 | In progress | |
 | G3 | Not started | |
 | G4 | Not started | |
 | G5 | Not started | |

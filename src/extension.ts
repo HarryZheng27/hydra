@@ -26,7 +26,6 @@ import { createLeadVerifier, createUserVerifier } from './core/leadVerification'
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from './core/claudeMem';
 import { installWithFallback } from './core/openVsx';
 import { firstRunConnectKey, firstRunProviders, shouldConnectOnFirstRun } from './core/onboarding';
-import { selfCheckCli } from './core/cliSelfCheck';
 import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from './core/helperRegistration';
 import { claudeSupportsLimitHook, limitHookGroup, limitHookState, type LimitHookGroup } from './core/claudeLimitHook';
 import type { LimitEvent } from './core/limitEvents';
@@ -43,28 +42,25 @@ import { registerChatLocationController, setChatLocation } from './chatLocationC
 import { registerLimitOffer } from './extensionLimitOffer';
 import { codexLaneFanout } from './core/limitEvents';
 import { LimitOfferTracker } from './core/limitOffer';
-import { LanesController, isLaneMessage } from './extensionLanes';
+import { LanesController } from './extensionLanes';
 import { HydraTreeProvider } from './extensionTree';
 // ---- Packs (docs/internal/Packs_Plan.md). Its own block. ----
 import { createPackService } from './extensionPacks';
 import type { PackService } from './core/packs/service';
-import { parseMessage, type HelperJobView, type Provider, type ProviderDiagnostic, type Snapshot, type SnapshotRole, type Handoff, type HandoffTask } from './core/model';
+import { type ClientMessage, type HelperJobView, type Provider, type ProviderDiagnostic, type Snapshot, type Handoff, type HandoffTask } from './core/model';
 // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4). Its own block; Phase 1 (Lanes) wires its own imports separately. ----
-import { createPlan, maxPlanJobs, PlanStore, type Plan, type PlanDispatch, type PlanJob } from './core/plans';
-import { planBrief } from './core/planner';
+import { PlanStore, type Plan, type PlanDispatch } from './core/plans';
 // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md). Their own block. ----
-import { cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, planIdPattern, planJobKeyPattern, type PlanJobRunAs } from './core/plans';
-import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneResultInput } from './core/planRunner';
+import { planIdPattern, planJobKeyPattern } from './core/plans';
+import { PlanRunner, type PlanJobStatus, type PlanJobView } from './core/planRunner';
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat"). Their own block. ----
-import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, buildPlanReport, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, type PlanReportJobDetail } from './core/plans';
+import { appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom } from './core/plans';
 import type { PlanBoardBridge, PlanLeadAmendInput, PlanLeadBridge, PlanLeadCreateInput, PlanLeadMessageInput, PlanLeadPlan } from './core/helperService';
-import type { LanePlanJobView } from './core/model';
 // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together"). Their own block. ----
-import { defaultIntegrationFixRounds, integrationLeadView, isIntegrationFixKey, integrationSettled, laneMergeRefusal, mergeRefusal } from './core/integration';
+import { integrationLeadView, isIntegrationFixKey, integrationSettled } from './core/integration';
 import type { PlanMergeVia } from './core/planRunner';
 // ---- Gates (docs/internal/Gates_Plan.md). Their own block. ----
 import { otherStillLimited } from './core/limitOffer';
-import { toHeadCheckView } from './core/jobs';
 import { buildEvidenceMarkdown } from './core/evidence';
 import { loadGates } from './core/gates';
 import { detectTestScript, noGatesFile, starterTestGatesFile } from './core/starterGates';
@@ -75,6 +71,9 @@ import { AuditLog, type AuditEvent } from './core/audit';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from './core/windowClose';
 // ---- Updates (docs/Releases.md, "Updating"). Its own line. ----
 import { registerUpdates } from './extensionUpdates';
+// ---- The host boundary (docs/internal/hydra-app/G2-host-split.md). Its own line. ----
+import { VsCodeHost } from './vscodeHost';
+import { HydraController } from './host/controller';
 
 let manager: Manager | undefined;
 // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
@@ -114,8 +113,6 @@ function redactedChannel(channel: vscode.OutputChannel, redact: (text: string) =
 class Manager {
   private repositories: string[] = [];
   private panel?: vscode.WebviewPanel;
-  /** hydra.newPlan on a panel that is still loading: shown once its webview says it is ready. */
-  private pendingNewPlan = false;
   private mode: 'editor' | 'agents' = 'editor';
   private busy = false;
   private error?: string;
@@ -128,17 +125,23 @@ class Manager {
   // ---- Audit log (5.2): one per window, denials/approvals/stops ----
   private readonly audit: AuditLog;
   private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
+  /** What the controller needs from VS Code (docs/internal/hydra-app/G2-host-split.md). */
+  private readonly host: VsCodeHost;
   private readonly locks: OwnershipLock[] = [];
   private readonly storageDirectory: string;
-  /** Hydra helpers for this window (docs/internal/Official_Extensions_Plan.md): job store, local endpoint, service, discovery record. */
-  private helpers?: { store: JobStore; endpoint: HelperEndpoint; service: HelperService; record: string; handshake?: string };
-  // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own store, and the brief-planning ----
-  // ---- CLI runs in flight (by plan id), so Cancel and window close can abort them. ----
-  private plans?: { store: PlanStore; planning: Map<string, AbortController> };
-  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): runs plans whose jobs are heads or lanes ----
-  private planRunner?: PlanRunner;
+  /** The Agents view, plans and the plan runner (docs/internal/hydra-app/G2-host-split.md); this class forwards to it. */
+  private readonly controller: HydraController;
+  // Helpers, plans, the plan runner and the active roles live in the controller.
+  private get helpers() { return this.controller.helpers; }
+  private set helpers(value) { this.controller.helpers = value; }
+  private get plans() { return this.controller.plans; }
+  private set plans(value) { this.controller.plans = value; }
+  private get planRunner() { return this.controller.planRunner; }
+  private set planRunner(value) { this.controller.planRunner = value; }
+  private get roles() { return this.controller.roles; }
+  private set roles(value) { this.controller.roles = value; }
+  private get planWaiters() { return this.controller.planWaiters; }
   private readonly leadKey: string;
-  private snapshotGeneration = 0;
   private handoff?: Handoff;
   private readonly diagnostics = new Map<Provider, ProviderDiagnostic>();
   private readonly diagnosticChecks = new Set<AbortController>();
@@ -168,20 +171,16 @@ class Manager {
   private projectSummary?: ProjectSummaryPublisher;
   // ---- Gates (docs/internal/Gates_Plan.md): each provider's latest usage limit, so a review gate uses the other agent while one is limited ----
   private readonly latestLimits = new Map<Provider, LimitEvent>();
-  // ---- Canvas tidy-up (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"): the Finished tray's Clear button, kept across reloads. ----
-  private readonly dismissedTrayKey = 'hydra.tray.dismissed.v1';
-  private dismissedTrayIds = new Set<string>();
   // ---- Packs (docs/internal/Packs_Plan.md): gates.json plus the active packs' gates, for heads and lanes ----
   private readonly packs: PackService;
   /** Step 2: Codex's sandbox for heads' shells and gate commands, checked once per window when first needed. */
   private readonly headSandbox: HeadSandbox;
-  /** The active packs' roles (Snapshot.roles), refreshed whenever packs change. */
-  private roles: SnapshotRole[] = [];
   /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
   private packsLeadFolder?: string;
   /** Watches your packs folder (hydra.packs.folder), so a pack added or edited there refreshes without Reload. */
   private packsFolderWatcher?: vscode.FileSystemWatcher;
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.host = new VsCodeHost(context, this.output, message => this.panel?.webview.postMessage(message), () => this.toEditor());
     // Stop all (5.3): a workspace-wide switch, so it survives a reload until Resume Agents runs.
     this.stop = new StopSwitch(context.workspaceState);
     // Audit log (5.2): one file per window, under Hydra's own storage, never a worktree.
@@ -214,10 +213,10 @@ class Manager {
       gatesExecutable: provider => this.helperExecutable(provider),
       gatesLimited: provider => otherStillLimited(this.latestLimits.get(provider), new Date()),
       // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md) ----
-      planJob: laneId => this.planJobOfLane(laneId),
-      markJobDone: (laneId, result) => this.markPlanJobDone(laneId, result),
-      cancelPlanJob: laneId => this.cancelPlanJobOfLane(laneId),
-      planLaneMergeRefusal: laneId => this.planLaneMergeRefusal(laneId),
+      planJob: laneId => this.controller.planJobOfLane(laneId),
+      markJobDone: (laneId, result) => this.controller.markPlanJobDone(laneId, result),
+      cancelPlanJob: laneId => this.controller.cancelPlanJobOfLane(laneId),
+      planLaneMergeRefusal: laneId => this.controller.planLaneMergeRefusal(laneId),
       // Step C: Auto-dispatch checks a job through the runner.
       planRunner: () => this.planRunner,
       gates: this.packs.gates, roles: this.packs,
@@ -231,8 +230,21 @@ class Manager {
       offerStarterGates: folder => void this.offerStarterGatesIfNeeded(folder),
     }, this.limitOfferTracker);
     context.subscriptions.push(this.lanes);
-    const storedDismissed = context.workspaceState.get<string[]>(this.dismissedTrayKey);
-    if (Array.isArray(storedDismissed)) this.dismissedTrayIds = new Set(storedDismissed.filter(id => typeof id === 'string'));
+    this.controller = new HydraController({
+      host: this.host, lanes: this.lanes, stop: this.stop, audit: this.audit,
+      ide: {
+        view: () => this.view(),
+        handle: message => this.handleIde(message),
+        uiReady: () => { this.readyPanel = this.panel; },
+        agentsOpen: () => !!this.panel,
+        showingAgents: () => this.mode === 'agents',
+        openAgents: () => this.openAgents(),
+        tree: update => this.tree.update(update),
+        summaryChanged: () => this.projectSummary?.changed(),
+        offerStarterGates: folder => void this.offerStarterGatesIfNeeded(folder),
+        report: error => this.report(error),
+      },
+    });
   }
   async initialize(): Promise<void> {
     const command = (name: string, callback: (...args: any[]) => unknown) => this.context.subscriptions.push(vscode.commands.registerCommand(name, (...args) =>
@@ -474,13 +486,7 @@ class Manager {
   helperBridge(provider?: ConnectableProvider): { command: string; args: string[]; env: Record<string, string> } {
     return { command: process.execPath, args: [path.join(this.context.extensionPath, 'dist', 'hydra-mcp.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: path.join(this.context.globalStorageUri.fsPath, 'helpers'), ...(provider ? { HYDRA_LEAD_PROVIDER: provider } : {}) } };
   }
-  private async helperExecutable(provider: Provider): Promise<string> {
-    const info = await findProvider(provider, machineSetting<string>(vscode.workspace.getConfiguration('hydra'), `${provider}Path`));
-    if (!info.executable) throw new Error(`${provider === 'claude' ? 'Claude Code' : 'Codex'} CLI not found. Install it or set Hydra's ${provider} path.`);
-    const check = await selfCheckCli(provider, info.executable);
-    if (!check.ok) throw new Error(check.error);
-    return info.executable;
-  }
+  private helperExecutable(provider: Provider): Promise<string> { return this.controller.helperExecutable(provider); }
   /** Helpers need a trusted Git folder. The first repository in the window is the lead's folder. */
   private async startHelpers(): Promise<void> {
     if (this.disabled || this.handoff || !vscode.workspace.isTrusted || this.helpers) return;
@@ -569,7 +575,7 @@ class Manager {
       plans: this.createPlanLeadBridge(),
       planBoard: this.createPlanBoardBridge(),
       // ---- O7: unattended plans (docs/Heads.md, "Unattended plans") ----
-      enforceUnattendedBudgets: () => this.enforceUnattendedBudgets(),
+      enforceUnattendedBudgets: () => this.controller.enforceUnattendedBudgets(),
     });
     this.context.subscriptions.push(service.onLimit(event => this.limitEvents.fire(event)));
     this.context.subscriptions.push(this.limitEvents.event(event => { this.latestLimits.set(event.provider, event); }));
@@ -593,7 +599,7 @@ class Manager {
     catch (error) { endpoint.revoke(userToken); this.output.appendLine(`[heads] no handshake for scripts: ${this.describe(error)}`); }
     this.startProjectSummary(record, leadFolder);
     // Plan lanes: the runner picks up running plans; a lane job that is ready now waits for Start lane.
-    this.planRunner = this.createPlanRunner(planStore, service, leadFolder);
+    this.planRunner = this.controller.createPlanRunner(planStore, service, leadFolder, this.leadKey);
     await this.planRunner.advanceAll({ startup: true }).catch(error => this.output.appendLine(`[plans] ${this.describe(error)}`));
     this.tree.update({ lanes: this.lanes.state().lanes, heads: this.headViews() ?? [], plans: planStore.list(), planJobs: this.planJobViews() });
     this.output.appendLine(`[heads] ready for ${leadFolder}`);
@@ -1123,79 +1129,20 @@ class Manager {
     if (await realpath(taskCommon.trim()) !== await realpath(mainCommon.trim())) throw new Error('Handoff worktree belongs to a different repository.');
     if (branch.trim() !== task.branch) throw new Error('Handoff worktree branch changed. Restore its recorded branch.');
   }
-  private publishTimer: ReturnType<typeof setTimeout> | undefined;
-  /** One trailing publish for high-frequency updates; an immediate publish() supersedes it. */
-  /** The heads the webview shows (Agents canvas and dashboard), newest first. */
-  private headViews(): HelperJobView[] | undefined {
-    const service = this.helpers?.service;
-    return service?.list().map(job => ({
-      id: job.id, title: job.title, state: job.state, provider: job.provider, createdAt: job.createdAt, finishedAt: job.finishedAt,
-      progress: job.progress, question: job.state === 'blocked' ? job.question : undefined, reason: job.state === 'running' ? undefined : job.reason,
-      branch: job.branch, commit: job.result?.commit, summary: job.result?.summary, changedFiles: job.result?.changedFiles.length ?? 0,
-      checks: job.result?.checks.map(toHeadCheckView) ?? [],
-      repository: service.leadFolder, worktree: job.worktree, dependsOn: job.dependsOn,
-      lead: job.lead, merged: service.isMerged(job.id), startedAt: job.startedAt, writeScope: job.writeScope,
-      ...(job.role ? { role: { ref: job.role.ref, title: job.role.title, packTitle: job.role.packTitle } } : {}),
-      ...(job.result?.status ? { status: job.result.status } : {}),
-      ...(service.headConflicts(job.id).length ? { conflicts: service.headConflicts(job.id) } : {}),
-      ...(service.headIntegrationConflict(job.id) ? { integrationConflict: { branch: service.headIntegrationConflict(job.id)!.branch, files: service.headIntegrationConflict(job.id)!.files } } : {}),
-      ...(job.providerWait && job.state === 'running' ? { providerWait: job.providerWait } : {}),
-      ...(job.providerWaitMs ? { providerWaitMs: job.providerWaitMs } : {}),
-    })).reverse();
-  }
-  /** Head changes go to the webview at once (the Agents canvas animates them); the full snapshot follows, debounced. */
-  private headsChanged(): void {
-    const heads = this.headViews() ?? [];
-    void this.broadcast({ type: 'heads', heads }).catch(() => undefined);
-    this.tree.update({ heads });
-    // Plan lanes: the runner moves running plans along (it also makes them done or incomplete).
-    this.planRunner?.advanceSoon();
-    this.projectSummary?.changed();
-    this.publishSoon();
-    // Step A: a head just finished — the one-time starter-gates offer, non-blocking.
-    if (this.helpers && heads.some(head => head.state === 'done')) void this.offerStarterGatesIfNeeded(this.helpers.service.leadFolder);
-  }
-  private publishSoon(): void {
-    if (this.publishTimer) clearTimeout(this.publishTimer);
-    this.publishTimer = setTimeout(() => { this.publishTimer = undefined; void this.publish().catch(error => this.report(error)); }, 200);
-  }
-  private async publish(): Promise<void> {
-    if (this.publishTimer) { clearTimeout(this.publishTimer); this.publishTimer = undefined; }
-    const generation = ++this.snapshotGeneration;
+  private headViews(): HelperJobView[] | undefined { return this.controller.headViews(); }
+  private headsChanged(): void { this.controller.headsChanged(); }
+  private async publish(): Promise<void> { await this.controller.publish(); }
+  /** The IDE's part of each snapshot, and the status bar that always changed with it. */
+  private view(): Pick<Snapshot, 'mode' | 'busy' | 'error' | 'handoff' | 'officialExtensions'> {
     this.status.text = `$(layout) ${this.mode === 'agents' ? 'Agent Manager' : 'Editor'}${this.error ? ' $(warning)' : ''}`;
     this.status.tooltip = `Hydra: switch to the ${this.mode === 'agents' ? 'Editor' : 'Agent Manager'} (Alt+Shift+A)`;
-    if (generation !== this.snapshotGeneration) return;
-    const snapshot: Snapshot = {
-      mode: this.mode, busy: this.busy || this.disabled, error: this.error,
-      helpers: this.headViews(), plans: this.plans?.store.list(), defaultProvider: vscode.workspace.getConfiguration('hydra').get('defaultProvider', 'claude'),
-      handoff: this.handoff, officialExtensions: ['claude', 'codex'].map(provider => officialExtensionInfo(provider as 'claude' | 'codex')),
-      dismissedTray: [...this.dismissedTrayIds],
-      planJobs: this.planJobViews(),
-      roles: this.roles,
-    };
-    await this.broadcast({ type: 'snapshot', snapshot });
+    return { mode: this.mode, busy: this.busy || this.disabled, error: this.error, handoff: this.handoff, officialExtensions: ['claude', 'codex'].map(provider => officialExtensionInfo(provider as 'claude' | 'codex')) };
   }
-  // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
-  /** Plan changes go to the webview at once (mirrors headsChanged); the full snapshot follows, debounced. */
-  private plansChanged(): void {
-    const plans = this.plans?.store.list() ?? [];
-    void this.broadcast({ type: 'plans', plans, planJobs: this.planJobViews() }).catch(() => undefined);
-    this.tree.update({ plans, planJobs: this.planJobViews() });
-    this.lanes.planStatesChanged();
-    this.projectSummary?.changed();
-    this.publishSoon();
-    this.wakePlanWaiters();
-  }
-  private requirePlans(): { store: PlanStore; planning: Map<string, AbortController> } {
-    if (!this.plans) throw new Error('Hydra plans are not ready in this window yet.');
-    return this.plans;
-  }
+  private plansChanged(): void { this.controller.plansChanged(); }
+  private requirePlans(): { store: PlanStore; planning: Map<string, AbortController> } { return this.controller.requirePlans(); }
 
   // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
 
-  /** Woken by plansChanged (any plan or plan-job change), for hydra_plan_wait. */
-  private readonly planWaiters = new Set<() => void>();
-  private wakePlanWaiters(): void { for (const wake of [...this.planWaiters]) wake(); }
 
   private createPlanLeadBridge(): PlanLeadBridge {
     return {
@@ -1389,371 +1336,15 @@ class Manager {
     });
     this.plansChanged();
   }
-  // ---- Canvas tidy-up (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up") ----
-  /** The Finished tray's Clear button: hide these heads from the tray, kept across reloads; a new finished head still shows up. */
-  private async trayClear(ids: readonly string[]): Promise<void> {
-    for (const id of ids) this.dismissedTrayIds.add(id);
-    await this.context.workspaceState.update(this.dismissedTrayKey, [...this.dismissedTrayIds]);
-    await this.publish();
-  }
   /** hydra.learn: opens the "Work with Hydra" walkthrough (docs/internal/Lanes_And_Planner_Plan.md, "A walkthrough"). */
   private async openWalkthrough(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.openWalkthrough', `${this.context.extension.id}#hydra.workWithHydra`, false);
   }
-  private async newPlan(): Promise<void> {
-    const loaded = !!this.panel;
-    this.pendingNewPlan = !loaded;
-    await this.openAgents();
-    if (loaded) await this.broadcast({ type: 'showNewPlan' });
-  }
-  private async planCreateEmpty(title: string): Promise<void> {
-    const plans = this.requirePlans();
-    await plans.store.save(createPlan({ title, state: 'draft' }));
-    this.plansChanged();
-  }
-  private async planCreate(title: string, brief: string): Promise<void> {
-    const plans = this.requirePlans();
-    const plan = await plans.store.save(createPlan({ title, brief, state: 'planning' }));
-    this.plansChanged();
-    void this.draftPlan(plan.id, brief);
-  }
-  private async planRetry(id: string): Promise<void> {
-    const plans = this.requirePlans();
-    const current = plans.store.get(id);
-    if (!current) throw new Error(`No plan ${id}.`);
-    if (current.state !== 'failed') throw new Error('Only a failed plan can be retried.');
-    if (!current.brief) throw new Error('This plan has no brief to retry; use "+ Job" instead.');
-    await plans.store.save({ ...current, state: 'planning', error: undefined });
-    this.plansChanged();
-    void this.draftPlan(id, current.brief);
-  }
-  private planCancel(id: string): void {
-    this.plans?.planning.get(id)?.abort();
-  }
-  /** The failed state's "Start empty": keep the plan, but clear the failed brief attempt to an empty draft. */
-  private async planStartEmpty(id: string): Promise<void> {
-    const plans = this.requirePlans();
-    const current = plans.store.get(id);
-    if (!current) throw new Error(`No plan ${id}.`);
-    plans.planning.get(id)?.abort();
-    plans.planning.delete(id);
-    await plans.store.save({ ...current, state: 'draft', jobs: [], error: undefined });
-    this.plansChanged();
-  }
-  /** Run the planner CLI and record the result. Runs in the background (called with `void`); `plansChanged` tells the webview when it settles. */
-  private async draftPlan(id: string, brief: string): Promise<void> {
-    const plans = this.plans;
-    if (!plans) return; // the window closed between starting this and getting here
-    const controller = new AbortController();
-    plans.planning.set(id, controller);
-    try {
-      const helpers = this.helpers;
-      if (!helpers) throw new Error('Hydra heads are not ready in this window yet.');
-      const provider: Provider = vscode.workspace.getConfiguration('hydra').get('defaultProvider', 'claude');
-      const executable = await this.helperExecutable(provider);
-      const roles = this.roles.map(role => ({ ref: role.ref, title: role.title, description: role.description }));
-      const result = await planBrief({ provider, executable, repository: helpers.service.leadFolder, brief, signal: controller.signal, ...(roles.length ? { roles } : {}) });
-      const current = plans.store.get(id);
-      if (!current || current.state !== 'planning') return; // deleted, or cancelled and already marked failed
-      await plans.store.save(result.ok ? { ...current, jobs: result.jobs, state: 'draft', error: undefined } : { ...current, state: 'failed', error: result.error });
-    } catch (error) {
-      const current = plans.store.get(id);
-      if (current?.state === 'planning') await plans.store.save({ ...current, state: 'failed', error: this.describe(error) }).catch(() => undefined);
-    } finally {
-      plans.planning.delete(id);
-      this.plansChanged();
-    }
-  }
-  private async planDelete(id: string): Promise<void> {
-    const plans = this.requirePlans();
-    // Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 4): deleting a plan that ran asks first, and stops nothing.
-    const current = plans.store.get(id);
-    if (current && (current.state === 'running' || current.state === 'incomplete')) {
-      const pick = await vscode.window.showWarningMessage(`Delete plan ${current.title}?`, { modal: true, detail: 'Its heads and lanes keep going; they are no longer part of a plan.' }, 'Delete plan');
-      if (pick !== 'Delete plan') return;
-    }
-    plans.planning.get(id)?.abort();
-    plans.planning.delete(id);
-    await plans.store.remove(id);
-    this.plansChanged();
-  }
-  /** + Job. On a plan that has run (decision 5) the new job waits for Run plan, so a half-written job never starts by itself. */
-  private async planAddJob(id: string): Promise<void> {
-    await this.editPlan(id, plan => {
-      if (plan.state === 'done' || plan.state === 'planning') throw new Error(plan.state === 'done' ? 'This plan is done.' : 'This plan is still being drafted.');
-      if (plan.jobs.length >= maxPlanJobs) throw new Error(`A plan may have at most ${maxPlanJobs} jobs.`);
-      let index = plan.jobs.length + 1, key = `job-${index}`;
-      while (plan.jobs.some(job => job.key === key)) key = `job-${++index}`;
-      const ran = plan.state === 'running' || plan.state === 'incomplete';
-      const job: PlanJob = { key, title: 'New job', brief: 'Describe what this job should do.', dependsOn: [], ...(ran ? { draft: true } : {}) };
-      return { ...plan, jobs: [...plan.jobs, job] };
-    });
-  }
-  /**
-   * `role` (docs/internal/Packs_Plan.md, "Picking a role") is "pack/role" to set it, ""
-   * to clear it, or undefined to leave it as it was. A role that isn't active
-   * is refused unless it's the job's own unchanged value, so a role whose pack
-   * went away stays on the job instead of being silently dropped.
-   */
-  private async planSaveJob(id: string, key: string, title: string, brief: string, provider?: Provider, runAs?: PlanJobRunAs, role?: string): Promise<void> {
-    await this.editPlan(id, plan => {
-      const job = plan.jobs.find(item => item.key === key);
-      if (!job) throw new Error(`No job "${key}" in this plan.`);
-      // A job that has started keeps what drives it (docs/internal/Plan_Lanes_Plan.md, "Editing").
-      if (runAs && runAs !== jobRunAs(job) && jobStarted(job)) throw new Error(`Job ${job.title} has started, so it can't switch between Head and Lane.`);
-      if (role !== undefined && role !== '' && role !== job.role && !this.roles.some(candidate => candidate.ref === role)) throw new Error(`There's no active role "${role}".`);
-      const nextRole = role === undefined ? job.role : role === '' ? undefined : role;
-      return { ...plan, jobs: plan.jobs.map(item => item.key === key ? { ...item, title, brief, provider, ...(runAs ? { runAs } : {}), ...(nextRole ? { role: nextRole } : { role: undefined }) } : item) };
-    });
-  }
-  private async planDeleteJob(id: string, key: string): Promise<void> {
-    await this.editPlan(id, plan => {
-      const job = plan.jobs.find(item => item.key === key);
-      if (job && jobStarted(job) && plan.state !== 'draft' && plan.state !== 'failed') throw new Error(`Job ${job.title} has started; cancel it instead.`);
-      return { ...plan, jobs: plan.jobs.filter(item => item.key !== key).map(item => ({ ...item, dependsOn: item.dependsOn.filter(dependency => dependency !== key) })) };
-    });
-  }
-  /** "Depends on…": a native multi-select quick pick of the plan's other jobs. */
-  private async planDependsOn(id: string, key: string): Promise<void> {
-    const plans = this.requirePlans();
-    const plan = plans.store.get(id);
-    const job = plan?.jobs.find(item => item.key === key);
-    if (!plan || !job) throw new Error(`No job "${key}" in this plan.`);
-    const others = plan.jobs.filter(item => item.key !== key);
-    const picked = await vscode.window.showQuickPick(
-      others.map(item => ({ label: item.title, description: item.key, picked: job.dependsOn.includes(item.key) })),
-      { canPickMany: true, title: `"${job.title}" depends on…`, placeHolder: 'Select the jobs that must finish first' },
-    );
-    if (picked === undefined) return; // Esc: leave it as it was
-    const dependsOn = picked.map(item => item.description!);
-    await this.editPlan(id, current => this.withDependencies(current, key, () => dependsOn));
-  }
-  private async planAddDependency(id: string, key: string, dependsOn: string): Promise<void> {
-    await this.editPlan(id, plan => {
-      if (!plan.jobs.some(job => job.key === key) || !plan.jobs.some(job => job.key === dependsOn)) throw new Error('Unknown job.');
-      return this.withDependencies(plan, key, current => current.includes(dependsOn) ? current : [...current, dependsOn]);
-    });
-  }
-  private async planRemoveDependency(id: string, key: string, dependsOn: string): Promise<void> {
-    await this.editPlan(id, plan => this.withDependencies(plan, key, current => current.filter(dependency => dependency !== dependsOn)));
-  }
-  /** Run plan: the plan runner starts every job that is ready, dependencies first (docs/internal/Plan_Lanes_Plan.md, section 2). Running it again starts only jobs added since. */
-  private async runPlanById(id: string): Promise<void> {
-    if (!this.helpers) throw new Error('Hydra heads are not ready in this window yet.');
-    await this.requirePlanRunner().run(id);
-  }
-  // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): the runner, its lookups, and the plan actions ----
-  private requirePlanRunner(): PlanRunner {
-    if (!this.planRunner) throw new Error('Hydra plans are not ready in this window yet.');
-    return this.planRunner;
-  }
-  /**
-   * Change a plan in place, on the plan runner's queue for that plan, so an edit and a job being
-   * started never overwrite each other.
-   */
-  private async editPlan(id: string, change: (plan: Plan) => Plan | undefined): Promise<void> {
-    const plans = this.requirePlans();
-    const work = async () => { if (!await plans.store.update(id, change)) throw new Error(`No plan ${id}.`); };
-    await (this.planRunner ? this.planRunner.withPlan(id, work) : work());
-    this.plansChanged();
-  }
-  /** A job's new dependencies. Once a plan has run, a job that started keeps its own, and no edit may make a cycle. */
-  private withDependencies(plan: Plan, key: string, change: (current: string[]) => string[]): Plan {
-    const job = plan.jobs.find(item => item.key === key);
-    if (!job) throw new Error(`No job "${key}" in this plan.`);
-    const ran = plan.state !== 'draft' && plan.state !== 'failed' && plan.state !== 'planning';
-    if (ran && jobStarted(job)) throw new Error(`Job ${job.title} has started, so what it depends on can't change.`);
-    const next = { ...plan, jobs: plan.jobs.map(item => item.key === key ? { ...item, dependsOn: change(item.dependsOn) } : item) };
-    const cycle = ran ? findCycle(next.jobs) : undefined;
-    if (cycle) throw new Error(cycleMessage(next.jobs, cycle));
-    return next;
-  }
-  private createPlanRunner(store: PlanStore, service: HelperService, leadFolder: string): PlanRunner {
-    const jobs = this.helpers!.store;
-    const defaultProvider = (): Provider => vscode.workspace.getConfiguration('hydra').get<string>('defaultProvider', 'claude') === 'codex' ? 'codex' : 'claude';
-    const lines = (text: string) => text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    return new PlanRunner({
-      store, repository: leadFolder,
-      look: {
-        head: id => { const job = jobs.get(id); return job && { state: job.state, title: job.title, ...(job.limitHit ? { limitHit: true } : {}), ...(job.reason ? { reason: job.reason } : {}), ...(job.branch ? { branch: job.branch } : {}), ...(job.result ? { result: { commit: job.result.commit, summary: job.result.summary, changedFiles: job.result.changedFiles, ...(job.result.status ? { status: job.result.status } : {}) } } : {}) }; },
-        lane: id => this.lanes.laneLook(id),
-        planLanes: planId => this.lanes.planLanes(planId),
-        lanesAvailable: () => this.lanes.available,
-      },
-      // A plan's heads group under its lead `plan-<id>`; a retried head gets a new idempotency key.
-      // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then hydra.defaultProvider.
-      startHead: async (plan, job, dependsOn, inputs, start) => {
-        const config = vscode.workspace.getConfiguration('hydra');
-        const headDefaults = resolveHeadDefaults({ minutes: config.get<number>('heads.defaultMinutes'), maxTurns: config.get<number>('heads.defaultMaxTurns'), budgetUsd: config.get<number>('heads.defaultBudgetUsd') });
-        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
-        return { jobId: result.job_id };
-      },
-      startLane: (plan, job, start) => this.lanes.startPlanLane(plan, job, start, defaultProvider()),
-      cancelHead: async (jobId, reason) => { await service.handle({ role: 'lead', leadKey: this.leadKey }, 'hydra_cancel_head', { job_id: jobId, reason }, new AbortController().signal); },
-      unlinkLane: id => this.lanes.unlinkPlan(id),
-      commitSubjects: async (from, to) => lines(await git(leadFolder, ['log', '--format=%s', '-n', '10', `${from}..${to}`])),
-      changedFiles: async (from, to) => (await git(leadFolder, ['diff', '--name-only', '-z', '--no-renames', from, to, '--'])).split('\0').filter(Boolean),
-      terminalsAvailable: () => this.lanes.state().terminals,
-      onChange: () => this.plansChanged(),
-      // "Plan Checkout started lane Build API", with Show lane. It never switches views by itself.
-      onLaneStarted: (plan, job, laneId) => {
-        void notices.info(`Plan ${plan.title} started lane ${this.lanes.laneName(laneId) ?? job.title}.`, 'Show lane')
-          .then(pick => { if (pick) void this.lanes.show('lanes', laneId); });
-      },
-      // O7: an unattended plan writes its morning report and notifies when it settles; an attended one is unaffected.
-      // O7/O3: an unattended plan writes its morning report once there's nothing more to wait for: at once when it
-      // ends incomplete (or has no integration branch), else after its integration gate has a result for the tip.
-      onSettled: plan => { if (plan.unattended && integrationSettled(plan)) void this.writePlanReport(plan); },
-      // Small plans run as one head (docs/Heads.md): on unless hydra.plans.singleHeadForSmallPlans is off.
-      singleHead: () => vscode.workspace.getConfiguration('hydra').get<boolean>('plans.singleHeadForSmallPlans', true),
-      onGateDone: plan => { if (plan.unattended && plan.state === 'done' && integrationSettled(plan)) void this.writePlanReport(plan); },
-      log: line => this.output.appendLine(line),
-      // ---- Stop all (5.3) ----
-      stop: this.stop,
-      // ---- O3: the integration branch and the integration gate (docs/Heads.md, "Landing a plan together") ----
-      integration: {
-        runGate: (plan, tip) => service.runIntegrationGate({
-          planId: plan.id, title: plan.title, ...(plan.brief ? { brief: plan.brief } : {}), base: plan.integration!.base, tip,
-          // One review of the combined work, not one per job (O6): any standard or strict job asks for it.
-          review: plan.jobs.some(job => job.rigor === 'standard' || job.rigor === 'strict'),
-          providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
-        }),
-        fixRounds: () => vscode.workspace.getConfiguration('hydra').get<number>('plans.integrationFixRounds', defaultIntegrationFixRounds),
-        headBudgetUsd: () => vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5),
-      },
-    });
-  }
-  /** O3: Merge plan / Open PR from the canvas: the same refusal as hydra_plan_merge; a pull request opens its compare page. */
-  private async planMergeFromCanvas(id: string, via: PlanMergeVia): Promise<void> {
-    const result = await this.requirePlanRunner().merge(id, via);
-    this.plansChanged();
-    if (result.compareUrl) await vscode.env.openExternal(vscode.Uri.parse(result.compareUrl, true));
-    else void notices.info(via === 'pr' ? `Pushed ${result.plan.integration?.branch}. Open a pull request for it on your host.` : `Merged plan "${result.plan.title}" into ${result.into}.`);
-  }
-  /** O3: Merge anyway (the canvas only; a lead's tool never can): asks first, records the approval in the audit log, then merges. */
-  private async planMergeAnyway(id: string): Promise<void> {
-    const plan = this.requirePlans().store.get(id);
-    if (!plan?.integration) throw new Error(`No plan ${id} with an integration branch.`);
-    const reason = mergeRefusal(plan);
-    const pick = await vscode.window.showWarningMessage(`Merge plan "${plan.title}" anyway?`, { modal: true, detail: `${reason ?? 'The integration gate passed.'}\n\nThis merges ${plan.integration.branch} into ${plan.integration.target ?? 'its branch'} as it is now.` }, 'Merge anyway');
-    if (pick !== 'Merge anyway') return;
-    await this.requirePlanRunner().overrideGate(id);
-    this.audit.record({ kind: 'approval', what: 'Merge plan anyway', detail: `${plan.title} (${plan.integration.branch} at ${plan.integration.tip.slice(0, 7)}): ${reason ?? 'gate passed'}` });
-    await this.planMergeFromCanvas(id, 'merge');
-  }
-  /** O7: the morning report (docs/Heads.md, "Unattended plans") — written next to plans.json, opened as a tab, and notified. */
-  private readonly reportedPlans = new Map<string, string>();
-  private async writePlanReport(plan: Plan): Promise<void> {
-    const plans = this.plans;
-    if (!plans) return;
-    const file = await plans.store.writeReport(plan.id, this.planReportMarkdown(plan));
-    // A gate run again later rewrites the report; only a new ending opens it and tells you.
-    const ending = `${plan.state}:${plan.integration?.tip ?? ''}`;
-    if (this.reportedPlans.get(plan.id) === ending) return;
-    this.reportedPlans.set(plan.id, ending);
-    const openReport = async () => { try { await this.toEditor(); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file), { preview: false }); } catch { /* best effort: the report is still saved */ } };
-    const verdict = plan.integration && plan.state === 'done' ? ` Integration gate: ${integrationLeadView(plan)?.gate.label ?? 'not run'}.` : '';
-    const ended = `Plan "${plan.title}" ${plan.state === 'done' ? 'finished' : 'stopped'}.${verdict}`;
-    // In the Agent Manager, the report waits to be asked for rather than pulling you out to the Editor.
-    if (this.mode === 'agents') { void notices.info(`${ended} Its report is ready.`, 'Open report').then(pick => { if (pick) void openReport(); }); return; }
-    await openReport();
-    void notices.info(`${ended} Its report is open.`);
-  }
-  /** A plan's report as Markdown: the morning report (O7) and hydra_plan_report (O8b) are the same text. */
-  private planReportMarkdown(plan: Plan): string {
-    const defaultHeadBudgetUsd = vscode.workspace.getConfiguration('hydra').get<number>('heads.defaultBudgetUsd', 5);
-    const details: PlanReportJobDetail[] = plan.jobs.map(job => {
-      const head = job.jobId ? this.helpers?.store.get(job.jobId) : undefined;
-      const view = this.planRunner?.statuses(plan.id)?.find(item => item.key === job.key);
-      return {
-        key: job.key, title: job.title, status: view?.status ?? job.outcome?.state ?? 'draft',
-        ...(head?.provider ? { provider: head.provider } : {}),
-        ...(head?.priorProviders?.length ? { priorProviders: head.priorProviders } : {}),
-        ...(head?.attempts !== undefined ? { attempts: head.attempts } : {}),
-        ...(head?.startedAt ? { startedAt: head.startedAt } : {}),
-        ...(head?.finishedAt ? { finishedAt: head.finishedAt } : {}),
-        ...(head?.result?.summary ? { summary: head.result.summary } : {}),
-        ...(head?.result?.changedFiles?.length ? { changedFiles: head.result.changedFiles } : {}),
-        ...(head?.result?.checks?.length ? { checks: head.result.checks.map(check => ({ id: check.id, required: check.required, passed: check.passed, ...(check.state ? { state: check.state } : {}), ...(check.summary ? { summary: check.summary } : {}) })) } : {}),
-        ...(job.outcome?.reason ? { reason: job.outcome.reason } : head?.reason ? { reason: head.reason } : {}),
-        ...(head?.question ? { question: head.question } : {}),
-        ...(head?.usage?.costUsd !== undefined ? { costUsd: head.usage.costUsd } : {}),
-        ...(head?.usage?.inputTokens !== undefined ? { inputTokens: head.usage.inputTokens } : {}),
-        ...(head?.usage?.outputTokens !== undefined ? { outputTokens: head.usage.outputTokens } : {}),
-        ...(head?.providerWaitMs ? { providerWaitMs: head.providerWaitMs } : {}),
-        ...(head?.replies.some(reply => reply.auto) ? { autoAnswered: head.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto!, ...(reply.question ? { question: reply.question } : {}) })) } : {}),
-      };
-    });
-    return buildPlanReport(plan, details, defaultHeadBudgetUsd);
-  }
-  /** O7: unattended plans cancel themselves when their wall-clock budget runs out; checked on HelperService's own watchdog tick. */
-  private async enforceUnattendedBudgets(): Promise<void> {
-    const running = this.plans?.store.list().filter(plan => plan.state === 'running' && plan.unattended?.wallClockMinutes !== undefined && plan.startedAt);
-    const runner = this.planRunner;
-    if (!running?.length || !runner) return;
-    const endedStatuses: PlanJobStatus[] = ['done', 'failed', 'cancelled', 'skipped'];
-    for (const plan of running) {
-      const limitMs = plan.unattended!.wallClockMinutes! * 60_000;
-      if (Date.now() - new Date(plan.startedAt!).getTime() < limitMs) continue;
-      const reason = `Unattended budget: the ${plan.unattended!.wallClockMinutes} minute wall-clock limit was reached.`;
-      for (const view of runner.statuses(plan.id) ?? []) {
-        if (endedStatuses.includes(view.status)) continue;
-        await runner.cancelJob(plan.id, view.key, reason).catch(error => this.output.appendLine(`[plans] ${plan.id}: couldn't cancel job ${view.key}: ${this.describe(error)}`));
-      }
-    }
-  }
-  /** Each plan's job statuses, for plans that have run. */
-  private planJobViews(): Record<string, PlanJobView[]> {
-    const runner = this.planRunner, views: Record<string, PlanJobView[]> = {};
-    if (!runner) return views;
-    for (const plan of this.plans?.store.list() ?? []) {
-      if (plan.state !== 'running' && plan.state !== 'incomplete' && plan.state !== 'done') continue;
-      const statuses = runner.statuses(plan.id);
-      if (statuses) views[plan.id] = statuses;
-    }
-    return views;
-  }
-  /** The plan job a lane runs, as its tile and actions see it. */
-  private planJobOfLane(laneId: string): LanePlanJobView | undefined {
-    const found = this.planRunner?.jobForLane(laneId);
-    if (!found) return undefined;
-    const { plan, job, view } = found;
-    return {
-      planId: plan.id, planTitle: plan.title, jobKey: job.key, jobTitle: job.title, state: view.status, ...(view.commit ? { commit: view.commit } : {}),
-      dependents: dependentsOf(plan.jobs, job.key).filter(item => !jobStarted(item)).length,
-      dependentsStarted: plan.jobs.filter(item => item.dependsOn.includes(job.key) && !!(item.jobId || item.laneId || item.result)).length,
-      ...(view.dispatch ? { dispatch: view.dispatch } : {}),
-    };
-  }
-  /** O3: a plan lane's own Merge refuses while its plan lands through an integration branch (laneMergeRefusal). */
-  private planLaneMergeRefusal(laneId: string): string | undefined {
-    const found = this.planRunner?.jobForLane(laneId);
-    return found ? laneMergeRefusal(found.plan, found.job) : undefined;
-  }
-  private async markPlanJobDone(laneId: string, result: PlanLaneResultInput): Promise<void> {
-    const found = this.requirePlanRunner().jobForLane(laneId);
-    if (!found) throw new Error('This lane doesn\'t run a plan job.');
-    await this.requirePlanRunner().markLaneDone(found.plan.id, found.job.key, laneId, result);
-  }
-  private async cancelPlanJobOfLane(laneId: string): Promise<void> {
-    const found = this.requirePlanRunner().jobForLane(laneId);
-    if (!found) throw new Error('This lane doesn\'t run a plan job.');
-    await this.requirePlanRunner().cancelJob(found.plan.id, found.job.key, 'Cancelled from its lane.');
-  }
-  /** Cancel job on a job's node (docs/internal/Plan_Lanes_Plan.md, "Failures"), after asking. */
-  private async planCancelJob(id: string, key: string): Promise<void> {
-    const plan = this.requirePlans().store.get(id);
-    const job = plan?.jobs.find(item => item.key === key);
-    if (!plan || !job) throw new Error(`No job "${key}" in this plan.`);
-    const waiting = dependentsOf(plan.jobs, key).filter(item => !jobStarted(item)).length;
-    const what = job.laneId ? 'Its lane stays open, as an ordinary lane.' : job.jobId ? 'Its head is stopped; its branch is kept.' : 'It won\'t start.';
-    const pick = await vscode.window.showWarningMessage(`Cancel job ${job.title} of plan ${plan.title}?`, { modal: true, detail: `${what}${waiting ? ` ${waiting} ${waiting === 1 ? 'job' : 'jobs'} that depend on it won't start.` : ''}` }, 'Cancel job');
-    if (pick !== 'Cancel job') return;
-    await this.requirePlanRunner().cancelJob(id, key, 'Cancelled from the plan.');
-  }
-  private async broadcast(message: unknown): Promise<void> {
-    await this.panel?.webview.postMessage(message);
-  }
+  private newPlan(): Promise<void> { return this.controller.newPlan(); }
+  private runPlanById(id: string): Promise<void> { return this.controller.runPlanById(id); }
+  private requirePlanRunner(): PlanRunner { return this.controller.requirePlanRunner(); }
+  private planReportMarkdown(plan: Plan): string { return this.controller.planReportMarkdown(plan); }
+  private planJobViews(): Record<string, PlanJobView[]> { return this.controller.planJobViews(); }
   private connectWebview(webview: vscode.Webview): void {
     webview.onDidReceiveMessage(value => { void this.handle(value).catch(error => this.report(error)); }, undefined, this.context.subscriptions);
   }
@@ -1801,47 +1392,16 @@ class Manager {
     // so inline styles are allowed here. Scripts stay nonce-only; text is escaped by React and xterm.
     return `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${css}"><title>Hydra</title></head><body data-logo="${logo}"><div id="root"></div><script nonce="${nonce}" src="${script}"></script></body></html>`;
   }
-  private async handle(value: unknown): Promise<void> {
-    const message = parseMessage(value);
-    if (message.type === 'ready') {
-      await this.publish();
-      this.readyPanel = this.panel; this.lanes.webviewReady();
-      if (this.pendingNewPlan) { this.pendingNewPlan = false; await this.broadcast({ type: 'showNewPlan' }); }
-      return;
-    }
-    if (isLaneMessage(message)) { await this.lanes.handle(message); return; }
+  private async handle(value: unknown): Promise<void> { await this.controller.handle(value); }
+  /** The Agents view's messages that stay with the IDE: the controller passes them back here. */
+  private async handleIde(message: ClientMessage): Promise<void> {
     if (message.type === 'editor') { await this.openEditor(); return; }
     if (message.type === 'agents') { await this.openAgents(); return; }
     if (message.type === 'settings') { this.settings.show(); return; }
     if (message.type === 'refresh') { await this.refresh(); return; }
     if (message.type === 'helperStopAll') { await vscode.commands.executeCommand('hydra.stopAllHelpers'); return; }
     if (message.type === 'learn') { await vscode.commands.executeCommand('hydra.learn'); return; }
-    if (message.type === 'trayClear') { await this.trayClear(message.ids); return; }
     if (message.type === 'helperReview' || message.type === 'helperLog' || message.type === 'helperCancel' || message.type === 'helperAnswer' || message.type === 'helperEvidence') { await this.helperAction(message.type, message.jobId); return; }
-    // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
-    if (message.type === 'planCreate') { await this.planCreate(message.title, message.brief); return; }
-    if (message.type === 'planCreateEmpty') { await this.planCreateEmpty(message.title); return; }
-    if (message.type === 'planRetry') { await this.planRetry(message.id); return; }
-    if (message.type === 'planCancel') { this.planCancel(message.id); return; }
-    if (message.type === 'planDelete') { await this.planDelete(message.id); return; }
-    if (message.type === 'planStartEmpty') { await this.planStartEmpty(message.id); return; }
-    if (message.type === 'planAddJob') { await this.planAddJob(message.id); return; }
-    if (message.type === 'planSaveJob') { await this.planSaveJob(message.id, message.key, message.title, message.brief, message.provider, message.runAs, message.role); return; }
-    if (message.type === 'planDeleteJob') { await this.planDeleteJob(message.id, message.key); return; }
-    if (message.type === 'planDependsOn') { await this.planDependsOn(message.id, message.key); return; }
-    if (message.type === 'planAddDependency') { await this.planAddDependency(message.id, message.key, message.dependsOn); return; }
-    if (message.type === 'planRemoveDependency') { await this.planRemoveDependency(message.id, message.key, message.dependsOn); return; }
-    if (message.type === 'planRun') { await this.runPlanById(message.id); return; }
-    // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md) ----
-    if (message.type === 'planRetryJobs') { await this.requirePlanRunner().retry(message.id); return; }
-    if (message.type === 'planCancelJob') { await this.planCancelJob(message.id, message.key); return; }
-    if (message.type === 'planStartJob') { await this.requirePlanRunner().startJob(message.id, message.key); return; }
-    // Step C: Auto-dispatch to lanes, on (with its settings) or off. Stop all may leave the runner quiet, so say it changed.
-    if (message.type === 'planDispatch') { await this.requirePlanRunner().setDispatch(message.id, message.dispatch ?? undefined); this.plansChanged(); return; }
-    // ---- O3: the integration gate, Merge plan, Open PR and Merge anyway ----
-    if (message.type === 'planIntegrate') { await this.requirePlanRunner().integrate(message.id); this.plansChanged(); return; }
-    if (message.type === 'planMerge') { await this.planMergeFromCanvas(message.id, message.via); return; }
-    if (message.type === 'planMergeAnyway') { await this.planMergeAnyway(message.id); return; }
     if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace to use Hydra.');
     if (this.disabled) throw new Error('Hydra is disabled in this window. Resolve the ownership or handoff error and reload this window.');
     if (message.type === 'checkProvider') {

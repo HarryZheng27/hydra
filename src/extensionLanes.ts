@@ -88,8 +88,7 @@ export interface LanesHost {
 export interface LaneActionOptions { message?: string; close?: CloseMode }
 
 
-const laneMessages: ReadonlySet<string> = new Set(['laneNew', 'laneAttach', 'laneInput', 'laneResize', 'laneAction', 'laneLimitAction', 'laneCancelSwitch', 'view']);
-export const isLaneMessage = (message: { type: string }): message is LaneClientMessage => laneMessages.has(message.type);
+export { isLaneMessage } from './core/model';
 const baseScheme = 'hydra-lane';
 const providerLabel = (provider: Provider) => provider === 'codex' ? 'Codex' : 'Claude Code';
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);

@@ -5,6 +5,7 @@ Thanks for helping. Bug reports and ideas go in [issues](https://github.com/ndun
 ## How the code is laid out
 
 - `src/`: Hydra's built-in extension. `src/core/` holds the logic (heads, lanes, plans, gates, packs, worktrees), kept free of editor APIs where it can be, so it's testable in plain Node.
+- `src/host/`: the `Host` interface, everything the controller needs from the program it runs in, so the IDE and the Hydra app share one controller ([G2](docs/internal/hydra-app/G2-host-split.md)). `src/host/controller.ts` is the controller itself (the Agents view's state and messages, plans and the plan runner); `src/vscodeHost.ts` is the IDE's `Host`, and `src/extension.ts` forwards to the controller. Nothing under `src/core/` or `src/host/` imports `vscode` or `electron`; `tests/hostBoundary.test.ts` enforces it.
 - `webview/`: the Agent Manager canvas, the lanes grid and other webview UI.
 - `desktop/` and `scripts/desktop.mjs`: the standalone editor build, from a pinned upstream commit (`desktop/upstream.json`), and its Windows installer.
 - `packs/` and `schemas/`: the built-in packs, and the JSON schemas for `.hydra/` files.
