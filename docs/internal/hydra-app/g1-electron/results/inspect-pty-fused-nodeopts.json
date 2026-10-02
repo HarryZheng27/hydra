@@ -1,0 +1,11 @@
+{
+  "electron": "44.5.1",
+  "appRoot": "<scratch>\\g1\\electron\\build\\fused-44.5.1\\resources\\app.asar",
+  "packaged": true,
+  "tried": [
+    "<scratch>\\g1\\electron\\build\\fused-44.5.1\\resources\\app.asar\\node_modules\\node-pty"
+  ],
+  "errors": [],
+  "exitCode": 0,
+  "output": "hello-from-conpty"
+}

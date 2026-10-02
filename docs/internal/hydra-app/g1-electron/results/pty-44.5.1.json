@@ -1,0 +1,24 @@
+{
+  "electron": "44.5.1",
+  "node": "24.21.0",
+  "modules": "149",
+  "napi": "10",
+  "loadedFrom": "node_modules\\node-pty\\lib\\index.js",
+  "nativeModule": [],
+  "runs": [
+    {
+      "cmd": "cmd.exe /d /c echo hello-from-conpty",
+      "pid": 46320,
+      "exitCode": 0,
+      "ms": 1166,
+      "output": "hello-from-conpty"
+    },
+    {
+      "cmd": "powershell.exe -NoProfile -NonInteractive -Command Write-Output \"ps $($PSVersionTable.PSVersion.Major) $([Environment]::Is64BitProcess)\"; exit 7",
+      "pid": 50908,
+      "exitCode": 7,
+      "ms": 1460,
+      "output": "ps 5 True"
+    }
+  ]
+}

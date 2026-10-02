@@ -1,0 +1,72 @@
+{
+  "exe": "build\\fused-44.5.1\\Hydra.exe",
+  "appDir": null,
+  "appUserData": "<scratch>\\g1\\electron\\userdata\\Hydra App",
+  "ideUserData": "<scratch>\\g1\\electron\\userdata\\Hydra",
+  "firstReady": true,
+  "messageWindowsWhileFirstRuns": {
+    "ours": [
+      "<scratch>\\g1\\electron\\userdata\\Hydra App"
+    ],
+    "otherAppsCount": 15
+  },
+  "secondExit": 0,
+  "ideSimExit": 0,
+  "firstExit": 0,
+  "first": {
+    "role": "first",
+    "pid": 41952,
+    "defaultUserData": "~\\AppData\\Roaming\\Hydra",
+    "userData": "<scratch>\\g1\\electron\\userdata\\Hydra App",
+    "gotLock": true,
+    "lockMs": 5,
+    "events": [
+      {
+        "event": "second-instance",
+        "argvHasRole": "--role=second",
+        "additionalData": {
+          "from": "second",
+          "pid": 51064
+        }
+      }
+    ],
+    "userDataFiles": [
+      "GPUPersistentCache",
+      "GrShaderCache",
+      "Local State",
+      "lockfile",
+      "ShaderCache"
+    ]
+  },
+  "second": {
+    "role": "second",
+    "pid": 51064,
+    "defaultUserData": "~\\AppData\\Roaming\\Hydra",
+    "userData": "<scratch>\\g1\\electron\\userdata\\Hydra App",
+    "gotLock": false,
+    "lockMs": 28,
+    "events": []
+  },
+  "ide-sim": {
+    "role": "ide-sim",
+    "pid": 55460,
+    "defaultUserData": "~\\AppData\\Roaming\\Hydra",
+    "userData": "<scratch>\\g1\\electron\\userdata\\Hydra",
+    "gotLock": true,
+    "lockMs": 5,
+    "events": [],
+    "userDataFiles": [
+      "GPUPersistentCache",
+      "GrShaderCache",
+      "Local State",
+      "lockfile",
+      "ShaderCache"
+    ]
+  },
+  "appUserDataFiles": [
+    "GPUPersistentCache",
+    "GrShaderCache",
+    "Local State",
+    "ShaderCache"
+  ]
+}
