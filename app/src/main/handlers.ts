@@ -11,6 +11,8 @@ export interface HandlerDeps {
   state: JsonStore<AppState>;
   /** Main's own folder picker (for a project, or where a clone goes). Undefined when the user cancels. */
   pickFolder(purpose?: 'project' | 'clone'): Promise<string | undefined>;
+  /** The projects changed (one trusted or removed): Hydra starts or stops its controllers (app/src/main/hydra.ts). */
+  projectsChanged?(state: AppState): void;
   /** Clones a repository into a new folder under `parent`, returning it (app/src/main/clone.ts). */
   cloneRepo?(url: string, parent: string): Promise<string>;
   /** Main's own file picker for a provider's command-line tool. Undefined when the user cancels. */
@@ -95,13 +97,17 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const next = await deps.state.update(current => removeProject(current, id));
       // A folder that is no longer a project runs nothing: its chats' processes end now.
       if (project) await deps.chats.closeFolder?.(project.path);
+      deps.projectsChanged?.(next);
       return next;
     },
     'projects.trust': async ({ id }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === id);
       if (!project) throw new Error('No such project.');
       if (project.trustedAt) return deps.state.load();
-      return (await deps.confirmTrust(project)) ? deps.state.update(current => trustProject(current, id)) : deps.state.load();
+      if (!(await deps.confirmTrust(project))) return deps.state.load();
+      const next = await deps.state.update(current => trustProject(current, id));
+      deps.projectsChanged?.(next);
+      return next;
     },
     'chats.list': () => deps.chats.list(),
     'chats.create': async ({ projectId, ...rest }) => {

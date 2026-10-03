@@ -56,7 +56,9 @@ const gitFolder = (() => {
   const found = spawnSync('where.exe', ['git'], { encoding: 'utf8', windowsHide: true }).stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
   return found ? path.dirname(found) : undefined;
 })();
-const env = { ...process.env, PATH: [bin, ...(gitFolder ? [gitFolder] : []), path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
+// Hydra's storage (the IDE's, which the app shares): the smoke's own folder, never the user's.
+const ideStorage = path.join(work, 'ide-storage');
+const env = { ...process.env, HYDRA_APP_IDE_STORAGE: ideStorage, PATH: [bin, ...(gitFolder ? [gitFolder] : []), path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
@@ -239,6 +241,15 @@ try {
     const count = call => calls.filter(c => c === call).length;
     // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
     assert.ok(count('claude --version') >= 3 && count('codex --version') >= 3, calls.join(', '));
+  });
+  check('Hydra runs in the app: the restarted app owns its trusted project, and `hydra status` there reports the app', () => {
+    const status = r.hydraStatus;
+    assert.ok(status, 'no hydra status');
+    assert.equal(status.error, undefined, status.error);
+    assert.equal(status.status.window.pid, status.appPid, 'the window that owns the folder is the app');
+    assert.equal(path.resolve(status.status.repository).toLowerCase(), path.resolve(project).toLowerCase());
+    assert.ok(fs.existsSync(path.join(ideStorage, 'ownership')), 'the ownership lock is in the shared storage');
+    assert.equal(fs.readdirSync(path.join(ideStorage, 'helpers', 'windows')).filter(name => name.endsWith('.json') && !name.endsWith('.summary.json')).length, 0, 'the app removed its discovery record when it quit');
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);
