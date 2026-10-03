@@ -252,7 +252,7 @@ try {
     assert.equal(standinErrors(), '');
   });
   check('a chat with Codex: read-only by default, deny, allow, stop mid-command', () => {
-    assert.deepEqual(a.codex.sandboxes, ['Read-only', 'Can edit this folder'], 'no full access');
+    assert.deepEqual(a.codex.sandboxes, ['Read-only'], 'read-only until write access passes its live check; never full access');
     assert.deepEqual(a.codex.choices, ['Allow', 'Allow for this session', 'Deny']);
     assert.ok(a.codex.models.length > 1 && a.codex.models[0] === 'Default model', 'models from Codex\'s own model/list');
     assert.deepEqual(a.codex.outcomes, ['Denied', 'Allowed']);

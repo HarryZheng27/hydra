@@ -89,6 +89,8 @@ export interface ChatAdapter {
   interrupt(): string[];
   /** Lines that switch the running process to another model, when the CLI can do that in place. */
   setModel?(model: string): string[];
+  /** True when stopping a turn must also end the process (Codex: an interrupted command keeps running otherwise). */
+  readonly endAfterInterrupt?: boolean;
   /** Requests still waiting for an answer. */
   pending(): string[];
   /** Marks every pending request cancelled, for when the process goes away. */

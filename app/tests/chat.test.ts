@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, checkImage } from '../src/main/chats';
+import { ChatManager, checkImage, trustedProjects } from '../src/main/chats';
 import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
@@ -199,32 +199,51 @@ test('two quick messages share one session; every message checks trust; a remove
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('Codex chats: read-only or can edit their folder, never full access; allow for the session is a choice', () => {
+test('Codex chats are read-only (write access waits for its live check, full access never); allow for the session is a choice', () => {
   const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
-  assert.equal(parseCall({ channel: 'chats.create', payload: { projectId: id, provider: 'codex', sandbox: 'workspace-write', model: 'gpt-6-luna', effort: 'low' } }).ok, true);
+  assert.equal(parseCall({ channel: 'chats.create', payload: { projectId: id, provider: 'codex', sandbox: 'read-only', model: 'gpt-6-luna', effort: 'ultra' } }).ok, true);
+  assert.equal(parseCall({ channel: 'chats.create', payload: { projectId: id, provider: 'codex', sandbox: 'workspace-write' } }).ok, false, 'write access waits for its live check');
   assert.equal(parseCall({ channel: 'chats.create', payload: { projectId: id, provider: 'codex', sandbox: 'danger-full-access' } }).ok, false);
   assert.equal(parseCall({ channel: 'chats.configure', payload: { id, change: { sandbox: 'read-only' } } }).ok, true);
   assert.equal(parseCall({ channel: 'chats.answer', payload: { id, requestId: '0', answer: { kind: 'approval', decision: 'allow-session' } } }).ok, true);
 });
 
+test('Codex\'s trusted projects are read from its config.toml tables, by exact folder', () => {
+  const toml = [
+    'model = "x"',
+    "[projects.'C:\\Users\\me\\repo']", 'trust_level = "trusted"',
+    '[projects."C:\\\\Users\\\\me\\\\other"]', 'trust_level = "trusted"  # set by codex',
+    "[projects.'C:\\Users\\me\\untrusted']", 'trust_level = "untrusted"',
+    '[mcp_servers.x]', 'trust_level = "trusted"',
+  ].join('\n');
+  assert.deepEqual([...trustedProjects(toml)].sort(), [path.resolve('C:\\Users\\me\\other').toLowerCase(), path.resolve('C:\\Users\\me\\repo').toLowerCase()].sort());
+});
+
 test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat says so and Hydra leaves the file alone', async () => {
   const dir = scratch();
   try {
-    let config = 'model = "gpt-6-luna"\n[projects."C:\\other"]\ntrust_level = "trusted"\n';
+    let config = 'model = "gpt-6-luna"\n';
     const pushed: ChatEvent[] = [];
     const { starts, launch } = fakeLaunch();
     const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async () => 'codex.exe', trusted: async () => true, push: (_id, events) => pushed.push(...events), codexConfig: async () => config });
-    const chat = await manager.create({ cwd: dir, provider: 'codex', sandbox: 'workspace-write' });
-    await manager.send(chat.id, 'edit something');
+    const chat = await manager.create({ cwd: dir, provider: 'codex' });
+    const thread = '01a0fe38-af75-7372-aab6-eecfb1837dd5';
     const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
-    // The thread starts, a turn runs, and meanwhile Codex writes a trust entry for this folder.
-    say({ id: 3, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, sandbox: { type: 'readOnly' } } });
-    config += `[projects.'${dir}']\ntrust_level = "trusted"\n`;
-    say({ method: 'turn/started', params: { threadId: '01a0fe38-af75-7372-aab6-eecfb1837dd5', turn: { id: 't1' } } });
-    say({ method: 'turn/completed', params: { threadId: '01a0fe38-af75-7372-aab6-eecfb1837dd5', turn: { id: 't1', status: 'completed' } } });
-    const found = () => pushed.some(event => event.type === 'error' && /marked this folder as trusted/.test(event.message));
-    for (let i = 0; i < 100 && !found(); i++) await new Promise(resolve => setTimeout(resolve, 50));
-    assert.ok(found(), JSON.stringify(pushed.map(event => event.type)));
+    const notice = () => pushed.some(event => event.type === 'error' && /as trusted in your/.test(event.message));
+    const turn = async (id: string, change: string) => {
+      await new Promise(resolve => setTimeout(resolve, 150)); // Codex's config is read when the turn starts
+      config += change;
+      say({ method: 'turn/started', params: { threadId: thread, turn: { id } } });
+      say({ method: 'turn/completed', params: { threadId: thread, turn: { id, status: 'completed' } } });
+      await new Promise(resolve => setTimeout(resolve, 200));
+    };
+    await manager.send(chat.id, 'one');
+    say({ id: 3, result: { thread: { id: thread }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } });
+    await turn('t1', `[projects.'${dir}-two']\ntrust_level = "trusted"\n`);
+    assert.equal(notice(), false, 'a sibling folder with a longer name is not this one');
+    await manager.send(chat.id, 'two');
+    await turn('t2', `[projects.'${dir}']\ntrust_level = "trusted"\n`);
+    assert.equal(notice(), true, JSON.stringify(pushed.map(event => event.type)));
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

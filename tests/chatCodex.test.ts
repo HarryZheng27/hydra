@@ -31,7 +31,9 @@ async function drivePart(h: Harness, session: ChatSession, part: { records: Rec[
       session.send(text, images);
       sent++;
     } else if (message.method === 'turn/interrupt') {
-      await h.until(() => h.events.some(event => event.type === 'session'), 'the thread');
+      // Where G1's host did: once the command is running.
+      const tools = h.of('tool-call').length;
+      await h.until(() => h.of('tool-call').length > tools || h.events.some(event => event.type === 'tool-call'), 'the command to start');
       session.stop();
     } else if (!message.method && 'result' in message && message.result?.decision !== undefined) {
       const id = String(message.id);
@@ -54,7 +56,8 @@ async function runScenario(scenario: string) {
     const session = newSession(h);
     let expected = 0;
     for (const [i, part] of parts(scenario, 'codex').entries()) {
-      expected += part.records.filter(record => record.dir === 'send').length;
+      const harnessOnly = new Set(['mcpServerStatus/list', 'windowsSandbox/readiness', 'thread/read', 'account/rateLimits/read']);
+      expected += part.records.filter(record => record.dir === 'send' && !harnessOnly.has(JSON.parse(record.line!).method)).length;
       if (i > 0) {
         // The live check killed the app-server here; the next message resumes the same thread in a new one.
         h.processes.at(-1)!.kill();
@@ -62,12 +65,10 @@ async function runScenario(scenario: string) {
       }
       await drivePart(h, session, part);
     }
-    // G1's harness-only requests (mcpServerStatus/list and the like) are skipped by the stand-in, not counted.
-    await h.until(() => h.consumed() > 0 && !session.busy, 'the stand-in to check the host\'s lines');
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Every line the host sent was checked, apart from G1's harness-only requests, which the stand-in skips.
+    await h.until(() => h.consumed() >= expected || !!h.errors(), `the stand-in to check all ${expected} host lines`);
     session.close();
     assert.equal(h.errors(), '', 'the stand-in saw the host send something the recording didn\'t');
-    void expected;
     return h;
   } catch (error) { await h.cleanup(); throw error; }
 }
@@ -108,9 +109,42 @@ test('Codex: file changes are shown before approval, and decline writes nothing 
   } finally { await h.cleanup(); }
 });
 
-test('Codex: Stop interrupts the running turn', async () => {
+test('Codex: Stop interrupts the running turn, then ends the app-server so its command stops too', async () => {
   const h = await runScenario('interrupt');
-  try { assert.deepEqual(statuses(h.events), ['interrupted']); } finally { await h.cleanup(); }
+  try {
+    assert.deepEqual(statuses(h.events), ['interrupted']);
+    const done = h.of('done')[0]!;
+    assert.match(done.detail ?? '', /Codex was stopped, along with any command/);
+    assert.doesNotMatch(done.detail ?? '', /didn't stop in time/, 'the interrupt itself was sent, not the grace-period kill');
+  } finally { await h.cleanup(); }
+});
+
+test('Codex: a thread that comes back without approvals for the user, or with more than read-only, stops the chat', () => {
+  for (const result of [
+    { thread: { id: 't-1' }, approvalsReviewer: 'auto_review', sandbox: { type: 'readOnly' } },
+    { thread: { id: 't-1' }, approvalsReviewer: 'user', sandbox: { type: 'workspaceWrite' } },
+    { thread: { id: 't-1' }, approvalsReviewer: 'user' },
+    { approvalsReviewer: 'user', sandbox: { type: 'readOnly' } },
+  ]) {
+    const adapter = new CodexAdapter();
+    adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex' });
+    const { events } = adapter.feed(JSON.stringify({ id: 3, result }));
+    assert.ok(events.some(event => event.type === 'error' && event.fatal), JSON.stringify(result));
+    assert.ok(!events.some(event => event.type === 'session'));
+  }
+});
+
+test('Codex: write access stays off until its live check passes, and the model changes from the next turn', () => {
+  assert.throws(() => codexArguments({ provider: 'codex', cwd: '/', executable: 'codex', sandbox: 'workspace-write' }), /read-only for now/);
+  const adapter = new CodexAdapter();
+  adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', resume: '01a0fe38-af75-7372-aab6-eecfb1837dd5' });
+  adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.feed(JSON.stringify({ id: 2, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  adapter.setModel('gpt-6-sol');
+  const turn = JSON.parse(adapter.send('hi')[0]!);
+  assert.equal(turn.method, 'turn/start');
+  assert.equal(turn.params.model, 'gpt-6-sol');
+  assert.equal(turn.params.sandboxPolicy, undefined);
 });
 
 test('Codex: after the app-server is killed, the next message resumes the thread in a new one', async () => {
@@ -136,9 +170,9 @@ test('Codex arguments and thread options: read-only, approvals to the user, and 
   assert.deepEqual(codexArguments({ provider: 'codex', cwd: '/', executable: 'codex' }), ['app-server', '--listen', 'stdio://']);
   assert.throws(() => codexArguments({ provider: 'codex', cwd: '/', executable: 'codex', sandbox: 'danger-full-access' as never }), /isn't allowed/);
   const adapter = new CodexAdapter();
-  const lines = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', sandbox: 'workspace-write', model: 'gpt-6-luna', effort: 'low' }).map(line => JSON.parse(line));
+  const lines = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', sandbox: 'read-only', model: 'gpt-6-luna', effort: 'low' }).map(line => JSON.parse(line));
   const thread = lines.find(line => line.method === 'thread/start');
-  assert.equal(thread.params.sandbox, 'read-only', 'a thread always starts read-only, even when the chat may write');
+  assert.equal(thread.params.sandbox, 'read-only', 'a thread always starts read-only');
   assert.equal(thread.params.approvalsReviewer, 'user');
   assert.equal(thread.params.approvalPolicy, 'on-request');
 });
