@@ -15,11 +15,13 @@ function appRows(): string[] {
   return doc.slice(start, end < 0 ? undefined : end).split(/\r?\n/).filter(line => /^\| HSEC-\d+ \|/.test(line));
 }
 
-/** Every test('…') in app/tests and every check('…') in the smoke, by name. */
+/** Every test('…') in app/tests and the root tests, and every check('…') in the smoke, by name. */
 function testNames(): Set<string> {
   const names = new Set<string>();
   const sources = [
     ...fs.readdirSync(path.join(appDir, 'tests')).filter(name => name.endsWith('.test.ts')).map(name => read(appDir, 'tests', name)),
+    // The app's chat logic lives in src/core/chat, tested by the root suite.
+    ...fs.readdirSync(path.join(appDir, '..', 'tests')).filter(name => name.endsWith('.test.ts')).map(name => read(appDir, '..', 'tests', name)),
     read(appDir, 'smoke', 'run.mjs'),
   ];
   for (const source of sources) for (const match of source.matchAll(/\b(?:test|check)\('((?:[^'\\]|\\.)*)'/g)) names.add(match[1]!.replace(/\\'/g, "'"));
