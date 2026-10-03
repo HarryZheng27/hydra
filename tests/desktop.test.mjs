@@ -138,7 +138,7 @@ test('installed update trust stays disabled without owner values and rejects inc
 });
 test('installer branding preserves optional unchecked desktop shortcut and rejects upstream drift', () => {
   const original = [
-    '[Setup]', 'CloseApplications=force', '[InstallDelete]',
+    '[Setup]', 'DefaultGroupName={#NameLong}', 'CloseApplications=force', '[InstallDelete]',
     'AppPublisher=Microsoft Corporation', 'AppPublisherURL=https://code.visualstudio.com/',
     'AppSupportURL=https://code.visualstudio.com/', 'AppUpdatesURL=https://code.visualstudio.com/',
     'OutputBaseFilename=VSCodeSetup',
@@ -152,6 +152,7 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
     'function ShouldRunAfterUpdate(): Boolean;', 'begin', '  if IsBackgroundUpdate() then',
     '    end else begin', '      if IsVersionedUpdate() then begin',
     '    if ShouldRestartTunnelService then',
+    'procedure CurStepChanged(CurStep: TSetupStep);', 'begin', '  if CurStep = ssPostInstall then', '  begin', '    LogContextMenuInstallState();',
     'procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);', 'var', '  Path: string;', '  VSCodePath: string;',
     '  Parts: TArrayOfString;', '  NewPath: string;', '  i: Integer;', 'begin', '  if not CurUninstallStep = usUninstall then begin'
   ].join('\n');
@@ -172,11 +173,41 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
   assert.ok(result.indexOf('#include "hydra-update-mode.iss"') < result.indexOf('#include "hydra-uninstall.iss"'), 'the switch helpers it uses come first');
   assert.throws(() => brandedInstaller(original.replace('  i: Integer;', '  j: Integer;')), /Pinned installer changed: procedure CurUninstallStepChanged/);
   // The tasks page's clipped checkboxes: Hydra's own InitializeWizard, which the pinned installer must not also define.
-  assert.match(result, /#include "hydra-update-mode\.iss"\n#include "hydra-wizard\.iss"\nfunction IsBackgroundUpdate/);
+  assert.match(result, /#include "hydra-update-mode\.iss"\n#include "hydra-wizard\.iss"\n#include "hydra-shortcuts\.iss"\nfunction IsBackgroundUpdate/);
+  // The "Hydra IDE" handover: a new Start Menu folder, a fresh uninstall log, the
+  // old shortcuts noted before the install and removed once the new ones exist.
+  assert.match(result, /DefaultGroupName=\{#NameLong\}\nUsePreviousGroup=no\nUninstallLogMode=overwrite\n/);
+  assert.match(result, /Result := HydraCheckInstall\(\);\n  if Result <> '' then Exit;\n  HydraRememberOldShortcuts\(\);/);
+  assert.match(result, /if CurStep = ssPostInstall then\n  begin\n    HydraReplaceOldShortcuts\(\);\n    LogContextMenuInstallState\(\);/);
+  assert.throws(() => brandedInstaller(original.replace('DefaultGroupName={#NameLong}', 'DefaultGroupName=Code')), /Pinned installer changed: DefaultGroupName/);
+  assert.throws(() => brandedInstaller(original.replace('    LogContextMenuInstallState();', '    LogState();')), /Pinned installer changed: +if CurStep = ssPostInstall/);
   assert.throws(() => brandedInstaller(original.replace('[Code]\n', '[Code]\nprocedure InitializeWizard();\nbegin\nend;\n')), /defines InitializeWizard/);
 });
+test('the IDE is Hydra IDE and its upgrade removes only old Hydra.lnk files that open this installation', async () => {
+  const product = JSON.parse(await fs.readFile(path.join(root, 'desktop', 'product.json'), 'utf8'));
+  // Renamed; everything that taskbar pins, settings and the updater rely on stays.
+  assert.equal(product.nameLong, 'Hydra IDE');
+  assert.equal(product.nameShort, 'Hydra');
+  assert.equal(product.dataFolderName, '.hydra');
+  assert.equal(product.win32AppUserModelId, 'Hydra.IDE');
+  assert.equal(product.win32RegValueName, 'Hydra');
+  assert.equal(product.win32NameVersion, 'Hydra', 'the existing registration display name that upgrades check');
+  assert.equal(product.win32x64UserAppId, '{{4C372D32-54B2-43D8-8C63-ECC31D3744A8}');
+  const iss = await fs.readFile(path.join(root, 'desktop', 'hydra-shortcuts.iss'), 'utf8');
+  // Exactly the three old places, each through the target check.
+  const removed = [...iss.matchAll(/^ +HydraRemoveOldShortcut\(([^;]*)\);/gm)].map(match => match[1]);
+  assert.deepEqual(removed, [
+    "ExpandConstant('{autodesktop}\\Hydra.lnk')",
+    "ExpandConstant('{userappdata}\\Microsoft\\Internet Explorer\\Quick Launch\\Hydra.lnk')",
+    "AddBackslash(HydraOldGroup) + 'Hydra.lnk'"
+  ]);
+  assert.match(iss, /if CompareText\(HydraShortcutTarget\(Path\), ExpandConstant\('\{app\}\\\{#ExeBasename\}\.exe'\)\) <> 0 then begin\n *Log\([^\n]*\n *Exit;/);
+  assert.equal((iss.match(/DeleteFile\(/g) ?? []).length, 1);
+  assert.equal((iss.match(/DelTree\(/g) ?? []).length, 0, 'the old folder goes only when empty');
+  assert.match(iss, /if \(Pos\(':', Group\) > 0\) or \(Pos\('\.\.', Group\) > 0\) or \(Group\[1\] = '\\'\) then Exit;/);
+});
 test('the uninstall include ships with the installer and keeps to its two data folders', async () => {
-  assert.deepEqual(installerIncludes, ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss']);
+  assert.deepEqual(installerIncludes, ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss', 'hydra-shortcuts.iss']);
   const iss = await fs.readFile(path.join(root, 'desktop', 'hydra-uninstall.iss'), 'utf8');
   assert.match(iss, /procedure HydraUninstallCleanup\(CurUninstallStep: TUninstallStep\);/);
   assert.match(iss, /if IsBackgroundUpdate\(\) or IsHydraUpdate\(\) then Exit;/);

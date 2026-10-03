@@ -122,7 +122,7 @@ export function isolatedEditorTypes(upstream, declaration, typeRoots) {
     paths: { ...upstream.compilerOptions?.paths, vscode: [declaration] } } };
 }
 /** Hydra's Inno Setup includes, copied next to the pinned code.iss that brandedInstaller includes them from. */
-export const installerIncludes = ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss'];
+export const installerIncludes = ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss', 'hydra-shortcuts.iss'];
 export function brandedInstaller(text) {
   const replaceOnce = (before, after) => {
     if (text.split(before).length !== 2) throw new Error(`Pinned installer changed: ${before}`);
@@ -139,9 +139,16 @@ export function brandedInstaller(text) {
     replaceOnce(before, after);
   }
   replaceOnce('CloseApplications=force', 'CloseApplications=no\nRestartApplications=no');
+  // The IDE is "Hydra IDE" (product.json's nameLong): its Start Menu folder
+  // moves to the new name instead of keeping an upgrade's old "Hydra" folder.
+  // Each install writes a fresh uninstall log, so an uninstall never deletes a
+  // shortcut an earlier version made, such as Hydra.lnk, which is now the
+  // Hydra app's (desktop/hydra-shortcuts.iss). "new" would not do: it leaves
+  // the old log and adds a second uninstaller beside it.
+  replaceOnce('DefaultGroupName={#NameLong}', 'DefaultGroupName={#NameLong}\nUsePreviousGroup=no\nUninstallLogMode=overwrite');
   // hydra-wizard.iss defines InitializeWizard; a pinned installer with its own would be a duplicate.
   if (/procedure\s+InitializeWizard\s*\(/i.test(text)) throw new Error('Pinned installer changed: it defines InitializeWizard; merge hydra-wizard.iss into it.');
-  replaceOnce('[Code]\nfunction IsBackgroundUpdate(): Boolean;', '[Code]\n#include "hydra-update-mode.iss"\n#include "hydra-wizard.iss"\nfunction IsBackgroundUpdate(): Boolean;');
+  replaceOnce('[Code]\nfunction IsBackgroundUpdate(): Boolean;', '[Code]\n#include "hydra-update-mode.iss"\n#include "hydra-wizard.iss"\n#include "hydra-shortcuts.iss"\nfunction IsBackgroundUpdate(): Boolean;');
   replaceOnce('  Result := True;\n\n  #if "user" == InstallTarget',
     `  Result := True;
   if (HydraUpdateSwitchState() < 0) or HydraHasSwitch('/UPDATE') or not HydraUpdateArgumentsValid() then begin
@@ -155,6 +162,7 @@ export function brandedInstaller(text) {
 begin
   Result := HydraCheckInstall();
   if Result <> '' then Exit;
+  HydraRememberOldShortcuts();
   if IsHydraUpdate() then begin
     if CheckForMutexes('{#AppMutex},{#TunnelMutex},{#TunnelServiceMutex}') then
       Result := 'Stop all Hydra application and tunnel processes before updating.';
@@ -170,6 +178,8 @@ begin
   replaceOnce('    end else begin\n      if IsVersionedUpdate() then begin',
     '    end else if not IsHydraUpdate() then begin\n      if IsVersionedUpdate() then begin');
   replaceOnce('    if ShouldRestartTunnelService then', '    if ShouldRestartTunnelService and not IsHydraUpdate() then');
+  replaceOnce('  if CurStep = ssPostInstall then\n  begin\n    LogContextMenuInstallState();',
+    '  if CurStep = ssPostInstall then\n  begin\n    HydraReplaceOldShortcuts();\n    LogContextMenuInstallState();');
   // Uninstall cleanup (desktop/hydra-uninstall.iss) runs first at every uninstall
   // step, before upstream's early exit for steps other than usUninstall.
   const uninstallStep = 'procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);\nvar\n  Path: string;\n  VSCodePath: string;\n  Parts: TArrayOfString;\n  NewPath: string;\n  i: Integer;\nbegin\n';
@@ -1192,7 +1202,7 @@ export async function verify() {
   if (exe.subarray(0, 2).toString() !== 'MZ') throw new Error('Hydra Windows executable is missing or invalid.');
   const product = await readJson(path.join(output, 'resources', 'app', 'product.json'));
   const expectedGallery = brand.extensionsGallery ? openVsxGallery(brand.extensionsGallery) : undefined;
-  if (product.nameShort !== 'Hydra' || product.dataFolderName !== '.hydra' || product.win32AppUserModelId !== 'Hydra.IDE' || !isDeepStrictEqual(product.extensionsGallery, expectedGallery)) throw new Error('Desktop identity/profile isolation failed.');
+  if (product.nameShort !== 'Hydra' || product.nameLong !== 'Hydra IDE' || product.dataFolderName !== '.hydra' || product.win32AppUserModelId !== 'Hydra.IDE' || !isDeepStrictEqual(product.extensionsGallery, expectedGallery)) throw new Error('Desktop identity/profile isolation failed.');
   installedUpdateTrust(product.hydraUpdateTrust);
   if (!isDeepStrictEqual(product.hydraUpdateTrust, brand.hydraUpdateTrust)) throw new Error('Installed desktop update trust differs from the reviewed release configuration.');
   const bundled = path.join(output, 'resources', 'app', 'extensions', 'hydra-agent-manager');
