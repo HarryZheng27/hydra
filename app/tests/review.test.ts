@@ -192,7 +192,7 @@ test('a folder that isn\'t a repository says so; Open in editor stays inside the
     const savedPath = process.env.PATH;
     process.env.PATH = gitOnlyPath(); // no editor on PATH: the file is only shown in its folder
     try { assert.equal(await openInEditor(dir, 'a.ts', file => shown.push(file)), 'folder'); } finally { process.env.PATH = savedPath; }
-    assert.deepEqual(shown, [path.resolve(dir, 'a.ts')]);
+    assert.deepEqual(shown, [path.join(fs.realpathSync.native(dir), 'a.ts')]); // the real path (CI's temp folder is an 8.3 short name)
   } finally { fs.rmSync(plain, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
