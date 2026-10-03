@@ -93,7 +93,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });

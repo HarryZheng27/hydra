@@ -294,3 +294,59 @@ test('slash commands pass through to the CLI exactly as typed', () => {
   assert.deepEqual(JSON.parse(claude.send('/model sonnet')[0]!).message.content, '/model sonnet');
   assert.deepEqual(JSON.parse(claude.send('/g1cmd alpha')[0]!).message.content, '/g1cmd alpha');
 });
+
+test('an image-only message sends no empty text block, and images are re-encoded from their checked bytes', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+  const claude = new ClaudeAdapter();
+  const content = JSON.parse(claude.send('  ', [{ mediaType: 'image/png', data: png.toString('base64') }])[0]!).message.content;
+  assert.deepEqual(content.map((block: { type: string }) => block.type), ['image']);
+  // Unpadded base64 is accepted and passed on in canonical form.
+  assert.equal(checkImage({ mediaType: 'image/png', data: png.toString('base64').replace(/=+$/, '') }).data, png.toString('base64'));
+  assert.throws(() => checkImage({ mediaType: 'image/png', data: Buffer.concat([png, Buffer.alloc(4 * 1024 * 1024)]).toString('base64') }), /at most about 3\.7 MB/);
+});
+
+test('after Open in terminal, the chat sends nothing until the user says the terminal is closed; bad ids are refused', async () => {
+  const dir = scratch();
+  try {
+    const consoles: string[][] = [];
+    const { starts, launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({
+      store, launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined,
+      openConsole: async (_title, _executable, args) => { consoles.push(args); return { started: true }; },
+    });
+    const chat = await manager.create({ cwd: dir, provider: 'codex' });
+    await manager.send(chat.id, 'hi');
+    starts[0]!.handlers.line(JSON.stringify({ id: 3, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+    starts[0]!.handlers.line(JSON.stringify({ method: 'turn/completed', params: { threadId: '01a0fe38-af75-7372-aab6-eecfb1837dd5', turn: { status: 'completed' } } }));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(await manager.openTerminal(chat.id), { started: true });
+    assert.deepEqual(consoles, [['resume', '01a0fe38-af75-7372-aab6-eecfb1837dd5']]);
+    assert.equal((await manager.open(chat.id)).inTerminal, true);
+    await assert.rejects(manager.send(chat.id, 'again'), /open in a terminal/);
+    manager.terminalClosed(chat.id);
+    await manager.send(chat.id, 'again');
+    // A session id that could read as an option, or one cmd would re-read, never reaches a command line.
+    await store.update(chat.id, { providerSessionId: '--dangerously-bypass-approvals-and-sandbox' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    manager.closeAll();
+    const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined, openConsole: async () => ({ started: true }) });
+    await assert.rejects(fresh.openTerminal(chat.id), /session id isn't one Hydra can pass on/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('approving a plan takes the chat out of plan mode, so a later process doesn\'t go back to it', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined });
+    const chat = await manager.create({ cwd: dir, provider: 'claude', permissionMode: 'plan' });
+    await manager.send(chat.id, 'plan it');
+    starts[0]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'init', session_id: chat.providerSessionId, permissionMode: 'plan' }));
+    starts[0]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', session_id: chat.providerSessionId, permissionMode: 'default' }));
+    for (let i = 0; i < 50 && (await store.get(chat.id))?.permissionMode !== 'default'; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await store.get(chat.id))?.permissionMode, 'default');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

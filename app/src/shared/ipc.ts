@@ -14,7 +14,7 @@ export const IPC_TRANSPORT = 'hydra:call';
 export const CHAT_EVENTS = 'hydra:chat-events';
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
-export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean }
+export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 
@@ -63,6 +63,8 @@ export interface Channels {
   'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
   /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
   'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
+  /** The user closed the terminal they opened the chat in: it can run in the app again. */
+  'chats.terminalClosed': { payload: { id: string }; result: null };
   'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
   'chats.stop': { payload: { id: string }; result: null };
   'chats.configure': { payload: { id: string; change: ChatSettingsChange }; result: ChatRecord };
@@ -103,8 +105,8 @@ const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Z
 /** An effort word; each CLI checks it against its own list (Codex models offer `ultra`, for one). */
 const isEffort = (value: unknown): boolean => typeof value === 'string' && /^[a-z]{1,20}$/.test(value);
 const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
-/** At most four images, each a known type and at most 5 MB (main checks the bytes too). */
-const isImages = (value: unknown): boolean => Array.isArray(value) && value.length <= 4 && value.every(image => shaped({ mediaType: oneOf('image/png', 'image/jpeg', 'image/gif', 'image/webp'), data: (data: unknown) => typeof data === 'string' && data.length <= 7_000_000 })(image));
+/** At most four images, each a known type and at most 5 MB of base64, Claude's own limit (main checks the bytes too). */
+const isImages = (value: unknown): boolean => Array.isArray(value) && value.length <= 4 && value.every(image => shaped({ mediaType: oneOf('image/png', 'image/jpeg', 'image/gif', 'image/webp'), data: (data: unknown) => typeof data === 'string' && data.length <= 5 * 1024 * 1024 })(image));
 /**
  * Codex chats are read-only for now: write access waits for its live check (codexWriteVerified), and full access is
  * excluded in v1.
@@ -139,6 +141,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'chats.open': exactly<{ id: string }>({ id: isId }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
+  'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
   // An empty model or effort means the CLI's default.
@@ -184,6 +187,7 @@ export interface HydraApi {
   openChat(id: string): Promise<OpenChat>;
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
   openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
+  terminalClosed(id: string): Promise<null>;
   answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
   stopChat(id: string): Promise<null>;
   configureChat(id: string, change: ChatSettingsChange): Promise<ChatRecord>;

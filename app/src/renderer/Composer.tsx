@@ -2,14 +2,15 @@ import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEve
 import type { ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
-const MAX_IMAGES = 4, MAX_BYTES = 5 * 1024 * 1024;
+// Claude's API takes an image of at most 5 MB of base64, about 3.75 MB of file.
+const MAX_IMAGES = 4, MAX_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
 type Attached = ChatImage & { name: string; size: number };
 
 /** Reads an image file as base64. Main checks its bytes again before anything reaches a CLI. */
 function readImage(file: File): Promise<Attached> {
   return new Promise((resolve, reject) => {
     if (!imageTypes.includes(file.type as ChatImage['mediaType'])) { reject(new Error(`${file.name || 'That file'} isn't a PNG, JPEG, GIF or WebP image.`)); return; }
-    if (file.size > MAX_BYTES) { reject(new Error(`${file.name || 'That image'} is over 5 MB.`)); return; }
+    if (file.size > MAX_BYTES) { reject(new Error(`${file.name || 'That image'} is over 3.7 MB.`)); return; }
     const reader = new FileReader();
     reader.onload = () => { const url = String(reader.result); resolve({ mediaType: file.type as ChatImage['mediaType'], data: url.slice(url.indexOf(',') + 1), name: file.name || 'pasted image', size: file.size }); };
     reader.onerror = () => reject(new Error('Hydra couldn\'t read that image.'));

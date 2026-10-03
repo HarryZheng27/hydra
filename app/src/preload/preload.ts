@@ -24,6 +24,7 @@ const api: HydraApi = {
   openChat: id => call('chats.open', { id }),
   sendMessage: (id, text, images) => call('chats.send', images?.length ? { id, text, images } : { id, text }),
   openTerminal: id => call('chats.openTerminal', { id }),
+  terminalClosed: id => call('chats.terminalClosed', { id }),
   answer: (id, requestId, answer) => call('chats.answer', { id, requestId, answer }),
   stopChat: id => call('chats.stop', { id }),
   configureChat: (id, change) => call('chats.configure', { id, change }),
