@@ -61,7 +61,7 @@ export interface Channels {
   'projects.trust': { payload: { id: string }; result: AppState };
   'chats.list': { payload: null; result: ChatRecord[] };
   'chats.create': { payload: NewChatRequest; result: ChatRecord };
-  'chats.open': { payload: { id: string }; result: OpenChat };
+  'chats.open': { payload: { id: string; background?: boolean }; result: OpenChat };
   'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
   /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
   'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
@@ -145,7 +145,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'projects.trust': exactly<{ id: string }>({ id: isId }),
   'chats.list': isNull,
   'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }),
-  'chats.open': exactly<{ id: string }>({ id: isId }),
+  'chats.open': shaped<{ id: string; background?: boolean }>({ id: isId }, { background: value => value === true }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
   'review.diff': exactly<{ id: string }>({ id: isId }),
@@ -194,7 +194,8 @@ export interface HydraApi {
   trustProject(id: string): Promise<AppState>;
   listChats(): Promise<ChatRecord[]>;
   createChat(request: NewChatRequest): Promise<ChatRecord>;
-  openChat(id: string): Promise<OpenChat>;
+  /** `background`: the page catching up on a chat the user isn't looking at. */
+  openChat(id: string, background?: boolean): Promise<OpenChat>;
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
   openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
   reviewDiff(id: string): Promise<ReviewResult>;

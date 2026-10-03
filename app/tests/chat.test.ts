@@ -330,7 +330,7 @@ test('after Open in terminal, the chat sends nothing until the user says the ter
     await store.update(chat.id, { providerSessionId: '--dangerously-bypass-approvals-and-sandbox' });
     await new Promise(resolve => setTimeout(resolve, 50));
     manager.closeAll();
-    const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined, openConsole: async () => ({ started: true }) });
+    const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined });
     await assert.rejects(fresh.openTerminal(chat.id), /session id isn't one Hydra can pass on/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -370,12 +370,13 @@ test('new chats follow the user\'s own CLI settings; opening a Claude chat start
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(launched.starts.length, 1, 'Codex chats aren\'t started ahead');
     const second = await manager.create({ cwd: dir, provider: 'claude' });
-    let ended = 0;
-    const kill = launched.starts[0]!;
-    kill.handlers.exit = () => { ended++; };
+    const killed: number[] = [];
+    const firstExit = launched.starts[0]!.handlers.exit;
+    launched.starts[0]!.handlers.exit = code => { killed.push(0); firstExit(code); };
     await manager.open(second.id);
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(launched.starts.length, 2);
+    assert.equal(killed.length, 1, 'the chat warmed before ended when another was opened');
     await manager.send(second.id, 'hi');
     assert.equal(launched.starts.length, 2, 'the message used the started process');
     // A plan approval moves a plan-mode chat out of plan mode; a chat on the user's settings stays on them.
@@ -384,6 +385,33 @@ test('new chats follow the user\'s own CLI settings; opening a Claude chat start
     assert.equal((await store.get(second.id))!.permissionMode, 'settings');
     manager.closeAll();
     await store.flush();
-    void ended;
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('nothing starts ahead for a chat removed, quitting, or opened in the background', async () => {
+  const dir = scratch();
+  try {
+    const launched = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const slowTrust = () => new Promise<boolean>(resolve => setTimeout(() => resolve(true), 15));
+    const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: slowTrust, push: () => undefined, warm: true });
+    const settle = () => new Promise(resolve => setTimeout(resolve, 80));
+    const removed = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(removed.id);
+    await manager.remove(removed.id);
+    await settle();
+    assert.equal(launched.starts.length, 0, 'a chat removed while its CLI was starting');
+
+    const background = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(background.id, { warm: false });
+    await settle();
+    assert.equal(launched.starts.length, 0, 'an open the user doesn\'t see');
+
+    const quitting = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(quitting.id);
+    manager.closeAll();
+    await settle();
+    assert.equal(launched.starts.length, 0, 'quit began while the CLI was starting');
+    await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -142,7 +142,8 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
 - **New chats follow the user's own CLI settings** (from Nico's first try, 2026-10-03). Hydra had forced Claude's `--permission-mode default` and Codex's `approvalsReviewer: "user"`, which overrode his `defaultMode: "auto"` and `approvals_reviewer = "auto_review"`.
   - "Your settings", the default, passes neither, so each CLI behaves as it does on its own. Anything it still asks about comes to Hydra's cards.
   - The composer also offers Auto, Ask before edits, Accept edits and Plan first for Claude, and Ask me for Codex.
-  - Codex stays read-only either way, and bypass and full access are still never offered.
+  - Codex threads still start read-only, but with "Your Codex settings" its auto-review can approve a file change, or a command outside the sandbox, without a card.
+  - Bypass and full access are never offered. A chat that Claude reports in bypass mode (from the user's or a project's settings) stops before any turn.
   - HSEC-82 and HSEC-87 say what this means: Codex's auto-review can approve a request itself.
 - **Claude Code starts when a chat opens,** not when the first message is sent (one chat at a time, trusted folders only, ended after 3 minutes unused). On Nico's machine a small Haiku turn took 11.2 s cold and 5.6 s warm.
 - **The working line** says "Starting Claude Code…" or "Claude Code is working… 42s": Opus can think for a minute with no visible output.
@@ -158,4 +159,4 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
 - **The live script's user-state snapshot** covers `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml`, but not the rest of `~/.claude.json` or `settings.local.json`.
 - **Outside G4:** since #303 (G6 M1's rename to "Hydra IDE"), the desktop workflow's installer identity check fails on main, because the installer's ProductName follows the new name and the updater accepts only "Hydra". #304 to #306 merged on their required checks; it is flagged for G6.
 - **G5:** usage-limit handoff, heads and plans in chats.
-- **A visual design pass for the app:** Nico tried it and wants the UI reworked, after the app's goals work end to end.
+- **A visual design pass for the app:** Nico tried it and wants the UI reworked, after the app's goals work end to end. His direction is in [UI-direction.md](UI-direction.md).

@@ -217,3 +217,16 @@ test('Claude: "your settings" passes no permission mode, so the user\'s own defa
   const unset = claudeArguments({ provider: 'claude', cwd: '/', executable: 'claude', sessionId: id });
   assert.equal(unset[unset.indexOf('--permission-mode') + 1], 'default', 'the core\'s own default still asks');
 });
+
+test('Claude: a chat that Claude reports in bypass permissions (from the user\'s or a project\'s settings) stops before any turn', () => {
+  const fromInitialize = new ClaudeAdapter();
+  fromInitialize.start();
+  const reply = fromInitialize.feed(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'x', response: { commands: [], current_permission_mode: 'bypassPermissions' } } }));
+  assert.ok(reply.events.some(event => event.type === 'error' && event.fatal), 'the initialize reply');
+  const fromInit = new ClaudeAdapter();
+  const init = fromInit.feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: randomUUID(), permissionMode: 'bypassPermissions' }));
+  assert.ok(init.events.some(event => event.type === 'error' && event.fatal), 'system/init');
+  assert.ok(!init.events.some(event => event.type === 'session'));
+  const fine = new ClaudeAdapter().feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: randomUUID(), permissionMode: 'auto' }));
+  assert.ok(!fine.events.some(event => event.type === 'error'), 'auto runs');
+});

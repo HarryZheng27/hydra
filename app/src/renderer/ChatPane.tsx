@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatAnswer, ChatEvent, ChatImage, ChatRecord } from '../shared/ipc';
+import type { ChatAnswer, ChatEvent, ChatImage, ChatRecord, ClaudePermissionMode, CodexApprovals } from '../shared/ipc';
 import { foldEvents, type ChatItem } from './chatModel';
 import { Composer } from './Composer';
 import { Markdown } from './markdown';
@@ -19,7 +19,7 @@ interface Props {
   onTerminalClosed?(): void;
   onAnswer(requestId: string, answer: ChatAnswer): void | Promise<unknown>;
   onStop(): void;
-  onConfigure(change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan'; sandbox?: 'read-only' | 'workspace-write' }): void;
+  onConfigure(change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }): void;
 }
 
 /** The CLI's latest model list in this chat (Codex sends one when a thread starts). */

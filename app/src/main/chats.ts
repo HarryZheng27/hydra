@@ -98,6 +98,8 @@ export class ChatManager {
   private closing = false;
   /** The chat whose CLI was started ahead of a message; only one waits at a time. */
   private warmed: string | undefined;
+  /** Chats removed while their session may still be starting. */
+  private readonly removed = new Set<string>();
 
   constructor(private readonly deps: ChatManagerDeps) {}
 
@@ -118,10 +120,11 @@ export class ChatManager {
     });
   }
 
-  async open(id: string): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }> {
+  /** `warm: false` for an open the user doesn't see (the page catching up on a background chat). */
+  async open(id: string, { warm = true }: { warm?: boolean } = {}): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }> {
     const record = await this.record(id);
     const opened = { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id) };
-    this.warm(id, record);
+    if (warm) this.warm(id, record);
     return opened;
   }
 
@@ -134,7 +137,9 @@ export class ChatManager {
     if (!this.deps.warm || this.closing || record.provider !== 'claude' || this.inTerminal.has(id) || this.starting.has(id)) return;
     if (this.warmed && this.warmed !== id) this.sessions.get(this.warmed)?.cool();
     this.warmed = id;
-    void this.session(id).then(session => { if (this.warmed === id && !this.inTerminal.has(id)) session.warm(); }).catch(() => undefined);
+    void this.session(id).then(session => {
+      if (this.warmed === id && !this.closing && !this.inTerminal.has(id) && this.sessions.get(id) === session) session.warm();
+    }).catch(() => undefined);
   }
 
   private async record(id: string): Promise<ChatRecord> {
@@ -172,6 +177,9 @@ export class ChatManager {
     if (this.closing) throw new Error('Hydra is quitting.');
     // The folder may have stopped being trusted while this was starting.
     if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
+    // Quit or removal may have come during those awaits: nothing may start after either.
+    if (this.closing) throw new Error('Hydra is quitting.');
+    if (this.removed.has(id)) throw new Error('This chat was removed.');
     const session = new ChatSession(this.adapter(record.provider), options, this.deps.launch, events => void this.persist(id, events), this.deps.timings);
     this.sessions.set(id, session);
     return session;
@@ -322,6 +330,8 @@ export class ChatManager {
   }
 
   async remove(id: string): Promise<void> {
+    this.removed.add(id);
+    if (this.warmed === id) this.warmed = undefined;
     this.sessions.get(id)?.close();
     this.sessions.delete(id);
     await this.deps.store.remove(id);

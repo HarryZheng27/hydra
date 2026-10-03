@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatEvent, ChatEventsMessage, ChatRecord, OnboardingReport, Project } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatEvent, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -111,7 +111,7 @@ export function App() {
     // One open at a time per chat: a second request while one runs only brings it to the front.
     if (opening.current.has(id)) { if (show) setView({ kind: 'chat', id }); return; }
     opening.current.set(id, []);
-    void run(window.hydra.openChat(id), opened => {
+    void run(window.hydra.openChat(id, !show), opened => {
       let events: ChatEvent[] = opened.log.map(entry => entry.event);
       let gap = false;
       for (const message of opening.current.get(id) ?? []) { const merged = mergePush(events, message); if (merged) events = merged; else gap = true; }
@@ -139,7 +139,7 @@ export function App() {
       setView({ kind: 'chat', id: record.id });
     });
   };
-  const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan'; sandbox?: 'read-only' | 'workspace-write' }) =>
+  const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }) =>
     void run(window.hydra.configureChat(id, Object.fromEntries(Object.entries(change).map(([key, value]) => [key, value ?? ''])) as typeof change), record => setChats(list => list.map(c => (c.id === record.id ? record : c))));
 
   return (

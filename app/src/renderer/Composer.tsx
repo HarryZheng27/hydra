@@ -101,7 +101,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
           {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
         {codex
-          ? <select aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (such as its auto-review) or you. Codex runs read-only here; file changes it gets approved still apply.">
+          ? <select aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
               {approvalModes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           : <select aria-label="Permission mode" title="Your Claude settings: Claude Code decides what to ask, as it does outside Hydra; what it asks comes here as a card." value={record.permissionMode ?? 'default'} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>

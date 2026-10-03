@@ -35,6 +35,13 @@ export function claudeArguments(options: ChatOptions): string[] {
   ];
 }
 
+/**
+ * A chat on "your settings" passes no mode, so the user's or a project's settings could put Claude in bypass
+ * permissions; Hydra never runs a chat that way (HSEC-82). Claude says its mode before any turn: the chat stops then.
+ */
+const refusedMode = (mode: unknown): boolean => mode === 'bypassPermissions';
+const bypassRefused: ChatEvent = { type: 'error', message: 'Claude Code started in bypass permissions mode (from your settings or this project\'s), which Hydra doesn\'t run. Pick another mode for this chat, or change that setting.', fatal: true };
+
 type Pending = { kind: 'approval' | 'question' | 'plan'; requestId: string; input: Record<string, unknown> };
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -127,6 +134,7 @@ export class ClaudeAdapter implements ChatAdapter {
   }
 
   private system(message: Record<string, unknown>): ChatEvent[] {
+    if ((message.subtype === 'status' || message.subtype === 'init') && refusedMode(message.permissionMode)) return [bypassRefused];
     // Approving a plan switches Claude out of plan mode (G1); the chat follows, so a later process doesn't go back to it.
     if (message.subtype === 'status' && typeof message.permissionMode === 'string' && typeof message.session_id === 'string') {
       return [{ type: 'session', providerSessionId: message.session_id, permissionMode: message.permissionMode }];
@@ -261,6 +269,8 @@ export class ClaudeAdapter implements ChatAdapter {
   private controlResponse(message: Record<string, unknown>): ChatEvent[] {
     const response = isRecord(message.response) ? message.response : {};
     if (response.subtype === 'error') return [{ type: 'error', message: `Claude Code refused a request: ${text(response.error).slice(0, 300)}`, fatal: false }];
+    // initialize's reply comes before any turn and names the mode Claude is in (G1).
+    if (isRecord(response.response) && refusedMode(response.response.current_permission_mode)) return [bypassRefused];
     return [];
   }
 

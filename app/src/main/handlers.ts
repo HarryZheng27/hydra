@@ -97,7 +97,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       if (!project) throw new Error('No such project.');
       return deps.chats.create({ cwd: project.path, ...rest });
     },
-    'chats.open': ({ id }) => deps.chats.open(id),
+    'chats.open': ({ id, background }) => deps.chats.open(id, { warm: !background }),
     'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
     'review.diff': async ({ id }) => {

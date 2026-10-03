@@ -213,3 +213,15 @@ test('warm() starts the CLI ahead of a message; the message reuses it, and an un
   assert.equal(quiet.length, 0, 'a warm start that fails says nothing; the next message reports it');
   failing.close();
 });
+
+test('a CLI started ahead and ended before any message leaves no session: the next start uses --session-id again', () => {
+  const { cli, session, id } = setup();
+  session.warm();
+  session.cool();
+  session.send('one');
+  assert.equal(cli.starts.length, 2);
+  const args = cli.starts[1]!.args;
+  assert.equal(args[args.indexOf('--session-id') + 1], id);
+  assert.ok(!args.includes('--resume'));
+  session.close();
+});
