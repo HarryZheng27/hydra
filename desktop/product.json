@@ -1,6 +1,6 @@
 {
   "nameShort": "Hydra",
-  "nameLong": "Hydra",
+  "nameLong": "Hydra IDE",
   "applicationName": "hydra",
   "dataFolderName": ".hydra",
   "win32MutexName": "hydra-ide",

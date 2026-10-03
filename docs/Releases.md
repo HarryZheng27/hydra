@@ -12,6 +12,8 @@ Hydra installed with `HydraSetup.exe` checks GitHub for a newer release 30 secon
 - **The log:** the update is logged to `%TEMP%hydra-update.log`.
 - **By hand:** download `HydraSetup.exe` from the [releases page](https://github.com/ndunl075/hydra/releases) and run it with Hydra closed.
 
+**Hydra IDE:** releases after 0.27.1 call the editor Hydra IDE. Updating from an older release removes its `Hydra` shortcuts (only ones that open this installation) and creates `Hydra IDE` ones in a **Hydra IDE** Start Menu folder. Taskbar pins, settings, extensions and the install folder stay as they are, and updates still download `HydraSetup.exe`. The name `Hydra`, and its shortcuts, belong to the Hydra app.
+
 How the check decides what to trust is in [The update prompt](#the-update-prompt). What changed in each release is in the [changelog](../CHANGELOG.md).
 
 ## Uninstalling

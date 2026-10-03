@@ -32,10 +32,32 @@ $product | Add-Member -NotePropertyName target -NotePropertyValue 'user'
 if ($stagedProduct.target -ne 'user' -or ($stagedProduct | ConvertTo-Json -Depth 100 -Compress) -cne ($product | ConvertTo-Json -Depth 100 -Compress)) { throw 'Installer-staged product differs from the built runtime plus its user target.' }
 $testRoot = Join-Path $env:RUNNER_TEMP ('hydra-upgrade-' + [guid]::NewGuid().ToString('N'))
 $installRoot = Join-Path $testRoot 'Hydra'
-$desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Hydra.lnk'
+$programs = [Environment]::GetFolderPath('Programs')
+$desktop = [Environment]::GetFolderPath('DesktopDirectory')
+# The current IDE is "Hydra IDE"; the prior release still made "Hydra" shortcuts,
+# a name that now belongs to the Hydra app.
+$desktopShortcut = Join-Path $desktop 'Hydra IDE.lnk'
+$startFolder = Join-Path $programs 'Hydra IDE'
+$startShortcut = Join-Path $startFolder 'Hydra IDE.lnk'
+$oldDesktopShortcut = Join-Path $desktop 'Hydra.lnk'
+$oldStartFolder = Join-Path $programs 'Hydra'
+$oldStartShortcut = Join-Path $oldStartFolder 'Hydra.lnk'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{4C372D32-54B2-43D8-8C63-ECC31D3744A8}_is1'
-if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Runner already contains Hydra installation or shortcut; refusing to replace it.' }
+if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $oldDesktopShortcut) -or (Test-Path -LiteralPath $oldStartFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Runner already contains Hydra installation or shortcut; refusing to replace it.' }
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+$shell = New-Object -ComObject WScript.Shell
+function Get-ShortcutTarget([string]$path) { return $shell.CreateShortcut($path).TargetPath }
+# A stand-in for the Hydra app's own Hydra.lnk: it opens something other than the IDE.
+function New-AppShortcut([string]$path) {
+  New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+  $link = $shell.CreateShortcut($path)
+  $link.TargetPath = Join-Path $env:SystemRoot 'System32\notepad.exe'
+  $link.Save()
+  return (Get-FileHash -LiteralPath $path).Hash
+}
+function Assert-AppShortcut([string]$path, [string]$hash, [string]$when) {
+  if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path).Hash -ne $hash) { throw "$when removed or changed the Hydra app's $path." }
+}
 $sentinels = @(
   (Join-Path $env:APPDATA 'Hydra\User\settings.json'),
   (Join-Path $env:APPDATA 'Hydra\User\profiles\hydra-upgrade-fixture\settings.json'),
@@ -93,7 +115,13 @@ function Remove-TestInstallation([string]$label) {
     $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $testRoot ($label + '-uninstall.log')) + '"')) -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Upgrade uninstall failed: $($process.ExitCode)" }
   }
-  if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Upgrade uninstall left runtime, shortcut or registration behind.' }
+  if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Upgrade uninstall left runtime, shortcut or registration behind.' }
+  # Each install writes a fresh uninstall log (UninstallLogMode=overwrite), so a
+  # file only the prior release had would be left behind, and then a reinstall
+  # to the same folder is refused. Nothing may be left. The uninstaller removes
+  # its own folder last, from a copy of itself, so this waits for that.
+  for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $installRoot); $i++) { Start-Sleep -Milliseconds 500 }
+  if (Test-Path -LiteralPath $installRoot) { throw "Upgrade uninstall left files the prior release installed: $((Get-ChildItem -LiteralPath $installRoot -Recurse -File | Select-Object -First 10 | ForEach-Object FullName) -join ', ')" }
   Assert-DataPreserved
 }
 try {
@@ -102,21 +130,38 @@ try {
     $priorTasks = if ($enabled) { @('/TASKS="desktopicon"') } else { @('/TASKS=""') }
     Invoke-UpgradeInstaller $prior ($label + '-prior') $priorTasks
     Assert-Identity $baseline.version $false
-    if ((Test-Path -LiteralPath $desktopShortcut) -ne $enabled) { throw 'Prior installer shortcut choice was not established.' }
+    if ((Test-Path -LiteralPath $oldDesktopShortcut) -ne $enabled) { throw 'Prior installer shortcut choice was not established.' }
+    if (-not (Test-Path -LiteralPath $oldStartShortcut)) { throw 'The prior release made no "Hydra" Start Menu shortcut.' }
+    # Without the IDE's desktop shortcut there, the app's Hydra.lnk may already
+    # be on the desktop when the upgrade runs: the upgrade must leave it alone.
+    $upgradeAppShortcut = if ($enabled) { $null } else { New-AppShortcut $oldDesktopShortcut }
     Assert-InstallerRefused $current ($label + '-task-override') @('/HYDRAUPDATE=1', '/TASKS="desktopicon"')
     Assert-InstallerRefused $current ($label + '-force-close') @('/HYDRAUPDATE=1', '/CLOSEAPPLICATIONS')
     Assert-InstallerRefused $current ($label + '-upstream-update') @('/UPDATE=unsafe')
     Invoke-UpgradeInstaller $current ($label + '-upgrade') @('/HYDRAUPDATE=1')
     Assert-Identity $manifest.version $true
     if ((Test-Path -LiteralPath $desktopShortcut) -ne $enabled) { throw 'Distinct-version upgrade changed remembered shortcut preference.' }
+    # The handover: "Hydra IDE" shortcuts to the same executable, the old ones gone.
+    if (-not (Test-Path -LiteralPath $startShortcut) -or (Get-ShortcutTarget $startShortcut) -ne (Join-Path $installRoot 'Hydra.exe')) { throw 'The upgrade made no "Hydra IDE" Start Menu shortcut to Hydra.exe.' }
+    if ((Test-Path -LiteralPath $oldStartShortcut) -or (Test-Path -LiteralPath $oldStartFolder)) { throw 'The upgrade left the old "Hydra" Start Menu shortcut or folder.' }
+    if ($enabled -and (Test-Path -LiteralPath $oldDesktopShortcut)) { throw 'The upgrade left the old Hydra.lnk desktop shortcut.' }
+    if (-not $enabled) { Assert-AppShortcut $oldDesktopShortcut $upgradeAppShortcut 'The upgrade' }
     Assert-InstallerRefused $current ($label + '-equal') @('/HYDRAUPDATE=1')
     # Historical installers cannot acquire a guard retroactively. A synthetic
     # newer registration proves this installer's downgrade refusal only.
     Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value '99.0.0'
     try { Assert-InstallerRefused $current ($label + '-synthetic-downgrade') @() }
     finally { Set-ItemProperty -LiteralPath $uninstallKey -Name DisplayVersion -Value $manifest.version }
-    if ($enabled) { $shell = New-Object -ComObject WScript.Shell; if ($shell.CreateShortcut($desktopShortcut).TargetPath -ne (Join-Path $installRoot 'Hydra.exe')) { throw 'Upgraded shortcut targets another executable.' } }
+    if ($enabled -and (Get-ShortcutTarget $desktopShortcut) -ne (Join-Path $installRoot 'Hydra.exe')) { throw 'Upgraded shortcut targets another executable.' }
+    # The prior release's uninstall log listed both old Hydra.lnk paths. With the
+    # app's shortcuts now at those paths, uninstalling the IDE must keep them.
+    $planted = @{}
+    if ($enabled) { $planted[$oldDesktopShortcut] = New-AppShortcut $oldDesktopShortcut } else { $planted[$oldDesktopShortcut] = $upgradeAppShortcut }
+    $planted[$oldStartShortcut] = New-AppShortcut $oldStartShortcut
     Remove-TestInstallation $label
+    foreach ($path in $planted.Keys) { Assert-AppShortcut $path $planted[$path] 'Uninstalling the IDE' }
+    Remove-Item -LiteralPath $oldDesktopShortcut -Force
+    Remove-Item -LiteralPath $oldStartFolder -Recurse -Force
   }
 } finally {
   try { Remove-TestInstallation 'cleanup' }
@@ -126,4 +171,4 @@ try {
     [ordered]@{ prior = $baseline; currentVersion = $manifest.version; currentInstallerSha256 = $currentHash; runtimeCompared = @('Hydra.exe', 'product.json', 'built-in module', 'extension.cjs', 'webview.js') } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $logs 'provenance.json') -Encoding utf8
   }
 }
-Write-Output "PASS: pinned Hydra $($baseline.version) upgrades to $($manifest.version), preserves selected/unselected shortcut preference and user/profile/extension/task/project data, matches exact current runtime, and uninstalls cleanly."
+Write-Output "PASS: pinned Hydra $($baseline.version) upgrades to Hydra IDE $($manifest.version): its Hydra.lnk shortcuts become ""Hydra IDE"" ones with selected/unselected desktop preference kept, the app's Hydra.lnk survives the upgrade and a later uninstall, user/profile/extension/task/project data is preserved, the runtime matches exactly, and uninstall leaves nothing behind."
