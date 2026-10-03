@@ -29,7 +29,7 @@ const language = (file: string): string => {
   const known: Record<string, string> = { ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', json: 'json', md: 'markdown', css: 'css', html: 'html', py: 'python', rs: 'rust', go: 'go', java: 'java', cs: 'csharp', cpp: 'cpp', c: 'c', h: 'cpp', yml: 'yaml', yaml: 'yaml', sh: 'shell', ps1: 'powershell', sql: 'sql', xml: 'xml' };
   return known[ext] ?? 'plaintext';
 };
-const statusLabel: Record<ReviewFile['status'], string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', untracked: 'U', changed: 'T' };
+const statusLabel: Record<ReviewFile['status'], string> = { added: 'A', modified: 'M', deleted: 'D', untracked: 'U', changed: 'T' };
 
 function DiffView({ file }: { file: ReviewFile }) {
   const host = useRef<HTMLDivElement>(null);

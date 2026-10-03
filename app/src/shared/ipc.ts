@@ -16,7 +16,7 @@ export const CHAT_EVENTS = 'hydra:chat-events';
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
 export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
-export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
+export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
 export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 

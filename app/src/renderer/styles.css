@@ -192,7 +192,7 @@ details.tool.failed { border-color: var(--error); }
 .status { font-family: "Cascadia Code", Consolas, monospace; font-weight: 600; width: 12px; }
 .status.added, .status.untracked { color: var(--ok); }
 .status.deleted { color: var(--error); }
-.status.modified, .status.changed, .status.renamed { color: var(--warning); }
+.status.modified, .status.changed { color: var(--warning); }
 .review-diff { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .review-file-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
 .review-file-bar .path { flex: 1; min-width: 0; }
