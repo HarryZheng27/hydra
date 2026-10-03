@@ -50,7 +50,7 @@ Root `npm run check` and `npm test`; `npm --prefix app run check`, `test`, `buil
 
 ## Result (2026-10-03)
 
-Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) (core and Claude), [#304](https://github.com/ndunl075/hydra/pull/304) (Claude in the app), [#305](https://github.com/ndunl075/hydra/pull/305) (Codex), [#306](https://github.com/ndunl075/hydra/pull/306) (the rest of the conversation) and PR_M5 (review and polish). Each had an independent read-only review in a fresh Claude session, and #304's and PR_M5's fixes had a second, focused review. The findings and fixes are in each PR body. Every blocking and high finding was fixed before merge. There were two blocking ones:
+Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) (core and Claude), [#304](https://github.com/ndunl075/hydra/pull/304) (Claude in the app), [#305](https://github.com/ndunl075/hydra/pull/305) (Codex), [#306](https://github.com/ndunl075/hydra/pull/306) (the rest of the conversation) and [#307](https://github.com/ndunl075/hydra/pull/307) (review and polish). Each had an independent read-only review in a fresh Claude session, and #304's and #307's fixes had a second, focused review. The findings and fixes are in each PR body. Every blocking and high finding was fixed before merge. There were two blocking ones:
 - Stop didn't stop a running Codex command;
 - Open in editor could hand a file name containing `&` to an editor's `.cmd` launcher, which cmd.exe would read as a command.
 
@@ -149,5 +149,5 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
 - **A slash command with an image attached** goes as content blocks, so the CLI may not read it as a command.
 - **`extraArguments`** takes any flag. Only the live script uses it, but an allowlist would be safer if it ever reaches the app.
 - **The live script's user-state snapshot** covers `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml`, but not the rest of `~/.claude.json` or `settings.local.json`.
-- **Outside G4:** since #303 (G6 M1's rename to "Hydra IDE"), the desktop workflow's installer identity check fails on main, because the installer's ProductName follows the new name and the updater accepts only "Hydra". #304 to PR_M5 merged on their required checks; it is flagged for G6.
+- **Outside G4:** since #303 (G6 M1's rename to "Hydra IDE"), the desktop workflow's installer identity check fails on main, because the installer's ProductName follows the new name and the updater accepts only "Hydra". #304 to #306 merged on their required checks; it is flagged for G6.
 - **G5:** usage-limit handoff, heads and plans in chats.
