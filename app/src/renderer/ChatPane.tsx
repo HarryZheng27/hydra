@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatAnswer, ChatDefaults, ChatEvent, ChatImage, ChatRecord, ClaudePermissionMode, CodexApprovals } from '../shared/ipc';
 import { foldEvents, type ChatItem } from './chatModel';
 import { Composer } from './Composer';
+import { Icon } from './Icon';
 import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
 
@@ -159,8 +160,8 @@ export function ChatPane({ record, defaults, events, settledBefore = 0, onSend, 
         <span className="chat-title" title={record.cwd}>{record.title}</span>
         <span className="chip">{record.provider === 'claude' ? 'Claude Code' : 'Codex'}</span>
         {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
-        <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing}>{reviewing ? 'Back to chat' : 'Review changes'}</button>
-        <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} title={view.running ? 'Stop the chat first' : 'Continue this chat in the CLI itself, in a terminal window, with its own default settings'}>Open in terminal</button>
+        <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
+        <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
       </header>
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
       {reviewing && <ReviewPane chatId={record.id} />}

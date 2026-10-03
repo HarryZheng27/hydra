@@ -63,7 +63,9 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const model = record.model ?? defaults?.model ?? (codex ? sessionModel ?? models.find(m => m.isDefault)?.id : claudeAlias(sessionModel)) ?? (codex ? undefined : 'opus');
   const codexModel = models.find(m => m.id === model) ?? models.find(m => m.isDefault);
   const effort = record.effort ?? defaults?.effort ?? (codex ? codexModel?.defaultEffort : undefined);
-  const modelOptions = withValue(codex ? models.map(m => ({ value: m.id, label: m.label })) : claudeModels, model);
+  const version = /claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(sessionModel ?? '');
+  const named = claudeModels.map(option => (version && version[1]!.toLowerCase() === option.value ? { ...option, label: `${option.label} ${version[2]}.${version[3]}` } : option));
+  const modelOptions = withValue(codex ? models.map(m => ({ value: m.id, label: m.label })) : named, model);
   const effortOptions = withValue((codex ? codexModel?.efforts ?? [] : claudeEfforts).map(value => ({ value, label: titleCase(value) })), effort);
   const mode = !record.permissionMode || record.permissionMode === 'settings' ? (defaults?.mode as ClaudePermissionMode | undefined) ?? 'default' : record.permissionMode;
   const [text, setText] = useState('');
@@ -91,7 +93,9 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
     setImages([]);
   };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
-  // Like Claude desktop's prompt: one rounded box, the message on top, its controls along the bottom inside it.
+  // Like Claude desktop's prompt: the message in a rounded box with one button in its corner (send, or stop while a
+  // turn runs and nothing is typed), and the chat's settings in a quiet row under it.
+  const stopping = running && !text.trim() && !images.length;
   return (
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
       <div className="prompt-box">
@@ -105,28 +109,27 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
           </div>
         )}
         <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={2} />
-        <div className="composer-bar">
-          <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>
-          <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-          {codex
-            ? <select className="quiet" aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
-                {approvalModes(defaults).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            : <select className="quiet" aria-label="Permission mode" title="What Claude Code asks you about first (a new chat starts on your own Claude Code setting); anything it asks comes here as a card." value={mode} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
-                {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>}
-          <span className="composer-spacer" />
-          <select className="quiet" aria-label="Model" value={model ?? ''} onChange={e => onConfigure({ model: e.target.value })}>
-            {!model && <option value="">Model</option>}
-            {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          <select className="quiet" aria-label="Effort" value={effort ?? ''} onChange={e => onConfigure({ effort: e.target.value })}>
-            {!effort && <option value="">Effort</option>}
-            {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          {running && <button className="round stop" onClick={onStop} aria-label="Stop" title="Stop"><Icon name="stop" /></button>}
-          <button className="round send" onClick={send} disabled={!text.trim() && !images.length} aria-label="Send" title="Send (Enter)"><Icon name="arrowUp" /></button>
-        </div>
+        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'arrowUp'} /></button>
+      </div>
+      <div className="composer-bar">
+        <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>
+        <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+        {codex
+          ? <select className="quiet" aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
+              {approvalModes(defaults).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          : <select className="quiet" aria-label="Permission mode" title="What Claude Code asks you about first (a new chat starts on your own Claude Code setting); anything it asks comes here as a card." value={mode} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
+              {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>}
+        <span className="composer-spacer" />
+        <select className="quiet" aria-label="Model" value={model ?? ''} onChange={e => onConfigure({ model: e.target.value })}>
+          {!model && <option value="">Model</option>}
+          {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+        <select className="quiet" aria-label="Effort" value={effort ?? ''} onChange={e => onConfigure({ effort: e.target.value })}>
+          {!effort && <option value="">Effort</option>}
+          {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
       </div>
     </div>
   );

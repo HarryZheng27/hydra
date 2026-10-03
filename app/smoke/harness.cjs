@@ -166,7 +166,7 @@ if (role === 'resume') {
     report.resume.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
     report.resume.reply = await ui(`[...document.querySelectorAll('.msg.assistant')].at(-1)?.textContent ?? ''`);
     // Open in terminal: the CLI's own resume in a console (the harness records the launch; no window opens).
-    await ui(`[...document.querySelectorAll('.chat-head .head-action')].find(b => b.textContent === 'Open in terminal').click(); 1`);
+    await ui(`document.querySelector('.chat-head .head-action[aria-label="Open in terminal"]').click(); 1`);
     for (let i = 0; i < 100 && !report.signIns.length; i++) await wait(100);
     report.resume.terminal = report.signIns[0] ?? null;
     // The Codex chat: the next message resumes its thread in a new app-server.
@@ -385,7 +385,7 @@ if (role === 'first') {
 
       // The review pane: the project's working tree against HEAD, read-only, in Monaco's diff editor.
       const reviewConsoleStart = report.console.length;
-      await chat.click('.chat-head .head-action', 'Review changes');
+      await ui(`document.querySelector('.chat-head .head-action[aria-label="Review changes"]').click(); 1`);
       await chat.until(`document.querySelectorAll('.review-files button').length >= 2`, 'the changed files');
       report.review = { files: await ui(`[...document.querySelectorAll('.review-files button')].map(b => b.textContent)`) };
       await chat.until(`!!document.querySelector('.diff-host .monaco-diff-editor')`, 'the diff editor');
@@ -396,7 +396,7 @@ if (role === 'first') {
       report.review.shown = report.shown;
       report.review.cspViolations = report.console.slice(reviewConsoleStart).filter(m => /Content Security Policy|Trusted ?Type|TrustedScript|TrustedHTML/i.test(m.message)).map(m => m.message.slice(0, 200));
       await shot('review');
-      await chat.click('.chat-head .head-action', 'Back to chat');
+      await ui(`document.querySelector('.chat-head .head-action[aria-label="Back to chat"]').click(); 1`);
     }
     event('ready');
     // Wait for run.mjs's second launch to reach this instance, then leave.

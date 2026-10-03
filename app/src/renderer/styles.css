@@ -115,8 +115,8 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .setup .hint { margin-top: 8px; font-size: 12px; }
 
 /* Chats in the sidebar */
-.chats { list-style: none; margin: 0 0 4px; padding: 0 0 0 26px; }
-.chat-link { width: 100%; text-align: left; padding: 3px 8px; border-radius: var(--radius); font-size: 12px; color: var(--sidebar-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.chats { list-style: none; margin: 0 0 8px; padding: 0; }
+.chat-link { width: 100%; text-align: left; padding: 5px 8px; border-radius: var(--radius); font-size: 13px; color: var(--sidebar-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .chat-link:hover { background: var(--hover); color: var(--fg); }
 .chat-link.selected { background: var(--selected-bg); color: var(--selected-fg); }
 
@@ -162,27 +162,27 @@ details.tool.failed { border-color: var(--error); }
 .turn-end { font-size: 11px; color: var(--muted); text-align: right; }
 .turn-end.error { color: var(--error); }
 .working { color: var(--muted); font-size: 12px; }
-.composer { padding: 8px max(24px, calc((100% - 760px) / 2)) 16px; }
-/* Claude desktop's prompt: one rounded box with a soft shadow; the controls sit inside it, quiet until hovered. */
-.prompt-box { display: flex; flex-direction: column; gap: 4px; padding: 10px 10px 8px 14px; border-radius: 18px; border: 1px solid var(--input-border); background: var(--input-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 4px 16px rgba(0, 0, 0, .04); }
+.composer { padding: 8px max(24px, calc((100% - 760px) / 2)) 14px; }
+/* Claude desktop's prompt: a rounded box with the message and one round button in its corner; settings below it. */
+.prompt-box { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 12px 52px 12px 16px; border-radius: 16px; border: 1px solid var(--input-border); background: var(--input-bg); box-shadow: 0 1px 3px rgba(0, 0, 0, .05); }
 .prompt-box:focus-within { border-color: var(--faint); }
-.composer textarea { width: 100%; resize: none; padding: 4px 0; border: 0; outline: 0; background: transparent; color: var(--input-fg); font: inherit; font-size: 14px; line-height: 1.5; max-height: 40vh; }
-.composer-bar { display: flex; gap: 2px; align-items: center; }
-.composer select.quiet { appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.composer textarea { width: 100%; resize: none; padding: 0; border: 0; outline: 0; background: transparent; color: var(--input-fg); font: inherit; font-size: 15px; line-height: 1.5; max-height: 40vh; }
+.composer-bar { display: flex; gap: 2px; align-items: center; padding: 6px 2px 0; }
+.composer select.quiet { appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 13px; cursor: pointer; }
 .composer select.quiet:hover, .composer select.quiet:focus-visible { background: var(--hover); color: var(--fg); outline: none; }
 .composer-spacer { flex: 1; }
-.composer .icon-button.attach { width: 30px; height: 30px; border-radius: 8px; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; padding: 0; }
+.composer .icon-button.attach { width: 28px; height: 28px; border-radius: 8px; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; padding: 0; }
 .composer .icon-button.attach:hover { background: var(--hover); color: var(--fg); }
-.composer .round { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; border: 0; padding: 0; margin-left: 4px; }
+.composer .round { position: absolute; right: 10px; bottom: 10px; width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; border: 0; padding: 0; }
 .composer .round.send { background: var(--button-bg); color: var(--button-fg); }
 .composer .round.send:hover:not(:disabled) { background: var(--button-hover); }
-.composer .round.send:disabled { opacity: .35; }
+.composer .round.send:disabled { opacity: .3; }
 .composer .round.stop { background: var(--fg); color: var(--bg); }
 
 .new-chat-choices { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .provider-tag { margin-left: 6px; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; }
 
-.chat-head { display: flex; align-items: center; gap: 8px; padding: 8px max(24px, calc((100% - 760px) / 2)); border-bottom: 1px solid var(--border); }
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 8px max(24px, calc((100% - 760px) / 2)); }
 .chat-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .head-action { margin-left: 4px; padding: 3px 10px; border-radius: var(--radius); border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); font-size: 12px; }
 .attachments { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -234,3 +234,14 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .recent-meta, .recent-when { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .setup .providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
 .setup .providers .provider { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.chat-head .head-action { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+.chat-head .head-action:hover:not(:disabled), .chat-head .head-action[aria-pressed=true] { background: var(--hover); color: var(--fg); }
+.chat-head .head-action .icon { width: 18px; height: 18px; }
+.chat-title { font-weight: 600; font-size: 14px; }
+/* Sidebar: quiet project headings, their chats right under them. */
+.project-name { font-size: 12.5px; color: var(--muted); font-weight: 500; padding-left: 10px; }
+.project + .project { margin-top: 6px; }
+.project-row.selected .project-name, .project-name:hover { color: var(--fg); }
+.chats .chat-link { padding-left: 10px; }
+.msg.assistant { font-size: 15px; }
+.msg.user .bubble { font-size: 15px; }
