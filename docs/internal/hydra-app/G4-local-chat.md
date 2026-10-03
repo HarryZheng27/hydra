@@ -151,3 +151,4 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
 - **The live script's user-state snapshot** covers `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml`, but not the rest of `~/.claude.json` or `settings.local.json`.
 - **Outside G4:** since #303 (G6 M1's rename to "Hydra IDE"), the desktop workflow's installer identity check fails on main, because the installer's ProductName follows the new name and the updater accepts only "Hydra". #304 to #306 merged on their required checks; it is flagged for G6.
 - **G5:** usage-limit handoff, heads and plans in chats.
+- **A visual design pass for the app:** Nico tried it and wants the UI reworked, after the app's goals work end to end.
