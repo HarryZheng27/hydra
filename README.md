@@ -49,7 +49,7 @@ Windows 10 or 11, x64. Either:
 
 The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info → Run anyway**. To check a download yourself, see [Checking an installer](docs/Releases.md#checking-an-installer).
 
-Installed copies offer each new release in-app. Updating and uninstalling are covered in [Releases](docs/Releases.md#updating).
+It installs as **Hydra IDE**, the name on its Start Menu entry and desktop shortcut. Installed copies offer each new release in-app. Updating and uninstalling are covered in [Releases](docs/Releases.md#updating).
 
 ### Requirements
 
@@ -58,7 +58,7 @@ Installed copies offer each new release in-app. Updating and uninstalling are co
 
 ## A short tour
 
-1. **Open Hydra.** On the first run it connects whichever of Claude Code and Codex it finds, installs their extensions, and opens a short setup. You can also connect them in **Hydra Settings → Connectors**.
+1. **Open Hydra IDE.** On the first run it connects whichever of Claude Code and Codex it finds, installs their extensions, and opens a short setup. You can also connect them in **Hydra Settings → Connectors**.
 2. **Open a git repository** (File → Open Folder) and trust it.
 3. **Give the lead a task** in the Claude Code or Codex chat, one with independent parts. It starts heads, or a plan, when that's worth it.
 4. **Watch them in the Agent Manager.** Press **Alt+Shift+A**, or use the **Agent Manager / Editor** switch in the title bar. Each head shows what it's doing, its gate results and one plain status: *Passed required gates*, *Some gates not run*, *No gates configured* or *Human override*.

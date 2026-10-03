@@ -11,10 +11,25 @@ $workspaceRoot = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path.TrimEnd(
 if (-not $installer.StartsWith($workspaceRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Installer must be a workspace artifact.' }
 $testRoot = Join-Path $env:RUNNER_TEMP ('hydra-installer-' + [guid]::NewGuid().ToString('N'))
 $installRoot = Join-Path $testRoot 'Hydra'
-$desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Hydra.lnk'
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Hydra IDE.lnk'
+$startFolder = Join-Path ([Environment]::GetFolderPath('Programs')) 'Hydra IDE'
+$startShortcut = Join-Path $startFolder 'Hydra IDE.lnk'
+# "Hydra" shortcuts are the Hydra app's now: the IDE never makes one, and leaves
+# a stand-in for the app's alone through install and uninstall.
+$appShortcut = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Hydra.lnk'
+$oldStartFolder = Join-Path ([Environment]::GetFolderPath('Programs')) 'Hydra'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{4C372D32-54B2-43D8-8C63-ECC31D3744A8}_is1'
-if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Runner already contains a Hydra install or shortcut; refusing to replace it.' }
+if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $appShortcut) -or (Test-Path -LiteralPath $oldStartFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Runner already contains a Hydra install or shortcut; refusing to replace it.' }
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+$shell = New-Object -ComObject WScript.Shell
+$standIn = $shell.CreateShortcut($appShortcut)
+$standIn.TargetPath = Join-Path $env:SystemRoot 'System32\notepad.exe'
+$standIn.Save()
+$appShortcutHash = (Get-FileHash -LiteralPath $appShortcut).Hash
+function Assert-AppShortcutKept {
+  if (-not (Test-Path -LiteralPath $appShortcut) -or (Get-FileHash -LiteralPath $appShortcut).Hash -ne $appShortcutHash) { throw 'The IDE changed or removed the Hydra app''s Hydra.lnk.' }
+  if (Test-Path -LiteralPath $oldStartFolder) { throw 'The IDE made a "Hydra" Start Menu folder.' }
+}
 # The last case removes these two folders, so they must be the test's own. Earlier steps of this job
 # (the build's smoke run) can leave Hydra data behind: set it aside for the test and put it back after.
 $hydraData = @((Join-Path $env:APPDATA 'Hydra'), (Join-Path $env:USERPROFILE '.hydra'))
@@ -142,7 +157,9 @@ function Invoke-Installer([string]$label, [string[]]$taskArgs) {
   $helperProbe = Start-Process -FilePath $nativeHelper -ArgumentList '12345678-1234-4234-8234-123456789abc' -WindowStyle Hidden -Wait -PassThru
   if ($helperProbe.ExitCode -ne 2) { throw 'Installed native update helper accepted an unauthenticated operation.' }
   $product = Get-Content -LiteralPath (Join-Path $installRoot 'resources\app\product.json') -Raw | ConvertFrom-Json
-  if ($product.nameShort -ne 'Hydra' -or $product.dataFolderName -ne '.hydra') { throw 'Installed product identity changed.' }
+  if ($product.nameShort -ne 'Hydra' -or $product.nameLong -ne 'Hydra IDE' -or $product.dataFolderName -ne '.hydra' -or $product.win32AppUserModelId -ne 'Hydra.IDE') { throw 'Installed product identity changed.' }
+  if (-not (Test-Path -LiteralPath $startShortcut) -or $shell.CreateShortcut($startShortcut).TargetPath -ne (Join-Path $installRoot 'Hydra.exe')) { throw 'The "Hydra IDE" Start Menu shortcut is missing or opens something else.' }
+  Assert-AppShortcutKept
   $registry = Get-ItemProperty -LiteralPath $uninstallKey
   if ($registry.DisplayVersion -ne $product.hydraVersion) { throw 'Installer version does not match the bundled Hydra version.' }
   Assert-DataPreserved
@@ -165,7 +182,8 @@ function Remove-TestInstallation([string]$label, [string[]]$extraArgs = @(), [sw
     if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
     if ($RemovesData) { $script:hydraDataRemoved = $true }
   }
-  if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, shortcut, or registration behind.' }
+  if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, shortcut, or registration behind.' }
+  Assert-AppShortcutKept
   Assert-DataPreserved
 }
 try {
@@ -181,7 +199,6 @@ try {
   if (-not (Test-Path -LiteralPath $cleanupLog) -or -not (Select-String -LiteralPath $cleanupLog -SimpleMatch 'removed the hydra MCP entry' -Quiet)) { throw 'Uninstall cleanup did not run.' }
   Invoke-Installer 'enable-shortcut' @('/TASKS="desktopicon"')
   if (-not (Test-Path -LiteralPath $desktopShortcut)) { throw 'Selected desktop shortcut is missing.' }
-  $shell = New-Object -ComObject WScript.Shell
   $shortcut = $shell.CreateShortcut($desktopShortcut)
   if ($shortcut.TargetPath -ne (Join-Path $installRoot 'Hydra.exe')) { throw 'Desktop shortcut targets another application.' }
   Assert-EqualVersionRefused 'selected-equal-refusal'
@@ -201,7 +218,9 @@ try {
   Get-ChildItem -LiteralPath $testRoot -Filter '*.log' | Copy-Item -Destination $logRoot
   if (Test-Path -LiteralPath $cleanupLog) { Copy-Item -LiteralPath $cleanupLog -Destination $logRoot }
 }
-if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, desktop shortcut, or registration behind.' }
+if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, shortcut, or registration behind.' }
+Assert-AppShortcutKept
+Remove-Item -LiteralPath $appShortcut -Force
 Assert-DataPreserved
 Restore-SetAsideData
-Write-Output 'PASS: fresh default-unchecked and selected shortcut installs, equal-version refusal, and uninstall preserve Hydra/VS Code/Cursor data and projects; uninstall removes only its own Claude Code and Codex entries, and removes Hydra data only with /HYDRAREMOVEDATA.'
+Write-Output 'PASS: fresh "Hydra IDE" installs with default-unchecked and selected desktop shortcuts leave the app''s Hydra.lnk alone; equal-version refusal, and uninstall preserve Hydra/VS Code/Cursor data and projects; uninstall removes only its own Claude Code and Codex entries, and removes Hydra data only with /HYDRAREMOVEDATA.'
