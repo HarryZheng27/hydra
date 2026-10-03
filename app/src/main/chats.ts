@@ -92,6 +92,8 @@ export class ChatManager {
       ...(started && record.providerSessionId ? { resume: record.providerSessionId } : record.provider === 'claude' ? { sessionId: record.providerSessionId } : {}),
     };
     if (this.closing) throw new Error('Hydra is quitting.');
+    // The folder may have stopped being trusted while this was starting.
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
     const session = new ChatSession(this.adapter(record.provider), options, this.deps.launch, events => void this.persist(id, events), this.deps.timings);
     this.sessions.set(id, session);
     return session;
@@ -115,7 +117,11 @@ export class ChatManager {
       if (session && session.providerSessionId === (await this.deps.store.get(id))?.providerSessionId) delete patch.providerSessionId;
       if (Object.keys(patch).length || events.some(event => event.type === 'done')) await this.deps.store.update(id, patch);
     } catch (error) {
-      this.deps.push(id, [{ type: 'error', message: `Hydra couldn't save this chat: ${error instanceof Error ? error.message : String(error)}`, fatal: false }], -1);
+      // A chat Hydra can't record isn't shown either, so it must not keep running unseen: it is stopped.
+      const session = this.sessions.get(id);
+      this.sessions.delete(id);
+      session?.close();
+      this.deps.push(id, [{ type: 'error', message: `Hydra couldn't save this chat, so it stopped it: ${error instanceof Error ? error.message : String(error)}`, fatal: true }], -1);
     }
   }
 

@@ -217,7 +217,14 @@ export class ChatStore {
       const start = this.counts.get(id)!;
       if (!events.length) return start;
       const t = now.toISOString();
-      await appendFile(file, prefix + events.map(event => `${JSON.stringify({ t, event })}\n`).join(''), 'utf8');
+      try {
+        await appendFile(file, prefix + events.map(event => `${JSON.stringify({ t, event })}\n`).join(''), 'utf8');
+      } catch (error) {
+        // Part of it may be on disk: check the file again next time (end a torn line, recount).
+        this.checked.delete(id);
+        this.counts.delete(id);
+        throw error;
+      }
       this.counts.set(id, start + events.length);
       return start;
     });

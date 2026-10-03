@@ -6,7 +6,7 @@ export type ChatItem =
   | { kind: 'text'; key: string; text: string }
   | { kind: 'thinking'; key: string; text: string }
   | { kind: 'tool'; key: string; id: string; name: string; input: unknown; output?: string; isError?: boolean }
-  | { kind: 'request'; key: string; event: Extract<ChatEvent, { type: 'approval' | 'question' | 'plan' }>; resolved?: Extract<ChatEvent, { type: 'resolved' }> }
+  | { kind: 'request'; key: string; turn?: number; event: Extract<ChatEvent, { type: 'approval' | 'question' | 'plan' }>; resolved?: Extract<ChatEvent, { type: 'resolved' }> }
   | { kind: 'error'; key: string; message: string }
   | { kind: 'turn-end'; key: string; status: 'success' | 'interrupted' | 'error'; detail?: string; usage?: Extract<ChatEvent, { type: 'usage' }> };
 
@@ -35,9 +35,10 @@ export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): Cha
   let usage: Extract<ChatEvent, { type: 'usage' }> | undefined;
   let running = false;
   let n = 0;
+  let turns = 0;
   for (const event of events) {
     switch (event.type) {
-      case 'user': items.push({ kind: 'user', key: `u${n++}`, text: event.text, ...(event.images ? { images: event.images } : {}) }); running = true; usage = undefined; blocks.clear(); break;
+      case 'user': turns++; items.push({ kind: 'user', key: `u${n++}`, text: event.text, ...(event.images ? { images: event.images } : {}) }); running = true; usage = undefined; blocks.clear(); break;
       case 'text': case 'thinking': {
         const id = `${event.type}:${event.block}`;
         const existing = blocks.get(id);
@@ -47,7 +48,7 @@ export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): Cha
       }
       case 'tool-call': { const item = { kind: 'tool' as const, key: `t${n++}`, id: event.id, name: event.name, input: event.input }; tools.set(event.id, item); items.push(item); break; }
       case 'tool-result': { const tool = tools.get(event.id); if (tool) { tool.output = event.output; tool.isError = event.isError; } break; }
-      case 'approval': case 'question': case 'plan': { const item = { kind: 'request' as const, key: `r${n++}`, event }; requests.set(event.id, item); items.push(item); break; }
+      case 'approval': case 'question': case 'plan': { const item = { kind: 'request' as const, key: `r${n++}`, event, turn: turns }; requests.set(event.id, item); items.push(item); break; }
       case 'resolved': { const request = requests.get(event.id); if (request) request.resolved = event; break; }
       case 'usage': usage = event; break;
       case 'error': items.push({ kind: 'error', key: `e${n++}`, message: event.message }); break;
@@ -61,6 +62,7 @@ export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): Cha
     running = false;
     items.push({ kind: 'turn-end', key: `d${n++}`, status: 'interrupted', detail: 'This turn ended when Hydra closed.' });
   }
-  const pending = [...requests.values()].filter(request => !request.resolved && running).map(request => request.event.id);
+  // Only the running turn's requests can be answered: one left open by an earlier turn is gone with it.
+  const pending = running ? [...requests.values()].filter(request => !request.resolved && request.turn === turns).map(request => request.event.id) : [];
   return { items, running, pending };
 }

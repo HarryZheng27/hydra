@@ -10,7 +10,7 @@ interface Props {
   /** Events before this position were settled when the chat was opened. */
   settledBefore?: number;
   onSend(text: string): void;
-  onAnswer(requestId: string, answer: ChatAnswer): void;
+  onAnswer(requestId: string, answer: ChatAnswer): void | Promise<unknown>;
   onStop(): void;
   onConfigure(change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }): void;
 }
@@ -119,7 +119,12 @@ export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, 
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
   // Each request is answered once: a second click on the same card sends nothing.
   const answered = useRef(new Set<string>());
-  const answerOnce: Props['onAnswer'] = (id, answer) => { if (answered.current.has(id)) return; answered.current.add(id); onAnswer(id, answer); };
+  const answerOnce: Props['onAnswer'] = (id, answer) => {
+    if (answered.current.has(id)) return;
+    answered.current.add(id);
+    // If the answer didn't get through, the card can be tried again.
+    void Promise.resolve(onAnswer(id, answer)).catch(() => answered.current.delete(id));
+  };
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
   return (

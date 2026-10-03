@@ -69,7 +69,7 @@ export function App() {
       else setChatEvents(current => {
         if (!current[chatId]) return current;
         const merged = mergePush(current[chatId]!, message);
-        if (!merged) { reopen.current(chatId); return current; }
+        if (!merged) { setTimeout(() => reopen.current(chatId), 0); return current; }
         return merged === current[chatId] ? current : { ...current, [chatId]: merged };
       });
       if (events.some(event => event.type === 'done' || event.type === 'user')) void window.hydra.listChats().then(setChats, fail);
@@ -106,11 +106,15 @@ export function App() {
     : chat ? state?.projects.find(p => samePath(p.path, chat.cwd)) : undefined;
 
   const openChat = (id: string, show = true) => {
+    // One open at a time per chat: a second request while one runs only brings it to the front.
+    if (opening.current.has(id)) { if (show) setView({ kind: 'chat', id }); return; }
     opening.current.set(id, []);
     void run(window.hydra.openChat(id), opened => {
       let events: ChatEvent[] = opened.log.map(entry => entry.event);
-      for (const message of opening.current.get(id) ?? []) events = mergePush(events, message) ?? events;
+      let gap = false;
+      for (const message of opening.current.get(id) ?? []) { const merged = mergePush(events, message); if (merged) events = merged; else gap = true; }
       opening.current.delete(id);
+      if (gap) setTimeout(() => reopen.current(id), 0);
       setChatEvents(current => ({ ...current, [id]: events }));
       setSettled(current => ({ ...current, [id]: opened.running ? 0 : opened.log.length }));
       if (show) setView({ kind: 'chat', id });
@@ -160,7 +164,7 @@ export function App() {
             : view.kind === 'chat' && chat
               ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0}
                   onSend={text => void run(window.hydra.sendMessage(chat.id, text), () => undefined)}
-                  onAnswer={(requestId: string, answer: ChatAnswer) => void run(window.hydra.answer(chat.id, requestId, answer), () => undefined)}
+                  onAnswer={(requestId: string, answer: ChatAnswer) => window.hydra.answer(chat.id, requestId, answer).catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); throw e; })}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
                   onConfigure={change => configure(chat.id, change)} />
               : <EmptyState project={project} onPickFolder={pickProject} onNewChat={target => void newChat(target)} setup={project ? undefined : setupPanel} />}

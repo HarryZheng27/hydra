@@ -49,7 +49,7 @@ export function Markdown({ text }: { text: string }) {
   return <div className="markdown">{blocks(text)}</div>;
 }
 
-export function blocks(text: string): ReactNode[] {
+export function blocks(text: string, depth = 0): ReactNode[] {
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const out: ReactNode[] = [];
   let i = 0;
@@ -77,10 +77,11 @@ export function blocks(text: string): ReactNode[] {
       continue;
     }
     if (line.length <= 200 && /^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push(<hr key={key()} />); i++; continue; }
-    if (/^\s*>/.test(line)) {
+    // Quotes nest at most 8 deep; deeper markers stay as text, so a hostile line can't recurse without end.
+    if (depth < 8 && /^\s*>/.test(line)) {
       const quote: string[] = [];
       while (i < lines.length && /^\s*>/.test(lines[i]!)) quote.push(lines[i++]!.replace(/^\s*>\s?/, ''));
-      out.push(<blockquote key={key()}>{blocks(quote.join('\n'))}</blockquote>);
+      out.push(<blockquote key={key()}>{blocks(quote.join('\n'), depth + 1)}</blockquote>);
       continue;
     }
     const bullet = /^(\s*)([-*+]|\d{1,9}[.)])\s+/;
