@@ -20,7 +20,7 @@ export interface HandlerDeps {
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ started: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder'>;
 }
 
 /** What main does for each channel. Paths only ever come from main's own pickers, never from the renderer. */
@@ -77,7 +77,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const state = await deps.state.update(current => addProject(current, folder));
       return { state, picked: projectFor(state, folder)?.id };
     },
-    'projects.remove': ({ id }) => deps.state.update(current => removeProject(current, id)),
+    'projects.remove': async ({ id }) => {
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === id);
+      const next = await deps.state.update(current => removeProject(current, id));
+      // A folder that is no longer a project runs nothing: its chats' processes end now.
+      if (project) await deps.chats.closeFolder?.(project.path);
+      return next;
+    },
     'projects.trust': async ({ id }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === id);
       if (!project) throw new Error('No such project.');

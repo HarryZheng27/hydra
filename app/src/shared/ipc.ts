@@ -12,7 +12,8 @@ export type { ChatAnswer, ChatEvent, ChatProvider, ChatRecord, ClaudePermissionM
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
 export const CHAT_EVENTS = 'hydra:chat-events';
-export interface ChatEventsMessage { chatId: string; events: ChatEvent[] }
+/** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
+export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
 export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean }
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode }

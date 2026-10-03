@@ -15,13 +15,17 @@ export function safeHref(raw: string): string | undefined {
 
 function openLink(href: string) { window.open(href, '_blank'); }
 
+// Keys restart for each message, so re-rendering the same text (as it streams) keeps its elements.
 let keySeed = 0;
 const key = () => `md${keySeed++}`;
+/** Longer lines show as plain text: inline markdown is never parsed in them, so hostile input can't stall the page. */
+const MAX_INLINE = 4000;
 
 /** Inline markdown: code spans first (their content is literal), then links, bold and italic. */
 export function inline(text: string): ReactNode[] {
+  if (text.length > MAX_INLINE) return [text];
   const out: ReactNode[] = [];
-  const pattern = /(`+)([\s\S]*?[^`])\1(?!`)|\[([^\]\n]{1,500})\]\(([^)\s]{1,2000})\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
+  const pattern = /(`{1,8})([^`]{1,4000}?)\1(?!`)|\[([^\]\n]{1,500})\]\(([^)\s]{1,2000})\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
@@ -41,6 +45,7 @@ export function inline(text: string): ReactNode[] {
 }
 
 export function Markdown({ text }: { text: string }) {
+  keySeed = 0;
   return <div className="markdown">{blocks(text)}</div>;
 }
 
@@ -50,7 +55,10 @@ export function blocks(text: string): ReactNode[] {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i]!;
-    const fence = /^\s*(```+|~~~+)\s*([\w+-]*)\s*$/.exec(line);
+    // A fence: ``` or ~~~ and an optional language word. Checked by trimming, not by a backtracking pattern.
+    const trimmed = line.length <= 200 ? line.trim() : '';
+    const opener = /^(`{3,}|~{3,})/.exec(trimmed);
+    const fence = opener && /^[\w+-]*$/.test(trimmed.slice(opener[1]!.length).trim()) ? [line, opener[1]!, trimmed.slice(opener[1]!.length).trim()] as const : undefined;
     if (fence) {
       const body: string[] = [];
       i++;
@@ -68,7 +76,7 @@ export function blocks(text: string): ReactNode[] {
       i++;
       continue;
     }
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push(<hr key={key()} />); i++; continue; }
+    if (line.length <= 200 && /^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { out.push(<hr key={key()} />); i++; continue; }
     if (/^\s*>/.test(line)) {
       const quote: string[] = [];
       while (i < lines.length && /^\s*>/.test(lines[i]!)) quote.push(lines[i++]!.replace(/^\s*>\s?/, ''));

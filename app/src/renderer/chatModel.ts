@@ -1,4 +1,4 @@
-import type { ChatEvent } from '../shared/ipc';
+import type { ChatEvent, ChatEventsMessage } from '../shared/ipc';
 
 /** What the chat pane draws, folded from the chat's events in order. */
 export type ChatItem =
@@ -12,8 +12,22 @@ export type ChatItem =
 
 export interface ChatView { items: ChatItem[]; running: boolean; pending: string[] }
 
-/** Folds events into items: deltas of one block join, tool results meet their calls, answers meet their requests. */
-export function foldEvents(events: readonly ChatEvent[]): ChatView {
+/**
+ * Adds pushed events to a chat's list by their position in its log: events the list already has are skipped, and a
+ * push that would leave a gap returns undefined, so the caller reopens the chat instead of guessing.
+ */
+export function mergePush(current: readonly ChatEvent[], message: Pick<ChatEventsMessage, 'events' | 'start'>): ChatEvent[] | undefined {
+  if (message.start > current.length) return undefined;
+  const fresh = message.events.slice(current.length - message.start);
+  return fresh.length ? [...current, ...fresh] : (current as ChatEvent[]);
+}
+
+/**
+ * Folds events into items: deltas of one block join, tool results meet their calls, answers meet their requests.
+ * `settledBefore`: events before this position belong to a chat that wasn't running when it was opened, so a turn
+ * they leave open (the app was killed mid-turn) is over, and its requests can't be answered any more.
+ */
+export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): ChatView {
   const items: ChatItem[] = [];
   const blocks = new Map<string, ChatItem & { kind: 'text' | 'thinking' }>();
   const tools = new Map<string, ChatItem & { kind: 'tool' }>();
@@ -40,6 +54,12 @@ export function foldEvents(events: readonly ChatEvent[]): ChatView {
       case 'done': items.push({ kind: 'turn-end', key: `d${n++}`, status: event.status, ...(event.detail ? { detail: event.detail } : {}), ...(usage ? { usage } : {}) }); running = false; usage = undefined; break;
       default: break;
     }
+  }
+  let lastUser = -1;
+  events.forEach((event, index) => { if (event.type === 'user') lastUser = index; });
+  if (running && lastUser < settledBefore) {
+    running = false;
+    items.push({ kind: 'turn-end', key: `d${n++}`, status: 'interrupted', detail: 'This turn ended when Hydra closed.' });
   }
   const pending = [...requests.values()].filter(request => !request.resolved && running).map(request => request.event.id);
   return { items, running, pending };

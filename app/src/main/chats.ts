@@ -17,8 +17,8 @@ export interface ChatManagerDeps {
   executable(provider: ChatProvider): Promise<string | undefined>;
   /** Whether the user has trusted this folder in the app. */
   trusted(cwd: string): Promise<boolean>;
-  /** Pushes events to the window. */
-  push(chatId: string, events: ChatEvent[]): void;
+  /** Pushes events to the window; `start` is the first one's position in the chat's log. */
+  push(chatId: string, events: ChatEvent[], start: number): void;
   adapters?: Partial<Record<ChatProvider, () => ChatAdapter>>;
   timings?: SessionTimings;
 }
@@ -27,7 +27,11 @@ export interface NewChat { cwd: string; provider: ChatProvider; model?: string; 
 
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
+  /** Sessions being set up, so two quick messages share one. */
+  private readonly starting = new Map<string, Promise<ChatSession>>();
   private readonly titled = new Set<string>();
+  /** Set once the app is quitting: no chat starts after that. */
+  private closing = false;
 
   constructor(private readonly deps: ChatManagerDeps) {}
 
@@ -61,10 +65,19 @@ export class ChatManager {
     return record;
   }
 
-  /** The chat's session, started on demand. Every start checks trust again: a folder can be untrusted later. */
-  private async session(id: string): Promise<ChatSession> {
+  /** The chat's session, set up once even when several messages arrive while it is starting. */
+  private session(id: string): Promise<ChatSession> {
     const existing = this.sessions.get(id);
-    if (existing) return existing;
+    if (existing) return Promise.resolve(existing);
+    let starting = this.starting.get(id);
+    if (!starting) {
+      starting = this.makeSession(id).finally(() => this.starting.delete(id));
+      this.starting.set(id, starting);
+    }
+    return starting;
+  }
+
+  private async makeSession(id: string): Promise<ChatSession> {
     const record = await this.record(id);
     if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
     const executable = await this.deps.executable(record.provider);
@@ -78,6 +91,7 @@ export class ChatManager {
       // A Claude chat's id is chosen at creation; it is resumed once the CLI has started it.
       ...(started && record.providerSessionId ? { resume: record.providerSessionId } : record.provider === 'claude' ? { sessionId: record.providerSessionId } : {}),
     };
+    if (this.closing) throw new Error('Hydra is quitting.');
     const session = new ChatSession(this.adapter(record.provider), options, this.deps.launch, events => void this.persist(id, events), this.deps.timings);
     this.sessions.set(id, session);
     return session;
@@ -85,9 +99,10 @@ export class ChatManager {
 
   /** Writes a chat's events to its log, keeps its index entry current, and pushes them to the window. */
   private async persist(id: string, events: ChatEvent[]): Promise<void> {
-    this.deps.push(id, events);
     try {
-      await this.deps.store.append(id, events);
+      // Written first, then pushed with its position, so the window can merge it with a log it is reading.
+      const start = await this.deps.store.append(id, events);
+      this.deps.push(id, events, start);
       const patch: Partial<ChatRecord> = {};
       const session = events.find((event): event is Extract<ChatEvent, { type: 'session' }> => event.type === 'session');
       if (session) patch.providerSessionId = session.providerSessionId;
@@ -100,13 +115,31 @@ export class ChatManager {
       if (session && session.providerSessionId === (await this.deps.store.get(id))?.providerSessionId) delete patch.providerSessionId;
       if (Object.keys(patch).length || events.some(event => event.type === 'done')) await this.deps.store.update(id, patch);
     } catch (error) {
-      this.deps.push(id, [{ type: 'error', message: `Hydra couldn't save this chat: ${error instanceof Error ? error.message : String(error)}`, fatal: false }]);
+      this.deps.push(id, [{ type: 'error', message: `Hydra couldn't save this chat: ${error instanceof Error ? error.message : String(error)}`, fatal: false }], -1);
     }
   }
 
+  /** Every message checks trust first: a running chat's process can be replaced (idle, a new mode, a crash). */
   async send(id: string, text: string, images?: ChatImage[]): Promise<void> {
     if (!text.trim() && !images?.length) throw new Error('Type a message first.');
+    if (this.closing) throw new Error('Hydra is quitting.');
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) {
+      this.sessions.get(id)?.close();
+      this.sessions.delete(id);
+      throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
+    }
     (await this.session(id)).send(text, images);
+  }
+
+  /** Ends the chats in a folder, for when it stops being a project. */
+  async closeFolder(cwd: string): Promise<void> {
+    const same = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+    for (const record of await this.deps.store.list()) {
+      if (!same(record.cwd, cwd)) continue;
+      this.sessions.get(record.id)?.close();
+      this.sessions.delete(record.id);
+    }
   }
 
   answer(id: string, requestId: string, answer: ChatAnswer): void {
@@ -138,7 +171,8 @@ export class ChatManager {
 
   /** Ends every chat's process, for quit. */
   closeAll(): void {
-    for (const session of this.sessions.values()) session.close();
+    this.closing = true;
+    for (const session of this.sessions.values()) { try { session.close(); } catch { /* keep closing the rest */ } }
     this.sessions.clear();
   }
 }

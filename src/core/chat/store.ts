@@ -75,6 +75,8 @@ export class ChatStore {
   private chats: Map<string, ChatRecord> | undefined;
   /** Logs already created and checked in this run. */
   private readonly checked = new Set<string>();
+  /** How many entries each log holds, once known: an entry's position is its sequence number. */
+  private readonly counts = new Map<string, number>();
   /**
    * Index saves run on their own queue, so a slow one (each restricts and checks a new file) never holds up a log
    * append. Updates are saved shortly after, several at once; create, remove and flush save at once.
@@ -84,6 +86,7 @@ export class ChatStore {
   private dirty = false;
   /** The last index save that failed, reported by flush(). */
   private saveError: unknown;
+  private retries = 0;
 
   constructor(readonly root: string, private readonly security: StoreSecurity = ownerOnly, private readonly saveDelayMs = 300) {}
 
@@ -135,14 +138,16 @@ export class ChatStore {
     const text = `${JSON.stringify({ version: 1, chats: ordered }, null, 2)}\n`;
     this.dirty = false;
     const run = this.indexQueue.then(() => this.writePrivate(path.join(this.root, INDEX), text));
-    this.indexQueue = run.catch(error => { this.saveError = error; this.dirty = true; });
+    // A failed save is retried a few times, then left for flush() to report.
+    this.indexQueue = run.then(() => { this.saveError = undefined; this.retries = 0; }, error => { this.saveError = error; if (++this.retries <= 5) this.saveSoon(chats); });
     await run;
   }
 
   private saveSoon(chats: Map<string, ChatRecord>): void {
     this.dirty = true;
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => { this.saveTimer = undefined; if (this.dirty) void this.saveIndex(chats).catch(() => undefined); }, this.saveDelayMs);
+    this.saveTimer = setTimeout(() => { this.saveTimer = undefined; if (this.dirty) void this.saveIndex(chats).catch(() => undefined); }, this.saveDelayMs * (1 + this.retries));
+    this.saveTimer.unref?.();
   }
 
   /** Writes everything still pending (log appends and the index). Call it before the app quits. */
@@ -184,14 +189,18 @@ export class ChatStore {
       const next = parseRecord({ ...current, ...patch, id, provider: current.provider, createdAt: current.createdAt, updatedAt: now.toISOString() });
       if (!next) throw new Error('That change isn\'t valid.');
       chats.set(id, next);
-      this.saveSoon(chats);
+      // A provider session id is what resume needs: it is saved at once. Titles and times can wait a moment.
+      if (patch.providerSessionId !== undefined && patch.providerSessionId !== current.providerSessionId) await this.saveIndex(chats);
+      else this.saveSoon(chats);
       return next;
     });
   }
 
-  /** Appends events to a chat's log. The log only grows; nothing in it is ever rewritten. */
-  append(id: string, events: ChatEvent[], now = new Date()): Promise<void> {
-    if (!events.length) return Promise.resolve();
+  /**
+   * Appends events to a chat's log and returns the position of the first one. The log only grows; nothing in it is
+   * ever rewritten. Positions let a reader merge a log it read with events pushed to it meanwhile.
+   */
+  append(id: string, events: ChatEvent[], now = new Date()): Promise<number> {
     return this.serial(async () => {
       const chats = await this.ready();
       if (!chats.has(id)) throw new Error('No such chat.');
@@ -204,15 +213,24 @@ export class ChatStore {
         prefix = (await endsTorn(file)) ? '\n' : '';
         this.checked.add(id);
       }
+      if (!this.counts.has(id)) this.counts.set(id, (await this.readNow(id)).length);
+      const start = this.counts.get(id)!;
+      if (!events.length) return start;
       const t = now.toISOString();
       await appendFile(file, prefix + events.map(event => `${JSON.stringify({ t, event })}\n`).join(''), 'utf8');
+      this.counts.set(id, start + events.length);
+      return start;
     });
   }
 
-  /** A chat's log. A torn last line (a crash mid-write) is skipped. */
+  /** A chat's log, read after every append queued before it. A torn last line (a crash mid-write) is skipped. */
   async read(id: string): Promise<LogEntry[]> {
+    this.file(id);
+    return this.serial(async () => { await this.ready(); return this.readNow(id); });
+  }
+
+  private async readNow(id: string): Promise<LogEntry[]> {
     const file = this.file(id);
-    await this.serial(() => this.ready());
     let text: string;
     try { text = await readFile(file, 'utf8'); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
     const entries: LogEntry[] = [];
@@ -233,6 +251,7 @@ export class ChatStore {
       await this.saveIndex(chats);
       await rm(this.file(id), { force: true });
       this.checked.delete(id);
+      this.counts.delete(id);
     });
   }
 }

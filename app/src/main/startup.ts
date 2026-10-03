@@ -93,14 +93,14 @@ export function start(): void {
     launch: nodeLaunch(),
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
-    push: (chatId, events) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events }); },
+    push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
   });
   // Before quitting: end every chat's process, then wait for the store to write what it still holds.
   let flushed = false;
   app.on('before-quit', event => {
     if (flushed) return;
     event.preventDefault();
-    chats.closeAll();
+    try { chats.closeAll(); } catch { /* quit anyway */ }
     const timeout = new Promise(resolve => setTimeout(resolve, 5000));
     void Promise.race([chatStore.flush().catch(() => undefined), timeout]).finally(() => { flushed = true; app.quit(); });
   });

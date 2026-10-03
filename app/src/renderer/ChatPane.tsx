@@ -7,6 +7,8 @@ import { Markdown } from './markdown';
 interface Props {
   record: ChatRecord;
   events: ChatEvent[];
+  /** Events before this position were settled when the chat was opened. */
+  settledBefore?: number;
   onSend(text: string): void;
   onAnswer(requestId: string, answer: ChatAnswer): void;
   onStop(): void;
@@ -113,8 +115,11 @@ function usageLine(item: ChatItem & { kind: 'turn-end' }): string {
   return parts.join(' · ');
 }
 
-export function ChatPane({ record, events, onSend, onAnswer, onStop, onConfigure }: Props) {
-  const view = useMemo(() => foldEvents(events), [events]);
+export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure }: Props) {
+  const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
+  // Each request is answered once: a second click on the same card sends nothing.
+  const answered = useRef(new Set<string>());
+  const answerOnce: Props['onAnswer'] = (id, answer) => { if (answered.current.has(id)) return; answered.current.add(id); onAnswer(id, answer); };
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
   return (
@@ -128,9 +133,9 @@ export function ChatPane({ record, events, onSend, onAnswer, onStop, onConfigure
             case 'tool': return <ToolBlock key={item.key} item={item} />;
             case 'request': {
               const active = view.pending.includes(item.event.id);
-              if (item.event.type === 'approval') return <ApprovalCard key={item.key} item={item} active={active} onAnswer={onAnswer} />;
-              if (item.event.type === 'question') return <QuestionCard key={item.key} item={item} active={active} onAnswer={onAnswer} />;
-              return <PlanCard key={item.key} item={item} active={active} onAnswer={onAnswer} />;
+              if (item.event.type === 'approval') return <ApprovalCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;
+              if (item.event.type === 'question') return <QuestionCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;
+              return <PlanCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;
             }
             case 'error': return <div key={item.key} className="msg chat-error" role="alert">{item.message}</div>;
             case 'turn-end': { const line = usageLine(item); return line ? <div key={item.key} className={`turn-end ${item.status}`}>{line}</div> : null; }

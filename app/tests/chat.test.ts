@@ -11,7 +11,7 @@ import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
 import { ChatManager } from '../src/main/chats';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
-import { foldEvents } from '../src/renderer/chatModel';
+import { foldEvents, mergePush } from '../src/renderer/chatModel';
 import { Markdown, safeHref } from '../src/renderer/markdown';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
@@ -140,4 +140,60 @@ test('chat channels take ids, text and structured answers only', () => {
     ['chats.configure', { id, change: { permissionMode: 'bypassPermissions' } }], ['chats.configure', { id, change: { sandbox: 'danger-full-access' } }],
   ];
   for (const [channel, payload] of bad) assert.equal(parseCall({ channel, payload }).ok, false, `${channel} ${JSON.stringify(payload)}`);
+});
+
+test('a chat opened while it streams loses nothing: pushes merge by their position in the log', () => {
+  const log: ChatEvent[] = [{ type: 'user', text: 'hi' }, { type: 'text', delta: 'a', block: 'b' }];
+  // A push the log already holds adds nothing; one that overlaps adds only the new part; a gap asks for a reopen.
+  assert.equal(mergePush(log, { start: 1, events: [{ type: 'text', delta: 'a', block: 'b' }] }), log);
+  const approval: ChatEvent = { type: 'approval', id: 'r1', kind: 'tool', tool: 'Bash', input: {}, choices: ['allow', 'deny'] };
+  const merged = mergePush(log, { start: 1, events: [{ type: 'text', delta: 'a', block: 'b' }, approval] })!;
+  assert.deepEqual(merged.map(event => event.type), ['user', 'text', 'approval']);
+  assert.equal(mergePush(log, { start: 5, events: [approval] }), undefined);
+  assert.deepEqual(foldEvents(merged).pending, ['r1'], 'the card can be answered');
+});
+
+test('after a crash mid-turn, the reopened chat shows that turn over and its cards can\'t be clicked', () => {
+  const events: ChatEvent[] = [
+    { type: 'user', text: 'go' },
+    { type: 'approval', id: 'r1', kind: 'tool', tool: 'Bash', input: {}, choices: ['allow', 'deny'] },
+  ];
+  assert.equal(foldEvents(events).running, true);
+  const reopened = foldEvents(events, events.length);
+  assert.equal(reopened.running, false);
+  assert.deepEqual(reopened.pending, []);
+  assert.equal(reopened.items.at(-1)!.kind, 'turn-end');
+  // A new message after reopening is live again.
+  const next = foldEvents([...events, { type: 'user', text: 'again' }], events.length);
+  assert.equal(next.running, true);
+});
+
+test('hostile markdown can\'t stall the page', () => {
+  const started = Date.now();
+  html('```' + ' '.repeat(200_000) + '!');
+  html('`'.repeat(200) + 'x'.repeat(80_000));
+  html('-'.repeat(50_000) + ' x');
+  html(('**a' + ' '.repeat(10)).repeat(5000));
+  assert.ok(Date.now() - started < 1500, `took ${Date.now() - started} ms`);
+});
+
+test('two quick messages share one session; every message checks trust; a removed folder\'s chats stop', async () => {
+  const dir = scratch();
+  try {
+    let trusted = true;
+    const { starts, launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => trusted, push: () => undefined });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await Promise.all([manager.send(chat.id, 'one'), manager.send(chat.id, 'two')]);
+    assert.equal(starts.length, 1, 'one CLI process for both');
+    trusted = false;
+    await assert.rejects(manager.send(chat.id, 'three'), /isn't trusted/);
+    trusted = true;
+    await manager.send(chat.id, 'four');
+    assert.equal(starts.length, 2, 'the untrusted send ended the old session; this one started fresh');
+    await manager.closeFolder(dir);
+    manager.closeAll();
+    await assert.rejects(manager.send(chat.id, 'five'), /quitting/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

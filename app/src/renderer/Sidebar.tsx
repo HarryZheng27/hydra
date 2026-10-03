@@ -61,6 +61,18 @@ export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenPr
         {!projects.length && <li className="sidebar-note">Add a folder to start.</li>}
         {!!projects.length && !shown.length && <li className="sidebar-note">Nothing matches “{query}”.</li>}
       </ul>
+      {(() => {
+        // Chats whose folder is no longer a project stay reachable here.
+        const orphans = chats.filter(chat => !projects.some(project => chat.cwd.toLowerCase() === project.path.toLowerCase())).filter(matches);
+        return orphans.length ? (
+          <div className="orphans">
+            <div className="section-head"><span>Other chats</span></div>
+            <ul className="chats">{orphans.map(chat => (
+              <li key={chat.id}><button className={`chat-link ${view.kind === 'chat' && view.id === chat.id ? 'selected' : ''}`} title={chat.cwd} onClick={() => onOpenChat(chat.id)}>{chat.title}</button></li>
+            ))}</ul>
+          </div>
+        ) : null;
+      })()}
       <button className={`side-action settings-link ${view.kind === 'settings' ? 'selected' : ''}`} onClick={onOpenSettings}><Icon name="settings" /><span>Settings</span></button>
     </nav>
   );

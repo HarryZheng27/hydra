@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatEvent, ChatRecord, OnboardingReport, Project } from '../shared/ipc';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatEvent, ChatEventsMessage, ChatRecord, OnboardingReport, Project } from '../shared/ipc';
+import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
 import { EmptyState } from './EmptyState';
@@ -42,6 +43,11 @@ export function App() {
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
   const [chatEvents, setChatEvents] = useState<Record<string, ChatEvent[]>>({});
+  /** Per chat: events before this position were already settled when it was opened (see foldEvents). */
+  const [settled, setSettled] = useState<Record<string, number>>({});
+  /** Pushes that arrive while a chat's log is being read, merged once it is in. */
+  const opening = useRef(new Map<string, ChatEventsMessage[]>());
+  const reopen = useRef<(id: string) => void>(() => undefined);
   const systemDark = useSystemDark();
   const theme = resolveTheme(settings?.theme ?? 'system', systemDark);
 
@@ -55,8 +61,17 @@ export function App() {
     void window.hydra.problems().then(list => setProblems(list), fail);
     void window.hydra.listChats().then(setChats, fail);
     // Live events for every chat this window has open; the list refreshes when a turn ends or a title appears.
-    return window.hydra.onChatEvents(({ chatId, events }) => {
-      setChatEvents(current => (current[chatId] ? { ...current, [chatId]: [...current[chatId]!, ...events] } : current));
+    return window.hydra.onChatEvents(message => {
+      const { chatId, events, start } = message;
+      if (start < 0) { const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message); return; }
+      const buffered = opening.current.get(chatId);
+      if (buffered) buffered.push(message);
+      else setChatEvents(current => {
+        if (!current[chatId]) return current;
+        const merged = mergePush(current[chatId]!, message);
+        if (!merged) { reopen.current(chatId); return current; }
+        return merged === current[chatId] ? current : { ...current, [chatId]: merged };
+      });
       if (events.some(event => event.type === 'done' || event.type === 'user')) void window.hydra.listChats().then(setChats, fail);
     });
   }, []);
@@ -90,10 +105,18 @@ export function App() {
   const project = view.kind === 'project' ? state?.projects.find(p => p.id === view.id)
     : chat ? state?.projects.find(p => samePath(p.path, chat.cwd)) : undefined;
 
-  const openChat = (id: string) => void run(window.hydra.openChat(id), opened => {
-    setChatEvents(current => ({ ...current, [id]: opened.log.map(entry => entry.event) }));
-    setView({ kind: 'chat', id });
-  });
+  const openChat = (id: string, show = true) => {
+    opening.current.set(id, []);
+    void run(window.hydra.openChat(id), opened => {
+      let events: ChatEvent[] = opened.log.map(entry => entry.event);
+      for (const message of opening.current.get(id) ?? []) events = mergePush(events, message) ?? events;
+      opening.current.delete(id);
+      setChatEvents(current => ({ ...current, [id]: events }));
+      setSettled(current => ({ ...current, [id]: opened.running ? 0 : opened.log.length }));
+      if (show) setView({ kind: 'chat', id });
+    }).finally(() => opening.current.delete(id));
+  };
+  reopen.current = id => openChat(id, false);
   /** A new chat in a project: main asks the user to trust the folder first, in its own dialog. */
   const newChat = async (target: Project) => {
     let current = target;
@@ -105,6 +128,7 @@ export function App() {
     await run(window.hydra.createChat({ projectId: current.id, provider: 'claude' }), record => {
       setChats(list => [record, ...list]);
       setChatEvents(events => ({ ...events, [record.id]: [] }));
+      setSettled(current => ({ ...current, [record.id]: 0 }));
       setView({ kind: 'chat', id: record.id });
     });
   };
@@ -134,7 +158,7 @@ export function App() {
           {view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
-              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []}
+              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0}
                   onSend={text => void run(window.hydra.sendMessage(chat.id, text), () => undefined)}
                   onAnswer={(requestId: string, answer: ChatAnswer) => void run(window.hydra.answer(chat.id, requestId, answer), () => undefined)}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}

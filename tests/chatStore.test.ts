@@ -95,3 +95,17 @@ test('after a crash leaves half a line, the next entries are kept, not swallowed
     assert.deepEqual((await restarted.read(chat.id)).map(entry => (entry.event as { text: string }).text), ['a', 'after crash', 'later']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('appends report each batch\'s position, and a read waits for the appends queued before it', async () => {
+  const dir = scratch();
+  try {
+    const store = new ChatStore(dir, fakeSecurity);
+    const chat = await store.create({ provider: 'claude', cwd: dir });
+    assert.equal(await store.append(chat.id, [{ type: 'user', text: 'a' }, { type: 'user', text: 'b' }]), 0);
+    const appended = store.append(chat.id, [{ type: 'user', text: 'c' }]);
+    const read = store.read(chat.id);
+    assert.equal(await appended, 2);
+    assert.equal((await read).length, 3, 'the read came after the append queued before it');
+    assert.equal(await new ChatStore(dir, fakeSecurity).append(chat.id, [{ type: 'user', text: 'd' }]), 3, 'positions carry on after a restart');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
