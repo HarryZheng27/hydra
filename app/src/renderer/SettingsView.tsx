@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Connectors } from './Connectors';
 import type { AppInfo, AppSettings, CliProvider } from '../shared/ipc';
 import type { ThemeSetting } from '../shared/theme';
 
@@ -49,6 +50,7 @@ export function SettingsView({ settings, info, onTheme, onPickCli, onClearCli, s
           </div>
         );
       })}
+      <Connectors />
       {setup}
       {info && <p className="about">Hydra {info.version} · Electron {info.electron}</p>}
     </section>

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { parseCliVersion } from './cliVersions';
 
@@ -243,6 +244,26 @@ export function readClaudeLimitHooks(text: string | undefined): unknown[] {
     const stop = (JSON.parse(text.replace(/^\uFEFF/, '')) as { hooks?: { StopFailure?: unknown } }).hooks?.StopFailure;
     return Array.isArray(stop) ? stop.filter(isHydraLimitGroup) : [];
   } catch { return []; }
+}
+/**
+ * Whether the program and script every Hydra usage-limit hook in Claude's settings runs are still there. A hook that
+ * points at another Hydra still installed (the IDE's or the app's) is left alone, as the bridge's entry is (G5).
+ */
+export function limitHookTargetsExist(text: string | undefined, exists: (file: string) => boolean = existsSync): boolean {
+  const found = readClaudeLimitHooks(text);
+  if (!found.length) return false;
+  for (const group of found as LimitHookGroup[]) {
+    for (const hook of group.hooks ?? []) {
+      let program: string | undefined, script: string | undefined;
+      if (hook.command?.toLowerCase().endsWith('powershell.exe')) {
+        const quoted = [...(hook.args?.at(-1) ?? '').matchAll(/'((?:[^']|'')*)'/g)].map(match => match[1]!.replace(/''/g, "'"));
+        // `$env:ELECTRON_RUN_AS_NODE='1'; & 'program' 'script' 'events'`: the quoted values after the 1.
+        [program, script] = quoted.slice(1);
+      } else [program, script] = (hook.args ?? []).slice(2);
+      if (!program || !script || !exists(program) || !exists(script)) return false;
+    }
+  }
+  return true;
 }
 export function limitHookState(text: string | undefined, group: LimitHookGroup): 'missing' | 'current' | 'stale' {
   const found = readClaudeLimitHooks(text);

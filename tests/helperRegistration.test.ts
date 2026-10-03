@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { addClaudeAllowRule, addCodexBlock, addGuidanceBlock, removeGuidanceBlock, claudeAllowRule, claudeStatus, codexStatus, connectCodex, disconnectCodex, providerPaths, removeClaudeAllowRule, removeCodexBlock, type HelperServerSpec } from '../src/core/helperRegistration';
+import { addClaudeAllowRule, addCodexBlock, addGuidanceBlock, removeGuidanceBlock, claudeAllowRule, claudeStatus, codexStatus, connectCodex, disconnectCodex, providerPaths, removeClaudeAllowRule, removeCodexBlock, bridgeTargetExists, shouldRepairConnection, type HelperServerSpec } from '../src/core/helperRegistration';
+import { limitHookGroup, limitHookTargetsExist } from '../src/core/claudeLimitHook';
 
 const spec: HelperServerSpec = { command: 'C:\\Program Files\\Hydra\\Hydra.exe', args: ['C:\\Program Files\\Hydra\\resources\\app\\extensions\\hydra\\dist\\hydra-mcp.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: 'C:\\Users\\n\\AppData\\Roaming\\Hydra\\helpers' } };
 
@@ -235,4 +236,47 @@ test('turning off Memory (claude-mem) never uninstalls anything, and Repair refu
   assert.match(connectors, /claudeMem\.enabled/);
   assert.match(connectors, /third-party tools, installed into your user profile/, 'turning it on asks once, naming Bun and claude-mem as third-party');
   assert.match(connectors, /Hydra won't set it up or repair it; anything already installed stays\./);
+});
+
+test('another Hydra\'s entry is left alone while what it runs is there, and repaired only once it is gone (G5)', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hydra-reg-'));
+  try {
+    const other = path.join(dir, 'Other Hydra.exe'), otherScript = path.join(dir, 'hydra-mcp.cjs');
+    await writeFile(other, ''); await writeFile(otherScript, '');
+    const mine: HelperServerSpec = { command: path.join(dir, 'Mine.exe'), args: [path.join(dir, 'mine', 'hydra-mcp.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: dir } };
+    const theirs: HelperServerSpec = { command: other, args: [otherScript], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: dir } };
+    // Claude's user-level entry.
+    const paths = { ...providerPaths(), claudeJson: path.join(dir, '.claude.json'), codexConfig: path.join(dir, 'config.toml') };
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: theirs } }));
+    let claude = await claudeStatus(paths, mine);
+    assert.deepEqual([claude.connected, claude.current, claude.targetExists, shouldRepairConnection(claude)], [true, false, true, false]);
+    // Codex's block, in a file with Windows line endings.
+    await writeFile(paths.codexConfig, addCodexBlock('model = "x"\r\n', theirs));
+    let codex = await codexStatus(paths.codexConfig, mine);
+    assert.deepEqual([codex.connected, codex.current, codex.targetExists, shouldRepairConnection(codex)], [true, false, true, false]);
+    // The other Hydra is uninstalled: both are repaired to this one.
+    await rm(otherScript);
+    claude = await claudeStatus(paths, mine);
+    codex = await codexStatus(paths.codexConfig, mine);
+    assert.deepEqual([claude.targetExists, shouldRepairConnection(claude), codex.targetExists, shouldRepairConnection(codex)], [false, true, false, true]);
+    // This Hydra's own entry is current: nothing to repair.
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: mine } }));
+    claude = await claudeStatus(paths, mine);
+    assert.deepEqual([claude.current, claude.targetExists, shouldRepairConnection(claude)], [true, undefined, false]);
+    assert.equal(bridgeTargetExists(undefined, []), false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('another Hydra\'s Claude usage-limit hook counts as present while its program and script are there (G5)', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hydra-hook-'));
+  try {
+    const exe = path.join(dir, "O'Neil Hydra.exe"), script = path.join(dir, 'hydra-limit-hook.cjs');
+    await writeFile(exe, ''); await writeFile(script, '');
+    const group = limitHookGroup({ executable: exe, script, eventsDir: path.join(dir, 'events'), platform: 'win32', systemRoot: 'C:\Windows' });
+    const settings = JSON.stringify({ hooks: { StopFailure: [group] } });
+    assert.equal(limitHookTargetsExist(settings), true);
+    await rm(script);
+    assert.equal(limitHookTargetsExist(settings), false);
+    assert.equal(limitHookTargetsExist('{}'), false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

@@ -322,6 +322,8 @@ export interface ProviderConnectionView {
   extensionVersion?: string;
   connected: boolean;
   current: boolean;
+  /** Another Hydra's entry (G5): whether what it runs is still installed, so it works here too and isn't rewritten. */
+  targetExists?: boolean;
   /** A development window never rewrites the user-level connection, so "updating" would never come true there. */
   development?: boolean;
   error?: string;

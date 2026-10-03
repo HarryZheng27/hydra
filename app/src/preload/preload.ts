@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHAT_EVENTS, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type Payload, type Result } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_TREE, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraTreeMessage, type Payload, type Result } from '../shared/ipc';
 
 // The renderer gets these typed functions and nothing else: no ipcRenderer, no channel names, no Node.
 const call = <C extends Channel>(channel: C, payload: Payload<C>): Promise<Result<C>> =>
@@ -32,6 +32,15 @@ const api: HydraApi = {
   stopChat: id => call('chats.stop', { id }),
   configureChat: (id, change) => call('chats.configure', { id, change }),
   removeChat: id => call('chats.remove', { id }),
+  hydraConnections: () => call('hydra.connections', null),
+  connectHydra: provider => call('hydra.connect', { provider }),
+  disconnectHydra: provider => call('hydra.disconnect', { provider }),
+  hydraTree: () => call('hydra.tree', null),
+  onHydraTree: listener => {
+    const handler = (_event: unknown, message: HydraTreeMessage) => listener(message);
+    ipcRenderer.on(HYDRA_TREE, handler);
+    return () => { ipcRenderer.removeListener(HYDRA_TREE, handler); };
+  },
   // The page gets the message, never the Electron event or the sender.
   onChatEvents: listener => {
     const handler = (_event: unknown, message: ChatEventsMessage) => listener(message);

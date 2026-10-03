@@ -128,6 +128,8 @@ export interface Host {
   closeWindow(): Promise<void>;
   /** A development or test run of Hydra, which must never rewrite the user's own Claude Code or Codex connection to point at itself. */
   readonly development: boolean;
+  /** False in a program with no editor extensions (the Hydra app): Connect registers the CLIs and installs nothing. */
+  readonly hasExtensions?: boolean;
   /** An installed editor extension, by id: its folder and version; undefined when it isn't installed or the host has no extensions. */
   extension(id: string): { path: string; version?: string } | undefined;
   /** Installs an editor extension by id, or from a downloaded package file. */

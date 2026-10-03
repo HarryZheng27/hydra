@@ -257,3 +257,24 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .picker-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .picker-description { color: var(--muted); font-size: 12px; }
 .picker-menu li .icon { flex: none; width: 15px; height: 15px; }
+.connector .setting-label { display: flex; flex-direction: column; gap: 2px; }
+.connector-status { font-size: 12px; color: var(--muted); }
+.connector-status.ok { color: var(--ok); }
+.connector-status.warning { color: var(--warning); }
+/* Hydra cards in a chat (G5): a head or plan the chat started, live. */
+.hydra-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; background: var(--input-bg); }
+.hydra-card-head { display: flex; align-items: center; gap: 8px; }
+.hydra-card-kind { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.hydra-card-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hydra-card-meta, .hydra-job-reason { font-size: 12px; color: var(--muted); }
+.hydra-card-line { font-size: 13px; }
+.hydra-card-line.warning { color: var(--warning); }
+.hydra-card-line.error { color: var(--error); }
+.hydra-card-summary summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.hydra-card-summary div { white-space: pre-wrap; font-size: 13px; margin-top: 4px; }
+.hydra-state { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--hover); color: var(--muted); white-space: nowrap; }
+.hydra-state.ok { color: var(--ok); }
+.hydra-state.error { color: var(--error); }
+.hydra-state.warning { color: var(--warning); }
+.hydra-jobs { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.hydra-jobs li { display: flex; gap: 8px; align-items: baseline; }

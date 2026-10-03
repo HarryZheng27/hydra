@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -23,7 +24,25 @@ import { addClaudeLimitHook, readClaudeLimitHooks, removeClaudeLimitHook, type L
  */
 export type ConnectableProvider = 'claude' | 'codex';
 export interface HelperServerSpec { command: string; args: string[]; env: Record<string, string> }
-export interface ConnectionStatus { provider: ConnectableProvider; connected: boolean; current: boolean; error?: string }
+export interface ConnectionStatus {
+  provider: ConnectableProvider; connected: boolean; current: boolean; error?: string;
+  /** For an entry that isn't this Hydra's: whether the program and script it runs are still there (another Hydra's, say). */
+  targetExists?: boolean;
+}
+
+/** Whether a registered bridge's program and script (its first argument) both exist. */
+export function bridgeTargetExists(command: string | undefined, args: readonly string[] | undefined, exists: (file: string) => boolean = existsSync): boolean {
+  if (!command || !exists(command)) return false;
+  const script = args?.[0];
+  return !script || exists(script);
+}
+
+/**
+ * Whether an entry should be repaired to point at this Hydra (G5): only when it is Hydra's, not this Hydra's, and what
+ * it runs is gone. The IDE and the Hydra app each run the same bridge, so an entry that points at the other one (still
+ * installed) works for both: rewriting it would only make the two take turns.
+ */
+export const shouldRepairConnection = (status: ConnectionStatus): boolean => status.connected && !status.current && !status.error && status.targetExists === false;
 
 export const serverName = 'hydra';
 export const claudeAllowRule = 'mcp__hydra';
@@ -134,8 +153,19 @@ export async function codexStatus(file: string, spec: HelperServerSpec): Promise
     const text = await read(file) ?? '', agents = await read(codexAgentsFile(file)) ?? '';
     const had = removeCodexBlock(text).had;
     const guided = agents.includes(guidanceBlock(eolOf(agents)).trim());
-    return { provider: 'codex', connected: had, current: had && guided && text.includes(codexBlock(spec, eolOf(text)).trim()) };
+    const current = had && guided && text.includes(codexBlock(spec, eolOf(text)).trim());
+    return { provider: 'codex', connected: had, current, ...(had && !current ? { targetExists: codexTargetExists(text) } : {}) };
   } catch (error) { return { provider: 'codex', connected: false, current: false, error: error instanceof Error ? error.message : String(error) }; }
+}
+/** The program and script Hydra's block in Codex's config runs, read back from the block. */
+function codexTargetExists(text: string): boolean {
+  const start = text.indexOf(blockStart), end = text.indexOf(blockEnd, start);
+  if (start < 0 || end < 0) return false;
+  const block = text.slice(start, end);
+  const unquote = (value: string | undefined) => value?.replace(/^'|'$/g, '');
+  const command = unquote(/^command = ('[^'\r\n]*')/m.exec(block)?.[1]);
+  const script = unquote(/^args = \[('[^'\r\n]*')/m.exec(block)?.[1]);
+  return bridgeTargetExists(command, script ? [script] : []);
 }
 export async function connectCodex(file: string, spec: HelperServerSpec): Promise<void> {
   const config = addCodexBlock(await read(file) ?? '', spec);
@@ -195,7 +225,7 @@ export async function claudeStatus(paths: ProviderPaths, spec: HelperServerSpec)
     const config = JSON.parse(await read(paths.claudeJson) ?? '{}') as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> };
     const entry = config.mcpServers?.[serverName];
     const current = !!entry && entry.command === spec.command && JSON.stringify(entry.args) === JSON.stringify(spec.args) && JSON.stringify(entry.env) === JSON.stringify(spec.env);
-    return { provider: 'claude', connected: !!entry, current };
+    return { provider: 'claude', connected: !!entry, current, ...(entry && !current ? { targetExists: bridgeTargetExists(entry.command, entry.args) } : {}) };
   } catch (error) { return { provider: 'claude', connected: false, current: false, error: error instanceof Error ? error.message : String(error) }; }
 }
 

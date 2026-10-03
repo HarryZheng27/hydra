@@ -1,4 +1,4 @@
-import type { AppSettings, AppState, CliProvider, OnboardingReport, Project } from '../shared/ipc';
+import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project } from '../shared/ipc';
 import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
@@ -11,6 +11,13 @@ export interface HandlerDeps {
   state: JsonStore<AppState>;
   /** Main's own folder picker (for a project, or where a clone goes). Undefined when the user cancels. */
   pickFolder(purpose?: 'project' | 'clone'): Promise<string | undefined>;
+  /** Hydra in the app (app/src/main/hydra.ts): its connections to the CLIs, and each project's heads and plans. */
+  hydra?: {
+    connections(): Promise<HydraConnection[]>;
+    connect(provider: CliProvider): Promise<HydraConnection[]>;
+    disconnect(provider: CliProvider): Promise<HydraConnection[]>;
+    tree(): HydraTreeMessage[];
+  };
   /** The projects changed (one trusted or removed): Hydra starts or stops its controllers (app/src/main/hydra.ts). */
   projectsChanged?(state: AppState): void;
   /** Clones a repository into a new folder under `parent`, returning it (app/src/main/clone.ts). */
@@ -57,6 +64,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   };
   // One sign-in per provider at a time, so a page can't stack up browser logins.
   const signingIn = new Set<CliProvider>();
+  const requireHydra = () => { if (!deps.hydra) throw new Error('Hydra isn\'t available here.'); return deps.hydra; };
   return {
     'app.info': () => deps.info,
     'app.problems': async () => {
@@ -129,6 +137,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       if (!(await deps.review.changed(cwd)).includes(path)) throw new Error('That file isn\'t among this folder\'s changes.');
       return { opened: await deps.review.open(cwd, path) };
     },
+    'hydra.connections': () => requireHydra().connections(),
+    'hydra.connect': ({ provider }) => requireHydra().connect(provider),
+    'hydra.disconnect': ({ provider }) => requireHydra().disconnect(provider),
+    'hydra.tree': async () => deps.hydra?.tree() ?? [],
     'chats.terminalClosed': ({ id }) => { deps.chats.terminalClosed(id); return null; },
     'chats.answer': ({ id, requestId, answer }) => { deps.chats.answer(id, requestId, answer); return null; },
     'chats.stop': ({ id }) => { deps.chats.stop(id); return null; },
