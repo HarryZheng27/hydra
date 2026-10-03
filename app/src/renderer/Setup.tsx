@@ -41,7 +41,6 @@ export function Setup({ report, checking, onCheck, onSignIn }: Props) {
             <div className="provider-main">
               <div className="provider-name">{status.name}</div>
               <div className={`provider-status ${line.tone}`} role="status">{line.text}</div>
-              {status.executable && <div className="path" title={status.executable}>{status.executable}</div>}
               <div className="provider-registration">
                 Hydra tools: {registration.error ? <span className="warning">couldn't read {registration.where}</span> : registration.registered ? 'registered' : 'not registered'}
               </div>

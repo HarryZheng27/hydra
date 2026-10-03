@@ -126,6 +126,16 @@ function usageLine(item: ChatItem & { kind: 'turn-end' }): string {
   return parts.join(' · ');
 }
 
+/** The line under a running turn: what it waits on, and for how long once that's more than a few seconds. */
+function Working({ provider, starting }: { provider: ChatRecord['provider']; starting: boolean }) {
+  const since = useRef(Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const seconds = Math.floor((now - since.current) / 1000);
+  const name = provider === 'claude' ? 'Claude Code' : 'Codex';
+  return <div className="working" role="status">{starting ? `Starting ${name}…` : `${name} is working…`}{seconds >= 5 ? ` ${seconds}s` : ''}</div>;
+}
+
 export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
   const [reviewing, setReviewing] = useState(false);
@@ -173,7 +183,7 @@ export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, 
             case 'turn-end': { const line = usageLine(item); return line ? <div key={item.key} className={`turn-end ${item.status}`}>{line}</div> : null; }
           }
         })}
-        {view.running && !view.pending.length && <div className="working" aria-label="Working">Working…</div>}
+        {view.running && !view.pending.length && <Working provider={record.provider} starting={events[events.length - 1]?.type === 'user'} />}
         <div ref={end} />
       </div>
       <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} />

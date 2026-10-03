@@ -28,6 +28,7 @@ export function createMainWindow(distDir: string): BrowserWindow {
     titleBarStyle: 'hidden',
     titleBarOverlay: { ...titleBarColors(theme), height: TITLE_BAR_HEIGHT },
     autoHideMenuBar: true,
+    icon: path.join(distDir, 'icon.png'),
     webPreferences: hardenedWebPreferences(path.join(distDir, 'preload.cjs')),
   });
   mainWindow = win;

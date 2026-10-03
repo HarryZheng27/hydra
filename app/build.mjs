@@ -25,3 +25,5 @@ await Promise.all([
   build({ entryPoints: { 'editor.worker': path.join(here, 'src/renderer/editor.worker.ts') }, bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outdir: path.join(dist, 'renderer'), minify: true, logLevel: 'warning' }),
 ]);
 for (const file of ['index.html', 'styles.css']) await copyFile(path.join(here, 'src/renderer', file), path.join(dist, 'renderer', file));
+// The window's and taskbar's icon: the Hydra logo, not Electron's.
+await copyFile(path.join(here, '..', 'hydra-logo.png'), path.join(dist, 'icon.png'));
