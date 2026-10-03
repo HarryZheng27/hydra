@@ -12,8 +12,11 @@ interface Props {
   onSend(text: string): void;
   onAnswer(requestId: string, answer: ChatAnswer): void | Promise<unknown>;
   onStop(): void;
-  onConfigure(change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }): void;
+  onConfigure(change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan'; sandbox?: 'read-only' | 'workspace-write' }): void;
 }
+
+/** The CLI's latest model list in this chat (Codex sends one when a thread starts). */
+const latestModels = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'models') return event.models; } return []; };
 
 const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
 
@@ -51,6 +54,7 @@ function ApprovalCard({ item, active, onAnswer }: { item: ChatItem & { kind: 're
           <div className="card-actions">
             {editing ? <><button className="primary small" onClick={submitEdit}>Allow with these changes</button><button onClick={() => setEditing(false)}>Cancel</button></>
               : <><button className="primary small" onClick={() => onAnswer(event.id, { kind: 'approval', decision: 'allow' })}>Allow</button>
+                {event.choices.includes('allow-session') && <button onClick={() => onAnswer(event.id, { kind: 'approval', decision: 'allow-session' })}>Allow for this session</button>}
                 <button onClick={() => onAnswer(event.id, { kind: 'approval', decision: 'deny', message: 'The user denied this.' })}>Deny</button>
                 {event.choices.includes('edit') && <button onClick={() => setEditing(true)}>Edit…</button>}</>}
           </div>
@@ -149,7 +153,7 @@ export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, 
         {view.running && !view.pending.length && <div className="working" aria-label="Working">Working…</div>}
         <div ref={end} />
       </div>
-      <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} />
+      <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} />
     </section>
   );
 }

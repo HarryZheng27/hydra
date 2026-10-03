@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { ClaudeAdapter } from '../../../src/core/chat/claude';
+import { CodexAdapter } from '../../../src/core/chat/codex';
 import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
 import { ChatSession, type Launch, type SessionTimings } from '../../../src/core/chat/session';
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry } from '../../../src/core/chat/store';
@@ -20,6 +21,11 @@ export interface ChatManagerDeps {
   /** Pushes events to the window; `start` is the first one's position in the chat's log. */
   push(chatId: string, events: ChatEvent[], start: number): void;
   adapters?: Partial<Record<ChatProvider, () => ChatAdapter>>;
+  /**
+   * Codex's own config file, read before and after each Codex turn that may write: G1 found that write access given
+   * the wrong way marks the folder trusted there, which turns on the project's own config, hooks and MCP servers.
+   */
+  codexConfig?(): Promise<string | undefined>;
   timings?: SessionTimings;
 }
 
@@ -30,15 +36,15 @@ export class ChatManager {
   /** Sessions being set up, so two quick messages share one. */
   private readonly starting = new Map<string, Promise<ChatSession>>();
   private readonly titled = new Set<string>();
+  /** Codex's config as it was before each Codex chat's current turn. */
+  private readonly codexBefore = new Map<string, string | undefined>();
   /** Set once the app is quitting: no chat starts after that. */
   private closing = false;
 
   constructor(private readonly deps: ChatManagerDeps) {}
 
   private adapter(provider: ChatProvider): () => ChatAdapter {
-    const make = this.deps.adapters?.[provider] ?? (provider === 'claude' ? () => new ClaudeAdapter() : undefined);
-    if (!make) throw new Error(`${provider === 'codex' ? 'Codex' : provider} chats aren't available yet.`);
-    return make;
+    return this.deps.adapters?.[provider] ?? (provider === 'claude' ? () => new ClaudeAdapter() : () => new CodexAdapter());
   }
 
   list(): Promise<ChatRecord[]> { return this.deps.store.list(); }
@@ -105,6 +111,7 @@ export class ChatManager {
       // Written first, then pushed with its position, so the window can merge it with a log it is reading.
       const start = await this.deps.store.append(id, events);
       this.deps.push(id, events, start);
+      if (this.codexBefore.has(id) && events.some(event => event.type === 'done')) await this.checkCodexTrust(id);
       const patch: Partial<ChatRecord> = {};
       const session = events.find((event): event is Extract<ChatEvent, { type: 'session' }> => event.type === 'session');
       if (session) patch.providerSessionId = session.providerSessionId;
@@ -135,7 +142,25 @@ export class ChatManager {
       this.sessions.delete(id);
       throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
     }
+    if (record.provider === 'codex' && this.deps.codexConfig) this.codexBefore.set(id, await this.deps.codexConfig().catch(() => undefined));
     (await this.session(id)).send(text, images);
+  }
+
+  /** Says so if a Codex turn added this folder to Codex's own trusted projects. Hydra never edits that file. */
+  private async checkCodexTrust(id: string): Promise<void> {
+    const before = this.codexBefore.get(id);
+    this.codexBefore.delete(id);
+    const after = await this.deps.codexConfig?.().catch(() => undefined);
+    if (after === undefined || after === before) return;
+    const record = await this.deps.store.get(id);
+    if (!record) return;
+    // TOML writes a Windows path with its backslashes doubled, or as a literal string with them single.
+    const mentions = (text: string) => text.toLowerCase().includes(record.cwd.toLowerCase()) || text.toLowerCase().includes(record.cwd.replace(/\\/g, '\\\\').toLowerCase());
+    if (/trust_level\s*=\s*"trusted"/.test(after) && mentions(after) && !mentions(before ?? '')) {
+      const notice: ChatEvent[] = [{ type: 'error', message: 'Codex marked this folder as trusted in your ~/.codex/config.toml, which turns on the project\'s own config, hooks and MCP servers for Codex. Hydra didn\'t change that file; remove the entry there if you didn\'t mean to trust it.', fatal: false }];
+      const start = await this.deps.store.append(id, notice);
+      this.deps.push(id, notice, start);
+    }
   }
 
   /** Ends the chats in a folder, for when it stops being a project. */

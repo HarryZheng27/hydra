@@ -3,11 +3,11 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
-import type { ChatAnswer, ChatEvent, ChatProvider, ClaudePermissionMode } from '../../../src/core/chat/events';
+import type { ChatAnswer, ChatEvent, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
-export type { ChatAnswer, ChatEvent, ChatProvider, ChatRecord, ClaudePermissionMode, LogEntry };
+export type { ChatAnswer, ChatEvent, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
 
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
@@ -15,8 +15,8 @@ export const CHAT_EVENTS = 'hydra:chat-events';
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
 export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean }
-export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode }
-export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode }
+export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
+export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 
 export type CliProvider = 'claude' | 'codex';
 export interface AppInfo { name: string; version: string; electron: string; platform: string }
@@ -100,12 +100,14 @@ const isText = (max: number) => (value: unknown): boolean => typeof value === 's
 const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
 const isEffort = oneOf('low', 'medium', 'high', 'xhigh', 'max');
 const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
+/** Full access is excluded in v1. */
+const isSandbox = oneOf('read-only', 'workspace-write');
 const isRequestId = (value: unknown): boolean => typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
 /** An edited tool input: a JSON object of at most 1 MB. */
 const isToolInput = (value: unknown): boolean => { if (!isRecordValue(value)) return false; try { return JSON.stringify(value).length <= 1_000_000; } catch { return false; } };
 const isAnswers = (value: unknown): boolean => isRecordValue(value) && Object.keys(value).length <= 20 && Object.entries(value).every(([key, answer]) => key.length <= 1000 && typeof answer === 'string' && answer.length <= 4000);
 const isAnswer = (value: unknown): boolean =>
-  shaped({ kind: oneOf('approval'), decision: oneOf('allow', 'deny') }, { updatedInput: isToolInput, message: isText(2000) })(value)
+  shaped({ kind: oneOf('approval'), decision: oneOf('allow', 'allow-session', 'deny') }, { updatedInput: isToolInput, message: isText(2000) })(value)
   || shaped({ kind: oneOf('question'), answers: isAnswers })(value)
   || shaped({ kind: oneOf('plan'), approve: (v: unknown) => typeof v === 'boolean' }, { feedback: isText(4000) })(value);
 
@@ -125,13 +127,13 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'projects.trust': exactly<{ id: string }>({ id: isId }),
   'chats.list': isNull,
-  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode }),
+  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox }),
   'chats.open': exactly<{ id: string }>({ id: isId }),
   'chats.send': exactly<{ id: string; text: string }>({ id: isId, text: isText(200_000) }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
   // An empty model or effort means the CLI's default.
-  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode }) }),
+  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode, sandbox: isSandbox }) }),
   'chats.remove': exactly<{ id: string }>({ id: isId }),
 };
 

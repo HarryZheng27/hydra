@@ -122,21 +122,21 @@ export function App() {
   };
   reopen.current = id => openChat(id, false);
   /** A new chat in a project: main asks the user to trust the folder first, in its own dialog. */
-  const newChat = async (target: Project) => {
+  const newChat = async (target: Project, provider: 'claude' | 'codex' = 'claude') => {
     let current = target;
     if (!current.trustedAt) {
       try { const next = await window.hydra.trustProject(target.id); setState(next); current = next.projects.find(p => p.id === target.id) ?? target; }
       catch (e) { setError(e instanceof Error ? e.message : String(e)); return; }
       if (!current.trustedAt) return;
     }
-    await run(window.hydra.createChat({ projectId: current.id, provider: 'claude' }), record => {
+    await run(window.hydra.createChat({ projectId: current.id, provider }), record => {
       setChats(list => [record, ...list]);
       setChatEvents(events => ({ ...events, [record.id]: [] }));
       setSettled(current => ({ ...current, [record.id]: 0 }));
       setView({ kind: 'chat', id: record.id });
     });
   };
-  const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }) =>
+  const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan'; sandbox?: 'read-only' | 'workspace-write' }) =>
     void run(window.hydra.configureChat(id, Object.fromEntries(Object.entries(change).map(([key, value]) => [key, value ?? ''])) as typeof change), record => setChats(list => list.map(c => (c.id === record.id ? record : c))));
 
   return (
@@ -167,7 +167,7 @@ export function App() {
                   onAnswer={(requestId: string, answer: ChatAnswer) => window.hydra.answer(chat.id, requestId, answer).catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); throw e; })}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
                   onConfigure={change => configure(chat.id, change)} />
-              : <EmptyState project={project} onPickFolder={pickProject} onNewChat={target => void newChat(target)} setup={project ? undefined : setupPanel} />}
+              : <EmptyState project={project} onPickFolder={pickProject} onNewChat={(target, provider) => void newChat(target, provider)} setup={project ? undefined : setupPanel} />}
         </main>
       </div>
     </div>

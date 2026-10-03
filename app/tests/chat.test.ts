@@ -197,3 +197,33 @@ test('two quick messages share one session; every message checks trust; a remove
     await assert.rejects(manager.send(chat.id, 'five'), /quitting/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('Codex chats: read-only or can edit their folder, never full access; allow for the session is a choice', () => {
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  assert.equal(parseCall({ channel: 'chats.create', payload: { projectId: id, provider: 'codex', sandbox: 'workspace-write', model: 'gpt-6-luna', effort: 'low' } }).ok, true);
+  assert.equal(parseCall({ channel: 'chats.create', payload: { projectId: id, provider: 'codex', sandbox: 'danger-full-access' } }).ok, false);
+  assert.equal(parseCall({ channel: 'chats.configure', payload: { id, change: { sandbox: 'read-only' } } }).ok, true);
+  assert.equal(parseCall({ channel: 'chats.answer', payload: { id, requestId: '0', answer: { kind: 'approval', decision: 'allow-session' } } }).ok, true);
+});
+
+test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat says so and Hydra leaves the file alone', async () => {
+  const dir = scratch();
+  try {
+    let config = 'model = "gpt-6-luna"\n[projects."C:\\other"]\ntrust_level = "trusted"\n';
+    const pushed: ChatEvent[] = [];
+    const { starts, launch } = fakeLaunch();
+    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async () => 'codex.exe', trusted: async () => true, push: (_id, events) => pushed.push(...events), codexConfig: async () => config });
+    const chat = await manager.create({ cwd: dir, provider: 'codex', sandbox: 'workspace-write' });
+    await manager.send(chat.id, 'edit something');
+    const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
+    // The thread starts, a turn runs, and meanwhile Codex writes a trust entry for this folder.
+    say({ id: 3, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, sandbox: { type: 'readOnly' } } });
+    config += `[projects.'${dir}']\ntrust_level = "trusted"\n`;
+    say({ method: 'turn/started', params: { threadId: '01a0fe38-af75-7372-aab6-eecfb1837dd5', turn: { id: 't1' } } });
+    say({ method: 'turn/completed', params: { threadId: '01a0fe38-af75-7372-aab6-eecfb1837dd5', turn: { id: 't1', status: 'completed' } } });
+    const found = () => pushed.some(event => event.type === 'error' && /marked this folder as trusted/.test(event.message));
+    for (let i = 0; i < 100 && !found(); i++) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.ok(found(), JSON.stringify(pushed.map(event => event.type)));
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
