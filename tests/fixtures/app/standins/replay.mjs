@@ -104,13 +104,21 @@ const next = () => (lines.length ? Promise.resolve(lines.shift()) : closed ? Pro
 const write = line => new Promise(resolve => { if (!process.stdout.write(`${line}\n`)) process.stdout.once('drain', resolve); else resolve(); });
 
 let held; // a host line read while skipping optional requests, still to be matched
+let threadAsked = false; // an unrecorded model/list is answered only at the start, before the thread
 for (const record of part) {
   if (record.dir === 'send') {
-    const line = held ?? await next();
+    let line = held ?? await next();
     held = undefined;
     if (line === undefined) process.exit(0); // the host closed stdin: it ended the chat
-    const actual = parse(line);
+    let actual = parse(line);
     const expected = parse(record.line);
+    // A model list the recording didn't ask for (G1 recorded resumes without one) gets an empty list.
+    while (actual?.method === 'model/list' && 'id' in actual && expected?.method !== 'model/list' && !threadAsked) {
+      await write(JSON.stringify({ id: actual.id, result: { data: [] } }));
+      line = await next();
+      if (line === undefined) process.exit(0);
+      actual = parse(line);
+    }
     if (expected?.method && optional.has(expected.method) && kind(actual) !== kind(expected)) {
       if ('id' in expected) skipped.add(expected.id);
       held = line;
@@ -118,6 +126,7 @@ for (const record of part) {
     }
     if (kind(actual) !== kind(expected)) fail(`expected ${kind(expected)} from the host, got ${kind(actual)}: ${line.slice(0, 200)}`);
     if (detail(actual) !== detail(withSessionValue(expected))) fail(`expected ${detail(expected).slice(0, 300)} from the host, got ${detail(actual).slice(0, 300)}`);
+    if (/^thread\//.test(actual?.method ?? '')) threadAsked = true;
     fs.appendFileSync(path.join(state, 'consumed.log'), `${index}\n`);
     if (expected.type === 'control_request') ids.set(expected.request_id, actual.request_id);
     if (expected.method && 'id' in expected) ids.set(expected.id, actual.id);

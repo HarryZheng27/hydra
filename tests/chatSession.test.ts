@@ -180,3 +180,48 @@ test('a queued message shows as sent when its turn starts, so that turn\'s appro
   assert.equal(session.queued, 0);
   session.close();
 });
+
+test('warm() starts the CLI ahead of a message; the message reuses it, and an unused one ends', async () => {
+  const { cli, session, events } = setup({ idleMs: 10_000, stopGraceMs: 50, warmMs: 30 } as never);
+  session.warm();
+  assert.equal(cli.starts.length, 1, 'started before any message');
+  assert.ok(!cli.starts[0]!.written.some(line => line.includes('"type":"user"')), 'no message is sent, only the CLI\'s initialize');
+  session.warm();
+  assert.equal(cli.starts.length, 1, 'once');
+  session.send('one');
+  assert.equal(cli.starts.length, 1, 'the message uses the started process');
+  assert.equal(cli.starts[0]!.written.filter(line => line.includes('"type":"user"')).length, 1);
+  session.close();
+
+  const idle = setup({ idleMs: 10_000, stopGraceMs: 50, warmMs: 30 } as never);
+  idle.session.warm();
+  await wait(60);
+  assert.equal(idle.cli.starts[0]!.killed, true, 'a process no message reached ends after warmMs');
+  idle.session.send('later');
+  assert.equal(idle.cli.starts.length, 2, 'and the next message starts one again');
+  idle.session.close();
+
+  const cooled = setup();
+  cooled.session.warm();
+  cooled.session.cool();
+  assert.equal(cooled.cli.starts[0]!.killed, true, 'cool() ends an unused warm process');
+  assert.equal(cooled.events.filter(event => event.type === 'error').length, 0);
+
+  const quiet: ChatEvent[] = [];
+  const failing = new ChatSession(() => new ClaudeAdapter(), { provider: 'claude', cwd: '/', executable: 'claude', sessionId: 'not-a-uuid' }, cli.launch, batch => quiet.push(...batch));
+  failing.warm();
+  assert.equal(quiet.length, 0, 'a warm start that fails says nothing; the next message reports it');
+  failing.close();
+});
+
+test('a CLI started ahead and ended before any message leaves no session: the next start uses --session-id again', () => {
+  const { cli, session, id } = setup();
+  session.warm();
+  session.cool();
+  session.send('one');
+  assert.equal(cli.starts.length, 2);
+  const args = cli.starts[1]!.args;
+  assert.equal(args[args.indexOf('--session-id') + 1], id);
+  assert.ok(!args.includes('--resume'));
+  session.close();
+});

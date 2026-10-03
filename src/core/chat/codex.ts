@@ -1,5 +1,6 @@
 import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatModel } from './events';
-import { codexSandboxes } from './events';
+import { codexApprovalModes, codexSandboxes } from './events';
+import { extraArguments } from './claude';
 
 /**
  * Codex as a chat (G1's S2 decisions): one `codex app-server` per chat, JSON-RPC over stdio.
@@ -15,6 +16,17 @@ import { codexSandboxes } from './events';
  */
 const modelPattern = /^[A-Za-z0-9][A-Za-z0-9._:\-]{0,79}$/;
 const threadIdPattern = /^[A-Za-z0-9-]{8,80}$/;
+/** An API error Codex passes on as raw JSON ({"error":{"message":…}}) becomes its message. */
+function readable(message: string): string {
+  try {
+    const parsed: unknown = JSON.parse(message);
+    if (parsed && typeof parsed === 'object') {
+      const inner = (parsed as { error?: { message?: unknown } }).error?.message;
+      if (typeof inner === 'string' && inner) return inner.slice(0, 2000);
+    }
+  } catch { /* not JSON: as it is */ }
+  return message.slice(0, 2000);
+}
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
@@ -24,9 +36,10 @@ export const codexWriteVerified = false;
 export function codexArguments(options: ChatOptions): string[] {
   if (options.sandbox === 'workspace-write' && !codexWriteVerified) throw new Error('Codex chats are read-only for now: letting Codex edit the folder hasn\'t passed its live check.');
   if (options.sandbox !== undefined && !codexSandboxes.includes(options.sandbox)) throw new Error(`Sandbox ${String(options.sandbox)} isn't allowed in a chat.`);
+  if (options.approvals !== undefined && !codexApprovalModes.includes(options.approvals)) throw new Error(`Approvals ${String(options.approvals)} isn't allowed in a chat.`);
   if (options.model !== undefined && !modelPattern.test(options.model)) throw new Error('That model name isn\'t valid.');
   if (options.resume !== undefined && !threadIdPattern.test(options.resume)) throw new Error('That Codex thread id isn\'t valid.');
-  return ['app-server', '--listen', 'stdio://'];
+  return ['app-server', '--listen', 'stdio://', ...extraArguments(options)];
 }
 
 type Pending = { method: string; rpcId: number | string; decisions: string[] };
@@ -40,11 +53,21 @@ export class CodexAdapter implements ChatAdapter {
   private readonly requests = new Map<string, Pending>();
   private options!: ChatOptions;
   private threadId: string | undefined;
+  /** Whether this process has asked for its thread yet (it waits for the first message). */
+  private threadAsked = false;
+  /** The model Codex says the thread runs on, its mode line, and every model id model/list named (hidden ones too). */
+  private threadModel: string | undefined;
+  private threadMode = '';
+  private knownModels: Set<string> | undefined;
+  /** Codex's default model, when the user's config names one Codex doesn't offer this account. */
+  private fallbackModel: string | undefined;
   private turnId: string | undefined;
   private running = false;
   private interrupted = false;
   /** A usage-limit error was already shown for this turn, so turn/completed's copy of it isn't. */
   private limitShown = false;
+  /** Errors already shown this turn: Codex reports a failed turn's error twice (an error notice, then the turn's own). */
+  private readonly turnErrors = new Set<string>();
   private models: ChatModel[] | undefined;
   /** A message sent before the thread was ready: it starts the turn once the thread exists. */
   private waiting: Waiting | undefined;
@@ -61,27 +84,54 @@ export class CodexAdapter implements ChatAdapter {
     return JSON.stringify(params === undefined ? { id, method } : { id, method, params });
   }
 
+  /**
+   * Starts the app-server: initialize, and for a new thread Codex's model list. The thread itself (thread/start or
+   * thread/resume) waits for the first message, so a process started ahead of it (ChatSession.warm) leaves no empty
+   * thread in the user's Codex history.
+   */
   start(options: ChatOptions): string[] {
     this.options = options;
+    this.threadAsked = false;
     const lines = [
       this.request('initialize', { clientInfo: { name: 'hydra-app', title: 'Hydra', version: '0' }, capabilities: { experimentalApi: false } }),
       JSON.stringify({ method: 'initialized', params: {} }),
     ];
-    const thread = { cwd: options.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', ...(options.model ? { model: options.model } : {}) };
-    if (options.resume) {
-      this.threadId = options.resume;
-      lines.push(this.request('thread/resume', { threadId: options.resume, ...thread }));
-    } else {
-      // A new thread checks its model and effort against the CLI's own list first.
-      lines.push(this.request('model/list', {}));
-      lines.push(this.request('thread/start', { ...thread, ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}) }));
-    }
+    // Every chat checks its model and effort against the CLI's own list first, a resumed one too (its model may come
+    // from a config that has changed since).
+    lines.push(this.request('model/list', {}));
     return lines;
+  }
+
+  private effectiveModel(): string | undefined { return this.options.model ?? this.fallbackModel ?? this.threadModel; }
+
+  /**
+   * A model Codex doesn't know for this account (the user's config naming one their Codex can't run, say) fails every
+   * turn: the chat uses Codex's default instead, and says so once. Checked once both the thread and the list are in.
+   */
+  private checkThreadModel(): ChatEvent[] {
+    const model = this.threadModel;
+    const fallback = this.models?.find(m => m.isDefault);
+    if (this.options.model || this.fallbackModel || !model || !this.knownModels || !fallback || this.knownModels.has(model)) return [];
+    this.fallbackModel = fallback.id;
+    const from = this.options.resume ? 'this chat\'s earlier model' : 'from your Codex config';
+    return [{ type: 'error', message: `Codex doesn't offer ${model} (${from}) to your account, so this chat uses ${fallback.label}.`, fatal: false }];
+  }
+
+  /** thread/start or thread/resume, with the options as they are when the first message is sent. */
+  private threadRequest(): string {
+    const options = this.options;
+    this.threadAsked = true;
+    // `settings`: the user's own approval policy and reviewer apply (Codex's auto-review, for one). Read-only either way.
+    const approvals = options.approvals === 'settings' ? {} : { approvalPolicy: 'on-request', approvalsReviewer: 'user' };
+    const thread = { cwd: options.cwd, ...approvals, sandbox: 'read-only', ...(options.model ? { model: options.model } : {}) };
+    if (options.resume) return this.request('thread/resume', { threadId: options.resume, ...thread });
+    return this.request('thread/start', { ...thread, ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}) });
   }
 
   send(message: string, images: ChatImage[] = []): string[] {
     this.running = true;
     this.interrupted = false;
+    if (!this.threadAsked) { this.waiting = { text: message, images }; return [this.threadRequest()]; }
     if (!this.threadId || this.calls.size) { this.waiting = { text: message, images }; return []; }
     return [this.turnStart(message, images)];
   }
@@ -94,7 +144,8 @@ export class CodexAdapter implements ChatAdapter {
     const write = this.options.sandbox === 'workspace-write' && codexWriteVerified
       ? { sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true } }
       : {};
-    return this.request('turn/start', { threadId: this.threadId, input, ...(this.options.model ? { model: this.options.model } : {}), ...(effort ? { effort } : {}), ...write });
+    const model = this.options.model ?? this.fallbackModel;
+    return this.request('turn/start', { threadId: this.threadId, input, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...write });
   }
 
   /** The chosen effort if the chosen model supports it, from model/list; Codex itself accepts any. */
@@ -102,7 +153,7 @@ export class CodexAdapter implements ChatAdapter {
     const effort = this.options.effort;
     if (!effort) return undefined;
     if (!this.models) return effort;
-    const model = this.models.find(m => m.id === this.options.model) ?? this.models.find(m => m.isDefault);
+    const model = this.models.find(m => m.id === (this.options.model ?? this.fallbackModel)) ?? this.models.find(m => m.isDefault);
     return model && !model.efforts.includes(effort) ? undefined : effort;
   }
 
@@ -157,16 +208,23 @@ export class CodexAdapter implements ChatAdapter {
     if (isRecord(message.error)) {
       const detail = text(message.error.message).slice(0, 500) || 'an error';
       events.push({ type: 'error', message: `Codex refused ${method}: ${detail}`, fatal: method === 'thread/start' || method === 'thread/resume' || method === 'initialize' });
-      if (method === 'turn/start' && this.running) { this.running = false; events.push({ type: 'done', status: 'error' }); }
+      if (method === 'turn/start' && this.running) { this.running = false; this.turnErrors.clear(); events.push({ type: 'done', status: 'error' }); }
       return { events, replies: [] };
     }
     if (method === 'model/list' && Array.isArray(result.data)) {
+      // Every model Codex knows, hidden ones too, decides whether the thread's model can run; the menu shows the rest.
+      this.knownModels = new Set(result.data.filter(isRecord).map(model => model.id).filter((id): id is string => typeof id === 'string'));
       this.models = result.data.filter(isRecord).filter(model => model.hidden !== true && typeof model.id === 'string').map(model => ({
         id: String(model.id), label: text(model.displayName) || String(model.id), isDefault: model.isDefault === true,
         efforts: Array.isArray(model.supportedReasoningEfforts) ? model.supportedReasoningEfforts.filter(isRecord).map(option => text(option.reasoningEffort)).filter(Boolean) : [],
         ...(typeof model.defaultReasoningEffort === 'string' ? { defaultEffort: model.defaultReasoningEffort } : {}),
       }));
       events.push({ type: 'models', models: this.models });
+      // The thread may have answered first: check its model now, and say which one the chat uses.
+      if (this.threadId && this.threadModel) {
+        const notice = this.checkThreadModel();
+        if (notice.length) events.push(...notice, { type: 'session', providerSessionId: this.threadId, model: this.effectiveModel()!, ...(this.threadMode ? { permissionMode: this.threadMode } : {}) });
+      }
       if (this.options.model && !this.models.some(model => model.id === this.options.model)) events.push({ type: 'error', message: `Codex doesn't offer ${this.options.model}; it will use its default model.`, fatal: false });
       if (this.options.effort && this.checkedEffort() === undefined) events.push({ type: 'error', message: `That model doesn't support ${this.options.effort} effort; Codex will use its default.`, fatal: false });
     }
@@ -174,11 +232,17 @@ export class CodexAdapter implements ChatAdapter {
       if (!isRecord(result.thread) || typeof result.thread.id !== 'string') return { events: [{ type: 'error', message: `Codex didn't say which thread it ${method === 'thread/start' ? 'started' : 'resumed'}, so the chat stopped.`, fatal: true }], replies: [] };
       // The thread must come back exactly as asked: approvals for the user to answer, and read-only. Anything else
       // (a profile or managed setting overriding it) stops the chat before a turn can run.
-      if (result.approvalsReviewer !== 'user' || !isRecord(result.sandbox) || result.sandbox.type !== 'readOnly') {
+      const own = this.options.approvals === 'settings';
+      if ((!own && result.approvalsReviewer !== 'user') || !isRecord(result.sandbox) || result.sandbox.type !== 'readOnly') {
         return { events: [{ type: 'error', message: 'Codex started this chat without sending its approvals to you, or with more than read-only access, so Hydra stopped it.', fatal: true }], replies: [] };
       }
       this.threadId = result.thread.id;
-      events.push({ type: 'session', providerSessionId: result.thread.id, ...(typeof result.model === 'string' ? { model: result.model } : {}), ...(typeof result.approvalPolicy === 'string' ? { permissionMode: result.approvalPolicy } : {}) });
+      const mode = [result.approvalPolicy, result.approvalsReviewer].filter((part): part is string => typeof part === 'string').join(' · ');
+      // A model from the user's own Codex config that Codex doesn't offer this account fails every turn (a ChatGPT
+      // account can't use some): the chat uses Codex's default model instead, and says so.
+      this.threadModel = typeof result.model === 'string' ? result.model : undefined;
+      this.threadMode = mode;
+      events.push(...this.checkThreadModel(), { type: 'session', providerSessionId: result.thread.id, ...(this.effectiveModel() ? { model: this.effectiveModel()! } : {}), ...(mode ? { permissionMode: mode } : {}) });
     }
     if (method === 'turn/start' && isRecord(result.turn) && typeof result.turn.id === 'string') {
       this.turnId = result.turn.id;
@@ -221,7 +285,9 @@ export class CodexAdapter implements ChatAdapter {
         // An error Codex retries by itself isn't the end of anything.
         if (params.willRetry === true) return [];
         if (limit) this.limitShown = true;
-        return [{ type: 'error', message: text(error.message).slice(0, 2000) || 'Codex reported an error.', fatal: false, ...(limit ? { code: 'limit' as const } : {}) }];
+        const message = readable(text(error.message)) || 'Codex reported an error.';
+        this.turnErrors.add(message);
+        return [{ type: 'error', message, fatal: false, ...(limit ? { code: 'limit' as const } : {}) }];
       }
       case 'turn/completed': {
         if (!this.running) return [];
@@ -235,7 +301,9 @@ export class CodexAdapter implements ChatAdapter {
         this.limitShown = false;
         const events: ChatEvent[] = [];
         this.commands.clear();
-        if (status === 'error' && isRecord(turn.error) && text(turn.error.message) && !limitShown) events.push({ type: 'error', message: text(turn.error.message).slice(0, 2000), fatal: false });
+        const failure = isRecord(turn.error) ? readable(text(turn.error.message)) : '';
+        if (status === 'error' && failure && !limitShown && !this.turnErrors.has(failure)) events.push({ type: 'error', message: failure, fatal: false });
+        this.turnErrors.clear();
         events.push(...this.cancelAll(), { type: 'done', status, ...(status === 'interrupted' ? { detail: 'Codex was stopped, along with any command it was running.' } : {}) });
         return events;
       }

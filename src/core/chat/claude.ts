@@ -10,6 +10,13 @@ export const claudeSessionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 const modelPattern = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/;
 const efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** Extra arguments (live checks only): plain strings, no line breaks. */
+export function extraArguments(options: ChatOptions): string[] {
+  const extra = options.extraArgs ?? [];
+  if (!extra.every(arg => typeof arg === 'string' && !/[\r\n\u0000]/.test(arg))) throw new Error('An extra argument isn\'t allowed.');
+  return extra;
+}
+
 export function claudeArguments(options: ChatOptions): string[] {
   const id = options.resume ?? options.sessionId;
   if (!id || !claudeSessionIdPattern.test(id)) throw new Error('A Claude chat needs a valid session id.');
@@ -20,11 +27,20 @@ export function claudeArguments(options: ChatOptions): string[] {
   return [
     '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     ...(options.resume ? ['--resume', id] : ['--session-id', id]),
-    '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
+    // What Claude still asks about comes to Hydra's cards; `settings` lets the user's own mode decide what that is.
+    '--permission-prompt-tool', 'stdio', ...(mode === 'settings' ? [] : ['--permission-mode', mode]),
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--effort', options.effort] : []),
+    ...extraArguments(options),
   ];
 }
+
+/**
+ * A chat on "your settings" passes no mode, so the user's or a project's settings could put Claude in bypass
+ * permissions; Hydra never runs a chat that way (HSEC-82). Claude says its mode before any turn: the chat stops then.
+ */
+const refusedMode = (mode: unknown): boolean => mode === 'bypassPermissions';
+const bypassRefused: ChatEvent = { type: 'error', message: 'Claude Code started in bypass permissions mode (from your settings or this project\'s), which Hydra doesn\'t run. Pick another mode for this chat, or change that setting.', fatal: true };
 
 type Pending = { kind: 'approval' | 'question' | 'plan'; requestId: string; input: Record<string, unknown> };
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -118,6 +134,7 @@ export class ClaudeAdapter implements ChatAdapter {
   }
 
   private system(message: Record<string, unknown>): ChatEvent[] {
+    if ((message.subtype === 'status' || message.subtype === 'init') && refusedMode(message.permissionMode)) return [bypassRefused];
     // Approving a plan switches Claude out of plan mode (G1); the chat follows, so a later process doesn't go back to it.
     if (message.subtype === 'status' && typeof message.permissionMode === 'string' && typeof message.session_id === 'string') {
       return [{ type: 'session', providerSessionId: message.session_id, permissionMode: message.permissionMode }];
@@ -191,7 +208,7 @@ export class ClaudeAdapter implements ChatAdapter {
     const failed = !interrupted && (message.is_error === true || (typeof message.subtype === 'string' && message.subtype !== 'success'));
     if (failed) {
       const detail = typeof message.result === 'string' ? message.result : String(message.subtype ?? 'error');
-      events.push({ type: 'error', message: detail.slice(0, 2000), fatal: false, ...(/usage limit|rate limit|limit reached/i.test(detail) ? { code: 'limit' as const } : {}) });
+      events.push({ type: 'error', message: detail.slice(0, 2000), fatal: false, ...(/usage limit|hit your limit/i.test(detail) ? { code: 'limit' as const } : {}) });
     }
     events.push({ type: 'done', status: interrupted ? 'interrupted' : failed ? 'error' : 'success' });
     this.running = false;
@@ -252,6 +269,8 @@ export class ClaudeAdapter implements ChatAdapter {
   private controlResponse(message: Record<string, unknown>): ChatEvent[] {
     const response = isRecord(message.response) ? message.response : {};
     if (response.subtype === 'error') return [{ type: 'error', message: `Claude Code refused a request: ${text(response.error).slice(0, 300)}`, fatal: false }];
+    // initialize's reply comes before any turn and names the mode Claude is in (G1).
+    if (isRecord(response.response) && refusedMode(response.response.current_permission_mode)) return [bypassRefused];
     return [];
   }
 

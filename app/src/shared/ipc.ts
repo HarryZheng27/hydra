@@ -3,20 +3,24 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
-import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
-export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
+export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox, LogEntry };
 
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
 export const CHAT_EVENTS = 'hydra:chat-events';
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
-export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
-export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
-export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
+/** The user's own CLI defaults (model, effort, mode), which the composer shows when a chat doesn't choose its own. */
+export interface ChatDefaults { model?: string; effort?: string; mode?: string; approvals?: string }
+export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean; defaults: ChatDefaults }
+export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
+export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
+export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
+export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 
 export type CliProvider = 'claude' | 'codex';
 export interface AppInfo { name: string; version: string; electron: string; platform: string }
@@ -24,10 +28,12 @@ export interface AppInfo { name: string; version: string; electron: string; plat
 export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>> }
 /** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
 export interface Project { id: string; path: string; name: string; trustedAt?: string }
-/** One provider CLI, as onboarding found it: only `--version` and `--help` were run. */
+/** What the CLI says about the user's sign-in: only this, never who they are. */
+export type AccountStatus = 'signed-in' | 'signed-out' | 'other' | 'unknown';
+/** One provider CLI, as onboarding found it: its version, help and sign-in status checks. */
 export interface ProviderStatus {
   provider: CliProvider; name: string; found: boolean; executable?: string; configured: boolean;
-  version?: string; supported: boolean; minimum: string; requirement: string; advertised?: string[]; error?: string;
+  version?: string; supported: boolean; minimum: string; requirement: string; advertised?: string[]; error?: string; account?: AccountStatus;
 }
 /** Whether the user-level `hydra` MCP server is registered with a CLI, read from its config file. */
 export interface RegistrationStatus { registered: boolean; where: string; error?: string }
@@ -50,19 +56,25 @@ export interface Channels {
   'state.setSidebarOpen': { payload: { open: boolean }; result: AppState };
   /** Main shows a folder picker; the renderer never sends a path. `picked` is the chosen folder's project, new or not. */
   'projects.pick': { payload: null; result: { state: AppState; picked?: string } };
+  /** Clones a repository URL into a folder main asks for, and adds it as a project. */
+  'projects.clone': { payload: { url: string }; result: { state: AppState; picked?: string } };
   'projects.remove': { payload: { id: string }; result: AppState };
   /** Runs the version and help checks (again, with refresh) and reads the registrations. */
   'onboarding.check': { payload: { refresh: boolean }; result: OnboardingReport };
-  /** Opens a console window running the CLI's own sign-in. Nothing is read back. */
-  'onboarding.signIn': { payload: { provider: CliProvider }; result: { started: boolean; error?: string } };
+  /** Resolves when the sign-in in the browser finishes, fails or times out. */
+  'onboarding.signIn': { payload: { provider: CliProvider }; result: { signedIn: boolean; error?: string } };
   /** Main asks, in its own dialog, before a folder may run chats; the page only names the project. */
   'projects.trust': { payload: { id: string }; result: AppState };
   'chats.list': { payload: null; result: ChatRecord[] };
   'chats.create': { payload: NewChatRequest; result: ChatRecord };
-  'chats.open': { payload: { id: string }; result: OpenChat };
+  'chats.open': { payload: { id: string; background?: boolean }; result: OpenChat };
   'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
   /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
   'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
+  /** The chat folder's working tree against HEAD, read-only. */
+  'review.diff': { payload: { id: string }; result: ReviewResult };
+  /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
+  'review.open': { payload: { id: string; path: string }; result: { opened: 'editor' | 'folder' } };
   /** The user closed the terminal they opened the chat in: it can run in the app again. */
   'chats.terminalClosed': { payload: { id: string }; result: null };
   'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
@@ -104,7 +116,8 @@ const isText = (max: number) => (value: unknown): boolean => typeof value === 's
 const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
 /** An effort word; each CLI checks it against its own list (Codex models offer `ultra`, for one). */
 const isEffort = (value: unknown): boolean => typeof value === 'string' && /^[a-z]{1,20}$/.test(value);
-const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
+const isPermissionMode = oneOf('settings', 'auto', 'default', 'acceptEdits', 'plan');
+const isApprovals = oneOf('settings', 'ask');
 /** At most four images, each a known type and at most 5 MB of base64, Claude's own limit (main checks the bytes too). */
 const isImages = (value: unknown): boolean => Array.isArray(value) && value.length <= 4 && value.every(image => shaped({ mediaType: oneOf('image/png', 'image/jpeg', 'image/gif', 'image/webp'), data: (data: unknown) => typeof data === 'string' && data.length <= 5 * 1024 * 1024 })(image));
 /**
@@ -132,20 +145,24 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'state.get': isNull,
   'state.setSidebarOpen': exactly<{ open: boolean }>({ open: value => typeof value === 'boolean' }),
   'projects.pick': isNull,
+  'projects.clone': exactly<{ url: string }>({ url: value => typeof value === 'string' && value.length > 0 && value.length <= 500 }),
   'projects.remove': exactly<{ id: string }>({ id: isId }),
   'onboarding.check': exactly<{ refresh: boolean }>({ refresh: value => typeof value === 'boolean' }),
   'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'projects.trust': exactly<{ id: string }>({ id: isId }),
   'chats.list': isNull,
-  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox }),
-  'chats.open': exactly<{ id: string }>({ id: isId }),
+  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }),
+  'chats.open': shaped<{ id: string; background?: boolean }>({ id: isId }, { background: value => value === true }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
+  'review.diff': exactly<{ id: string }>({ id: isId }),
+  // A path relative to the chat's folder, checked again in main against the files the diff lists.
+  'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
   // An empty model or effort means the CLI's default.
-  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode, sandbox: isSandbox }) }),
+  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }) }),
   'chats.remove': exactly<{ id: string }>({ id: isId }),
 };
 
@@ -178,15 +195,19 @@ export interface HydraApi {
   getState(): Promise<AppState>;
   setSidebarOpen(open: boolean): Promise<AppState>;
   pickProject(): Promise<{ state: AppState; picked?: string }>;
+  cloneRepo(url: string): Promise<{ state: AppState; picked?: string }>;
   removeProject(id: string): Promise<AppState>;
   checkSetup(refresh: boolean): Promise<OnboardingReport>;
-  signIn(provider: CliProvider): Promise<{ started: boolean; error?: string }>;
+  signIn(provider: CliProvider): Promise<{ signedIn: boolean; error?: string }>;
   trustProject(id: string): Promise<AppState>;
   listChats(): Promise<ChatRecord[]>;
   createChat(request: NewChatRequest): Promise<ChatRecord>;
-  openChat(id: string): Promise<OpenChat>;
+  /** `background`: the page catching up on a chat the user isn't looking at. */
+  openChat(id: string, background?: boolean): Promise<OpenChat>;
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
   openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
+  reviewDiff(id: string): Promise<ReviewResult>;
+  openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;
   terminalClosed(id: string): Promise<null>;
   answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
   stopChat(id: string): Promise<null>;

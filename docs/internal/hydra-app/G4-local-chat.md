@@ -38,12 +38,171 @@
 Root `npm run check` and `npm test`; `npm --prefix app run check`, `test`, `build` and `smoke`.
 
 ## Acceptance
-- [ ] Every G1 fixture scenario passes through its adapter: text, tools, approval allow, deny and edit, interrupt, resume. Malformed output stops safely, and an unknown request is denied and logged.
-- [ ] App smoke with stand-ins, for both providers: new chat, stream, approve, deny, stop, restart the app, resume, and the review pane shows the diff.
-- [ ] A test proves HTML, scripts and `javascript:` links in model output render inert.
-- [ ] A test proves approval-looking text in a reply renders as text, never as a card.
-- [ ] A test proves no chat starts in an untrusted folder.
-- [ ] On Windows, a test checks that chat logs are readable only by the user.
-- [ ] Live checks pass for both providers on Nico's machine, with evidence in the Result.
-- [ ] THREAT_MODEL entries exist for chat logs, sanitization, approval routing, trust, and the chat's own permissions.
-- [ ] Last step: ask Nico to do one real task with each provider. Fix what he finds, or list it as follow-ups in the Result.
+- [x] Every G1 fixture scenario passes through its adapter: text, tools, approval allow, deny and edit, interrupt, resume. Malformed output stops safely, and an unknown request is denied and logged.
+- [x] App smoke with stand-ins, for both providers: new chat, stream, approve, deny, stop, restart the app, resume, and the review pane shows the diff.
+- [x] A test proves HTML, scripts and `javascript:` links in model output render inert.
+- [x] A test proves approval-looking text in a reply renders as text, never as a card.
+- [x] A test proves no chat starts in an untrusted folder.
+- [x] On Windows, a test checks that chat logs are readable only by the user.
+- [x] Live checks pass for both providers on Nico's machine, with evidence in the Result.
+- [x] THREAT_MODEL entries exist for chat logs, sanitization, approval routing, trust, and the chat's own permissions.
+- [x] Last step: ask Nico to do one real task with each provider. Fix what he finds, or list it as follow-ups in the Result.
+
+## Result (2026-10-03)
+
+Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) (core and Claude), [#304](https://github.com/ndunl075/hydra/pull/304) (Claude in the app), [#305](https://github.com/ndunl075/hydra/pull/305) (Codex), [#306](https://github.com/ndunl075/hydra/pull/306) (the rest of the conversation) and [#307](https://github.com/ndunl075/hydra/pull/307) (review and polish). Each had an independent read-only review in a fresh Claude session, and #304's and #307's fixes had a second, focused review. The findings and fixes are in each PR body. Every blocking and high finding was fixed before merge. There were two blocking ones:
+- Stop didn't stop a running Codex command;
+- Open in editor could hand a file name containing `&` to an editor's `.cmd` launcher, which cmd.exe would read as a command.
+
+**What exists now:**
+- **`src/core/chat/`** (host-agnostic, root `npm test`):
+  - `events.ts`: the `ChatEvent` model.
+  - `claude.ts`: route A. `claude -p`, stream-json, `--permission-prompt-tool stdio`.
+  - `codex.ts`: `codex app-server`, JSON-RPC. Threads are read-only, approvals go to the user, and the thread's echo is checked.
+  - `session.ts`: process per chat, turn queue, Stop, idle timeout and resume.
+  - `store.ts`: append-only logs plus an index, every file owner-only before it's written, positions for merging.
+  - `launch.ts`: hidden spawn and process-tree kill.
+- **Stand-in:** `tests/fixtures/app/standins/replay.mjs` replays G1's recordings in lockstep. It checks each host line's kind, approval decision and input, user content blocks, and Codex's thread, sandbox, reviewer and turn parameters.
+- **The app (`app/`):**
+  - **Chat pane:** sanitized markdown, tool and thinking blocks, approval, question and plan cards, Stop, usage and cost per turn.
+  - **Composer:** model, effort and mode; Codex's own model list; images.
+  - **Folder trust,** confirmed in main's own dialog.
+  - **Chats by project,** kept across restarts.
+  - **Open in terminal.**
+  - **Review pane:** Monaco's read-only diff of the chat folder.
+  - **Clear errors.**
+- **Live checks:** `scripts/app-live/chat.mjs` drives the real CLIs through the same `ChatSession` and adapters.
+
+**Evidence for each acceptance box:**
+1. **Fixture scenarios:**
+   - Claude (`tests/chatClaude.test.ts`, 12 tests): every route-A recording runs through `ClaudeAdapter` and `ChatSession`:
+     - three turns;
+     - approvals: allow, deny, allow with an edited input;
+     - a question, and a plan denied then approved;
+     - interrupt mid-tool and mid-text;
+     - kill and `--resume`;
+     - an image;
+     - slash commands and skills;
+     - `/model`, `/effort` and `set_model`;
+     - a project with its own hooks and MCP servers.
+   - Codex (`tests/chatCodex.test.ts`, 11 tests): every recording with turns:
+     - turn notifications;
+     - command approvals: decline, accept, accept for the session;
+     - file-change approvals;
+     - interrupt;
+     - resume after restart;
+     - images;
+     - an untrusted project's config;
+     - effort per turn;
+     - the model list.
+   - Malformed output stops safely (`'Claude: malformed output stops the chat safely, and an unknown request is denied and logged'`, `'malformed output stops safely: the process ends and the turn fails, nothing retried'`), and an unknown request is denied and logged for both providers.
+   - Not replayed, because they document routes G1 rejected: `headless-defaults`, `route-b-stub-mcp`, and the allowlist probe in part 1 of `untrusted-hooks-mcp`.
+2. **App smoke** (`npm --prefix app run smoke`, 20 checks, all hidden). Each provider's stand-in session is stitched from G1's real recorded turns:
+   - Claude: trust, stream, allow Bash, deny Write, Stop mid-text.
+   - Codex: deny, allow, Stop mid-command.
+   - Then the app quits (flushing the store), restarts, and resumes each chat. Claude resumes with `--resume <id>`, Codex in a new app-server.
+   - Open in terminal is recorded with the right resume command.
+   - The review pane lists the changed files and renders Monaco's diff, read-only, with no CSP violation.
+   - The App workflow ran it on every PR (#302's core has no app part).
+3. **HTML, scripts and `javascript:` links inert:** `'HTML, scripts and javascript: links in model output render inert'`, `'hostile markdown can't stall the page'` (`app/tests/chat.test.ts`).
+4. **Approval-looking text stays text:** `'approval-looking text in a reply renders as text, never as a card'` (`app/tests/chat.test.ts`), `'Claude: text that looks like an approval is only text; requests come only from control_request'` (`tests/chatClaude.test.ts`) and `'Codex: other server requests are refused, and approval-looking text is only text'` (`tests/chatCodex.test.ts`).
+5. **No chat in an untrusted folder:** `'no chat starts in an untrusted folder'` and `'two quick messages share one session; every message checks trust; a removed folder's chats stop'` (`app/tests/chat.test.ts`).
+6. **Chat logs readable only by the user (Windows):** `'on Windows, chat logs and the index are readable only by the user'` (`tests/chatStore.test.ts`), using `icacls` through `ownerOnlyProblem`.
+7. **Live checks** on Nico's machine (Windows 11, Claude Code and Codex signed in), 2026-10-03, with `scripts/app-live/chat.mjs`:
+   - **Claude** (haiku, low effort): 5 of 5 scenarios in 5 turns: reply, approve a write, deny a write, Stop while streaming, resume after killing the process. See [g4-live/claude.json](g4-live/claude.json).
+   - **Codex** (`gpt-6-luna`, low effort): 5 of 5 in 5 turns, using file-change approvals. Stop ended the app-server, and resume came back on the same thread. See [g4-live/codex.json](g4-live/codex.json).
+   - In both runs `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml` came out unchanged.
+   - The first Claude run failed its Stop scenario because of a bug in the script, which sent Stop before the turn had produced text. That was fixed and the run repeated; that run's 5 turns are on top of the 5 above.
+8. **THREAT_MODEL**, in "The Hydra app (unreleased)":
+   - HSEC-82: the chat's own permissions.
+   - HSEC-83: chat logs.
+   - HSEC-84: approval routing.
+   - HSEC-85: sanitization.
+   - HSEC-86: folder trust.
+   - HSEC-87: Codex's trust and sandbox.
+   - HSEC-88: images and Open in terminal.
+   - HSEC-89: the review pane, which runs no program the repository names.
+   - `app/tests/threatModel.test.ts` checks that every test each row names exists.
+9. **A real task with each provider,** Nico in the app on 2026-10-03, in his own project folder (`orven`), on his own subscriptions.
+   - **Claude Code:** "add an empty file called testhydra to the repo". Claude asked to write the file and to stage it; Nico allowed both, and the file was created and staged. Then several short chats ("hello", "yo") on his own settings (auto mode).
+   - **Codex:** "hi" and "yo" in a Codex chat, answered.
+   - Nico called it working well enough to finish G4. Speed is the open complaint (below).
+
+   **What he found, and what was fixed in #307:**
+   - **Speed:**
+     - New chats didn't pre-start their CLI. Now Claude Code and Codex both start as a chat opens.
+     - The working line said only "Working…". It now says what it waits on, and for how long.
+     - npm's Codex ran through PowerShell and Node. It now starts as its own binary, about 1.1 s faster per start.
+   - **Settings:**
+     - Hydra overrode his CLI settings: Claude's `defaultMode: auto` and Codex's auto-review. Chats now follow the user's own settings.
+     - The menus showed "Default" and "Your settings" instead of real values. They now show the actual model, effort and mode.
+     - His Codex config named `gpt-6.1-sol`, which his npm Codex 0.157.1 didn't offer. Every turn failed with a raw JSON error. A chat now falls back to Codex's default and says so once, in plain words. The real fix was updating Codex to 0.160.0, which offers it.
+   - **Sign in:**
+     - Claude's sign-in in a console didn't work for him.
+     - Sign in now runs each CLI's own login hidden, in the browser.
+     - Your agents says whether each CLI is signed in.
+   - **The UI** follows Claude desktop:
+     - a home screen with Open a project, Clone a repo (HSEC-90) and recents;
+     - Claude Code and Codex in Settings;
+     - a one-line prompt with one send/stop button;
+     - quiet menus and header icons;
+     - Claude-style message bubbles;
+     - a sidebar closer to the canvas;
+     - the Hydra logo;
+     - the Claude desktop window's size.
+   - **Characters:** Codex's text lost characters such as ’ through PowerShell. Fixed by the direct start above.
+   - **New chat:** the sidebar's New chat always made a Claude chat. It now offers Claude Code or Codex.
+
+**What changed versus this file:**
+- **Codex chats are read-only for now.** The goal allows workspace-write, but G1 found two problems:
+  - `thread/start` with it writes the folder into `~/.codex/config.toml` as trusted;
+  - your elevated Windows sandbox fails every command from a spawned app-server, and the unelevated one refuses workspace-write in a git repository.
+
+  The per-turn route (`turn/start`'s `sandboxPolicy`, G1's shape) is written but switched off by `codexWriteVerified` until a live check proves it. Approved file changes still apply, which is how the Codex live check wrote its file. As a backstop, the app reads Codex's config before and after each turn and says so if the folder became trusted.
+- **Stop ends Codex's app-server.** G1 found an interrupted command keeps running until the app-server exits.
+- **A message sent mid-turn shows when its turn starts,** not when it is queued, so each turn's cards belong to it.
+- **Index saves are coalesced** and kept off the log's queue. The app flushes the store before it quits, which the smoke caught when a stopped turn went missing after a restart.
+- **Images are capped at 5 MB of base64,** Claude's own limit, about 3.7 MB of image.
+- **Open in terminal** marks the chat. It sends nothing until you say the terminal is closed.
+- **Approving a plan** takes a Claude chat out of plan mode, following Claude's own switch.
+- **Questions and plan approval are Claude's.** Codex's question requests are refused, as G1 decided.
+- **The review pane covers only the chat folder,** and only when the repository's root is that folder or above it. git runs with the repository's filters emptied and lazy fetches off, and Open in editor checks the name against a names-only listing.
+- **New chats follow the user's own CLI settings** (from Nico's first try, 2026-10-03). Hydra had forced Claude's `--permission-mode default` and Codex's `approvalsReviewer: "user"`, which overrode his `defaultMode: "auto"` and `approvals_reviewer = "auto_review"`.
+  - "Your settings", the default, passes neither, so each CLI behaves as it does on its own. Anything it still asks about comes to Hydra's cards.
+  - The composer also offers Auto, Ask before edits, Accept edits and Plan first for Claude, and Ask me for Codex.
+  - Codex threads still start read-only, but with "Your Codex settings" its auto-review can approve a file change, or a command outside the sandbox, without a card.
+  - Bypass and full access are never offered. A chat that Claude reports in bypass mode (from the user's or a project's settings) stops before any turn.
+  - HSEC-82 and HSEC-87 say what this means: Codex's auto-review can approve a request itself.
+- **Claude Code starts when a chat opens,** not when the first message is sent (one chat at a time, trusted folders only, ended after 3 minutes unused). On Nico's machine a small Haiku turn took 11.2 s cold and 5.6 s warm.
+- **The working line** says "Starting Claude Code…" or "Claude Code is working… 42s": Opus can think for a minute with no visible output.
+- **Sign in runs out of sight** (Nico's ask): no terminal window. Claude Code's own `auth login` runs hidden and opens the browser; Codex signs in through its app-server, as the IDE does. Your agents now says whether each CLI is signed in, and offers Sign in only when it isn't (HSEC-81).
+- **The window opens at the Claude desktop app's size,** about 1020 x 736.
+- **`ChatOptions.extraArgs`** exists only for the live checks' isolation; no IPC payload can set it.
+
+**Follow-ups:**
+- **Speed is mostly the providers' own.**
+  - Claude Code with Nico's claude-mem plugin runs its hooks at every session and prompt, and adds about 47,000 cached tokens to each chat.
+  - A Codex reply waited about 19 s on OpenAI with nothing cached.
+  - Ideas:
+    - show the model's thinking where the CLI sends it;
+    - suggest a lighter model for quick chats;
+    - keep a warm process per project.
+- **Sign-in:**
+  - the hidden Claude login is proven against the stand-in and Claude's own code, not yet live (Nico was already signed in);
+  - there's no Cancel while it waits;
+  - the Codex sign-in path has no automated test.
+- **The UI pass at the end** follows [UI-direction.md](UI-direction.md).
+- **Clone a repo** has no Cancel button. Git Credential Manager may show its own sign-in window for https.
+- **Codex:** a Stop sent before the thread exists ends the turn only after the 5 s grace period.
+- **The menus** need full screen-reader support (the highlighted option, Home and End, Tab to close).
+- **The app smoke** sometimes times out waiting for the first window when run straight after the test suite; a rerun passes.
+- **Codex write access:** find why the elevated Windows sandbox fails from a spawned app-server (`~/.codex/logs_2.sqlite`, G1). Then live-check the per-turn `sandboxPolicy` route, and switch `codexWriteVerified` on if it neither persists trust nor fails.
+- **Codex's model list** comes only from a new thread's `model/list`: before the first message, and after a resume, the composer offers just the default.
+- **The review pane** hides Monaco's gutter icons, because the CSP loads no fonts. The build still emits the font and its `@font-face`, which could be dropped.
+- **The review pane with git LFS:** emptying LFS's clean filter shows a changed LFS file as its pointer against its content. `--ignore-submodules` hides submodule changes.
+- **A slash command with an image attached** goes as content blocks, so the CLI may not read it as a command.
+- **`extraArguments`** takes any flag. Only the live script uses it, but an allowlist would be safer if it ever reaches the app.
+- **The live script's user-state snapshot** covers `~/.claude/settings.json`, the `hydra` entry in `~/.claude.json` and `~/.codex/config.toml`, but not the rest of `~/.claude.json` or `settings.local.json`.
+- **Outside G4:** since #303 (G6 M1's rename to "Hydra IDE"), the desktop workflow's installer identity check fails on main, because the installer's ProductName follows the new name and the updater accepts only "Hydra". #304 to #306 merged on their required checks; it is flagged for G6.
+- **G5:** usage-limit handoff, heads and plans in chats.
+- **A visual design pass for the app:** Nico tried it and wants the UI reworked, after the app's goals work end to end. His direction is in [UI-direction.md](UI-direction.md).

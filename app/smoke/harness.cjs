@@ -35,6 +35,10 @@ electron.dialog.showMessageBox = async (...args) => {
 };
 electron.dialog.showMessageBoxSync = () => { report.confirms.push('sync'); return 1; };
 electron.shell.openExternal = async url => { report.opened.push(url); write(); };
+// Showing a file in Explorer or opening it would put a window on screen: recorded instead.
+report.shown = [];
+electron.shell.showItemInFolder = file => { report.shown.push(file); write(); };
+electron.shell.openPath = async file => { report.shown.push(`open:${file}`); write(); return ''; };
 // The folder and file pickers are stand-ins too: they answer with what run.mjs passed, and record that main asked.
 const pickedFolder = arg('folder');
 report.pickers = [];
@@ -162,7 +166,7 @@ if (role === 'resume') {
     report.resume.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
     report.resume.reply = await ui(`[...document.querySelectorAll('.msg.assistant')].at(-1)?.textContent ?? ''`);
     // Open in terminal: the CLI's own resume in a console (the harness records the launch; no window opens).
-    await ui(`document.querySelector('.chat-head .head-action').click(); 1`);
+    await ui(`document.querySelector('.chat-head .head-action[aria-label="Open in terminal"]').click(); 1`);
     for (let i = 0; i < 100 && !report.signIns.length; i++) await wait(100);
     report.resume.terminal = report.signIns[0] ?? null;
     // The Codex chat: the next message resumes its thread in a new app-server.
@@ -246,18 +250,28 @@ if (role === 'first') {
       throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent).join(' | ')`)}`);
     };
     report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
-    // Onboarding: the version and help checks, the registrations, and Sign in.
+    report.home = await ui(`({ buttons: [...document.querySelectorAll('.start-actions button')].map(b => b.textContent), setupOnHome: !!document.querySelector('.empty .setup') })`);
+    // Onboarding lives in Settings: the version and help checks, the registrations, and Sign in.
+    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await until(`!!document.querySelector('.settings h1')`, 'Settings');
     await until(`document.querySelectorAll('.setup .provider').length === 2`, 'the onboarding checks', 30000);
-    report.setup = await ui(`[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, signIn: !p.querySelector('.primary').disabled }))`);
-    await ui(`document.querySelector('.setup .provider[data-provider=codex] .primary').click(); 1`);
-    await until(`!!document.querySelector('.setup .provider[data-provider=codex] .hint')`, 'the sign-in note');
-    report.signInNote = await ui(`document.querySelector('.setup .provider[data-provider=codex] .hint').textContent`);
+    const setupRows = `[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, account: p.querySelector('.provider-account')?.textContent ?? null, signIn: !!p.querySelector('.primary') && !p.querySelector('.primary').disabled }))`;
+    report.setup = await ui(setupRows);
+    // Sign in: Claude's own login runs out of sight (the stand-in "signs in"), and the row then says so, with no button.
+    report.consolesBeforeSignIn = report.signIns.length;
+    await ui(`document.querySelector('.setup .provider[data-provider=claude] .primary').click(); 1`);
+    await until(`document.querySelector('.setup .provider[data-provider=claude] .provider-account')?.textContent === 'Signed in' && !document.querySelector('.setup .provider[data-provider=claude] .primary')`, 'Claude to show signed in', 30000);
+    report.afterSignIn = await ui(setupRows);
+    report.consolesAfterSignIn = report.signIns.length;
     const checkedAt = await ui(`document.querySelector('.setup').dataset.checkedAt`);
     await ui(`[...document.querySelectorAll('.setup-head button')][0].click(); 1`);
     await until(`document.querySelector('.setup').dataset.checkedAt !== ${JSON.stringify(checkedAt)} && !document.querySelector('.setup[aria-busy=true]')`, 'the re-check', 30000);
     report.recheckDone = true;
-    // A second Sign in straight away is refused, so a page can't stack windows.
-    report.secondSignIn = await ui(`window.hydra.signIn('codex')`);
+    // A second Sign in while one runs is refused, so a page can't stack logins.
+    report.secondSignIn = await ui(`Promise.all([window.hydra.signIn('claude'), window.hydra.signIn('claude')])`);
+    // Back to the home screen.
+    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('New chat')).click(); 1`);
+    await until(`document.querySelector('.empty h1')?.textContent === 'What are we working on?'`, 'the home screen');
     const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
     report.themes = { initial: await themeNow() };
     // `--smoke-shots=<dir>` saves what the hidden window draws, for a person to look at. Off in CI.
@@ -336,12 +350,23 @@ if (role === 'first') {
       await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('Codex'))`, 'the project view');
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('Codex')).click(); 1`);
-      await chat.until(`document.querySelector('.composer textarea')?.placeholder === 'Message Codex'`, 'the new Codex chat');
-      report.codex = { sandboxes: await ui(`[...document.querySelectorAll('.composer select[aria-label=Sandbox] option')].map(o => o.textContent)`) };
+      await chat.until(`!!document.querySelector('.composer .picker[aria-label=Approvals]')`, 'the new Codex chat');
+      // The pickers open a menu of options; their labels are read, then one is chosen by clicking it.
+      const pickerOptions = async label => { await ui(`document.querySelector('.composer .picker[aria-label=${label}]').click(); 1`); await chat.until(`!!document.querySelector('.picker-menu[aria-label=${label}]')`, `the ${label} menu`); const labels = await ui(`[...document.querySelectorAll('.picker-menu[aria-label=${label}] .picker-label')].map(e => e.textContent)`); await ui(`document.querySelector('.composer .picker[aria-label=${label}]').click(); 1`); return labels; };
+      report.codex = {
+        approvals: await pickerOptions('Approvals'),
+        approvalsDefault: await ui(`document.querySelector('.composer .picker[aria-label=Approvals]').dataset.value`),
+      };
+      // G1's recordings route every approval to the user, so this chat asks: the stand-in checks the thread says so.
+      await ui(`document.querySelector('.composer .picker[aria-label=Approvals]').click(); 1`);
+      await chat.until(`!!document.querySelector('.picker-menu [data-value=ask]')`, 'the Approvals menu');
+      await ui(`document.querySelector('.picker-menu [data-value=ask]').click(); 1`);
+      await chat.until(`document.querySelector('.composer .picker[aria-label=Approvals]').dataset.value === 'ask'`, 'Ask me to apply');
       await chat.send('Run node -e console.log(6*7) and tell me the output.');
       await chat.until(`!!document.querySelector('.card.approval .card-actions')`, 'the first Codex approval');
       report.codex.choices = await ui(`[...document.querySelectorAll('.card.approval .card-actions button')].map(b => b.textContent)`);
-      report.codex.models = await ui(`[...document.querySelectorAll('.composer select[aria-label=Model] option')].map(o => o.textContent)`);
+      report.codex.models = await pickerOptions('Model');
+      report.codex.model = await ui(`document.querySelector('.composer .picker[aria-label=Model]').dataset.value`);
       await chat.click('.card.approval .card-actions button', 'Deny');
       await chat.until(`document.querySelectorAll('.turn-end').length >= 1`, 'Codex turn one to end');
       await chat.send('Run it again, please.');
@@ -356,6 +381,21 @@ if (role === 'first') {
       report.codex.turnEnds = await ui(`[...document.querySelectorAll('.turn-end')].map(e => e.className.replace('turn-end', '').trim())`);
       report.codex.output = await ui(`[...document.querySelectorAll('pre.code.output')].map(e => e.textContent).join(' | ')`);
       await shot('codex');
+
+      // The review pane: the project's working tree against HEAD, read-only, in Monaco's diff editor.
+      const reviewConsoleStart = report.console.length;
+      await ui(`document.querySelector('.chat-head .head-action[aria-label="Review changes"]').click(); 1`);
+      await chat.until(`document.querySelectorAll('.review-files button').length >= 2`, 'the changed files');
+      report.review = { files: await ui(`[...document.querySelectorAll('.review-files button')].map(b => b.textContent)`) };
+      await chat.until(`!!document.querySelector('.diff-host .monaco-diff-editor')`, 'the diff editor');
+      await chat.until(`document.querySelectorAll('.diff-host .line-insert, .diff-host .char-insert').length > 0`, 'the diff to render', 15000);
+      report.review.readOnly = await ui(`document.querySelector('.diff-host textarea') ? document.querySelector('.diff-host textarea').readOnly : null`);
+      await chat.click('.review-file-bar button', 'Open in editor');
+      for (let i = 0; i < 50 && !report.shown.length; i++) await wait(100);
+      report.review.shown = report.shown;
+      report.review.cspViolations = report.console.slice(reviewConsoleStart).filter(m => /Content Security Policy|Trusted ?Type|TrustedScript|TrustedHTML/i.test(m.message)).map(m => m.message.slice(0, 200));
+      await shot('review');
+      await ui(`document.querySelector('.chat-head .head-action[aria-label="Back to chat"]').click(); 1`);
     }
     event('ready');
     // Wait for run.mjs's second launch to reach this instance, then leave.

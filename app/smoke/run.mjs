@@ -13,12 +13,26 @@ const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // G1's CSP (docs/internal/hydra-app/G1-spikes.md, S4 item 4), written out here so the smoke checks the app against
 // the decision, not against itself.
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify";
-const electron = createRequire(import.meta.url)('electron');
+const require = createRequire(import.meta.url);
+const electron = require('electron');
 const work = path.join(appDir, '.smoke', String(Date.now()));
 const appData = path.join(work, 'AppData', 'Roaming');
 const out = path.join(work, 'out');
 const project = path.join(work, 'Project One');
 fs.mkdirSync(project, { recursive: true });
+// A git repository with one commit and changes on top, for the review pane.
+{
+  const { spawnSync } = await import('node:child_process');
+  const git = (...args) => { const result = spawnSync('git', args, { cwd: project, windowsHide: true, encoding: 'utf8' }); if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`); };
+  git('init', '-q');
+  git('config', 'user.email', 'smoke@example.invalid');
+  git('config', 'user.name', 'Smoke');
+  fs.writeFileSync(path.join(project, 'hello.ts'), 'export const greeting = "one";\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'first');
+  fs.writeFileSync(path.join(project, 'hello.ts'), 'export const greeting = "two";\nexport const extra = 1;\n');
+  fs.writeFileSync(path.join(project, 'notes.md'), '# new\n');
+}
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(out, { recursive: true });
 // Stand-in CLIs on PATH, and scratch Claude and Codex config folders: the smoke never runs or reads the real ones.
@@ -36,7 +50,13 @@ fs.writeFileSync(path.join(claudeConfig, '.claude.json'), JSON.stringify({ mcpSe
 fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n');
 const configBefore = [path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8'));
 const systemRoot = process.env.SystemRoot || 'C:\\Windows';
-const env = { ...process.env, PATH: [bin, path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
+// git's own folder, for the review pane; nothing else from the user's PATH (no real claude or codex).
+const gitFolder = (() => {
+  const { spawnSync } = require('node:child_process');
+  const found = spawnSync('where.exe', ['git'], { encoding: 'utf8', windowsHide: true }).stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+  return found ? path.dirname(found) : undefined;
+})();
+const env = { ...process.env, PATH: [bin, ...(gitFolder ? [gitFolder] : []), path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
@@ -93,7 +113,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -153,7 +173,9 @@ try {
     assert.equal(a.ui.agentsDisabled, 'Agents');
     assert.deepEqual(a.ui.sidebar, ['New chat', 'Settings']);
     assert.equal(a.ui.search, true);
-    assert.match(a.ui.emptyButton, /Open a folder/);
+    assert.match(a.ui.emptyButton, /Open a project/);
+    assert.deepEqual(a.home.buttons, ['Open a project', 'Clone a repo']);
+    assert.equal(a.home.setupOnHome, false, 'Claude Code and Codex are in Settings, not on the home screen');
     assert.deepEqual(a.afterPick.projects, ['Project One']);
     assert.equal(a.afterPick.heading, 'Project One');
     assert.equal(a.sidebarAfterToggle, false);
@@ -183,38 +205,40 @@ try {
     assert.deepEqual(a.stores.files.filter(f => f.endsWith('.tmp')), []);
     assert.deepEqual(a.consoleErrors, []);
   });
-  check('onboarding shows each CLI version and support, and the hydra registration, read-only', () => {
-    assert.deepEqual(a.setup.map(p => [p.provider, p.status, p.registration, p.signIn]), [
-      ['claude', '2.1.282 · supported', 'Hydra tools: registered', true],
-      ['codex', '0.157.1 · supported', 'Hydra tools: not registered', true],
+  check('onboarding shows each CLI version and support, whether it is signed in, and the hydra registration, read-only', () => {
+    assert.deepEqual(a.setup.map(p => [p.provider, p.status, p.registration, p.account, p.signIn]), [
+      ['claude', '2.1.282 · supported', 'Hydra tools: registered', 'Not signed in', true],
+      ['codex', '0.157.1 · supported', 'Hydra tools: not registered', 'Signed in', false],
     ]);
     assert.deepEqual([path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8')), configBefore, 'a config file changed');
     assert.deepEqual(fs.readdirSync(claudeConfig), ['.claude.json']);
     assert.deepEqual(fs.readdirSync(codexHome), ['config.toml']);
   });
-  check('Sign in opens a console running the CLI login, and reads nothing back', () => {
-    assert.equal(a.signIns.length, 1);
-    assert.match(a.signIns[0].script, /codex\.cmd' 'login'/);
-    assert.equal(a.signIns[0].executable.toLowerCase(), 'cmd.exe');
-    assert.match(a.signIns[0].line, /^\/d \/s \/c "start "Codex sign-in" ".*powershell\.exe" -NoLogo -NoProfile -EncodedCommand <script>"$/);
-    assert.equal(a.signIns[0].detached, false, 'detached would leave PowerShell without a console');
-    assert.equal(a.signIns[0].verbatim, true);
-    assert.equal(a.signIns[0].stdio, 'ignore');
-    assert.equal(a.secondSignIn.started, false);
+  check('Sign in runs the CLI\'s own login out of sight: no window, no console, and the row then says signed in', () => {
+    assert.deepEqual(a.afterSignIn.map(p => [p.provider, p.account, p.signIn]), [['claude', 'Signed in', false], ['codex', 'Signed in', false]]);
+    assert.equal(a.consolesBeforeSignIn, 0);
+    assert.equal(a.consolesAfterSignIn, 0, 'no console window was opened');
     assert.deepEqual(a.refusedLaunches, [], 'something tried to start a visible process');
-    assert.match(a.signInNote, /sign-in window opened/);
+    assert.deepEqual(a.secondSignIn.map(r => r.signedIn).sort(), [false, true]);
+    assert.match(a.secondSignIn.find(r => !r.signedIn).error, /already/);
   });
-  check('no provider process starts except the version and help checks', () => {
+  check('no provider process starts except the version, help and sign-in checks, and the logins asked for', () => {
     const all = standinCalls(bin);
     assert.equal(a.recheckDone, true);
     // The chats' own processes, each started by a message the user sent (per provider: the first run, and the resume).
     const isChat = call => call.startsWith('claude -p ') || call.startsWith('codex app-server --listen');
     const chats = all.filter(isChat);
-    assert.equal(chats.length, 4, all.join(', '));
+    // Claude: the first run and the resume. Codex: the first run and the resume, plus one more when the app-server
+    // started as the chat opened was replaced as the chat switched to Ask me before its first message.
+    assert.equal(chats.filter(call => call.startsWith('claude -p ')).length, 2, all.join(', '));
+    const codexServers = chats.filter(call => call.startsWith('codex app-server')).length;
+    assert.ok(codexServers === 2 || codexServers === 3, all.join(', '));
     const calls = all.filter(call => !isChat(call));
-    // Three full checks (the first run, its Check again, and the restarted app): each runs exactly these five.
-    const once = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help'];
-    assert.deepEqual([...calls].sort(), once.flatMap(call => [call, call, call]).sort(), calls.join(', '));
+    const checks = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help', 'claude auth status --json', 'codex login status'];
+    assert.deepEqual(calls.filter(call => !checks.includes(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
+    const count = call => calls.filter(c => c === call).length;
+    // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
+    assert.ok(count('claude --version') >= 3 && count('codex --version') >= 3, calls.join(', '));
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);
@@ -252,9 +276,11 @@ try {
     assert.equal(standinErrors(), '');
   });
   check('a chat with Codex: read-only by default, deny, allow, stop mid-command', () => {
-    assert.deepEqual(a.codex.sandboxes, ['Read-only'], 'read-only until write access passes its live check; never full access');
+    assert.deepEqual(a.codex.approvals, ['Codex decides', 'Ask me'], 'the first follows the user\'s own Codex config, named for what it does');
+    assert.equal(a.codex.approvalsDefault, 'settings', 'a new chat follows the user\'s own Codex settings');
     assert.deepEqual(a.codex.choices, ['Allow', 'Allow for this session', 'Deny']);
-    assert.ok(a.codex.models.length > 1 && a.codex.models[0] === 'Default model', 'models from Codex\'s own model/list');
+    assert.ok(a.codex.models.length > 1 && !a.codex.models.some(label => /default/i.test(label)), 'models from Codex\'s own model/list, no "default" entry');
+    assert.ok(a.codex.model && a.codex.model !== 'x', 'the menu shows the model Codex reports in use, not a config model it doesn\'t offer');
     assert.deepEqual(a.codex.outcomes, ['Denied', 'Allowed']);
     assert.deepEqual(a.codex.turnEnds, ['success', 'success', 'interrupted']);
     assert.match(a.codex.output, /42/, 'the allowed command\'s output');
@@ -267,6 +293,13 @@ try {
     assert.match(r.resume.codex.lastTurn, /success/);
     assert.equal(chatStarts(codexState).length, 2);
     assert.equal(standinErrors(codexState), '');
+  });
+  check('the review pane shows the working tree against HEAD, read-only, with no CSP violation', () => {
+    assert.deepEqual(a.review.files.sort(), ['Mhello.ts', 'Unotes.md']);
+    assert.equal(a.review.readOnly, true);
+    assert.deepEqual(a.review.cspViolations, []);
+    assert.equal(a.review.shown.length, 1, 'Open in editor showed the file in its folder (no editor on the smoke\'s PATH)');
+    assert.match(a.review.shown[0], /hello\.ts$/);
   });
   check('a second launch focuses the first and exits', () => {
     assert.equal(a.hasLock, true);

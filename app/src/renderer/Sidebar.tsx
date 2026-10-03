@@ -42,12 +42,10 @@ export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenPr
           return (
             <li key={project.id} className="project">
               <div className={`project-row ${selected ? 'selected' : ''}`}>
-                <button className="twisty" aria-label={open ? `Collapse ${project.name}` : `Expand ${project.name}`} aria-expanded={open} onClick={() => setCollapsed(current => ({ ...current, [project.id]: open }))}>
-                  <span className={`chevron ${open ? 'open' : ''}`}><Icon name="chevron" /></span>
+                <button className="project-name" title={project.path} onClick={() => onOpenProject(project.id)} onDoubleClick={() => setCollapsed(current => ({ ...current, [project.id]: open }))} aria-expanded={open}>
+                  <span>{project.name}</span>
                 </button>
-                <button className="project-name" title={project.path} onClick={() => onOpenProject(project.id)}>
-                  <Icon name="folder" /><span>{project.name}</span>
-                </button>
+                <button className="icon-button small hover-only" aria-label={`New chat in ${project.name}`} title="New chat" onClick={() => onOpenProject(project.id)}><Icon name="plus" /></button>
                 <button className="icon-button small hover-only" aria-label={`Remove ${project.name} from Hydra`} title="Remove from Hydra (the folder stays on disk)" onClick={() => onRemoveProject(project.id)}><Icon name="close" /></button>
               </div>
               {open && (chatsOf(project).length

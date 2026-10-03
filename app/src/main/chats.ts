@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { ClaudeAdapter } from '../../../src/core/chat/claude';
 import { CodexAdapter } from '../../../src/core/chat/codex';
-import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../../../src/core/chat/events';
 import { claudePermissionModes } from '../../../src/core/chat/events';
 import { claudeSessionIdPattern } from '../../../src/core/chat/claude';
 import { cmdUnsafe, isWindowsShim } from '../../../src/core/process';
@@ -32,6 +32,42 @@ export interface ChatManagerDeps {
   /** Opens a console window the user owns, running a CLI in a folder; Hydra never reads it. */
   openConsole?(title: string, executable: string, args: string[], cwd: string): Promise<{ started: boolean; error?: string }>;
   timings?: SessionTimings;
+  /** The user's own CLI config file's text (Claude's settings.json, Codex's config.toml), for the composer's defaults. */
+  cliConfig?(provider: ChatProvider): Promise<string | undefined>;
+  /** Start a Claude chat's CLI when the chat is opened, ahead of its next message (the app sets this; tests don't). */
+  warm?: boolean;
+}
+
+/**
+ * What the user's own CLI settings choose when a chat doesn't: model, effort and mode, so the composer shows real values
+ * rather than "default". Only these keys are read; nothing else in the file is kept.
+ */
+export interface ChatDefaults { model?: string; effort?: string; mode?: string; approvals?: string }
+const shortValue = (value: unknown): string | undefined => (typeof value === 'string' && /^[\w.\-\[\]]{1,80}$/.test(value) ? value : undefined);
+export function claudeDefaults(text: string | undefined): ChatDefaults {
+  let settings: Record<string, unknown>;
+  try { settings = JSON.parse(text ?? '{}') as Record<string, unknown>; } catch { return {}; }
+  if (!settings || typeof settings !== 'object') return {};
+  const permissions = settings.permissions && typeof settings.permissions === 'object' ? settings.permissions as Record<string, unknown> : {};
+  const mode = shortValue(permissions.defaultMode);
+  const out: ChatDefaults = {};
+  const model = shortValue(settings.model), effort = shortValue(settings.effortLevel);
+  if (model) out.model = model;
+  if (effort) out.effort = effort;
+  // Bypass is never run (HSEC-82): a chat on these settings is stopped, so it isn't shown as the mode.
+  if (mode && (claudePermissionModes as readonly string[]).includes(mode)) out.mode = mode;
+  return out;
+}
+export function codexDefaults(text: string | undefined): ChatDefaults {
+  const out: ChatDefaults = {};
+  for (const line of (text ?? '').split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break; // only the top-level keys, before the first table
+    const match = /^\s*(model|model_reasoning_effort|approvals_reviewer)\s*=\s*"([^"]*)"\s*(#.*)?$/.exec(line);
+    const value = match && shortValue(match[2]);
+    if (!match || !value) continue;
+    if (match[1] === 'model') out.model = value; else if (match[1] === 'model_reasoning_effort') out.effort = value; else out.approvals = value;
+  }
+  return out;
 }
 
 /** Image formats a chat accepts, by their first bytes: the declared type must match the file. */
@@ -81,7 +117,7 @@ export function trustedProjects(toml: string): Set<string> {
   return out;
 }
 
-export interface NewChat { cwd: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
+export interface NewChat { cwd: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
@@ -94,6 +130,10 @@ export class ChatManager {
   private readonly inTerminal = new Set<string>();
   /** Set once the app is quitting: no chat starts after that. */
   private closing = false;
+  /** The chat whose CLI was started ahead of a message; only one waits at a time. */
+  private warmed: string | undefined;
+  /** Chats removed while their session may still be starting. */
+  private readonly removed = new Set<string>();
 
   constructor(private readonly deps: ChatManagerDeps) {}
 
@@ -109,14 +149,33 @@ export class ChatManager {
     this.adapter(input.provider);
     return this.deps.store.create({
       provider: input.provider, cwd: input.cwd,
-      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'default' } : { sandbox: input.sandbox ?? 'read-only' }),
+      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'settings' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
       ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
     });
   }
 
-  async open(id: string): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }> {
+  /** `warm: false` for an open the user doesn't see (the page catching up on a background chat). */
+  async open(id: string, { warm = true }: { warm?: boolean } = {}): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean; defaults: ChatDefaults }> {
     const record = await this.record(id);
-    return { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id) };
+    const config = await this.deps.cliConfig?.(record.provider).catch(() => undefined);
+    const defaults = record.provider === 'claude' ? claudeDefaults(config) : codexDefaults(config);
+    const opened = { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id), defaults };
+    if (warm) this.warm(id, record);
+    return opened;
+  }
+
+  /**
+   * Starts a chat's CLI as the chat opens, so its startup (Claude Code's about 10 s with the user's MCP servers and
+   * hooks, Codex's app-server about 5 s) is done by the time they send. Codex's thread waits for the message. Only in a trusted folder, never while the chat is open in a terminal, and
+   * one chat at a time: the one warmed before is ended if no message used it.
+   */
+  private warm(id: string, record: ChatRecord): void {
+    if (!this.deps.warm || this.closing || this.inTerminal.has(id) || this.starting.has(id)) return;
+    if (this.warmed && this.warmed !== id) this.sessions.get(this.warmed)?.cool();
+    this.warmed = id;
+    void this.session(id).then(session => {
+      if (this.warmed === id && !this.closing && !this.inTerminal.has(id) && this.sessions.get(id) === session) session.warm();
+    }).catch(() => undefined);
   }
 
   private async record(id: string): Promise<ChatRecord> {
@@ -147,13 +206,16 @@ export class ChatManager {
     const options: ChatOptions = {
       provider: record.provider, cwd: record.cwd, executable,
       ...(record.model ? { model: record.model } : {}), ...(record.effort ? { effort: record.effort } : {}),
-      ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}), ...(record.sandbox ? { sandbox: record.sandbox } : {}),
+      ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}), ...(record.sandbox ? { sandbox: record.sandbox } : {}), ...(record.approvals ? { approvals: record.approvals } : {}),
       // A Claude chat's id is chosen at creation; it is resumed once the CLI has started it.
       ...(started && record.providerSessionId ? { resume: record.providerSessionId } : record.provider === 'claude' ? { sessionId: record.providerSessionId } : {}),
     };
     if (this.closing) throw new Error('Hydra is quitting.');
     // The folder may have stopped being trusted while this was starting.
     if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
+    // Quit or removal may have come during those awaits: nothing may start after either.
+    if (this.closing) throw new Error('Hydra is quitting.');
+    if (this.removed.has(id)) throw new Error('This chat was removed.');
     const session = new ChatSession(this.adapter(record.provider), options, this.deps.launch, events => void this.persist(id, events), this.deps.timings);
     this.sessions.set(id, session);
     return session;
@@ -172,11 +234,12 @@ export class ChatManager {
       const patch: Partial<ChatRecord> = {};
       const session = events.find((event): event is Extract<ChatEvent, { type: 'session' }> => event.type === 'session');
       if (session) patch.providerSessionId = session.providerSessionId;
-      // Claude left plan mode (an approved plan): the next process starts in the mode it is in now.
+      // Claude left plan mode (an approved plan): the next process starts in the mode it is in now. A chat on the user's
+      // own settings stays on them.
       const mode = session?.permissionMode;
-      if (mode && (claudePermissionModes as readonly string[]).includes(mode)) {
+      if (mode && mode !== 'plan' && (claudePermissionModes as readonly string[]).includes(mode)) {
         const current = await this.deps.store.get(id);
-        if (current?.provider === 'claude' && current.permissionMode !== mode) patch.permissionMode = mode as ClaudePermissionMode;
+        if (current?.provider === 'claude' && current.permissionMode === 'plan') patch.permissionMode = mode as ClaudePermissionMode;
       }
       const user = events.find((event): event is Extract<ChatEvent, { type: 'user' }> => event.type === 'user');
       if (user && !this.titled.has(id)) {
@@ -257,6 +320,12 @@ export class ChatManager {
     return result;
   }
 
+  /** The folder a chat may be reviewed in: its own, and only while that folder is trusted. */
+  async reviewFolder(id: string): Promise<string> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra.');
+    return record.cwd;
+  }
   /** The user closed the terminal they opened this chat in: the chat can run here again (it resumes what they did). */
   terminalClosed(id: string): void { this.inTerminal.delete(id); }
 
@@ -282,7 +351,7 @@ export class ChatManager {
   stop(id: string): void { this.sessions.get(id)?.stop(); }
 
   /** Changes model, effort or permission mode for the chat's next turn. */
-  async configure(id: string, requested: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }): Promise<ChatRecord> {
+  async configure(id: string, requested: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }): Promise<ChatRecord> {
     // An empty model or effort goes back to the CLI's default.
     const change = Object.fromEntries(Object.entries(requested).map(([key, value]) => [key, value === '' ? undefined : value])) as typeof requested;
     const record = await this.deps.store.update(id, change);
@@ -291,10 +360,14 @@ export class ChatManager {
       if (change.model && Object.keys(change).length === 1) session.setModel(change.model);
       else session.reconfigure(change);
     }
+    // A process ended for the new settings starts again ahead of the next message.
+    if (this.warmed === id) this.warm(id, record);
     return record;
   }
 
   async remove(id: string): Promise<void> {
+    this.removed.add(id);
+    if (this.warmed === id) this.warmed = undefined;
     this.sessions.get(id)?.close();
     this.sessions.delete(id);
     await this.deps.store.remove(id);

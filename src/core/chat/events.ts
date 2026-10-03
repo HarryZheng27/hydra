@@ -47,11 +47,20 @@ export type ChatAnswer =
   | { kind: 'question'; answers: Record<string, string> }
   | { kind: 'plan'; approve: boolean; feedback?: string };
 
-/** The permission modes a chat may use. Bypass and full access are excluded in v1. */
-export const claudePermissionModes = ['default', 'acceptEdits', 'plan'] as const;
+/**
+ * The permission modes a chat may use. `settings` passes no mode, so Claude Code follows the user's own settings
+ * (their `defaultMode` and rules), as it does outside Hydra. Bypass is excluded.
+ */
+export const claudePermissionModes = ['settings', 'auto', 'default', 'acceptEdits', 'plan'] as const;
 export type ClaudePermissionMode = typeof claudePermissionModes[number];
 export const codexSandboxes = ['read-only', 'workspace-write'] as const;
 export type CodexSandbox = typeof codexSandboxes[number];
+/**
+ * Who answers a Codex chat's approvals: `settings` leaves it to the user's own Codex config (its approval policy and
+ * reviewer, such as Codex's auto-review); `ask` sends every one to the user in Hydra.
+ */
+export const codexApprovalModes = ['settings', 'ask'] as const;
+export type CodexApprovals = typeof codexApprovalModes[number];
 
 /** What a chat is started with. Model and effort are checked against what the CLI offers before use. */
 export interface ChatOptions {
@@ -62,10 +71,17 @@ export interface ChatOptions {
   effort?: string;
   permissionMode?: ClaudePermissionMode;
   sandbox?: CodexSandbox;
+  /** Codex only; `ask` when unset. */
+  approvals?: CodexApprovals;
   /** Set to resume: the provider's session or thread id from the store. */
   resume?: string;
   /** Claude only: the session id to start a new chat with. */
   sessionId?: string;
+  /**
+   * Extra CLI arguments, for the live checks' isolation from the user's own setup (scripts/app-live/chat.mjs). The
+   * app never sets them, and no IPC payload can.
+   */
+  extraArgs?: string[];
 }
 
 /** An image the user attached: PNG, JPEG, GIF or WebP, base64, at most 5 MB decoded. */

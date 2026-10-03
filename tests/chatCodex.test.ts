@@ -128,6 +128,7 @@ test('Codex: a thread that comes back without approvals for the user, or with mo
   ]) {
     const adapter = new CodexAdapter();
     adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex' });
+    adapter.send('hi'); // the thread is asked for with the first message
     const { events } = adapter.feed(JSON.stringify({ id: 3, result }));
     assert.ok(events.some(event => event.type === 'error' && event.fatal), JSON.stringify(result));
     assert.ok(!events.some(event => event.type === 'session'));
@@ -139,9 +140,10 @@ test('Codex: write access stays off until its live check passes, and the model c
   const adapter = new CodexAdapter();
   adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', resume: '01a0fe38-af75-7372-aab6-eecfb1837dd5' });
   adapter.feed(JSON.stringify({ id: 1, result: {} }));
-  adapter.feed(JSON.stringify({ id: 2, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  adapter.feed(JSON.stringify({ id: 2, result: { data: [] } }));
   adapter.setModel('gpt-6-sol');
-  const turn = JSON.parse(adapter.send('hi')[0]!);
+  assert.equal(JSON.parse(adapter.send('hi')[0]!).method, 'thread/resume', 'the thread is resumed with the first message');
+  const turn = JSON.parse(adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } })).replies[0]!);
   assert.equal(turn.method, 'turn/start');
   assert.equal(turn.params.model, 'gpt-6-sol');
   assert.equal(turn.params.sandboxPolicy, undefined);
@@ -171,7 +173,8 @@ test('Codex arguments and thread options: read-only, approvals to the user, and 
   assert.throws(() => codexArguments({ provider: 'codex', cwd: '/', executable: 'codex', sandbox: 'danger-full-access' as never }), /isn't allowed/);
   const adapter = new CodexAdapter();
   const lines = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', sandbox: 'read-only', model: 'gpt-6-luna', effort: 'low' }).map(line => JSON.parse(line));
-  const thread = lines.find(line => line.method === 'thread/start');
+  assert.ok(!lines.some(line => line.method === 'thread/start'), 'no thread until a message is sent');
+  const thread = adapter.send('hi').map(line => JSON.parse(line)).find(line => line.method === 'thread/start');
   assert.equal(thread.params.sandbox, 'read-only', 'a thread always starts read-only');
   assert.equal(thread.params.approvalsReviewer, 'user');
   assert.equal(thread.params.approvalPolicy, 'on-request');
@@ -201,4 +204,78 @@ test('Codex: other server requests are refused, and approval-looking text is onl
   assert.deepEqual(adapter.pending(), []);
   assert.equal(adapter.feed('not json').events[0]!.type, 'error');
   void path;
+});
+
+test('Codex: "your settings" leaves approvals to the user\'s config (its auto-review, say), still read-only', () => {
+  const adapter = new CodexAdapter();
+  adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', approvals: 'settings' });
+  const thread = adapter.send('hi').map(line => JSON.parse(line)).find(line => line.method === 'thread/start');
+  assert.equal(thread.params.approvalsReviewer, undefined);
+  assert.equal(thread.params.approvalPolicy, undefined);
+  assert.equal(thread.params.sandbox, 'read-only');
+  const { events } = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: { type: 'readOnly' } } }));
+  const session = events.find(event => event.type === 'session');
+  assert.ok(session && session.type === 'session' && session.permissionMode === 'on-request · auto_review', 'the reviewer Codex chose is reported');
+  const wider = new CodexAdapter();
+  wider.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', approvals: 'settings' });
+  wider.send('hi');
+  const refused = wider.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, approvalsReviewer: 'auto_review', sandbox: { type: 'workspaceWrite' } } }));
+  assert.ok(refused.events.some(event => event.type === 'error' && event.fatal), 'more than read-only still stops the chat');
+  assert.throws(() => codexArguments({ provider: 'codex', cwd: '/', executable: 'codex', approvals: 'never' as never }), /isn't allowed/);
+});
+
+test('Codex: a process started ahead asks for no thread; a model the user\'s config names that Codex doesn\'t offer falls back to its default', () => {
+  const adapter = new CodexAdapter();
+  const started = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex' }).map(line => JSON.parse(line));
+  assert.deepEqual(started.map(line => line.method), ['initialize', 'initialized', 'model/list'], 'no empty thread in the user\'s Codex history');
+  adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.feed(JSON.stringify({ id: 2, result: { data: [
+    { id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'medium' }] },
+    { id: 'gpt-6-sol', displayName: 'GPT-6 Sol', isDefault: false, supportedReasoningEfforts: [{ reasoningEffort: 'medium' }] },
+  ] } }));
+  assert.equal(JSON.parse(adapter.send('hi')[0]!).method, 'thread/start');
+  const ready = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, model: 'gpt-6.1-sol', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.ok(ready.events.some(event => event.type === 'error' && !event.fatal && /doesn't offer gpt-6\.1-sol/.test(event.message)), 'it says so');
+  const session = ready.events.find(event => event.type === 'session');
+  assert.ok(session && session.type === 'session' && session.model === 'gpt-6-astra');
+  const turn = JSON.parse(ready.replies[0]!);
+  assert.equal(turn.method, 'turn/start');
+  assert.equal(turn.params.model, 'gpt-6-astra', 'the turn runs on the default model');
+});
+
+test('Codex: a resumed chat checks its model too, and a failed turn\'s error shows once, readable', () => {
+  const adapter = new CodexAdapter();
+  const started = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', resume: 't-1' }).map(line => JSON.parse(line));
+  assert.ok(started.some(line => line.method === 'model/list'), 'the model list on resume as well');
+  adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.feed(JSON.stringify({ id: 2, result: { data: [{ id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: true, supportedReasoningEfforts: [] }] } }));
+  adapter.send('hi');
+  const ready = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, model: 'gpt-6.1-sol', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.equal(JSON.parse(ready.replies[0]!).params.model, 'gpt-6-astra', 'the resumed chat falls back too');
+  const raw = JSON.stringify({ type: 'error', status: 400, error: { type: 'invalid_request_error', message: 'That model is not supported.' } });
+  const notice = adapter.feed(JSON.stringify({ method: 'error', params: { threadId: 't-1', error: { message: raw }, willRetry: false } }));
+  assert.deepEqual(notice.events.map(event => event.type === 'error' && event.message), ['That model is not supported.']);
+  const done = adapter.feed(JSON.stringify({ method: 'turn/completed', params: { threadId: 't-1', turn: { id: 'x', status: 'failed', error: { message: raw } } } }));
+  assert.deepEqual(done.events.map(event => event.type), ['done'], 'not shown a second time');
+});
+
+test('Codex: the fallback holds whichever comes back first, the thread or the model list; a model Codex hides still runs', () => {
+  const adapter = new CodexAdapter();
+  adapter.start({ provider: 'codex', cwd: 'C:\repo', executable: 'codex' });
+  adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.send('hi');
+  const thread = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, model: 'gpt-6.1-sol', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.deepEqual(thread.replies, [], 'the turn waits for the model list');
+  const list = adapter.feed(JSON.stringify({ id: 2, result: { data: [{ id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: true, supportedReasoningEfforts: [] }, { id: 'gpt-old', hidden: true, isDefault: false }] } }));
+  assert.ok(list.events.some(event => event.type === 'error' && /doesn't offer gpt-6\.1-sol/.test(event.message)));
+  assert.equal(JSON.parse(list.replies[0]!).params.model, 'gpt-6-astra');
+
+  const hidden = new CodexAdapter();
+  hidden.start({ provider: 'codex', cwd: 'C:\repo', executable: 'codex' });
+  hidden.feed(JSON.stringify({ id: 1, result: {} }));
+  hidden.feed(JSON.stringify({ id: 2, result: { data: [{ id: 'gpt-6-astra', isDefault: true }, { id: 'gpt-old', hidden: true, isDefault: false }] } }));
+  hidden.send('hi');
+  const ready = hidden.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-2' }, model: 'gpt-old', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.ok(!ready.events.some(event => event.type === 'error'), 'a hidden model Codex knows is left alone');
+  assert.equal(JSON.parse(ready.replies[0]!).params.model, undefined);
 });

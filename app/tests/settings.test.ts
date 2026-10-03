@@ -85,7 +85,7 @@ test('CLI paths and projects come only from main\'s own pickers, never from the 
       pickExecutable: async provider => { picked.push(provider); return nextFile; },
       applyTheme: () => undefined,
       checkSetup: async () => { throw new Error('not used'); },
-      signIn: async () => ({ started: false }),
+      signIn: async () => ({ signedIn: false }),
       confirmTrust: async () => false,
       chats: {} as never,
     });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatEvent, ChatEventsMessage, ChatRecord, OnboardingReport, Project } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -47,6 +47,7 @@ export function App() {
   const [settled, setSettled] = useState<Record<string, number>>({});
   /** Chats open in a terminal the user started. */
   const [inTerminal, setInTerminal] = useState<Record<string, boolean>>({});
+  const [defaults, setDefaults] = useState<Record<string, ChatDefaults>>({});
   /** Pushes that arrive while a chat's log is being read, merged once it is in. */
   const opening = useRef(new Map<string, ChatEventsMessage[]>());
   const reopen = useRef<(id: string) => void>(() => undefined);
@@ -89,6 +90,11 @@ export function App() {
     try { await run(window.hydra.checkSetup(refresh), setSetup); } finally { setChecking(false); }
   }
   const setupPanel = <Setup report={setup} checking={checking} onCheck={() => void checkSetup(true)} onSignIn={provider => window.hydra.signIn(provider)} />;
+  /** The latest chats, newest first, for the home screen. */
+  const recents = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
+    id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
+    project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
+  }));
   const afterCliChange = (next: AppSettings) => { setSettings(next); void checkSetup(false); };
 
   const sidebarOpen = state?.sidebarOpen ?? true;
@@ -103,6 +109,14 @@ export function App() {
     setState(next);
     if (picked) setView({ kind: 'project', id: picked });
   });
+  /** Clone a repo: main asks where it goes, clones it, and the clone opens as a project. Errors show in the banner. */
+  const cloneRepo = async (url: string) => {
+    try {
+      const { state: next, picked } = await window.hydra.cloneRepo(url);
+      setState(next);
+      if (picked) setView({ kind: 'project', id: picked });
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
   const chat = view.kind === 'chat' ? chats.find(c => c.id === view.id) : undefined;
   const project = view.kind === 'project' ? state?.projects.find(p => p.id === view.id)
     : chat ? state?.projects.find(p => samePath(p.path, chat.cwd)) : undefined;
@@ -111,7 +125,7 @@ export function App() {
     // One open at a time per chat: a second request while one runs only brings it to the front.
     if (opening.current.has(id)) { if (show) setView({ kind: 'chat', id }); return; }
     opening.current.set(id, []);
-    void run(window.hydra.openChat(id), opened => {
+    void run(window.hydra.openChat(id, !show), opened => {
       let events: ChatEvent[] = opened.log.map(entry => entry.event);
       let gap = false;
       for (const message of opening.current.get(id) ?? []) { const merged = mergePush(events, message); if (merged) events = merged; else gap = true; }
@@ -120,6 +134,7 @@ export function App() {
       setChatEvents(current => ({ ...current, [id]: events }));
       setSettled(current => ({ ...current, [id]: opened.running ? 0 : opened.log.length }));
       setInTerminal(current => ({ ...current, [id]: opened.inTerminal }));
+      setDefaults(current => ({ ...current, [id]: opened.defaults }));
       if (show) setView({ kind: 'chat', id });
     }).finally(() => opening.current.delete(id));
   };
@@ -137,9 +152,11 @@ export function App() {
       setChatEvents(events => ({ ...events, [record.id]: [] }));
       setSettled(current => ({ ...current, [record.id]: 0 }));
       setView({ kind: 'chat', id: record.id });
+      // Opening it starts Claude Code now, while the user types, and brings the user's own defaults.
+      openChat(record.id);
     });
   };
-  const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan'; sandbox?: 'read-only' | 'workspace-write' }) =>
+  const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }) =>
     void run(window.hydra.configureChat(id, Object.fromEntries(Object.entries(change).map(([key, value]) => [key, value ?? ''])) as typeof change), record => setChats(list => list.map(c => (c.id === record.id ? record : c))));
 
   return (
@@ -151,7 +168,8 @@ export function App() {
             projects={state.projects}
             chats={chats}
             view={view}
-            onNewChat={() => (project ? void newChat(project) : setView({ kind: 'home' }))}
+            // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
+            onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
             onOpenChat={openChat}
             onOpenProject={id => setView({ kind: 'project', id })}
             onAddProject={pickProject}
@@ -161,19 +179,20 @@ export function App() {
         )}
         <main className="main">
           {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}
-          {error && <div className="banner error" role="alert">{error}</div>}
+          {error && <div className="banner error" role="alert">{error}{/Your agents/.test(error) && <> <button className="link" onClick={() => setView({ kind: 'settings' })}>Open Your agents</button></>}</div>}
           {view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
-              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0}
+              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]}
                   onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
+                  onOpenSettings={() => setView({ kind: 'settings' })}
                   onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}
                   inTerminal={!!inTerminal[chat.id]}
                   onTerminalClosed={() => void run(window.hydra.terminalClosed(chat.id), () => setInTerminal(current => ({ ...current, [chat.id]: false })))}
                   onAnswer={(requestId: string, answer: ChatAnswer) => window.hydra.answer(chat.id, requestId, answer).catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); throw e; })}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
                   onConfigure={change => configure(chat.id, change)} />
-              : <EmptyState project={project} onPickFolder={pickProject} onNewChat={(target, provider) => void newChat(target, provider)} setup={project ? undefined : setupPanel} />}
+              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} />}
         </main>
       </div>
     </div>

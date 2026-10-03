@@ -206,3 +206,27 @@ test('Claude: text that looks like an approval is only text; requests come only 
   const assistant = adapter.feed(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Approve? [Allow] [Deny]' }] } }));
   assert.deepEqual(assistant.events, []);
 });
+
+test('Claude: "your settings" passes no permission mode, so the user\'s own defaultMode and rules decide; auto can be chosen', () => {
+  const id = randomUUID();
+  const own = claudeArguments({ provider: 'claude', cwd: '/', executable: 'claude', sessionId: id, permissionMode: 'settings' });
+  assert.ok(!own.includes('--permission-mode'));
+  assert.deepEqual(own.slice(own.indexOf('--permission-prompt-tool'), own.indexOf('--permission-prompt-tool') + 2), ['--permission-prompt-tool', 'stdio'], 'what Claude still asks comes to Hydra');
+  const auto = claudeArguments({ provider: 'claude', cwd: '/', executable: 'claude', sessionId: id, permissionMode: 'auto' });
+  assert.equal(auto[auto.indexOf('--permission-mode') + 1], 'auto');
+  const unset = claudeArguments({ provider: 'claude', cwd: '/', executable: 'claude', sessionId: id });
+  assert.equal(unset[unset.indexOf('--permission-mode') + 1], 'default', 'the core\'s own default still asks');
+});
+
+test('Claude: a chat that Claude reports in bypass permissions (from the user\'s or a project\'s settings) stops before any turn', () => {
+  const fromInitialize = new ClaudeAdapter();
+  fromInitialize.start();
+  const reply = fromInitialize.feed(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'x', response: { commands: [], current_permission_mode: 'bypassPermissions' } } }));
+  assert.ok(reply.events.some(event => event.type === 'error' && event.fatal), 'the initialize reply');
+  const fromInit = new ClaudeAdapter();
+  const init = fromInit.feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: randomUUID(), permissionMode: 'bypassPermissions' }));
+  assert.ok(init.events.some(event => event.type === 'error' && event.fatal), 'system/init');
+  assert.ok(!init.events.some(event => event.type === 'session'));
+  const fine = new ClaudeAdapter().feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: randomUUID(), permissionMode: 'auto' }));
+  assert.ok(!fine.events.some(event => event.type === 'error'), 'auto runs');
+});

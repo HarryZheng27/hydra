@@ -9,8 +9,10 @@ import { readFile } from 'node:fs/promises';
 import { CHAT_EVENTS, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
+import { changedPaths, openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
-import { onboardingReport, openSignIn } from './onboarding';
+import { onboardingReport, signIn, stopSignIns } from './onboarding';
+import { cloneRepo } from './clone';
 import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
@@ -32,8 +34,8 @@ function confirmExternal(contents: WebContents, url: string): void {
   }, contents);
 }
 
-async function pickFolder(): Promise<string | undefined> {
-  const options = { title: 'Open a project folder', properties: ['openDirectory' as const, 'dontAddToRecent' as const] };
+async function pickFolder(purpose: 'project' | 'clone' = 'project'): Promise<string | undefined> {
+  const options = { title: purpose === 'clone' ? 'Choose where to put the repository' : 'Open a project folder', properties: ['openDirectory' as const, 'dontAddToRecent' as const] };
   const win = getMainWindow();
   const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return result.canceled ? undefined : result.filePaths[0];
@@ -94,9 +96,11 @@ export function start(): void {
   const chats = new ChatManager({
     store: chatStore,
     launch: nodeLaunch(),
+    warm: true,
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),
+    cliConfig: provider => readFile(provider === 'claude' ? providerPaths().claudeSettings : providerPaths().codexConfig, 'utf8').catch(() => undefined),
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
     push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
   });
@@ -106,6 +110,7 @@ export function start(): void {
     if (flushed) return;
     event.preventDefault();
     try { chats.closeAll(); } catch { /* quit anyway */ }
+    try { stopSignIns(); } catch { /* quit anyway */ }
     const timeout = new Promise(resolve => setTimeout(resolve, 5000));
     void Promise.race([chatStore.flush().catch(() => undefined), timeout]).finally(() => { flushed = true; app.quit(); });
   });
@@ -113,14 +118,16 @@ export function start(): void {
     info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
     settings,
     state,
-    pickFolder: () => pickFolder(),
+    pickFolder: purpose => pickFolder(purpose),
+    cloneRepo: (url, parent) => cloneRepo(url, parent),
     pickExecutable: provider => pickExecutable(provider),
     applyTheme,
     // The checks run in user data, never a project folder, so no project's files are in reach.
     checkSetup: cliPaths => onboardingReport(cliPaths, userData),
-    signIn: (provider, configured) => openSignIn(provider, configured, userData),
+    signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     chats,
+    review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
   });
 
   app.on('window-all-closed', () => app.quit());

@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, checkImage, trustedProjects } from '../src/main/chats';
+import { ChatManager, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
 import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
@@ -223,19 +223,24 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
   const dir = scratch();
   try {
     let config = 'model = "gpt-6-luna"\n';
+    let reads = 0;
     const pushed: ChatEvent[] = [];
     const { starts, launch } = fakeLaunch();
-    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async () => 'codex.exe', trusted: async () => true, push: (_id, events) => pushed.push(...events), codexConfig: async () => config });
+    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async () => 'codex.exe', trusted: async () => true, push: (_id, events) => pushed.push(...events), codexConfig: async () => { reads++; return config; } });
+    // Waits for Hydra to read Codex's config, rather than for a fixed time (a loaded machine is slower).
+    const readsReach = async (count: number) => { for (let i = 0; i < 500 && reads < count; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(reads >= count, `Codex's config read ${reads} times, expected ${count}`); };
     const chat = await manager.create({ cwd: dir, provider: 'codex' });
     const thread = '01a0fe38-af75-7372-aab6-eecfb1837dd5';
     const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
     const notice = () => pushed.some(event => event.type === 'error' && /as trusted in your/.test(event.message));
     const turn = async (id: string, change: string) => {
-      await new Promise(resolve => setTimeout(resolve, 150)); // Codex's config is read when the turn starts
+      const before = reads;
+      await readsReach(before + 1); // Codex's config is read when the turn starts
       config += change;
       say({ method: 'turn/started', params: { threadId: thread, turn: { id } } });
       say({ method: 'turn/completed', params: { threadId: thread, turn: { id, status: 'completed' } } });
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await readsReach(before + 2); // and again when it ends
+      await new Promise(resolve => setTimeout(resolve, 50));
     };
     await manager.send(chat.id, 'one');
     say({ id: 3, result: { thread: { id: thread }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } });
@@ -330,7 +335,7 @@ test('after Open in terminal, the chat sends nothing until the user says the ter
     await store.update(chat.id, { providerSessionId: '--dangerously-bypass-approvals-and-sandbox' });
     await new Promise(resolve => setTimeout(resolve, 50));
     manager.closeAll();
-    const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined, openConsole: async () => ({ started: true }) });
+    const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined });
     await assert.rejects(fresh.openTerminal(chat.id), /session id isn't one Hydra can pass on/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -349,4 +354,82 @@ test('approving a plan takes the chat out of plan mode, so a later process doesn
     assert.equal((await store.get(chat.id))?.permissionMode, 'default');
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('new chats follow the user\'s own CLI settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
+  const dir = scratch();
+  try {
+    const launched = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined, warm: true });
+    const first = await manager.create({ cwd: dir, provider: 'claude' });
+    assert.equal(first.permissionMode, 'settings');
+    const codex = await manager.create({ cwd: dir, provider: 'codex' });
+    assert.equal(codex.approvals, 'settings');
+    assert.equal(codex.sandbox, 'read-only');
+    await manager.open(first.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(launched.starts.length, 1, 'the Claude CLI started when the chat opened');
+    assert.ok(!launched.starts[0]!.args.includes('--permission-mode'), 'your settings: no mode passed');
+    const killed: number[] = [];
+    const watch = (index: number) => { const exit = launched.starts[index]!.handlers.exit; launched.starts[index]!.handlers.exit = code => { killed.push(index); exit(code); }; };
+    watch(0);
+    await manager.open(codex.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(launched.starts.length, 2, 'a Codex chat\'s app-server starts ahead too');
+    assert.ok(!launched.starts[1]!.written.some(line => line.includes('thread/')), 'but asks for no thread until a message');
+    assert.deepEqual(killed, [0], 'the chat warmed before ended when another was opened');
+    watch(1);
+    const second = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(second.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(launched.starts.length, 3);
+    assert.deepEqual(killed, [0, 1]);
+    await manager.send(second.id, 'hi');
+    assert.equal(launched.starts.length, 3, 'the message used the started process');
+    // A plan approval moves a plan-mode chat out of plan mode; a chat on the user's settings stays on them.
+    launched.starts[2]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', permissionMode: 'auto', session_id: second.providerSessionId }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await store.get(second.id))!.permissionMode, 'settings');
+    manager.closeAll();
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('nothing starts ahead for a chat removed, quitting, or opened in the background', async () => {
+  const dir = scratch();
+  try {
+    const launched = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const slowTrust = () => new Promise<boolean>(resolve => setTimeout(() => resolve(true), 15));
+    const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: slowTrust, push: () => undefined, warm: true });
+    const settle = () => new Promise(resolve => setTimeout(resolve, 80));
+    const removed = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(removed.id);
+    await manager.remove(removed.id);
+    await settle();
+    assert.equal(launched.starts.length, 0, 'a chat removed while its CLI was starting');
+
+    const background = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(background.id, { warm: false });
+    await settle();
+    assert.equal(launched.starts.length, 0, 'an open the user doesn\'t see');
+
+    const quitting = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(quitting.id);
+    manager.closeAll();
+    await settle();
+    assert.equal(launched.starts.length, 0, 'quit began while the CLI was starting');
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the composer shows the user\'s own model, effort and mode, read from their CLI settings and nothing else', () => {
+  assert.deepEqual(claudeDefaults(JSON.stringify({ model: 'opus', effortLevel: 'medium', permissions: { defaultMode: 'auto', allow: ['Bash'] }, env: { SECRET: 'x' } })), { model: 'opus', effort: 'medium', mode: 'auto' });
+  assert.deepEqual(claudeDefaults(JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } })), {}, 'bypass is never shown as the mode');
+  assert.deepEqual(claudeDefaults('{ broken'), {});
+  assert.deepEqual(claudeDefaults(JSON.stringify({ model: 'opus; rm -rf /' })), {}, 'only a plain model name');
+  assert.deepEqual(codexDefaults('model = "gpt-6.1-sol"\nmodel_reasoning_effort = "medium" # mine\napprovals_reviewer = "auto_review"\n[projects.\'C:\\\\x\']\nmodel = "other"\n'),
+    { model: 'gpt-6.1-sol', effort: 'medium', approvals: 'auto_review' });
+  assert.deepEqual(codexDefaults(undefined), {});
 });

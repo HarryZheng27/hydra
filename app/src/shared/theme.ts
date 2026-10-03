@@ -35,9 +35,16 @@ const sources: Record<string, readonly string[]> = {
   '--warning': ['list.warningForeground'],
   '--ok': ['gitDecoration.addedResourceForeground'],
 };
-export const themeVariableNames = Object.freeze(Object.keys(sources));
+/** The app's own colors, beyond what the IDE's themes give: each theme sets every one (appColors, below). */
+const appOnly = ['--user-bubble'];
+export const themeVariableNames = Object.freeze([...Object.keys(sources), ...appOnly]);
 
 const files: Record<ThemeName, { colors: Record<string, string> }> = { dark: hydraDark, light: hydraLight };
+/** The app's own adjustments on top of the IDE's themes: Hydra Light's sidebar sits closer to the canvas here. */
+const appColors: Record<ThemeName, Record<string, string>> = {
+  dark: { '--user-bubble': '#262626' },
+  light: { '--sidebar-bg': '#F6F8F4', '--user-bubble': '#EEF0EC' },
+};
 
 /** The CSS variables for one theme. Throws if the theme file lacks a color the app needs. */
 export function themeVariables(name: ThemeName): Record<string, string> {
@@ -48,7 +55,7 @@ export function themeVariables(name: ThemeName): Record<string, string> {
     if (!key) throw new Error(`Hydra ${name} has none of ${keys.join(', ')}.`);
     out[variable] = colors[key]!;
   }
-  return out;
+  return { ...out, ...appColors[name] };
 }
 
 /** The theme a setting shows, given whether the system prefers dark. */

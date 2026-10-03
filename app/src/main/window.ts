@@ -18,8 +18,10 @@ export function createMainWindow(distDir: string): BrowserWindow {
   const theme = currentTheme();
   const win = new BrowserWindow({
     title: PRODUCT_NAME,
-    width: 1200,
-    height: 800,
+    // The Claude desktop app's default shape (Nico's ask), measured side by side on his 1280 x 800 screen.
+    width: 1017,
+    height: 734,
+    center: true,
     minWidth: 720,
     minHeight: 480,
     show: false,
@@ -28,6 +30,7 @@ export function createMainWindow(distDir: string): BrowserWindow {
     titleBarStyle: 'hidden',
     titleBarOverlay: { ...titleBarColors(theme), height: TITLE_BAR_HEIGHT },
     autoHideMenuBar: true,
+    icon: path.join(distDir, 'icon.png'),
     webPreferences: hardenedWebPreferences(path.join(distDir, 'preload.cjs')),
   });
   mainWindow = win;
