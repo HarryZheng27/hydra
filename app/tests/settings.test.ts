@@ -86,6 +86,8 @@ test('CLI paths and projects come only from main\'s own pickers, never from the 
       applyTheme: () => undefined,
       checkSetup: async () => { throw new Error('not used'); },
       signIn: async () => ({ started: false }),
+      confirmTrust: async () => false,
+      chats: {} as never,
     });
     assert.deepEqual((await handlers['settings.pickCliPath']({ provider: 'claude' })).cliPaths, { claude: absolute });
     nextFile = undefined;

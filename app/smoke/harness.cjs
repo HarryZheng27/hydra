@@ -26,7 +26,13 @@ app.setPath('appData', appData);
 
 // The confirm and the browser are stand-ins: the app reads electron.dialog and electron.shell when it calls them.
 let confirmAnswer = 1; // Cancel
-electron.dialog.showMessageBox = async (...args) => { const options = args.find(a => a && typeof a === 'object' && 'buttons' in a); report.confirms.push(options.detail); write(); return { response: confirmAnswer, checkboxChecked: false }; };
+report.trustPrompts = [];
+electron.dialog.showMessageBox = async (...args) => {
+  const options = args.find(a => a && typeof a === 'object' && 'buttons' in a);
+  // The folder-trust confirm: the smoke trusts its project folder, as a user would.
+  if (/^Trust /.test(options.message)) { report.trustPrompts.push(`${options.message}\n${options.detail}`); write(); return { response: 0, checkboxChecked: false }; }
+  report.confirms.push(options.detail); write(); return { response: confirmAnswer, checkboxChecked: false };
+};
 electron.dialog.showMessageBoxSync = () => { report.confirms.push('sync'); return 1; };
 electron.shell.openExternal = async url => { report.opened.push(url); write(); };
 // The folder and file pickers are stand-ins too: they answer with what run.mjs passed, and record that main asked.
@@ -114,6 +120,48 @@ async function ipcProbe() {
   result.foreignSender = await foreign.webContents.executeJavaScript(`window.probe.invoke('hydra:call', { channel: 'app.info', payload: null }).then(v => ({ ok: true }), e => ({ ok: false, error: String(e && e.message || e) }))`);
   foreign.destroy();
   return result;
+}
+
+/** Chat helpers over the page, as a user drives it: type, send, click a card's button, wait for a turn to end. */
+function chatDriver(wc) {
+  const ui = expression => wc.executeJavaScript(expression);
+  const until = async (expression, what, ms = 30000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (await ui(expression)) return; await wait(100); }
+    throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner, .chat-error')].map(b => b.textContent).join(' | ')`)}`);
+  };
+  const type = async text => ui(`(() => {
+    const box = document.querySelector('.composer textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, ${JSON.stringify(text)});
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    return 1;
+  })()`);
+  const send = async text => { await type(text); await until(`!document.querySelector('.composer .send').disabled`, 'Send to be ready'); await ui(`document.querySelector('.composer .send').click(); 1`); };
+  const turnEnds = () => ui(`document.querySelectorAll('.turn-end').length`);
+  const click = (selector, label) => ui(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(b => b.textContent.trim() === ${JSON.stringify(label)}).click(), 1`);
+  return { ui, until, send, turnEnds, click };
+}
+
+if (role === 'resume') {
+  // A second run of the app over the same user data: the chat is still listed, and the next message resumes it.
+  void app.whenReady().then(async () => {
+    const win = await new Promise(resolve => { const found = BrowserWindow.getAllWindows()[0]; if (found) resolve(found); else app.once('browser-window-created', (_e, w) => resolve(w)); });
+    const wc = win.webContents;
+    await loaded(wc);
+    const { ui, until, send, turnEnds } = chatDriver(wc);
+    await until(`document.querySelectorAll('.chat-link').length === 1`, 'the saved chat in the sidebar');
+    report.resume = { title: await ui(`document.querySelector('.chat-link').textContent`) };
+    await ui(`document.querySelector('.chat-link').click(); 1`);
+    await until(`!!document.querySelector('.composer textarea')`, 'the chat to open');
+    report.resume.restoredTurnEnds = await turnEnds();
+    report.resume.restoredCards = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);
+    await send('What was the code word? Reply with one word.');
+    await until(`document.querySelectorAll('.turn-end').length > ${report.resume.restoredTurnEnds}`, 'the resumed turn to end');
+    report.resume.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
+    report.resume.reply = await ui(`[...document.querySelectorAll('.msg.assistant')].at(-1)?.textContent ?? ''`);
+    event('done');
+    app.quit();
+  });
 }
 
 if (role === 'first') {
@@ -241,6 +289,37 @@ if (role === 'first') {
     const readJson = name => { try { return JSON.parse(fs.readFileSync(path.join(userData, name), 'utf8')); } catch (e) { return String(e.message); } };
     report.stores = { settings: readJson('settings.json'), state: readJson('state.json'), files: fs.readdirSync(userData) };
     report.consoleErrors = report.console.slice(uiConsoleStart).filter(m => m.level === 'error' || m.level === 3);
+
+    // A chat with Claude Code (the stand-in replaying G1's recorded turns): trust, stream, approve, deny, stop.
+    {
+      const chat = chatDriver(wc);
+      await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
+      await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('New chat'))`, 'the project view');
+      report.chat = { trustedBefore: await ui(`document.querySelector('.empty .hint')?.textContent ?? ''`) };
+      await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('New chat')).click(); 1`);
+      await chat.until(`!!document.querySelector('.composer textarea')`, 'the new chat');
+      await chat.send('Use the Bash tool to run exactly: mkdir g1-bash-dir');
+      await chat.until(`!!document.querySelector('.card.approval .card-actions')`, 'the first approval card');
+      report.chat.firstCard = await ui(`document.querySelector('.card.approval .card-title').textContent`);
+      await chat.click('.card.approval .card-actions button', 'Allow');
+      await chat.until(`document.querySelectorAll('.turn-end').length >= 1`, 'turn one to end');
+      await chat.send('Use the Write tool to create denied.txt containing the word no.');
+      await chat.until(`document.querySelectorAll('.card.approval .card-actions').length === 1 && document.querySelectorAll('.card.approval').length === 2`, 'the second approval card');
+      await chat.click('.card.approval .card-actions button', 'Deny');
+      await chat.until(`document.querySelectorAll('.turn-end').length >= 2`, 'turn two to end');
+      await chat.send('Write a 400-word story about a lighthouse keeper.');
+      await chat.until(`!!document.querySelector('.composer .stop')`, 'Stop to appear');
+      await ui(`document.querySelector('.composer .stop').click(); 1`);
+      await chat.until(`document.querySelectorAll('.turn-end').length >= 3`, 'the stopped turn to end');
+      report.chat.outcomes = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);
+      report.chat.turnEnds = await ui(`[...document.querySelectorAll('.turn-end')].map(e => e.className.replace('turn-end', '').trim())`);
+      report.chat.tools = await ui(`[...document.querySelectorAll('details.tool .tool-name')].map(e => e.textContent)`);
+      report.chat.assistantTexts = await ui(`document.querySelectorAll('.msg.assistant').length`);
+      report.chat.title = await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent)`);
+      const chats = path.join(app.getPath('userData'), 'chats');
+      report.chat.files = fs.readdirSync(chats).sort();
+      await shot('chat');
+    }
     event('ready');
     // Wait for run.mjs's second launch to reach this instance, then leave.
     const deadline = Date.now() + 30000;

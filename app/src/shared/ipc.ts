@@ -3,16 +3,27 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
+import type { ChatAnswer, ChatEvent, ChatProvider, ClaudePermissionMode } from '../../../src/core/chat/events';
+import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
+export type { ChatAnswer, ChatEvent, ChatProvider, ChatRecord, ClaudePermissionMode, LogEntry };
+
 export const IPC_TRANSPORT = 'hydra:call';
+/** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
+export const CHAT_EVENTS = 'hydra:chat-events';
+/** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
+export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
+export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean }
+export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode }
+export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode }
 
 export type CliProvider = 'claude' | 'codex';
 export interface AppInfo { name: string; version: string; electron: string; platform: string }
 /** Preferences, in settings.json. CLI paths are machine-only: set from main's file picker, never from a project. */
 export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>> }
-/** A folder the user picked. Chats arrive in G4. */
-export interface Project { id: string; path: string; name: string }
+/** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
+export interface Project { id: string; path: string; name: string; trustedAt?: string }
 /** One provider CLI, as onboarding found it: only `--version` and `--help` were run. */
 export interface ProviderStatus {
   provider: CliProvider; name: string; found: boolean; executable?: string; configured: boolean;
@@ -44,6 +55,16 @@ export interface Channels {
   'onboarding.check': { payload: { refresh: boolean }; result: OnboardingReport };
   /** Opens a console window running the CLI's own sign-in. Nothing is read back. */
   'onboarding.signIn': { payload: { provider: CliProvider }; result: { started: boolean; error?: string } };
+  /** Main asks, in its own dialog, before a folder may run chats; the page only names the project. */
+  'projects.trust': { payload: { id: string }; result: AppState };
+  'chats.list': { payload: null; result: ChatRecord[] };
+  'chats.create': { payload: NewChatRequest; result: ChatRecord };
+  'chats.open': { payload: { id: string }; result: OpenChat };
+  'chats.send': { payload: { id: string; text: string }; result: null };
+  'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
+  'chats.stop': { payload: { id: string }; result: null };
+  'chats.configure': { payload: { id: string; change: ChatSettingsChange }; result: ChatRecord };
+  'chats.remove': { payload: { id: string }; result: null };
 }
 export type Channel = keyof Channels;
 export type Payload<C extends Channel> = Channels[C]['payload'];
@@ -64,6 +85,29 @@ function exactly<T>(checks: { [K in keyof T]: (value: unknown) => boolean }): Va
 const oneOf = (...allowed: unknown[]) => (value: unknown): boolean => allowed.includes(value);
 const isProvider = oneOf('claude', 'codex');
 const isId = (value: unknown): boolean => typeof value === 'string' && /^[0-9a-f-]{8,64}$/.test(value);
+const isRecordValue = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+/** A plain object whose keys are all known, with the required ones present and each passing its check. */
+function shaped<T>(required: Record<string, (value: unknown) => boolean>, optional: Record<string, (value: unknown) => boolean> = {}): Validator<T> {
+  return (value): value is T => {
+    if (!isRecordValue(value)) return false;
+    for (const key of Object.keys(value)) if (!(key in required) && !(key in optional)) return false;
+    for (const [key, check] of Object.entries(required)) if (!Object.prototype.hasOwnProperty.call(value, key) || !check(value[key])) return false;
+    for (const [key, check] of Object.entries(optional)) if (Object.prototype.hasOwnProperty.call(value, key) && !check(value[key])) return false;
+    return true;
+  };
+}
+const isText = (max: number) => (value: unknown): boolean => typeof value === 'string' && value.length <= max;
+const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
+const isEffort = oneOf('low', 'medium', 'high', 'xhigh', 'max');
+const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
+const isRequestId = (value: unknown): boolean => typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
+/** An edited tool input: a JSON object of at most 1 MB. */
+const isToolInput = (value: unknown): boolean => { if (!isRecordValue(value)) return false; try { return JSON.stringify(value).length <= 1_000_000; } catch { return false; } };
+const isAnswers = (value: unknown): boolean => isRecordValue(value) && Object.keys(value).length <= 20 && Object.entries(value).every(([key, answer]) => key.length <= 1000 && typeof answer === 'string' && answer.length <= 4000);
+const isAnswer = (value: unknown): boolean =>
+  shaped({ kind: oneOf('approval'), decision: oneOf('allow', 'deny') }, { updatedInput: isToolInput, message: isText(2000) })(value)
+  || shaped({ kind: oneOf('question'), answers: isAnswers })(value)
+  || shaped({ kind: oneOf('plan'), approve: (v: unknown) => typeof v === 'boolean' }, { feedback: isText(4000) })(value);
 
 /** A payload validator per channel. A channel missing here can't be called. */
 export const validators: { [C in Channel]: Validator<Payload<C>> } = {
@@ -79,6 +123,16 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'projects.remove': exactly<{ id: string }>({ id: isId }),
   'onboarding.check': exactly<{ refresh: boolean }>({ refresh: value => typeof value === 'boolean' }),
   'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
+  'projects.trust': exactly<{ id: string }>({ id: isId }),
+  'chats.list': isNull,
+  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode }),
+  'chats.open': exactly<{ id: string }>({ id: isId }),
+  'chats.send': exactly<{ id: string; text: string }>({ id: isId, text: isText(200_000) }),
+  'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
+  'chats.stop': exactly<{ id: string }>({ id: isId }),
+  // An empty model or effort means the CLI's default.
+  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode }) }),
+  'chats.remove': exactly<{ id: string }>({ id: isId }),
 };
 
 export const channels = Object.freeze(Object.keys(validators) as Channel[]);
@@ -113,4 +167,15 @@ export interface HydraApi {
   removeProject(id: string): Promise<AppState>;
   checkSetup(refresh: boolean): Promise<OnboardingReport>;
   signIn(provider: CliProvider): Promise<{ started: boolean; error?: string }>;
+  trustProject(id: string): Promise<AppState>;
+  listChats(): Promise<ChatRecord[]>;
+  createChat(request: NewChatRequest): Promise<ChatRecord>;
+  openChat(id: string): Promise<OpenChat>;
+  sendMessage(id: string, text: string): Promise<null>;
+  answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
+  stopChat(id: string): Promise<null>;
+  configureChat(id: string, change: ChatSettingsChange): Promise<ChatRecord>;
+  removeChat(id: string): Promise<null>;
+  /** Calls `listener` with each chat's new events; returns a function that stops it. */
+  onChatEvents(listener: (message: ChatEventsMessage) => void): () => void;
 }

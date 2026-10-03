@@ -51,13 +51,18 @@ export class ChatSession {
   get alive(): boolean { return !!this.process; }
   get sessionId(): string | undefined { return this.providerSessionId; }
 
-  /** Queues a message. It is sent when the turn before it ends. */
+  /**
+   * Queues a message. It is sent when the turn before it ends, and its `user` event is emitted then, so each turn's
+   * events follow its own message (a card shown during a turn belongs to that turn).
+   */
   send(text: string, images?: ChatImage[]): void {
     if (this.closed) throw new Error('This chat is closed.');
     this.queue.push({ text, ...(images?.length ? { images } : {}) });
-    this.emit([{ type: 'user', text, ...(images?.length ? { images: images.length } : {}) }]);
     this.pump();
   }
+
+  /** Messages waiting for the current turn to end. */
+  get queued(): number { return this.queue.length; }
 
   answer(id: string, answer: ChatAnswer): void {
     if (!this.adapter || !this.process) throw new Error('This chat isn\'t running.');
@@ -108,8 +113,10 @@ export class ChatSession {
     if (this.turnRunning || !this.queue.length || this.closed) return;
     clearTimeout(this.idleTimer);
     if (!this.process && !this.spawn()) return;
+    // (spawn() reports its own failure; the message isn't shown as sent)
     const turn = this.queue.shift()!;
     this.turnRunning = true;
+    this.emit([{ type: 'user', text: turn.text, ...(turn.images?.length ? { images: turn.images.length } : {}) }]);
     for (const line of this.adapter!.send(turn.text, turn.images)) this.process!.write(line);
   }
 

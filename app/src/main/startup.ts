@@ -1,6 +1,11 @@
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, type WebContents } from 'electron';
 import type { CliProvider } from '../shared/ipc';
+import { ChatStore } from '../../../src/core/chat/store';
+import { nodeLaunch } from '../../../src/core/chat/launch';
+import { findProvider } from '../../../src/core/providers';
+import { CHAT_EVENTS, type Project } from '../shared/ipc';
+import { ChatManager } from './chats';
 import { createHandlers } from './handlers';
 import { onboardingReport, openSignIn } from './onboarding';
 import { identityProblems, PRODUCT_NAME } from './identity';
@@ -39,6 +44,21 @@ async function pickExecutable(provider: CliProvider): Promise<string | undefined
   return result.canceled ? undefined : result.filePaths[0];
 }
 
+/**
+ * The folder-trust confirm (hard rule 6), drawn by main so a page can't fake or skip it. `claude -p` and Codex run a
+ * project's own hooks, MCP servers and commands with no prompt of their own.
+ */
+async function confirmTrust(project: Project): Promise<boolean> {
+  const options = {
+    type: 'warning' as const, buttons: ['Trust this folder', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true, title: PRODUCT_NAME,
+    message: `Trust ${project.name}?`,
+    detail: `${project.path}\n\nChats here run Claude Code or Codex with this project's own settings. Its hooks, MCP servers and commands will run on your computer, with your permissions, and neither tool asks first. Trust only folders whose contents you trust.`,
+  };
+  const win = getMainWindow();
+  const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+  return response === 0;
+}
+
 /** Runs after identity.ts has set the app's paths (main.ts). */
 export function start(): void {
   // Never run with a broken identity: it would write into another folder, possibly the IDE's.
@@ -66,6 +86,24 @@ export function start(): void {
   const userData = app.getPath('userData');
   const settings = createSettingsStore(userData);
   const state = createStateStore(userData);
+  const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  const chatStore = new ChatStore(path.join(userData, 'chats'));
+  const chats = new ChatManager({
+    store: chatStore,
+    launch: nodeLaunch(),
+    executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
+    trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
+    push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
+  });
+  // Before quitting: end every chat's process, then wait for the store to write what it still holds.
+  let flushed = false;
+  app.on('before-quit', event => {
+    if (flushed) return;
+    event.preventDefault();
+    try { chats.closeAll(); } catch { /* quit anyway */ }
+    const timeout = new Promise(resolve => setTimeout(resolve, 5000));
+    void Promise.race([chatStore.flush().catch(() => undefined), timeout]).finally(() => { flushed = true; app.quit(); });
+  });
   const handlers = createHandlers({
     info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
     settings,
@@ -76,6 +114,8 @@ export function start(): void {
     // The checks run in user data, never a project folder, so no project's files are in reach.
     checkSetup: cliPaths => onboardingReport(cliPaths, userData),
     signIn: (provider, configured) => openSignIn(provider, configured, userData),
+    confirmTrust,
+    chats,
   });
 
   app.on('window-all-closed', () => app.quit());

@@ -167,3 +167,16 @@ test('Claude: per-turn cost from its running total, and synthetic replies are sh
   const synthetic = adapter.feed(JSON.stringify({ type: 'assistant', uuid: 'u1', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Set model to Sonnet' }] } }));
   assert.deepEqual(synthetic.events.map(event => event.type === 'text' && event.delta), ['Set model to Sonnet']);
 });
+
+test('a queued message shows as sent when its turn starts, so that turn\'s approvals belong to it', () => {
+  const { cli, session, events } = setup({ idleMs: 10_000, stopGraceMs: 50 });
+  session.send('one');
+  session.send('two');
+  assert.deepEqual(events.filter(event => event.type === 'user').map(event => (event as { text: string }).text), ['one'], 'two waits');
+  cli.say(result());
+  assert.deepEqual(events.filter(event => event.type === 'user').map(event => (event as { text: string }).text), ['one', 'two']);
+  const order = events.map(event => event.type);
+  assert.ok(order.lastIndexOf('done') < order.lastIndexOf('user'), 'turn one ended before message two was shown');
+  assert.equal(session.queued, 0);
+  session.close();
+});
