@@ -27,7 +27,7 @@ export function Connectors() {
   return (
     <div className="connectors">
       <h2>Connectors</h2>
-      <p className="hint">Hydra adds one tool server, <code>hydra</code>, to Claude Code and Codex, so a chat can start heads and plans. It changes nothing else in their settings.</p>
+      <p className="hint">Hydra adds one tool server, <code>hydra</code>, to Claude Code and Codex, so a chat can start heads and plans. Connecting Claude Code also allows that server's tools and adds a hook that tells Hydra when a usage limit is hit; connecting Codex also adds a short note to its AGENTS.md about the tools. Disconnecting removes each of these.</p>
       {!rows && !problem && <p className="hint">Checking…</p>}
       {rows?.map(row => {
         const line = describe(row);

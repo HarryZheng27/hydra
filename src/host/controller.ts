@@ -16,7 +16,7 @@ import { createLeadVerifier, createUserVerifier } from '../core/leadVerification
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from '../core/claudeMem';
 import { installWithFallback } from '../core/openVsx';
 import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, shouldRepairConnection, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
-import { claudeSupportsLimitHook, limitHookGroup, limitHookState, limitHookTargetsExist, type LimitHookGroup } from '../core/claudeLimitHook';
+import { claudeSupportsLimitHook, limitHookGroup, limitHookState, limitHookReachesThisHydra, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
 import { headShellSentence } from '../core/confine';
@@ -1334,8 +1334,8 @@ export class HydraController {
     const text = await read(paths.claudeSettings);
     const state = limitHookState(text, group);
     if (state === 'current') return;
-    // Another Hydra's hook, still installed, tells every Hydra window too: leave it (G5).
-    if (state === 'stale' && limitHookTargetsExist(text)) return;
+    // Another Hydra's hook, still installed and writing where this one reads, tells every Hydra window too: leave it (G5).
+    if (state === 'stale' && limitHookReachesThisHydra(text, group)) return;
     if (state === 'missing') { const claude = await this.claudeForRegistration(); if (!claude || !await this.limitHookFor(claude)) return; }
     await setClaudeLimitHook(paths, group);
     this.host.log(`[limits] ${state === 'stale' ? 'updated' : 'added'} the Claude usage-limit hook`);

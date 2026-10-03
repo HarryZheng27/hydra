@@ -122,7 +122,7 @@ export class HydraProjects {
   private audit?: AuditLog;
   private closing = false;
   /** A controller that is never started, for Connect and Disconnect while no project runs Hydra. */
-  private registration?: Running;
+  private registration?: Promise<Running>;
   /** The trusted projects as they are now (sync), so a controller checks trust and removal against the latest. */
   private latest = new Map<string, Project>();
   constructor(private readonly options: HydraProjectsOptions) {}
@@ -134,12 +134,14 @@ export class HydraProjects {
   private async registrar(): Promise<HydraController> {
     const running = [...this.running.values()].find(candidate => !candidate.controller.disabled);
     if (running) return running.controller;
-    if (!this.registration) {
+    // Built once, even when two clicks ask for it at once.
+    this.registration ??= (async () => {
       const folder = path.join(this.options.userData, 'hydra', 'registration');
       await mkdir(folder, { recursive: true });
-      this.registration = await this.build({ id: 'registration', path: folder, name: 'Hydra', trustedAt: new Date(0).toISOString() });
-    }
-    return this.registration.controller;
+      return this.build({ id: 'registration', path: folder, name: 'Hydra registration', trustedAt: new Date(0).toISOString() });
+    })();
+    this.registration.catch(() => { this.registration = undefined; });
+    return (await this.registration).controller;
   }
   async connections(): Promise<HydraConnection[]> {
     const rows = await (await this.registrar()).helperConnections();
@@ -293,7 +295,8 @@ export class HydraProjects {
       tree.plans = (latest.plans ?? []).map(plan => planCard(plan, latest.planJobs?.[plan.id]));
       notifyTree(tree);
     }
-    const notifyTree = (message: HydraTreeMessage) => this.options.tree?.(message);
+    // Only a running project's cards reach the window: none while it starts, is refused or is stopped.
+    const notifyTree = (message: HydraTreeMessage) => { if (this.running.get(project.id)?.tree === message) this.options.tree?.(message); };
     controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id) });
     return { project, host, controller, lanes, quota, state, tree };
   }
@@ -313,10 +316,10 @@ export class HydraProjects {
     running.tree.owned = !controller.disabled;
     if (controller.disabled) running.tree.error = `Hydra IDE manages ${project.name}, so its heads and plans run there. Close it there to run them here.`;
     else delete running.tree.error;
-    this.options.tree?.(running.tree);
     // Quit began, or the project was removed or untrusted while this started: nothing of it stays.
     if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose(running); return; }
     this.running.set(project.id, running);
+    this.options.tree?.(running.tree);
   }
 
   /** Stops a project's controller. It is no longer running from this call on, so an open right after waits for it. */
@@ -343,6 +346,8 @@ export class HydraProjects {
     running.host.dispose();
     await running.state.flush();
     this.alive.delete(running.controller);
+    // Its cards go from the window, unless it runs again already.
+    if (running.project.id !== 'registration' && !this.running.has(running.project.id)) this.options.tree?.({ projectId: running.project.id, heads: [], plans: [], owned: false });
   }
 
   /** Every project's controller stops: heads, lanes and plans end, discovery records go, ownership is released. */
@@ -351,7 +356,7 @@ export class HydraProjects {
     await Promise.all([...this.starting.values()]);
     await Promise.all([...this.running.keys()].map(id => this.stop(id)));
     await Promise.all([...this.stopping.values()]);
-    if (this.registration) { const registration = this.registration; this.registration = undefined; await this.dispose(registration); }
+    if (this.registration) { const registration = this.registration; this.registration = undefined; await registration.then(running => this.dispose(running), () => undefined); }
     await Promise.all([this.settings?.flush(), this.globalState?.flush(), this.audit?.flush()]);
   }
 }

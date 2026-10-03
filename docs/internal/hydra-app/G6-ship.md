@@ -12,6 +12,7 @@
    - Update `scripts/desktop-installer-test.ps1` and `desktop-upgrade-test.ps1`, the docs ("Hydra IDE"), and a CHANGELOG line.
 2. **App package and installer:**
    - Package the app with G1's fuses.
+   - Claude, Codex and Claude's hook run `hydra-mcp.cjs`, `hydra-cli.cjs` and `hydra-limit-hook.cjs` by path. Unpack them from the asar (`asarUnpack`), and point the registration at the unpacked copies. Prove it with a packaged-build test: the registered bridge answers.
    - `app/installer/hydra-app.iss` adapts `desktop/hydra-wizard.iss`, `hydra-uninstall.iss` and `hydra-update-mode.iss`: a new AppId GUID, a per-user install with no admin, `%LOCALAPPDATA%\Programs\Hydra App`, "Hydra" shortcuts, AppUserModelId `Hydra.App`.
    - The uninstaller runs the app's own uninstall helper, like `src/uninstall.ts`, which removes only this install's Claude and Codex entries.
    - `/HYDRAREMOVEDATA` asks, then removes `%APPDATA%\Hydra App`. It removes the shared storage root only when the IDE isn't installed.
