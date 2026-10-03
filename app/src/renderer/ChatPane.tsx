@@ -1,0 +1,145 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ChatAnswer, ChatEvent, ChatRecord } from '../shared/ipc';
+import { foldEvents, type ChatItem } from './chatModel';
+import { Composer } from './Composer';
+import { Markdown } from './markdown';
+
+interface Props {
+  record: ChatRecord;
+  events: ChatEvent[];
+  onSend(text: string): void;
+  onAnswer(requestId: string, answer: ChatAnswer): void;
+  onStop(): void;
+  onConfigure(change: { model?: string; effort?: string; permissionMode?: 'default' | 'acceptEdits' | 'plan' }): void;
+}
+
+const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
+
+/** One collapsible block for a tool call and its result. Everything in it is text. */
+function ToolBlock({ item }: { item: ChatItem & { kind: 'tool' } }) {
+  const summary = typeof (item.input as { command?: unknown })?.command === 'string' ? String((item.input as { command: string }).command)
+    : typeof (item.input as { file_path?: unknown })?.file_path === 'string' ? String((item.input as { file_path: string }).file_path) : '';
+  return (
+    <details className={`tool ${item.isError ? 'failed' : ''}`}>
+      <summary><span className="tool-name">{item.name}</span>{summary && <span className="tool-summary">{summary}</span>}{item.output === undefined && <span className="tool-state">running…</span>}</summary>
+      <pre className="code"><code>{pretty(item.input)}</code></pre>
+      {item.output !== undefined && <pre className={`code output ${item.isError ? 'error' : ''}`}><code>{item.output || '(no output)'}</code></pre>}
+    </details>
+  );
+}
+
+/** An approval card. It is drawn only for an `approval` event, which only the CLI's structured request produces. */
+function ApprovalCard({ item, active, onAnswer }: { item: ChatItem & { kind: 'request' }; active: boolean; onAnswer: Props['onAnswer'] }) {
+  const event = item.event as Extract<ChatEvent, { type: 'approval' }>;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(() => pretty(event.input));
+  const [problem, setProblem] = useState<string>();
+  const submitEdit = () => {
+    try { const value = JSON.parse(draft) as unknown; if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The input must be a JSON object.'); onAnswer(event.id, { kind: 'approval', decision: 'allow', updatedInput: value }); }
+    catch (error) { setProblem(error instanceof Error ? error.message : String(error)); }
+  };
+  return (
+    <section className="card approval" data-request={event.id} aria-label={`Permission for ${event.tool}`}>
+      <div className="card-title">Allow <strong>{event.tool}</strong>?</div>
+      {event.description && <div className="card-detail">{event.description}</div>}
+      {editing ? <textarea className="edit-input" value={draft} onChange={e => setDraft(e.target.value)} spellCheck={false} aria-label="Edited input" /> : <pre className="code"><code>{pretty(event.input)}</code></pre>}
+      {problem && <div className="error">{problem}</div>}
+      {item.resolved ? <div className={`card-outcome ${item.resolved.outcome}`}>{item.resolved.outcome === 'allowed' ? 'Allowed' : item.resolved.outcome === 'denied' ? 'Denied' : 'No longer needed'}{item.resolved.by === 'hydra' ? ' by Hydra' : ''}</div>
+        : active && (
+          <div className="card-actions">
+            {editing ? <><button className="primary small" onClick={submitEdit}>Allow with these changes</button><button onClick={() => setEditing(false)}>Cancel</button></>
+              : <><button className="primary small" onClick={() => onAnswer(event.id, { kind: 'approval', decision: 'allow' })}>Allow</button>
+                <button onClick={() => onAnswer(event.id, { kind: 'approval', decision: 'deny', message: 'The user denied this.' })}>Deny</button>
+                {event.choices.includes('edit') && <button onClick={() => setEditing(true)}>Edit…</button>}</>}
+          </div>
+        )}
+    </section>
+  );
+}
+
+function QuestionCard({ item, active, onAnswer }: { item: ChatItem & { kind: 'request' }; active: boolean; onAnswer: Props['onAnswer'] }) {
+  const event = item.event as Extract<ChatEvent, { type: 'question' }>;
+  const [chosen, setChosen] = useState<Record<string, string[]>>({});
+  const toggle = (question: string, label: string, multi: boolean) => setChosen(current => ({ ...current, [question]: multi ? (current[question]?.includes(label) ? current[question]!.filter(l => l !== label) : [...(current[question] ?? []), label]) : [label] }));
+  const complete = event.questions.every(q => chosen[q.question]?.length);
+  return (
+    <section className="card question" data-request={event.id}>
+      {event.questions.map(q => (
+        <fieldset key={q.question} disabled={!active || !!item.resolved}>
+          <legend>{q.header ? <span className="chip">{q.header}</span> : null}{q.question}</legend>
+          {q.options.map(option => (
+            <label key={option.label} className="option">
+              <input type={q.multiSelect ? 'checkbox' : 'radio'} name={`${event.id}:${q.question}`} checked={!!chosen[q.question]?.includes(option.label)} onChange={() => toggle(q.question, option.label, !!q.multiSelect)} />
+              <span>{option.label}{option.description && <span className="option-detail"> · {option.description}</span>}</span>
+            </label>
+          ))}
+        </fieldset>
+      ))}
+      {item.resolved ? <div className="card-outcome">Answered</div>
+        : active && <div className="card-actions"><button className="primary small" disabled={!complete} onClick={() => onAnswer(event.id, { kind: 'question', answers: Object.fromEntries(Object.entries(chosen).map(([q, labels]) => [q, labels.join(', ')])) })}>Answer</button></div>}
+    </section>
+  );
+}
+
+function PlanCard({ item, active, onAnswer }: { item: ChatItem & { kind: 'request' }; active: boolean; onAnswer: Props['onAnswer'] }) {
+  const event = item.event as Extract<ChatEvent, { type: 'plan' }>;
+  const [feedback, setFeedback] = useState('');
+  return (
+    <section className="card plan" data-request={event.id}>
+      <div className="card-title">Plan</div>
+      <Markdown text={event.plan} />
+      {item.resolved ? <div className={`card-outcome ${item.resolved.outcome}`}>{item.resolved.outcome === 'allowed' ? 'Approved' : 'Sent back'}</div>
+        : active && (
+          <div className="card-actions column">
+            <textarea value={feedback} onChange={e => setFeedback(e.target.value)} placeholder="What should change? (optional)" aria-label="Plan feedback" />
+            <div className="card-actions">
+              <button className="primary small" onClick={() => onAnswer(event.id, { kind: 'plan', approve: true })}>Approve plan</button>
+              <button onClick={() => onAnswer(event.id, { kind: 'plan', approve: false, ...(feedback.trim() ? { feedback: feedback.trim() } : {}) })}>Keep planning</button>
+            </div>
+          </div>
+        )}
+    </section>
+  );
+}
+
+function usageLine(item: ChatItem & { kind: 'turn-end' }): string {
+  const parts: string[] = [];
+  if (item.status === 'interrupted') parts.push('Stopped');
+  if (item.status === 'error') parts.push('Ended with an error');
+  const usage = item.usage;
+  if (usage?.inputTokens !== undefined || usage?.outputTokens !== undefined) parts.push(`${(usage.inputTokens ?? 0) + (usage.cachedTokens ?? 0)} in · ${usage.outputTokens ?? 0} out`);
+  if (usage?.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
+  if (item.detail) parts.push(item.detail);
+  return parts.join(' · ');
+}
+
+export function ChatPane({ record, events, onSend, onAnswer, onStop, onConfigure }: Props) {
+  const view = useMemo(() => foldEvents(events), [events]);
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
+  return (
+    <section className="chat" aria-label={record.title}>
+      <div className="transcript" role="log" aria-live="polite">
+        {view.items.map(item => {
+          switch (item.kind) {
+            case 'user': return <div key={item.key} className="msg user"><div className="bubble">{item.text}{item.images ? <span className="chip">{item.images} image{item.images > 1 ? 's' : ''}</span> : null}</div></div>;
+            case 'text': return <div key={item.key} className="msg assistant"><Markdown text={item.text} /></div>;
+            case 'thinking': return <details key={item.key} className="thinking"><summary>Thinking</summary><div className="thinking-text">{item.text}</div></details>;
+            case 'tool': return <ToolBlock key={item.key} item={item} />;
+            case 'request': {
+              const active = view.pending.includes(item.event.id);
+              if (item.event.type === 'approval') return <ApprovalCard key={item.key} item={item} active={active} onAnswer={onAnswer} />;
+              if (item.event.type === 'question') return <QuestionCard key={item.key} item={item} active={active} onAnswer={onAnswer} />;
+              return <PlanCard key={item.key} item={item} active={active} onAnswer={onAnswer} />;
+            }
+            case 'error': return <div key={item.key} className="msg chat-error" role="alert">{item.message}</div>;
+            case 'turn-end': { const line = usageLine(item); return line ? <div key={item.key} className={`turn-end ${item.status}`}>{line}</div> : null; }
+          }
+        })}
+        {view.running && !view.pending.length && <div className="working" aria-label="Working">Working…</div>}
+        <div ref={end} />
+      </div>
+      <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} />
+    </section>
+  );
+}

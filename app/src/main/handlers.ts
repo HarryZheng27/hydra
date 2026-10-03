@@ -1,7 +1,8 @@
-import type { AppSettings, AppState, CliProvider, OnboardingReport } from '../shared/ipc';
+import type { AppSettings, AppState, CliProvider, OnboardingReport, Project } from '../shared/ipc';
+import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
 import type { Handlers } from './ipc';
-import { addProject, projectFor, removeProject, setCliPath, type JsonStore } from './settings';
+import { addProject, projectFor, removeProject, setCliPath, trustProject, type JsonStore } from './settings';
 
 export interface HandlerDeps {
   info: { name: string; version: string; electron: string; platform: string };
@@ -17,6 +18,9 @@ export interface HandlerDeps {
   checkSetup(cliPaths: AppSettings['cliPaths']): Promise<OnboardingReport>;
   /** Opens the CLI's own sign-in in a console window. */
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ started: boolean; error?: string }>;
+  /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
+  confirmTrust(project: Project): Promise<boolean>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove'>;
 }
 
 /** What main does for each channel. Paths only ever come from main's own pickers, never from the renderer. */
@@ -74,6 +78,24 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return { state, picked: projectFor(state, folder)?.id };
     },
     'projects.remove': ({ id }) => deps.state.update(current => removeProject(current, id)),
+    'projects.trust': async ({ id }) => {
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === id);
+      if (!project) throw new Error('No such project.');
+      if (project.trustedAt) return deps.state.load();
+      return (await deps.confirmTrust(project)) ? deps.state.update(current => trustProject(current, id)) : deps.state.load();
+    },
+    'chats.list': () => deps.chats.list(),
+    'chats.create': async ({ projectId, ...rest }) => {
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
+      if (!project) throw new Error('No such project.');
+      return deps.chats.create({ cwd: project.path, ...rest });
+    },
+    'chats.open': ({ id }) => deps.chats.open(id),
+    'chats.send': async ({ id, text }) => { await deps.chats.send(id, text); return null; },
+    'chats.answer': ({ id, requestId, answer }) => { deps.chats.answer(id, requestId, answer); return null; },
+    'chats.stop': ({ id }) => { deps.chats.stop(id); return null; },
+    'chats.configure': ({ id, change }) => deps.chats.configure(id, change),
+    'chats.remove': async ({ id }) => { await deps.chats.remove(id); return null; },
     'onboarding.check': ({ refresh }) => checkSetup(refresh),
     'onboarding.signIn': async ({ provider }) => {
       const now = Date.now();

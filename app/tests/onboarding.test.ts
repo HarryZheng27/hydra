@@ -117,6 +117,8 @@ test('a page can\'t stack sign-in windows or checks: one sign-in per provider at
     pickFolder: async () => undefined, pickExecutable: async () => undefined, applyTheme: () => undefined,
     checkSetup: () => { const n = ++checks; return new Promise(resolve => { releases.push(() => resolve({ providers: [], registration: {} as never, checkedAt: String(n) })); }); },
     signIn: async provider => { signIns.push(provider); return nextStart ? { started: true } : { started: false, error: 'missing' }; },
+    confirmTrust: async () => false,
+    chats: {} as never,
   });
   const tick = () => new Promise(resolve => setTimeout(resolve, 10));
   assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'claude' }), { started: true });

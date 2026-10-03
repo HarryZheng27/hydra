@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const program = (name, version, help, extra = '') => [
+const program = (name, version, help, extra = '', chat = '') => [
   '@echo off',
   'set tries=0',
   ':log',
@@ -13,6 +13,7 @@ const program = (name, version, help, extra = '') => [
   extra,
   'if "%~1"=="--version" goto version',
   'if "%~1"=="--help" goto help',
+  ...(chat ? ['if "%~1"=="-p" goto chat'] : []),
   'exit /b 3',
   ':version',
   `echo ${version}`,
@@ -20,13 +21,17 @@ const program = (name, version, help, extra = '') => [
   ':help',
   `echo ${help}`,
   'exit /b 0',
+  ...(chat ? [':chat', chat, 'exit /b %errorlevel%'] : []),
   '',
 ].filter(line => line !== '').join('\r\n') + '\r\n';
 
-/** Writes claude.cmd and codex.cmd into `dir`. Pass `false` to leave one out, as if it weren't installed. */
-export function writeStandins(dir, { claude = '2.1.282', codex = '0.157.1' } = {}) {
+/**
+ * Writes claude.cmd and codex.cmd into `dir`. Pass `false` to leave one out, as if it weren't installed. With `replay`
+ * (node and the replay script), `claude -p` runs a chat against G1's recordings (tests/fixtures/app/standins/replay.mjs).
+ */
+export function writeStandins(dir, { claude = '2.1.282', codex = '0.157.1', replay } = {}) {
   fs.mkdirSync(dir, { recursive: true });
-  if (claude) fs.writeFileSync(path.join(dir, 'claude.cmd'), program('claude', `${claude} (Claude Code)`, 'Usage: claude [options] --output-format stream-json --input-format stream-json --resume --permission-prompt-tool'));
+  if (claude) fs.writeFileSync(path.join(dir, 'claude.cmd'), program('claude', `${claude} (Claude Code)`, 'Usage: claude [options] --output-format stream-json --input-format stream-json --resume --permission-prompt-tool', '', replay ? `"${replay.node}" "${replay.script}" %*` : ''));
   if (codex) fs.writeFileSync(path.join(dir, 'codex.cmd'), program('codex', `codex-cli ${codex}`, 'Commands: exec app-server login',
     'if "%~1"=="app-server" if "%~2"=="--help" (echo app-server generate-json-schema& exit /b 0)'));
   return dir;

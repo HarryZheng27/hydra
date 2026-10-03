@@ -49,11 +49,12 @@ export function parseSettings(raw: unknown): AppSettings | undefined {
 
 const MAX_PROJECTS = 500;
 function parseProject(raw: unknown): Project | undefined {
-  if (!isRecord(raw) || !onlyKeys(raw, ['id', 'path', 'name'])) return undefined;
+  if (!isRecord(raw) || !onlyKeys(raw, ['id', 'path', 'name', 'trustedAt'])) return undefined;
   if (typeof raw.id !== 'string' || !/^[0-9a-f-]{8,64}$/.test(raw.id)) return undefined;
   if (!isAbsolutePath(raw.path)) return undefined;
   if (typeof raw.name !== 'string' || !raw.name || raw.name.length > 260) return undefined;
-  return { id: raw.id, path: raw.path, name: raw.name };
+  if (raw.trustedAt !== undefined && (typeof raw.trustedAt !== 'string' || Number.isNaN(Date.parse(raw.trustedAt)))) return undefined;
+  return { id: raw.id, path: raw.path, name: raw.name, ...(typeof raw.trustedAt === 'string' ? { trustedAt: raw.trustedAt } : {}) };
 }
 
 export function parseState(raw: unknown): AppState | undefined {
@@ -173,6 +174,10 @@ export function addProject(state: AppState, folder: string): AppState {
 }
 
 export const removeProject = (state: AppState, id: string): AppState => ({ ...state, projects: state.projects.filter(project => project.id !== id) });
+
+/** Marks a project trusted: the user agreed that chats may run its own hooks and MCP servers. Only main's confirm calls this. */
+export const trustProject = (state: AppState, id: string, now = new Date()): AppState =>
+  ({ ...state, projects: state.projects.map(project => (project.id === id ? { ...project, trustedAt: now.toISOString() } : project)) });
 
 export function setCliPath(settings: AppSettings, provider: CliProvider, file: string | undefined): AppSettings {
   const cliPaths = { ...settings.cliPaths };

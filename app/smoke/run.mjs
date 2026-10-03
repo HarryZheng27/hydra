@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { composeClaudeSmoke } from './compose.mjs';
 import { standinCalls, writeStandins } from './standins.mjs';
 
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -21,7 +22,11 @@ fs.mkdirSync(project, { recursive: true });
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(out, { recursive: true });
 // Stand-in CLIs on PATH, and scratch Claude and Codex config folders: the smoke never runs or reads the real ones.
-const bin = writeStandins(path.join(work, 'bin'));
+const repoRoot = path.join(appDir, '..');
+const replayScript = path.join(repoRoot, 'tests', 'fixtures', 'app', 'standins', 'replay.mjs');
+const bin = writeStandins(path.join(work, 'bin'), { replay: { node: process.execPath, script: replayScript } });
+const standinState = path.join(work, 'standin');
+const chatFixture = composeClaudeSmoke(path.join(repoRoot, 'tests', 'fixtures', 'app', 'claude'), path.join(work, 'claude-smoke.jsonl'));
 const claudeConfig = path.join(work, 'claude-config'), codexHome = path.join(work, 'codex-home');
 fs.mkdirSync(claudeConfig, { recursive: true });
 fs.mkdirSync(codexHome, { recursive: true });
@@ -29,7 +34,7 @@ fs.writeFileSync(path.join(claudeConfig, '.claude.json'), JSON.stringify({ mcpSe
 fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n');
 const configBefore = [path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8'));
 const systemRoot = process.env.SystemRoot || 'C:\\Windows';
-const env = { ...process.env, PATH: [bin, path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome };
+const env = { ...process.env, PATH: [bin, path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
@@ -51,6 +56,8 @@ async function until(test, ms, what) {
 }
 
 const themeColor = (name, key) => JSON.parse(fs.readFileSync(path.join(appDir, '..', 'themes', `hydra-${name}.json`), 'utf8')).colors[key];
+const standinErrors = () => { try { return fs.readFileSync(path.join(standinState, 'errors.log'), 'utf8'); } catch { return ''; } };
+const chatStarts = () => { try { return fs.readFileSync(path.join(standinState, 'calls.log'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line).args); } catch { return []; } };
 const checks = [];
 const check = (name, fn) => { fn(); checks.push(name); console.log(`ok - ${name}`); };
 const first = launch('first');
@@ -60,6 +67,10 @@ try {
   const second = launch('second');
   const secondCode = await second.exited;
   const firstCode = await first.exited;
+  // Restart the app over the same user data, and resume the chat.
+  const resume = launch('resume');
+  const resumeCode = await resume.exited;
+  const r = read('resume');
   const a = read('first'), b = read('second');
 
   check('the app opens one window on app://hydra/', () => {
@@ -80,7 +91,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -192,12 +203,44 @@ try {
     assert.match(a.signInNote, /sign-in window opened/);
   });
   check('no provider process starts except the version and help checks', () => {
-    const calls = standinCalls(bin);
+    const all = standinCalls(bin);
     assert.equal(a.recheckDone, true);
-    // Two full checks (the first, and Check again): each runs exactly these five, and nothing else.
-    assert.deepEqual([...calls].sort(), ['claude --help', 'claude --help', 'claude --version', 'claude --version', 'codex --help', 'codex --help', 'codex --version', 'codex --version', 'codex app-server --help', 'codex app-server --help'], calls.join(', '));
-    const allowed = new Set(['claude --version', 'claude --help', 'codex --version', 'codex --help', 'codex app-server --help']);
-    assert.deepEqual(calls.filter(call => !allowed.has(call)), []);
+    // The chats' own processes, each started by a message the user sent (two: the first run, and the resume).
+    const chats = all.filter(call => call.startsWith('claude -p '));
+    assert.equal(chats.length, 2, all.join(', '));
+    const calls = all.filter(call => !call.startsWith('claude -p '));
+    // Three full checks (the first run, its Check again, and the restarted app): each runs exactly these five.
+    const once = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help'];
+    assert.deepEqual([...calls].sort(), once.flatMap(call => [call, call, call]).sort(), calls.join(', '));
+  });
+  check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
+    assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);
+    assert.equal(a.trustPrompts.length, 1);
+    assert.match(a.trustPrompts[0], /^Trust Project One\?/);
+    assert.match(a.trustPrompts[0], /hooks, MCP servers and commands will run/);
+    assert.match(a.chat.firstCard, /Allow Bash\?/);
+    assert.deepEqual(a.chat.outcomes, ['Allowed', 'Denied']);
+    assert.deepEqual(a.chat.turnEnds, ['success', 'success', 'interrupted']);
+    assert.ok(a.chat.tools.includes('Bash'));
+    assert.ok(a.chat.assistantTexts >= 2);
+    assert.deepEqual(a.chat.title, ['Use the Bash tool to run exactly: mkdir g1-bash-dir']);
+    assert.equal(a.chat.files.filter(f => f.endsWith('.jsonl')).length, 1);
+    assert.ok(a.chat.files.includes('index.json'));
+    assert.equal(standinErrors(), '', 'the stand-in saw the app send something the recording did not');
+  });
+  check('after a restart the chat is still there, and the next message resumes its session', () => {
+    assert.equal(resumeCode, 0, resume.log());
+    assert.equal(r.resume.title, 'Use the Bash tool to run exactly: mkdir g1-bash-dir');
+    assert.equal(r.resume.restoredTurnEnds, 3);
+    assert.deepEqual(r.resume.restoredCards, ['Allowed', 'Denied']);
+    assert.match(r.resume.lastTurn, /success/);
+    const starts = chatStarts();
+    assert.equal(starts.length, 2);
+    const first = starts[0], second = starts[1];
+    const id = first[first.indexOf('--session-id') + 1];
+    assert.match(id, /^[0-9a-f-]{36}$/);
+    assert.equal(second[second.indexOf('--resume') + 1], id);
+    assert.equal(standinErrors(), '');
   });
   check('a second launch focuses the first and exits', () => {
     assert.equal(a.hasLock, true);

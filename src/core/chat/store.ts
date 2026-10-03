@@ -75,8 +75,17 @@ export class ChatStore {
   private chats: Map<string, ChatRecord> | undefined;
   /** Logs already created and checked in this run. */
   private readonly checked = new Set<string>();
+  /**
+   * Index saves run on their own queue, so a slow one (each restricts and checks a new file) never holds up a log
+   * append. Updates are saved shortly after, several at once; create, remove and flush save at once.
+   */
+  private indexQueue: Promise<unknown> = Promise.resolve();
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
+  private dirty = false;
+  /** The last index save that failed, reported by flush(). */
+  private saveError: unknown;
 
-  constructor(readonly root: string, private readonly security: StoreSecurity = ownerOnly) {}
+  constructor(readonly root: string, private readonly security: StoreSecurity = ownerOnly, private readonly saveDelayMs = 300) {}
 
   private file(id: string): string {
     if (!chatIdPattern.test(id)) throw new Error('Not a chat id.');
@@ -118,12 +127,32 @@ export class ChatStore {
       if (problem) throw new Error(`Hydra couldn't make a chat file private: ${problem}`);
       await writeFile(temporary, content, { encoding: 'utf8', mode: 0o600 });
       await replaceAtomic(temporary, file);
-    } finally { await rm(temporary, { force: true }).catch(() => undefined); }
+    } finally { await rm(temporary, { force: true, maxRetries: 10, retryDelay: 100 }).catch(() => undefined); }
   }
 
   private async saveIndex(chats: Map<string, ChatRecord>): Promise<void> {
     const ordered = [...chats.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    await this.writePrivate(path.join(this.root, INDEX), `${JSON.stringify({ version: 1, chats: ordered }, null, 2)}\n`);
+    const text = `${JSON.stringify({ version: 1, chats: ordered }, null, 2)}\n`;
+    this.dirty = false;
+    const run = this.indexQueue.then(() => this.writePrivate(path.join(this.root, INDEX), text));
+    this.indexQueue = run.catch(error => { this.saveError = error; this.dirty = true; });
+    await run;
+  }
+
+  private saveSoon(chats: Map<string, ChatRecord>): void {
+    this.dirty = true;
+    if (this.saveTimer) return;
+    this.saveTimer = setTimeout(() => { this.saveTimer = undefined; if (this.dirty) void this.saveIndex(chats).catch(() => undefined); }, this.saveDelayMs);
+  }
+
+  /** Writes everything still pending (log appends and the index). Call it before the app quits. */
+  async flush(): Promise<void> {
+    await this.queue;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    if (this.dirty && this.chats) await this.saveIndex(this.chats).catch(() => undefined);
+    await this.indexQueue;
+    if (this.saveError) { const error = this.saveError; this.saveError = undefined; throw error; }
   }
 
   async list(): Promise<ChatRecord[]> {
@@ -155,7 +184,7 @@ export class ChatStore {
       const next = parseRecord({ ...current, ...patch, id, provider: current.provider, createdAt: current.createdAt, updatedAt: now.toISOString() });
       if (!next) throw new Error('That change isn\'t valid.');
       chats.set(id, next);
-      try { await this.saveIndex(chats); } catch (error) { chats.set(id, current); throw error; }
+      this.saveSoon(chats);
       return next;
     });
   }

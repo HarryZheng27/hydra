@@ -31,6 +31,7 @@ test('the index keeps each chat\'s provider session id for resume, and survives 
     const store = new ChatStore(dir, fakeSecurity);
     const chat = await store.create({ provider: 'codex', cwd: dir, sandbox: 'read-only' });
     await store.update(chat.id, { providerSessionId: 'thr_123', title: titleFrom('  Fix the\nflaky   test in auth please  ') });
+    await store.flush(); // updates are saved shortly after; the app flushes before it quits
     const again = new ChatStore(dir, fakeSecurity);
     const [record] = await again.list();
     assert.equal(record!.providerSessionId, 'thr_123');

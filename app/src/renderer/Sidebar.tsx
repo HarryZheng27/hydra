@@ -1,24 +1,28 @@
 import { useState } from 'react';
-import type { Project } from '../shared/ipc';
+import type { ChatRecord, Project } from '../shared/ipc';
 import type { View } from './App';
 import { Icon } from './Icon';
 
 interface Props {
   projects: Project[];
+  chats: ChatRecord[];
   view: View;
   onNewChat(): void;
+  onOpenChat(id: string): void;
   onOpenProject(id: string): void;
   onAddProject(): void;
   onRemoveProject(id: string): void;
   onOpenSettings(): void;
 }
 
-/** New chat, search, the projects with their chats, and Settings. Chats arrive with G4. */
-export function Sidebar({ projects, view, onNewChat, onOpenProject, onAddProject, onRemoveProject, onOpenSettings }: Props) {
+/** New chat, search, the projects with their chats, and Settings. */
+export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenProject, onAddProject, onRemoveProject, onOpenSettings }: Props) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const needle = query.trim().toLowerCase();
-  const shown = needle ? projects.filter(project => project.name.toLowerCase().includes(needle) || project.path.toLowerCase().includes(needle)) : projects;
+  const chatsOf = (project: Project) => chats.filter(chat => chat.cwd.toLowerCase() === project.path.toLowerCase());
+  const matches = (chat: ChatRecord) => !needle || chat.title.toLowerCase().includes(needle);
+  const shown = needle ? projects.filter(project => project.name.toLowerCase().includes(needle) || project.path.toLowerCase().includes(needle) || chatsOf(project).some(matches)) : projects;
 
   return (
     <nav className="sidebar" aria-label="Projects and chats">
@@ -46,7 +50,11 @@ export function Sidebar({ projects, view, onNewChat, onOpenProject, onAddProject
                 </button>
                 <button className="icon-button small hover-only" aria-label={`Remove ${project.name} from Hydra`} title="Remove from Hydra (the folder stays on disk)" onClick={() => onRemoveProject(project.id)}><Icon name="close" /></button>
               </div>
-              {open && <div className="chats-empty">No chats yet</div>}
+              {open && (chatsOf(project).length
+                ? <ul className="chats">{chatsOf(project).filter(chat => matches(chat) || project.name.toLowerCase().includes(needle)).map(chat => (
+                    <li key={chat.id}><button className={`chat-link ${view.kind === 'chat' && view.id === chat.id ? 'selected' : ''}`} title={chat.title} onClick={() => onOpenChat(chat.id)}>{chat.title}</button></li>
+                  ))}</ul>
+                : <div className="chats-empty">No chats yet</div>)}
             </li>
           );
         })}
