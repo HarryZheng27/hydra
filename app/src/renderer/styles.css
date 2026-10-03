@@ -167,3 +167,6 @@ details.tool.failed { border-color: var(--error); }
 .composer-spacer { flex: 1; }
 .composer .stop { border-color: var(--error); color: var(--error); }
 .composer .primary.small { margin-top: 0; }
+
+.new-chat-choices { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.provider-tag { margin-left: 6px; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; }

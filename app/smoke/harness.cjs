@@ -149,9 +149,11 @@ if (role === 'resume') {
     const wc = win.webContents;
     await loaded(wc);
     const { ui, until, send, turnEnds } = chatDriver(wc);
-    await until(`document.querySelectorAll('.chat-link').length === 1`, 'the saved chat in the sidebar');
-    report.resume = { title: await ui(`document.querySelector('.chat-link').textContent`) };
-    await ui(`document.querySelector('.chat-link').click(); 1`);
+    await until(`document.querySelectorAll('.chat-link').length === 2`, 'the saved chats in the sidebar');
+    report.resume = { titles: await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent).sort()`) };
+    const openByTitle = async part => { await ui(`[...document.querySelectorAll('.chat-link')].find(e => e.textContent.includes(${JSON.stringify('PART')}.replace('PART', ${JSON.stringify(part)}))).click(); 1`); await until(`!!document.querySelector('.composer textarea')`, 'the chat to open'); await wait(300); };
+    await openByTitle('Bash tool');
+    report.resume.title = await ui(`[...document.querySelectorAll('.chat-link.selected')].map(e => e.textContent)[0]`);
     await until(`!!document.querySelector('.composer textarea')`, 'the chat to open');
     report.resume.restoredTurnEnds = await turnEnds();
     report.resume.restoredCards = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);
@@ -159,6 +161,12 @@ if (role === 'resume') {
     await until(`document.querySelectorAll('.turn-end').length > ${report.resume.restoredTurnEnds}`, 'the resumed turn to end');
     report.resume.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
     report.resume.reply = await ui(`[...document.querySelectorAll('.msg.assistant')].at(-1)?.textContent ?? ''`);
+    // The Codex chat: the next message resumes its thread in a new app-server.
+    await openByTitle('console.log');
+    report.resume.codex = { restoredTurnEnds: await turnEnds(), restoredCards: await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`) };
+    await send('What was the code word? Reply with one word.');
+    await until(`document.querySelectorAll('.turn-end').length > ${report.resume.codex.restoredTurnEnds}`, 'the resumed Codex turn to end');
+    report.resume.codex.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
     event('done');
     app.quit();
   });
@@ -319,6 +327,31 @@ if (role === 'first') {
       const chats = path.join(app.getPath('userData'), 'chats');
       report.chat.files = fs.readdirSync(chats).sort();
       await shot('chat');
+
+      // A chat with Codex in the same, already trusted folder: deny, allow, then stop mid-command.
+      await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
+      await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('Codex'))`, 'the project view');
+      await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('Codex')).click(); 1`);
+      await chat.until(`document.querySelector('.composer textarea')?.placeholder === 'Message Codex'`, 'the new Codex chat');
+      report.codex = { sandboxes: await ui(`[...document.querySelectorAll('.composer select[aria-label=Sandbox] option')].map(o => o.textContent)`) };
+      await chat.send('Run node -e console.log(6*7) and tell me the output.');
+      await chat.until(`!!document.querySelector('.card.approval .card-actions')`, 'the first Codex approval');
+      report.codex.choices = await ui(`[...document.querySelectorAll('.card.approval .card-actions button')].map(b => b.textContent)`);
+      report.codex.models = await ui(`[...document.querySelectorAll('.composer select[aria-label=Model] option')].map(o => o.textContent)`);
+      await chat.click('.card.approval .card-actions button', 'Deny');
+      await chat.until(`document.querySelectorAll('.turn-end').length >= 1`, 'Codex turn one to end');
+      await chat.send('Run it again, please.');
+      await chat.until(`document.querySelectorAll('.card.approval .card-actions').length === 1 && document.querySelectorAll('.card.approval').length === 2`, 'the second Codex approval');
+      await chat.click('.card.approval .card-actions button', 'Allow');
+      await chat.until(`document.querySelectorAll('.turn-end').length >= 2`, 'Codex turn two to end');
+      await chat.send('Run a slow command.');
+      await chat.until(`!!document.querySelector('details.tool .tool-state')`, 'the command to start');
+      await ui(`document.querySelector('.composer .stop').click(); 1`);
+      await chat.until(`document.querySelectorAll('.turn-end').length >= 3`, 'the stopped Codex turn to end');
+      report.codex.outcomes = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);
+      report.codex.turnEnds = await ui(`[...document.querySelectorAll('.turn-end')].map(e => e.className.replace('turn-end', '').trim())`);
+      report.codex.output = await ui(`[...document.querySelectorAll('pre.code.output')].map(e => e.textContent).join(' | ')`);
+      await shot('codex');
     }
     event('ready');
     // Wait for run.mjs's second launch to reach this instance, then leave.

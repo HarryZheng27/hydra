@@ -33,12 +33,19 @@ fs.writeFileSync(counterFile, String(index + 1));
 fs.appendFileSync(path.join(state, 'calls.log'), `${JSON.stringify({ index, args })}\n`);
 
 const records = fs.readFileSync(fixture, 'utf8').split(/\r?\n/).filter(Boolean).slice(1).map(line => JSON.parse(line));
-// Parts: each starts at an "args:" note (one per process the live check started).
+// Parts, one per process the live check started: Claude's fixtures mark each with an "args:" note; Codex's begin each
+// process with the host's initialize request.
 const parts = [];
+const marked = records.some(record => record.dir === 'note' && record.text.startsWith('args:'));
 for (const record of records) {
-  if (record.dir === 'note' && record.text.startsWith('args:')) parts.push([]);
-  else if (parts.length && (record.dir === 'send' || record.dir === 'recv')) parts.at(-1).push(record);
+  const line = record.dir === 'send' ? (() => { try { return JSON.parse(record.line); } catch { return {}; } })() : undefined;
+  if (marked ? record.dir === 'note' && record.text.startsWith('args:') : line?.method === 'initialize') parts.push([]);
+  if (parts.length && (record.dir === 'send' || record.dir === 'recv')) parts.at(-1).push(record);
 }
+// Requests G1's harness sent for its own checks that a chat client doesn't (isolation, sandbox readiness, a read-back):
+// when the host doesn't send one, it is skipped with its response.
+const optional = new Set(['mcpServerStatus/list', 'windowsSandbox/readiness', 'thread/read', 'account/rateLimits/read', 'model/list']);
+const skipped = new Set();
 const part = parts[index];
 if (!part) { process.stderr.write(`replay: ${path.basename(fixture)} has no process ${index + 1}\n`); process.exit(2); }
 
@@ -76,6 +83,13 @@ function detail(message) {
     const content = message.message?.content;
     return JSON.stringify(typeof content === 'string' ? ['text'] : (content ?? []).map(block => block.type));
   }
+  // Codex: what decides a thread's safety and which thread or turn a request is about. (approvalPolicy is left out:
+  // G1 recorded different policies per scenario; the app always asks for on-request.)
+  const p = message?.params ?? {};
+  if (message?.method === 'thread/start') return JSON.stringify({ sandbox: p.sandbox, approvalsReviewer: p.approvalsReviewer });
+  if (message?.method === 'thread/resume') return JSON.stringify({ threadId: p.threadId, sandbox: p.sandbox, approvalsReviewer: p.approvalsReviewer });
+  if (message?.method === 'turn/start') return JSON.stringify({ threadId: p.threadId, sandboxPolicy: p.sandboxPolicy ?? null });
+  if (message?.method === 'turn/interrupt') return JSON.stringify({ threadId: p.threadId, turnId: p.turnId });
   return '';
 }
 
@@ -89,12 +103,19 @@ input.on('close', () => { closed = true; if (waiting) { const resolve = waiting;
 const next = () => (lines.length ? Promise.resolve(lines.shift()) : closed ? Promise.resolve(undefined) : new Promise(resolve => { waiting = resolve; }));
 const write = line => new Promise(resolve => { if (!process.stdout.write(`${line}\n`)) process.stdout.once('drain', resolve); else resolve(); });
 
+let held; // a host line read while skipping optional requests, still to be matched
 for (const record of part) {
   if (record.dir === 'send') {
-    const line = await next();
+    const line = held ?? await next();
+    held = undefined;
     if (line === undefined) process.exit(0); // the host closed stdin: it ended the chat
     const actual = parse(line);
     const expected = parse(record.line);
+    if (expected?.method && optional.has(expected.method) && kind(actual) !== kind(expected)) {
+      if ('id' in expected) skipped.add(expected.id);
+      held = line;
+      continue;
+    }
     if (kind(actual) !== kind(expected)) fail(`expected ${kind(expected)} from the host, got ${kind(actual)}: ${line.slice(0, 200)}`);
     if (detail(actual) !== detail(withSessionValue(expected))) fail(`expected ${detail(expected).slice(0, 300)} from the host, got ${detail(actual).slice(0, 300)}`);
     fs.appendFileSync(path.join(state, 'consumed.log'), `${index}\n`);
@@ -103,6 +124,7 @@ for (const record of part) {
     continue;
   }
   const message = parse(withSession(record.line));
+  if (message && !message.method && 'id' in message && skipped.has(message.id)) continue; // the skipped request's response
   if (message?.type === 'control_response' && ids.has(message.response?.request_id)) message.response.request_id = ids.get(message.response.request_id);
   if (message && !message.method && 'id' in message && ids.has(message.id)) message.id = ids.get(message.id);
   await write(message ? JSON.stringify(message) : withSession(record.line));

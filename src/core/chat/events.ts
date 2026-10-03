@@ -27,6 +27,8 @@ export type ChatEvent =
   | { type: 'plan'; id: string; plan: string }
   /** A request was answered, by the user or by Hydra's own refusal. */
   | { type: 'resolved'; id: string; outcome: 'allowed' | 'denied' | 'answered' | 'cancelled'; by: 'user' | 'hydra'; note?: string }
+  /** The models the CLI offers (Codex's model/list), for the composer and for checking model and effort. */
+  | { type: 'models'; models: ChatModel[] }
   /** Token use and cost for a turn, as the provider reports them. */
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; cachedTokens?: number; costUsd?: number; contextWindow?: number }
   | { type: 'error'; message: string; fatal: boolean; code?: 'malformed' | 'unknown-request' | 'exited' | 'limit' | 'missing-cli' | 'spawn' }
@@ -34,6 +36,8 @@ export type ChatEvent =
   | { type: 'done'; status: 'success' | 'interrupted' | 'error'; detail?: string };
 
 export type ApprovalChoice = 'allow' | 'allow-session' | 'deny' | 'edit';
+
+export interface ChatModel { id: string; label: string; isDefault: boolean; efforts: string[]; defaultEffort?: string }
 
 export interface ChatQuestion { question: string; header?: string; multiSelect?: boolean; options: Array<{ label: string; description?: string }> }
 
@@ -85,6 +89,8 @@ export interface ChatAdapter {
   interrupt(): string[];
   /** Lines that switch the running process to another model, when the CLI can do that in place. */
   setModel?(model: string): string[];
+  /** True when stopping a turn must also end the process (Codex: an interrupted command keeps running otherwise). */
+  readonly endAfterInterrupt?: boolean;
   /** Requests still waiting for an answer. */
   pending(): string[];
   /** Marks every pending request cancelled, for when the process goes away. */

@@ -13,7 +13,7 @@ const program = (name, version, help, extra = '', chat = '') => [
   extra,
   'if "%~1"=="--version" goto version',
   'if "%~1"=="--help" goto help',
-  ...(chat ? ['if "%~1"=="-p" goto chat'] : []),
+  ...(chat ? [name === 'codex' ? 'if "%~1"=="app-server" goto chat' : 'if "%~1"=="-p" goto chat'] : []),
   'exit /b 3',
   ':version',
   `echo ${version}`,
@@ -32,8 +32,10 @@ const program = (name, version, help, extra = '', chat = '') => [
 export function writeStandins(dir, { claude = '2.1.282', codex = '0.157.1', replay } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   if (claude) fs.writeFileSync(path.join(dir, 'claude.cmd'), program('claude', `${claude} (Claude Code)`, 'Usage: claude [options] --output-format stream-json --input-format stream-json --resume --permission-prompt-tool', '', replay ? `"${replay.node}" "${replay.script}" %*` : ''));
+  // Codex's chat process replays its own fixture, into its own state folder.
   if (codex) fs.writeFileSync(path.join(dir, 'codex.cmd'), program('codex', `codex-cli ${codex}`, 'Commands: exec app-server login',
-    'if "%~1"=="app-server" if "%~2"=="--help" (echo app-server generate-json-schema& exit /b 0)'));
+    'if "%~1"=="app-server" if "%~2"=="--help" (echo app-server generate-json-schema& exit /b 0)',
+    replay ? `set "HYDRA_STANDIN_FIXTURE=%HYDRA_STANDIN_CODEX_FIXTURE%"& set "HYDRA_STANDIN_STATE=%HYDRA_STANDIN_CODEX_STATE%"& "${replay.node}" "${replay.script}" %*` : ''));
   return dir;
 }
 

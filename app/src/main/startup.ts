@@ -4,6 +4,8 @@ import type { CliProvider } from '../shared/ipc';
 import { ChatStore } from '../../../src/core/chat/store';
 import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
+import { providerPaths } from '../../../src/core/helperRegistration';
+import { readFile } from 'node:fs/promises';
 import { CHAT_EVENTS, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { createHandlers } from './handlers';
@@ -92,6 +94,7 @@ export function start(): void {
     store: chatStore,
     launch: nodeLaunch(),
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
+    codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
     push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
   });

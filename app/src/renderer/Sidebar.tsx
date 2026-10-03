@@ -52,7 +52,7 @@ export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenPr
               </div>
               {open && (chatsOf(project).length
                 ? <ul className="chats">{chatsOf(project).filter(chat => matches(chat) || project.name.toLowerCase().includes(needle)).map(chat => (
-                    <li key={chat.id}><button className={`chat-link ${view.kind === 'chat' && view.id === chat.id ? 'selected' : ''}`} title={chat.title} onClick={() => onOpenChat(chat.id)}>{chat.title}</button></li>
+                    <li key={chat.id}><button className={`chat-link ${view.kind === 'chat' && view.id === chat.id ? 'selected' : ''}`} title={chat.title} onClick={() => onOpenChat(chat.id)}>{chat.title}{chat.provider === 'codex' ? <span className="provider-tag">Codex</span> : null}</button></li>
                   ))}</ul>
                 : <div className="chats-empty">No chats yet</div>)}
             </li>
