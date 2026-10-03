@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { watch as watchFolder, type FSWatcher } from 'node:fs';
+import { existsSync, watch as watchFolder, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, nativeTheme, shell, type MessageBoxOptions } from 'electron';
 import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, HostTerminal, InputOptions, NoticeLevel, PickItem } from '../../../src/host/host';
@@ -184,17 +184,27 @@ export class ElectronHost implements Host {
     const prefix = glob.split('/').slice(0, fixed < 0 ? -1 : fixed).join('/');
     let inner: FSWatcher | undefined, outer: FSWatcher | undefined;
     const fire = (name: string) => { if (match.test(name)) listener(); };
+    const dir = path.join(folder, prefix);
+    // On Windows a watched folder that is deleted raises no error: its watcher fires without end (a core's worth).
+    // So each event checks the folder is still there, and the watcher closes the moment it isn't.
+    const disarm = () => { inner?.close(); inner = undefined; };
     const arm = () => {
-      if (inner || !prefix) return;
+      disarm();
+      if (!prefix || !existsSync(dir)) return;
       try {
-        inner = watchFolder(path.join(folder, prefix), { recursive: true }, (_event, name) => fire(name ? `${prefix}/${String(name).replace(/\\/g, '/')}` : prefix));
-        inner.on('error', () => { inner?.close(); inner = undefined; });
+        inner = watchFolder(dir, { recursive: true }, (_event, name) => {
+          if (!existsSync(dir)) { disarm(); listener(); return; }
+          fire(name ? `${prefix}/${String(name).replace(/\\/g, '/')}` : prefix);
+        });
+        inner.on('error', () => { disarm(); });
         listener();
-      } catch { /* not there yet */ }
+      } catch { disarm(); }
     };
     try {
       outer = watchFolder(folder, { recursive: !prefix }, (_event, name) => {
+        if (!existsSync(folder)) { outer?.close(); disarm(); return; }
         const changed = String(name ?? '').replace(/\\/g, '/');
+        // The pattern's folder appeared, went or was replaced: watch whatever is there now.
         if (prefix && changed === prefix.split('/')[0]) arm();
         fire(changed);
       });

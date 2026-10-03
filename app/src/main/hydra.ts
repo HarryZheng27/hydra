@@ -112,6 +112,10 @@ export interface ProjectHydraStatus { id: string; running: boolean; owned: boole
 export class HydraProjects {
   private readonly running = new Map<string, Running>();
   private readonly starting = new Map<string, Promise<void>>();
+  /** Stops in progress: a new start for the project waits for the old one's lock and state to be let go. */
+  private readonly stopping = new Map<string, Promise<void>>();
+  /** Every controller built and not yet disposed (starting, running or stopping): their heads are refused as leads. */
+  private readonly alive = new Map<HydraController, string>();
   private readonly errors = new Map<string, string>();
   private settings?: JsonValues;
   private globalState?: JsonValues;
@@ -179,7 +183,7 @@ export class HydraProjects {
 
   /** Every running project's heads' processes but this one's, refused as its leads too. */
   headsOutside(id: string): number[] {
-    return [...this.running.values()].filter(running => running.project.id !== id).flatMap(running => [...running.controller.helperProcessIds()]);
+    return [...this.alive].filter(([, owner]) => owner !== id).flatMap(([controller]) => [...controller.helperProcessIds()]);
   }
 
   status(): ProjectHydraStatus[] {
@@ -200,7 +204,7 @@ export class HydraProjects {
     if (current) return this.stop(project.id).then(() => this.start(project));
     let pending = this.starting.get(project.id);
     if (!pending) {
-      pending = this.boot(project).catch(error => {
+      pending = (this.stopping.get(project.id) ?? Promise.resolve()).then(() => this.boot(project)).catch(error => {
         const message = error instanceof Error ? error.message : String(error);
         this.errors.set(project.id, message);
         this.options.log(`[hydra] ${project.name}: not started: ${message}`);
@@ -297,6 +301,9 @@ export class HydraProjects {
   private async boot(project: Project): Promise<void> {
     const running = await this.build(project);
     const { controller } = running;
+    this.alive.set(controller, project.id);
+    // Removed or untrusted while it was being built: it never takes the lock or resumes a plan.
+    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose(running); return; }
     await controller.start();
     if (controller.disabled) {
       // Another Hydra (the IDE, say) owns this repository: nothing runs here for it.
@@ -312,13 +319,20 @@ export class HydraProjects {
     this.running.set(project.id, running);
   }
 
-  async stop(id: string): Promise<void> {
-    await this.starting.get(id);
-    const running = this.running.get(id);
+  /** Stops a project's controller. It is no longer running from this call on, so an open right after waits for it. */
+  stop(id: string): Promise<void> {
     this.errors.delete(id);
-    if (!running) return;
-    this.running.delete(id);
-    await this.dispose(running);
+    const running = this.running.get(id);
+    if (running) {
+      this.running.delete(id);
+      const stopping = this.dispose(running).finally(() => { if (this.stopping.get(id) === stopping) this.stopping.delete(id); });
+      this.stopping.set(id, stopping);
+      return stopping;
+    }
+    // Still starting: stop it once it has (boot itself drops one removed or untrusted meanwhile).
+    const starting = this.starting.get(id);
+    if (starting) return starting.then(() => this.stop(id));
+    return this.stopping.get(id) ?? Promise.resolve();
   }
 
   private async dispose(running: Running): Promise<void> {
@@ -328,6 +342,7 @@ export class HydraProjects {
     running.lanes.dispose();
     running.host.dispose();
     await running.state.flush();
+    this.alive.delete(running.controller);
   }
 
   /** Every project's controller stops: heads, lanes and plans end, discovery records go, ownership is released. */
@@ -335,6 +350,7 @@ export class HydraProjects {
     this.closing = true;
     await Promise.all([...this.starting.values()]);
     await Promise.all([...this.running.keys()].map(id => this.stop(id)));
+    await Promise.all([...this.stopping.values()]);
     if (this.registration) { const registration = this.registration; this.registration = undefined; await this.dispose(registration); }
     await Promise.all([this.settings?.flush(), this.globalState?.flush(), this.audit?.flush()]);
   }
