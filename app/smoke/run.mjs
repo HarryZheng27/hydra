@@ -242,7 +242,7 @@ try {
     // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
     assert.ok(count('claude --version') >= 3 && count('codex --version') >= 3, calls.join(', '));
   });
-  check('Hydra runs in the app: the restarted app owns its trusted project, and `hydra status` there reports the app', () => {
+  check('Hydra runs in the app: opening a chat starts its project\'s controller, and `hydra status` there reports the app', () => {
     const status = r.hydraStatus;
     assert.ok(status, 'no hydra status');
     assert.equal(status.error, undefined, status.error);

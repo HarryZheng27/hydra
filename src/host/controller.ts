@@ -126,6 +126,12 @@ export interface ControllerOptions {
   limitOfferTracker: LimitOfferTracker;
   /** Tests only: stand-ins (head processes, executables, isolation) laid over the heads service's real options. */
   helperService?: Partial<HelperServiceOptions>;
+  /**
+   * Heads of other controllers in the same program, refused as leads and as the user here too (G5: the Hydra app runs
+   * one controller per project in one process, so the window's process is every project's heads' ancestor). The IDE
+   * runs one controller per window process and leaves this out.
+   */
+  otherHeads?: () => Iterable<number>;
 }
 
 // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md): arguments of the hydra.plans.* test commands ----
@@ -177,6 +183,8 @@ export class HydraController {
   readonly limitEvents = new Emitter<LimitEvent>(error => this.host.log(`[limits] a listener failed: ${describe(error)}`));
   // ---- Gates (docs/internal/Gates_Plan.md): each provider's latest usage limit, so a review gate uses the other agent while one is limited ----
   readonly latestLimits = new Map<Provider, LimitEvent>();
+  /** This controller's heads' processes (none before its heads start), for a program that runs several controllers. */
+  helperProcessIds(): ReadonlySet<number> { return this.helpers?.service.helperProcessIds() ?? new Set<number>(); }
   /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
   packsLeadFolder?: string;
   /** Watches your packs folder (hydra.packs.folder), so a pack added or edited there refreshes without Reload. */
@@ -980,9 +988,9 @@ export class HydraController {
       // This window's extension host and its main process start the official
       // extensions' CLIs and Hydra's terminals; helpers are refused by process.
       allowedAncestors: new Set(this.host.windowProcessIds()),
-      deniedAncestors: service?.helperProcessIds() ?? new Set<number>(),
+      deniedAncestors: new Set([...(service?.helperProcessIds() ?? []), ...(this.options.otherHeads?.() ?? [])]),
     }), undefined, undefined, line => this.host.log(line));
-    const verifyUser = createUserVerifier(() => ({ deniedAncestors: service?.helperProcessIds() ?? new Set<number>() }), undefined, undefined, line => this.host.log(line));
+    const verifyUser = createUserVerifier(() => ({ deniedAncestors: new Set([...(service?.helperProcessIds() ?? []), ...(this.options.otherHeads?.() ?? [])]) }), undefined, undefined, line => this.host.log(line));
     const endpoint = new HelperEndpoint(async (caller, tool, args, signal) => {
       if (!service) throw new Error('Hydra heads are still starting.');
       // Every action is logged, whoever calls it (plan, Phase 3 security note).
