@@ -165,12 +165,12 @@ export class ChatManager {
   }
 
   /**
-   * Starts a Claude chat's CLI as the chat opens, so Claude Code's startup (about 10 s with the user's MCP servers and
-   * hooks) is done by the time they send. Only in a trusted folder, never while the chat is open in a terminal, and
+   * Starts a chat's CLI as the chat opens, so its startup (Claude Code's about 10 s with the user's MCP servers and
+   * hooks, Codex's app-server about 5 s) is done by the time they send. Codex's thread waits for the message. Only in a trusted folder, never while the chat is open in a terminal, and
    * one chat at a time: the one warmed before is ended if no message used it.
    */
   private warm(id: string, record: ChatRecord): void {
-    if (!this.deps.warm || this.closing || record.provider !== 'claude' || this.inTerminal.has(id) || this.starting.has(id)) return;
+    if (!this.deps.warm || this.closing || this.inTerminal.has(id) || this.starting.has(id)) return;
     if (this.warmed && this.warmed !== id) this.sessions.get(this.warmed)?.cool();
     this.warmed = id;
     void this.session(id).then(session => {

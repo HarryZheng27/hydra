@@ -228,13 +228,17 @@ try {
     // The chats' own processes, each started by a message the user sent (per provider: the first run, and the resume).
     const isChat = call => call.startsWith('claude -p ') || call.startsWith('codex app-server --listen');
     const chats = all.filter(isChat);
-    assert.equal(chats.length, 4, all.join(', '));
+    // Claude: the first run and the resume. Codex: the first run and the resume, plus one more when the app-server
+    // started as the chat opened was replaced as the chat switched to Ask me before its first message.
+    assert.equal(chats.filter(call => call.startsWith('claude -p ')).length, 2, all.join(', '));
+    const codexServers = chats.filter(call => call.startsWith('codex app-server')).length;
+    assert.ok(codexServers === 2 || codexServers === 3, all.join(', '));
     const calls = all.filter(call => !isChat(call));
     const checks = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help', 'claude auth status --json', 'codex login status'];
     assert.deepEqual(calls.filter(call => !checks.includes(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
-    // Every full check runs the five version and help checks.
     const count = call => calls.filter(c => c === call).length;
-    assert.ok(count('claude --version') >= 3 && checks.slice(0, 5).every(call => count(call) === count('claude --version')), calls.join(', '));
+    // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
+    assert.ok(count('claude --version') >= 3 && count('codex --version') >= 3, calls.join(', '));
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);
@@ -276,7 +280,7 @@ try {
     assert.equal(a.codex.approvalsDefault, 'settings', 'a new chat follows the user\'s own Codex settings');
     assert.deepEqual(a.codex.choices, ['Allow', 'Allow for this session', 'Deny']);
     assert.ok(a.codex.models.length > 1 && !a.codex.models.some(label => /default/i.test(label)), 'models from Codex\'s own model/list, no "default" entry');
-    assert.equal(a.codex.model, 'x', 'the menu shows the model the user\'s Codex config chooses');
+    assert.ok(a.codex.model && a.codex.model !== 'x', 'the menu shows the model Codex reports in use, not a config model it doesn\'t offer');
     assert.deepEqual(a.codex.outcomes, ['Denied', 'Allowed']);
     assert.deepEqual(a.codex.turnEnds, ['success', 'success', 'interrupted']);
     assert.match(a.codex.output, /42/, 'the allowed command\'s output');

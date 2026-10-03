@@ -42,6 +42,10 @@ export class CodexAdapter implements ChatAdapter {
   private readonly requests = new Map<string, Pending>();
   private options!: ChatOptions;
   private threadId: string | undefined;
+  /** Whether this process has asked for its thread yet (it waits for the first message). */
+  private threadAsked = false;
+  /** Codex's default model, when the user's config names one Codex doesn't offer this account. */
+  private fallbackModel: string | undefined;
   private turnId: string | undefined;
   private running = false;
   private interrupted = false;
@@ -63,29 +67,38 @@ export class CodexAdapter implements ChatAdapter {
     return JSON.stringify(params === undefined ? { id, method } : { id, method, params });
   }
 
+  /**
+   * Starts the app-server: initialize, and for a new thread Codex's model list. The thread itself (thread/start or
+   * thread/resume) waits for the first message, so a process started ahead of it (ChatSession.warm) leaves no empty
+   * thread in the user's Codex history.
+   */
   start(options: ChatOptions): string[] {
     this.options = options;
+    this.threadAsked = false;
     const lines = [
       this.request('initialize', { clientInfo: { name: 'hydra-app', title: 'Hydra', version: '0' }, capabilities: { experimentalApi: false } }),
       JSON.stringify({ method: 'initialized', params: {} }),
     ];
+    // A new thread checks its model and effort against the CLI's own list first.
+    if (!options.resume) lines.push(this.request('model/list', {}));
+    return lines;
+  }
+
+  /** thread/start or thread/resume, with the options as they are when the first message is sent. */
+  private threadRequest(): string {
+    const options = this.options;
+    this.threadAsked = true;
     // `settings`: the user's own approval policy and reviewer apply (Codex's auto-review, for one). Read-only either way.
     const approvals = options.approvals === 'settings' ? {} : { approvalPolicy: 'on-request', approvalsReviewer: 'user' };
     const thread = { cwd: options.cwd, ...approvals, sandbox: 'read-only', ...(options.model ? { model: options.model } : {}) };
-    if (options.resume) {
-      this.threadId = options.resume;
-      lines.push(this.request('thread/resume', { threadId: options.resume, ...thread }));
-    } else {
-      // A new thread checks its model and effort against the CLI's own list first.
-      lines.push(this.request('model/list', {}));
-      lines.push(this.request('thread/start', { ...thread, ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}) }));
-    }
-    return lines;
+    if (options.resume) return this.request('thread/resume', { threadId: options.resume, ...thread });
+    return this.request('thread/start', { ...thread, ...(options.effort ? { config: { model_reasoning_effort: options.effort } } : {}) });
   }
 
   send(message: string, images: ChatImage[] = []): string[] {
     this.running = true;
     this.interrupted = false;
+    if (!this.threadAsked) { this.waiting = { text: message, images }; return [this.threadRequest()]; }
     if (!this.threadId || this.calls.size) { this.waiting = { text: message, images }; return []; }
     return [this.turnStart(message, images)];
   }
@@ -98,7 +111,8 @@ export class CodexAdapter implements ChatAdapter {
     const write = this.options.sandbox === 'workspace-write' && codexWriteVerified
       ? { sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true } }
       : {};
-    return this.request('turn/start', { threadId: this.threadId, input, ...(this.options.model ? { model: this.options.model } : {}), ...(effort ? { effort } : {}), ...write });
+    const model = this.options.model ?? this.fallbackModel;
+    return this.request('turn/start', { threadId: this.threadId, input, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...write });
   }
 
   /** The chosen effort if the chosen model supports it, from model/list; Codex itself accepts any. */
@@ -106,7 +120,7 @@ export class CodexAdapter implements ChatAdapter {
     const effort = this.options.effort;
     if (!effort) return undefined;
     if (!this.models) return effort;
-    const model = this.models.find(m => m.id === this.options.model) ?? this.models.find(m => m.isDefault);
+    const model = this.models.find(m => m.id === (this.options.model ?? this.fallbackModel)) ?? this.models.find(m => m.isDefault);
     return model && !model.efforts.includes(effort) ? undefined : effort;
   }
 
@@ -184,7 +198,15 @@ export class CodexAdapter implements ChatAdapter {
       }
       this.threadId = result.thread.id;
       const mode = [result.approvalPolicy, result.approvalsReviewer].filter((part): part is string => typeof part === 'string').join(' · ');
-      events.push({ type: 'session', providerSessionId: result.thread.id, ...(typeof result.model === 'string' ? { model: result.model } : {}), ...(mode ? { permissionMode: mode } : {}) });
+      // A model from the user's own Codex config that Codex doesn't offer this account fails every turn (a ChatGPT
+      // account can't use some): the chat uses Codex's default model instead, and says so.
+      let model = typeof result.model === 'string' ? result.model : undefined;
+      const fallback = this.models?.find(m => m.isDefault);
+      if (!this.options.model && model && this.models && fallback && !this.models.some(m => m.id === model)) {
+        events.push({ type: 'error', message: `Codex doesn't offer ${model} (from your Codex config) to your account, so this chat uses ${fallback.label}.`, fatal: false });
+        this.fallbackModel = model = fallback.id;
+      }
+      events.push({ type: 'session', providerSessionId: result.thread.id, ...(model ? { model } : {}), ...(mode ? { permissionMode: mode } : {}) });
     }
     if (method === 'turn/start' && isRecord(result.turn) && typeof result.turn.id === 'string') {
       this.turnId = result.turn.id;

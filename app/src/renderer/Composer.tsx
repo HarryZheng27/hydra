@@ -1,5 +1,6 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
+import { Picker } from './Picker';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
@@ -32,15 +33,19 @@ const withValue = (options: Array<{ value: string; label: string }>, value: stri
  * Who answers a Codex chat's approvals. A Codex chat is read-only for now either way: letting it edit the folder waits
  * for its live check, and full access is never offered. Approved file changes still apply.
  */
-const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string }> => [
-  { value: 'settings', label: defaults?.approvals === 'auto_review' ? 'Auto-review' : 'Codex decides' }, { value: 'ask', label: 'Ask me' },
+const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string; description: string }> => [
+  { value: 'settings', label: defaults?.approvals === 'auto_review' ? 'Auto-review' : 'Codex decides', description: defaults?.approvals === 'auto_review' ? 'Codex\'s reviewer approves what it can' : 'Your Codex config decides what to ask' },
+  { value: 'ask', label: 'Ask me', description: 'Every approval comes to you' },
 ];
 /**
  * "Your settings" passes no mode, so Claude Code follows the user's own (their defaultMode, such as auto). Bypass
  * permissions isn't offered (HSEC-82).
  */
-const modes: Array<{ value: ClaudePermissionMode; label: string }> = [
-  { value: 'auto', label: 'Auto' }, { value: 'default', label: 'Ask before edits' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan first' },
+const modes: Array<{ value: ClaudePermissionMode; label: string; description: string }> = [
+  { value: 'auto', label: 'Auto', description: 'Claude Code decides what needs your OK' },
+  { value: 'default', label: 'Ask before edits', description: 'Asks before editing files or running commands' },
+  { value: 'acceptEdits', label: 'Accept edits', description: 'Edits files without asking; asks before commands' },
+  { value: 'plan', label: 'Plan first', description: 'Plans, and changes nothing until you approve' },
 ];
 
 interface Props {
@@ -60,7 +65,7 @@ interface Props {
 export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel }: Props) {
   const codex = record.provider === 'codex';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
-  const model = record.model ?? defaults?.model ?? (codex ? sessionModel ?? models.find(m => m.isDefault)?.id : claudeAlias(sessionModel)) ?? (codex ? undefined : 'opus');
+  const model = record.model ?? (codex ? sessionModel ?? defaults?.model ?? models.find(m => m.isDefault)?.id : defaults?.model ?? claudeAlias(sessionModel) ?? 'opus');
   const codexModel = models.find(m => m.id === model) ?? models.find(m => m.isDefault);
   const effort = record.effort ?? defaults?.effort ?? (codex ? codexModel?.defaultEffort : undefined);
   const version = /claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(sessionModel ?? '');
@@ -72,6 +77,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const [images, setImages] = useState<Attached[]>([]);
   const [problem, setProblem] = useState<string>();
   const picker = useRef<HTMLInputElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
   const attach = async (files: File[]) => {
     setProblem(undefined);
     for (const file of files) {
@@ -91,6 +97,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
     onSend(text, images.map(({ mediaType, data }) => ({ mediaType, data })));
     setText('');
     setImages([]);
+    if (box.current) box.current.style.height = ''; // back to one line
   };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
   // Like Claude desktop's prompt: the message in a rounded box with one button in its corner (send, or stop while a
@@ -108,28 +115,18 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
             {problem && <span className="error">{problem}</span>}
           </div>
         )}
-        <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={2} />
+        <textarea ref={box} value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={1} onInput={event => { const box = event.currentTarget; box.style.height = 'auto'; box.style.height = `${box.scrollHeight}px`; }} />
         <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'arrowUp'} /></button>
       </div>
       <div className="composer-bar">
         <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>
         <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         {codex
-          ? <select className="quiet" aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
-              {approvalModes(defaults).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          : <select className="quiet" aria-label="Permission mode" title="What Claude Code asks you about first (a new chat starts on your own Claude Code setting); anything it asks comes here as a card." value={mode} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
-              {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>}
+          ? <Picker label="Approvals" value={record.approvals ?? 'ask'} options={approvalModes(defaults)} onChange={value => onConfigure({ approvals: value as CodexApprovals })} title="Who answers Codex's approvals. Hydra starts Codex read-only." />
+          : <Picker label="Permission mode" value={mode} options={modes} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
         <span className="composer-spacer" />
-        <select className="quiet" aria-label="Model" value={model ?? ''} onChange={e => onConfigure({ model: e.target.value })}>
-          {!model && <option value="">Model</option>}
-          {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-        <select className="quiet" aria-label="Effort" value={effort ?? ''} onChange={e => onConfigure({ effort: e.target.value })}>
-          {!effort && <option value="">Effort</option>}
-          {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
+        <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />
+        <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />
       </div>
     </div>
   );

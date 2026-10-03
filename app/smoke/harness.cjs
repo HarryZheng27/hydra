@@ -350,24 +350,23 @@ if (role === 'first') {
       await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('Codex'))`, 'the project view');
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('Codex')).click(); 1`);
-      await chat.until(`!!document.querySelector('.composer select[aria-label=Approvals]')`, 'the new Codex chat');
+      await chat.until(`!!document.querySelector('.composer .picker[aria-label=Approvals]')`, 'the new Codex chat');
+      // The pickers open a menu of options; their labels are read, then one is chosen by clicking it.
+      const pickerOptions = async label => { await ui(`document.querySelector('.composer .picker[aria-label=${label}]').click(); 1`); await chat.until(`!!document.querySelector('.picker-menu[aria-label=${label}]')`, `the ${label} menu`); const labels = await ui(`[...document.querySelectorAll('.picker-menu[aria-label=${label}] .picker-label')].map(e => e.textContent)`); await ui(`document.querySelector('.composer .picker[aria-label=${label}]').click(); 1`); return labels; };
       report.codex = {
-        approvals: await ui(`[...document.querySelectorAll('.composer select[aria-label=Approvals] option')].map(o => o.textContent)`),
-        approvalsDefault: await ui(`document.querySelector('.composer select[aria-label=Approvals]').value`),
+        approvals: await pickerOptions('Approvals'),
+        approvalsDefault: await ui(`document.querySelector('.composer .picker[aria-label=Approvals]').dataset.value`),
       };
       // G1's recordings route every approval to the user, so this chat asks: the stand-in checks the thread says so.
-      await ui(`(() => {
-        const select = document.querySelector('.composer select[aria-label=Approvals]');
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'ask');
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        return 1;
-      })()`);
-      await chat.until(`document.querySelector('.composer select[aria-label=Approvals]').value === 'ask'`, 'Ask me to apply');
+      await ui(`document.querySelector('.composer .picker[aria-label=Approvals]').click(); 1`);
+      await chat.until(`!!document.querySelector('.picker-menu [data-value=ask]')`, 'the Approvals menu');
+      await ui(`document.querySelector('.picker-menu [data-value=ask]').click(); 1`);
+      await chat.until(`document.querySelector('.composer .picker[aria-label=Approvals]').dataset.value === 'ask'`, 'Ask me to apply');
       await chat.send('Run node -e console.log(6*7) and tell me the output.');
       await chat.until(`!!document.querySelector('.card.approval .card-actions')`, 'the first Codex approval');
       report.codex.choices = await ui(`[...document.querySelectorAll('.card.approval .card-actions button')].map(b => b.textContent)`);
-      report.codex.models = await ui(`[...document.querySelectorAll('.composer select[aria-label=Model] option')].map(o => o.textContent)`);
-      report.codex.model = await ui(`document.querySelector('.composer select[aria-label=Model]').value`);
+      report.codex.models = await pickerOptions('Model');
+      report.codex.model = await ui(`document.querySelector('.composer .picker[aria-label=Model]').dataset.value`);
       await chat.click('.card.approval .card-actions button', 'Deny');
       await chat.until(`document.querySelectorAll('.turn-end').length >= 1`, 'Codex turn one to end');
       await chat.send('Run it again, please.');

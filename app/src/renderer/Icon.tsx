@@ -9,6 +9,8 @@ const paths: Record<string, string> = {
   clone: 'M6 3.5v9M6 12.5a2 2 0 1 0 0 4a2 2 0 0 0 0-4zM14 7.5a2 2 0 1 0 0-4a2 2 0 0 0 0 4zM14 7.5c0 3-8 2-8 5',
   arrowUp: 'M10 15.5v-11M5.5 9l4.5-4.5L14.5 9',
   stop: 'M6.5 6.5h7v7h-7z',
+  chevronDown: 'M6 8l4 4l4-4',
+  check: 'M4.5 10.5l3.5 3.5l7.5-8',
   terminal: 'M3.5 4.5h13v11h-13zM6.5 8.5l2 1.5l-2 1.5M10.5 12.5h3',
   diff: 'M6 3.5v6M3 6.5h6M3.5 14.5h6M12.5 3.5h4v13h-4',
 };
