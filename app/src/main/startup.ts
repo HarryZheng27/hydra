@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import { CHAT_EVENTS, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
+import { openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
 import { onboardingReport, openSignIn } from './onboarding';
 import { identityProblems, PRODUCT_NAME } from './identity';
@@ -121,6 +122,7 @@ export function start(): void {
     signIn: (provider, configured) => openSignIn(provider, configured, userData),
     confirmTrust,
     chats,
+    review: { diff: workingTreeDiff, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
   });
 
   app.on('window-all-closed', () => app.quit());

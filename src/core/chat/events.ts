@@ -66,6 +66,11 @@ export interface ChatOptions {
   resume?: string;
   /** Claude only: the session id to start a new chat with. */
   sessionId?: string;
+  /**
+   * Extra CLI arguments, for the live checks' isolation from the user's own setup (scripts/app-live/chat.mjs). The
+   * app never sets them, and no IPC payload can.
+   */
+  extraArgs?: string[];
 }
 
 /** An image the user attached: PNG, JPEG, GIF or WebP, base64, at most 5 MB decoded. */

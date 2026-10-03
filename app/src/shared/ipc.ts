@@ -16,6 +16,8 @@ export const CHAT_EVENTS = 'hydra:chat-events';
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
 export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
+export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
+export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 
 export type CliProvider = 'claude' | 'codex';
@@ -63,6 +65,10 @@ export interface Channels {
   'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
   /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
   'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
+  /** The chat folder's working tree against HEAD, read-only. */
+  'review.diff': { payload: { id: string }; result: ReviewResult };
+  /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
+  'review.open': { payload: { id: string; path: string }; result: { opened: 'editor' | 'folder' } };
   /** The user closed the terminal they opened the chat in: it can run in the app again. */
   'chats.terminalClosed': { payload: { id: string }; result: null };
   'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
@@ -141,6 +147,9 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'chats.open': exactly<{ id: string }>({ id: isId }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
+  'review.diff': exactly<{ id: string }>({ id: isId }),
+  // A path relative to the chat's folder, checked again in main against the files the diff lists.
+  'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
@@ -187,6 +196,8 @@ export interface HydraApi {
   openChat(id: string): Promise<OpenChat>;
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
   openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
+  reviewDiff(id: string): Promise<ReviewResult>;
+  openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;
   terminalClosed(id: string): Promise<null>;
   answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
   stopChat(id: string): Promise<null>;

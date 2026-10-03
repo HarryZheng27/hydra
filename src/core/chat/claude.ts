@@ -10,6 +10,13 @@ export const claudeSessionIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 const modelPattern = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/;
 const efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** Extra arguments (live checks only): plain strings, no line breaks. */
+export function extraArguments(options: ChatOptions): string[] {
+  const extra = options.extraArgs ?? [];
+  if (!extra.every(arg => typeof arg === 'string' && !/[\r\n\u0000]/.test(arg))) throw new Error('An extra argument isn\'t allowed.');
+  return extra;
+}
+
 export function claudeArguments(options: ChatOptions): string[] {
   const id = options.resume ?? options.sessionId;
   if (!id || !claudeSessionIdPattern.test(id)) throw new Error('A Claude chat needs a valid session id.');
@@ -23,6 +30,7 @@ export function claudeArguments(options: ChatOptions): string[] {
     '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--effort', options.effort] : []),
+    ...extraArguments(options),
   ];
 }
 

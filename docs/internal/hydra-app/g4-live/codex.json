@@ -1,0 +1,49 @@
+{
+  "schema": "hydra-app-live/chat-codex/v1",
+  "provider": "codex",
+  "turnsUsed": 5,
+  "turnCap": 6,
+  "result": "pass",
+  "results": [
+    {
+      "scenario": "reply",
+      "status": "pass"
+    },
+    {
+      "scenario": "approve",
+      "status": "pass"
+    },
+    {
+      "scenario": "deny",
+      "status": "pass"
+    },
+    {
+      "scenario": "stop",
+      "status": "pass"
+    },
+    {
+      "scenario": "resume",
+      "status": "pass"
+    }
+  ],
+  "userStateUnchanged": {
+    "claudeSettings": true,
+    "claudeHydraEntry": true,
+    "codexConfig": true
+  },
+  "errors": [],
+  "processes": 2,
+  "eventCounts": {
+    "user": 5,
+    "models": 1,
+    "session": 2,
+    "text": 108,
+    "usage": 8,
+    "done": 5,
+    "tool-call": 2,
+    "file-change": 2,
+    "approval": 2,
+    "resolved": 2,
+    "tool-result": 2
+  }
+}

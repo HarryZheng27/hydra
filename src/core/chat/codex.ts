@@ -1,5 +1,6 @@
 import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatModel } from './events';
 import { codexSandboxes } from './events';
+import { extraArguments } from './claude';
 
 /**
  * Codex as a chat (G1's S2 decisions): one `codex app-server` per chat, JSON-RPC over stdio.
@@ -26,7 +27,7 @@ export function codexArguments(options: ChatOptions): string[] {
   if (options.sandbox !== undefined && !codexSandboxes.includes(options.sandbox)) throw new Error(`Sandbox ${String(options.sandbox)} isn't allowed in a chat.`);
   if (options.model !== undefined && !modelPattern.test(options.model)) throw new Error('That model name isn\'t valid.');
   if (options.resume !== undefined && !threadIdPattern.test(options.resume)) throw new Error('That Codex thread id isn\'t valid.');
-  return ['app-server', '--listen', 'stdio://'];
+  return ['app-server', '--listen', 'stdio://', ...extraArguments(options)];
 }
 
 type Pending = { method: string; rpcId: number | string; decisions: string[] };

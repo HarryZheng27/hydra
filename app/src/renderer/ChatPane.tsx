@@ -3,6 +3,7 @@ import type { ChatAnswer, ChatEvent, ChatImage, ChatRecord } from '../shared/ipc
 import { foldEvents, type ChatItem } from './chatModel';
 import { Composer } from './Composer';
 import { Markdown } from './markdown';
+import { ReviewPane } from './ReviewPane';
 
 interface Props {
   record: ChatRecord;
@@ -11,6 +12,8 @@ interface Props {
   settledBefore?: number;
   onSend(text: string, images?: ChatImage[]): void;
   onOpenTerminal(): void;
+  /** Opens Settings, where Your agents shows what is installed. */
+  onOpenSettings?(): void;
   /** The chat is open in a terminal the user started: sends wait until they close it. */
   inTerminal?: boolean;
   onTerminalClosed?(): void;
@@ -123,8 +126,9 @@ function usageLine(item: ChatItem & { kind: 'turn-end' }): string {
   return parts.join(' · ');
 }
 
-export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed }: Props) {
+export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
+  const [reviewing, setReviewing] = useState(false);
   // Each request is answered once: a second click on the same card sends nothing.
   const answered = useRef(new Set<string>());
   const answerOnce: Props['onAnswer'] = (id, answer) => {
@@ -141,10 +145,12 @@ export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, 
         <span className="chat-title" title={record.cwd}>{record.title}</span>
         <span className="chip">{record.provider === 'claude' ? 'Claude Code' : 'Codex'}</span>
         {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
-        <button className="head-action" onClick={onOpenTerminal} disabled={view.running || inTerminal} title={view.running ? 'Stop the chat first' : 'Continue this chat in the CLI itself, in a terminal window, with its own default settings'}>Open in terminal</button>
+        <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing}>{reviewing ? 'Back to chat' : 'Review changes'}</button>
+        <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} title={view.running ? 'Stop the chat first' : 'Continue this chat in the CLI itself, in a terminal window, with its own default settings'}>Open in terminal</button>
       </header>
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
-      <div className="transcript" role="log" aria-live="polite">
+      {reviewing && <ReviewPane chatId={record.id} />}
+      <div className="transcript" role="log" aria-live="polite" hidden={reviewing}>
         {view.items.map(item => {
           switch (item.kind) {
             case 'user': return <div key={item.key} className="msg user"><div className="bubble">{item.text}{item.images ? <span className="chip">{item.images} image{item.images > 1 ? 's' : ''}</span> : null}</div></div>;
@@ -157,7 +163,13 @@ export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, 
               if (item.event.type === 'question') return <QuestionCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;
               return <PlanCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;
             }
-            case 'error': return <div key={item.key} className="msg chat-error" role="alert">{item.message}</div>;
+            case 'error': {
+              // Errors say what to do next: a missing CLI leads to Your agents; a usage limit is the plan's, not Hydra's.
+              if (item.code === 'missing-cli') return <div key={item.key} className="msg chat-error" role="alert">{item.message} <button className="link" onClick={onOpenSettings}>Open Your agents</button></div>;
+              if (item.code === 'limit') return <div key={item.key} className="msg chat-error limit" role="alert">{record.provider === 'claude' ? 'Claude Code' : 'Codex'} has reached your plan's usage limit. Try again when it resets{/reset/i.test(item.message) ? ` (${item.message})` : ''}. <span className="hint">Handing the chat to the other agent comes in a later version.</span></div>;
+              if (item.code === 'malformed') return <div key={item.key} className="msg chat-error" role="alert">{item.message} Send a message to start it again, or use Open in terminal.</div>;
+              return <div key={item.key} className="msg chat-error" role="alert">{item.message}</div>;
+            }
             case 'turn-end': { const line = usageLine(item); return line ? <div key={item.key} className={`turn-end ${item.status}`}>{line}</div> : null; }
           }
         })}

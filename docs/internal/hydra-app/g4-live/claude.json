@@ -1,0 +1,48 @@
+{
+  "schema": "hydra-app-live/chat-claude/v1",
+  "provider": "claude",
+  "turnsUsed": 5,
+  "turnCap": 6,
+  "result": "pass",
+  "results": [
+    {
+      "scenario": "reply",
+      "status": "pass"
+    },
+    {
+      "scenario": "approve",
+      "status": "pass"
+    },
+    {
+      "scenario": "deny",
+      "status": "pass"
+    },
+    {
+      "scenario": "stop",
+      "status": "pass"
+    },
+    {
+      "scenario": "resume",
+      "status": "pass"
+    }
+  ],
+  "userStateUnchanged": {
+    "claudeSettings": true,
+    "claudeHydraEntry": true,
+    "codexConfig": true
+  },
+  "errors": [],
+  "processes": 2,
+  "eventCounts": {
+    "user": 5,
+    "session": 5,
+    "text": 12,
+    "usage": 5,
+    "done": 5,
+    "tool-call": 2,
+    "file-change": 2,
+    "approval": 2,
+    "resolved": 2,
+    "tool-result": 2
+  }
+}

@@ -19,6 +19,8 @@ await Promise.all([
   build({ entryPoints: [path.join(here, 'src/main/main.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron'], outfile: path.join(dist, 'main.cjs'), sourcemap: true, define, logLevel: 'warning' }),
   // A sandboxed preload may only require electron and a few Node built-ins, so it is one self-contained file.
   build({ entryPoints: [path.join(here, 'src/preload/preload.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'chrome140', external: ['electron'], outfile: path.join(dist, 'preload.cjs'), logLevel: 'warning' }),
-  build({ entryPoints: [path.join(here, 'src/renderer/index.tsx')], bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outfile: path.join(dist, 'renderer', 'renderer.js'), minify: true, alias, define: { ...define, 'process.env.NODE_ENV': '"production"' }, logLevel: 'warning' }),
+  // Monaco's CSS comes out as renderer.css beside it; its icon font is a file served from app://hydra/.
+  build({ entryPoints: [path.join(here, 'src/renderer/index.tsx')], bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outfile: path.join(dist, 'renderer', 'renderer.js'), minify: true, alias, define: { ...define, 'process.env.NODE_ENV': '"production"' }, loader: { '.ttf': 'file' }, assetNames: '[name]', logLevel: 'warning' }),
+  build({ entryPoints: { 'editor.worker': path.join(here, 'src/renderer/editor.worker.ts') }, bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outdir: path.join(dist, 'renderer'), minify: true, logLevel: 'warning' }),
 ]);
 for (const file of ['index.html', 'styles.css']) await copyFile(path.join(here, 'src/renderer', file), path.join(dist, 'renderer', file));

@@ -20,7 +20,8 @@ export interface HandlerDeps {
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ started: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder'>;
+  review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
 }
 
 /** What main does for each channel. Paths only ever come from main's own pickers, never from the renderer. */
@@ -99,6 +100,17 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.open': ({ id }) => deps.chats.open(id),
     'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
+    'review.diff': async ({ id }) => {
+      if (!deps.review) throw new Error('Review isn\'t available here.');
+      return deps.review.diff(await deps.chats.reviewFolder(id));
+    },
+    'review.open': async ({ id, path }) => {
+      if (!deps.review) throw new Error('Review isn\'t available here.');
+      const cwd = await deps.chats.reviewFolder(id);
+      // Only a file the diff lists right now can be opened.
+      if (!(await deps.review.diff(cwd)).files.some(file => file.path === path)) throw new Error('That file isn\'t among this folder\'s changes.');
+      return { opened: await deps.review.open(cwd, path) };
+    },
     'chats.terminalClosed': ({ id }) => { deps.chats.terminalClosed(id); return null; },
     'chats.answer': ({ id, requestId, answer }) => { deps.chats.answer(id, requestId, answer); return null; },
     'chats.stop': ({ id }) => { deps.chats.stop(id); return null; },

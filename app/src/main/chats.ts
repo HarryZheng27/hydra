@@ -257,6 +257,12 @@ export class ChatManager {
     return result;
   }
 
+  /** The folder a chat may be reviewed in: its own, and only while that folder is trusted. */
+  async reviewFolder(id: string): Promise<string> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra.');
+    return record.cwd;
+  }
   /** The user closed the terminal they opened this chat in: the chat can run here again (it resumes what they did). */
   terminalClosed(id: string): void { this.inTerminal.delete(id); }
 

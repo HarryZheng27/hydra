@@ -13,12 +13,26 @@ const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // G1's CSP (docs/internal/hydra-app/G1-spikes.md, S4 item 4), written out here so the smoke checks the app against
 // the decision, not against itself.
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify";
-const electron = createRequire(import.meta.url)('electron');
+const require = createRequire(import.meta.url);
+const electron = require('electron');
 const work = path.join(appDir, '.smoke', String(Date.now()));
 const appData = path.join(work, 'AppData', 'Roaming');
 const out = path.join(work, 'out');
 const project = path.join(work, 'Project One');
 fs.mkdirSync(project, { recursive: true });
+// A git repository with one commit and changes on top, for the review pane.
+{
+  const { spawnSync } = await import('node:child_process');
+  const git = (...args) => { const result = spawnSync('git', args, { cwd: project, windowsHide: true, encoding: 'utf8' }); if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`); };
+  git('init', '-q');
+  git('config', 'user.email', 'smoke@example.invalid');
+  git('config', 'user.name', 'Smoke');
+  fs.writeFileSync(path.join(project, 'hello.ts'), 'export const greeting = "one";\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'first');
+  fs.writeFileSync(path.join(project, 'hello.ts'), 'export const greeting = "two";\nexport const extra = 1;\n');
+  fs.writeFileSync(path.join(project, 'notes.md'), '# new\n');
+}
 fs.mkdirSync(appData, { recursive: true });
 fs.mkdirSync(out, { recursive: true });
 // Stand-in CLIs on PATH, and scratch Claude and Codex config folders: the smoke never runs or reads the real ones.
@@ -36,7 +50,13 @@ fs.writeFileSync(path.join(claudeConfig, '.claude.json'), JSON.stringify({ mcpSe
 fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model = "x"\n');
 const configBefore = [path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8'));
 const systemRoot = process.env.SystemRoot || 'C:\\Windows';
-const env = { ...process.env, PATH: [bin, path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
+// git's own folder, for the review pane; nothing else from the user's PATH (no real claude or codex).
+const gitFolder = (() => {
+  const { spawnSync } = require('node:child_process');
+  const found = spawnSync('where.exe', ['git'], { encoding: 'utf8', windowsHide: true }).stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+  return found ? path.dirname(found) : undefined;
+})();
+const env = { ...process.env, PATH: [bin, ...(gitFolder ? [gitFolder] : []), path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
@@ -93,7 +113,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -267,6 +287,13 @@ try {
     assert.match(r.resume.codex.lastTurn, /success/);
     assert.equal(chatStarts(codexState).length, 2);
     assert.equal(standinErrors(codexState), '');
+  });
+  check('the review pane shows the working tree against HEAD, read-only, with no CSP violation', () => {
+    assert.deepEqual(a.review.files.sort(), ['Mhello.ts', 'Unotes.md']);
+    assert.equal(a.review.readOnly, true);
+    assert.deepEqual(a.review.cspViolations, []);
+    assert.equal(a.review.shown.length, 1, 'Open in editor showed the file in its folder (no editor on the smoke\'s PATH)');
+    assert.match(a.review.shown[0], /hello\.ts$/);
   });
   check('a second launch focuses the first and exits', () => {
     assert.equal(a.hasLock, true);

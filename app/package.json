@@ -19,6 +19,7 @@
     "@types/react-dom": "^19.0.0",
     "electron": "44.5.1",
     "esbuild": "^0.25.0",
+    "monaco-editor": "0.57.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.0"

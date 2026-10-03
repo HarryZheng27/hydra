@@ -161,12 +161,13 @@ export function App() {
         )}
         <main className="main">
           {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}
-          {error && <div className="banner error" role="alert">{error}</div>}
+          {error && <div className="banner error" role="alert">{error}{/Your agents/.test(error) && <> <button className="link" onClick={() => setView({ kind: 'settings' })}>Open Your agents</button></>}</div>}
           {view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
               ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0}
                   onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
+                  onOpenSettings={() => setView({ kind: 'settings' })}
                   onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}
                   inTerminal={!!inTerminal[chat.id]}
                   onTerminalClosed={() => void run(window.hydra.terminalClosed(chat.id), () => setInTerminal(current => ({ ...current, [chat.id]: false })))}
