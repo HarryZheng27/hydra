@@ -87,6 +87,10 @@ export interface ProjectHydraStatus { id: string; running: boolean; owned: boole
 export class HydraProjects {
   private readonly running = new Map<string, Running>();
   private readonly starting = new Map<string, Promise<void>>();
+  /** Stops in progress: a new start for the project waits for the old one's lock and state to be let go. */
+  private readonly stopping = new Map<string, Promise<void>>();
+  /** Every controller built and not yet disposed (starting, running or stopping): their heads are refused as leads. */
+  private readonly alive = new Map<HydraController, string>();
   private readonly errors = new Map<string, string>();
   private settings?: JsonValues;
   private globalState?: JsonValues;
@@ -120,7 +124,7 @@ export class HydraProjects {
 
   /** Every running project's heads' processes but this one's, refused as its leads too. */
   headsOutside(id: string): number[] {
-    return [...this.running.values()].filter(running => running.project.id !== id).flatMap(running => [...running.controller.helperProcessIds()]);
+    return [...this.alive].filter(([, owner]) => owner !== id).flatMap(([controller]) => [...controller.helperProcessIds()]);
   }
 
   status(): ProjectHydraStatus[] {
@@ -141,7 +145,7 @@ export class HydraProjects {
     if (current) return this.stop(project.id).then(() => this.start(project));
     let pending = this.starting.get(project.id);
     if (!pending) {
-      pending = this.boot(project).catch(error => {
+      pending = (this.stopping.get(project.id) ?? Promise.resolve()).then(() => this.boot(project)).catch(error => {
         const message = error instanceof Error ? error.message : String(error);
         this.errors.set(project.id, message);
         this.options.log(`[hydra] ${project.name}: not started: ${message}`);
@@ -220,28 +224,43 @@ export class HydraProjects {
       report: error => { const message = error instanceof Error ? error.message : String(error); log(`[error] ${message}`); this.options.notice?.(project, 'error', message); },
     };
     controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id) });
+    this.alive.set(controller, project.id);
+    // Removed or untrusted while it was being built: it never takes the lock or resumes a plan.
+    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose({ project, host, controller, lanes, quota, state }); return; }
     await controller.start();
     if (controller.disabled) {
       // Another Hydra (the IDE, say) owns this repository: nothing runs here for it.
       this.errors.set(project.id, `Hydra in another window already manages ${project.name}.`);
     } else this.errors.delete(project.id);
     // Quit began, or the project was removed or untrusted while this started: nothing of it stays.
-    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await controller.shutdown().catch(() => undefined); await quota.shutdown().catch(() => undefined); quota.dispose(); lanes.dispose(); host.dispose(); return; }
+    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose({ project, host, controller, lanes, quota, state }); return; }
     this.running.set(project.id, { project, host, controller, lanes, quota, state });
   }
 
-  async stop(id: string): Promise<void> {
-    await this.starting.get(id);
-    const running = this.running.get(id);
+  /** Stops a project's controller. It is no longer running from this call on, so an open right after waits for it. */
+  stop(id: string): Promise<void> {
     this.errors.delete(id);
-    if (!running) return;
-    this.running.delete(id);
+    const running = this.running.get(id);
+    if (running) {
+      this.running.delete(id);
+      const stopping = this.dispose(running).finally(() => { if (this.stopping.get(id) === stopping) this.stopping.delete(id); });
+      this.stopping.set(id, stopping);
+      return stopping;
+    }
+    // Still starting: stop it once it has (boot itself drops one removed or untrusted meanwhile).
+    const starting = this.starting.get(id);
+    if (starting) return starting.then(() => this.stop(id));
+    return this.stopping.get(id) ?? Promise.resolve();
+  }
+
+  private async dispose(running: Running): Promise<void> {
     await running.controller.shutdown().catch(error => this.options.log(`[hydra] ${running.project.name}: shutdown: ${error instanceof Error ? error.message : String(error)}`));
     await running.quota.shutdown().catch(() => undefined);
     running.quota.dispose();
     running.lanes.dispose();
     running.host.dispose();
     await running.state.flush();
+    this.alive.delete(running.controller);
   }
 
   /** Every project's controller stops: heads, lanes and plans end, discovery records go, ownership is released. */
@@ -249,6 +268,7 @@ export class HydraProjects {
     this.closing = true;
     await Promise.all([...this.starting.values()]);
     await Promise.all([...this.running.keys()].map(id => this.stop(id)));
+    await Promise.all([...this.stopping.values()]);
     await Promise.all([this.settings?.flush(), this.globalState?.flush(), this.audit?.flush()]);
   }
 }

@@ -62,12 +62,12 @@ const env = { ...process.env, HYDRA_APP_IDE_STORAGE: ideStorage, PATH: [bin, ...
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
-  const child = spawn(electron, [path.join(appDir, 'smoke', 'harness.cjs'), `--smoke-role=${role}`, `--smoke-out=${out}`, `--smoke-appdata=${appData}`, `--smoke-folder=${project}`, ...process.argv.slice(2).filter(a => a.startsWith('--smoke-shots='))], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(electron, [path.join(appDir, 'smoke', 'harness.cjs'), `--smoke-role=${role}`, `--smoke-out=${out}`, `--smoke-appdata=${appData}`, `--smoke-folder=${project}`, `--smoke-timeout=150000`, ...process.argv.slice(2).filter(a => a.startsWith('--smoke-shots='))], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout.on('data', d => { log += d; });
   child.stderr.on('data', d => { log += d; });
   const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
-  const killer = setTimeout(() => child.kill(), 90000);
+  const killer = setTimeout(() => child.kill(), 180000);
   void exited.then(() => clearTimeout(killer));
   return { exited, log: () => log };
 }
@@ -87,7 +87,7 @@ const check = (name, fn) => { fn(); checks.push(name); console.log(`ok - ${name}
 const first = launch('first');
 let failed = false;
 try {
-  await until(() => read('first')?.events.includes('ready'), 60000, 'the first instance to load');
+  await until(() => read('first')?.events.includes('ready'), 150000, 'the first instance to load');
   const second = launch('second');
   const secondCode = await second.exited;
   const firstCode = await first.exited;

@@ -142,7 +142,7 @@ export function start(): void {
     signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
-    projectOpened: async cwd => { const project = (await state.load()).projects.find(candidate => samePath(candidate.path, cwd)); if (project) void hydra.open(project).catch(() => undefined); },
+    projectOpened: cwd => { void state.load().then(loaded => { const project = loaded.projects.find(candidate => samePath(candidate.path, cwd)); if (project) return hydra.open(project); return undefined; }).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
   });

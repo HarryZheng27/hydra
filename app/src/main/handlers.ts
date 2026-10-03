@@ -109,6 +109,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       if (!(await deps.confirmTrust(project))) return deps.state.load();
       const next = await deps.state.update(current => trustProject(current, id));
       deps.projectsChanged?.(next);
+      // The user is in this project now: its controller starts.
+      deps.projectOpened?.(project.path);
       return next;
     },
     'chats.list': () => deps.chats.list(),

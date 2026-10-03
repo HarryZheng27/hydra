@@ -112,3 +112,48 @@ test('a project removed while its controller starts never keeps the repository',
     for (const folder of [dir, storage, userData]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test('a project\'s watch follows .hydra as it comes and goes, without a flood when it is deleted', { skip: process.platform !== 'win32', timeout: 60_000 }, async () => {
+  const dir = scratch('watch');
+  const { ElectronHost } = await import('../src/main/host');
+  const values = { get: <T>(_key: string, fallback: T) => fallback, update: async () => undefined };
+  const host = new ElectronHost({ folder: dir, paths: { storage: dir, dist: dir, appRoot: dir, extension: dir }, settings: values, state: values, globalState: values, machine: () => undefined, trusted: () => true, log: () => undefined, version: '0', development: true });
+  const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  let calls = 0;
+  try {
+    const watcher = host.watch(dir, '.hydra/{packs.json,packs/**}', () => { calls++; });
+    fs.mkdirSync(path.join(dir, '.hydra'));
+    fs.writeFileSync(path.join(dir, '.hydra', 'packs.json'), '{}');
+    await wait(400);
+    assert.ok(calls > 0, 'creating .hydra/packs.json is seen');
+    fs.rmSync(path.join(dir, '.hydra'), { recursive: true, force: true });
+    await wait(400);
+    const afterDelete = calls;
+    await wait(600);
+    assert.ok(calls - afterDelete < 5, `no flood once .hydra is gone (${calls - afterDelete} more calls)`);
+    fs.mkdirSync(path.join(dir, '.hydra'));
+    await wait(200);
+    const before = calls;
+    fs.writeFileSync(path.join(dir, '.hydra', 'packs.json'), '{"a":1}');
+    await wait(400);
+    assert.ok(calls > before, 'a new .hydra is watched again');
+    watcher.dispose();
+  } finally { host.dispose(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test('reopening a project while its controller is still stopping waits for it, rather than finding it "already managed"', { timeout: 120_000 }, async () => {
+  const dir = repo();
+  const storage = scratch('storage'), userData = scratch('userdata');
+  try {
+    const app = projects(storage, userData);
+    const p = project(dir);
+    await app.open(p);
+    const stopping = app.stop(p.id);
+    await app.open(p);
+    await stopping;
+    assert.deepEqual(app.status().map(status => [status.running, status.owned, status.error]), [[true, true, undefined]]);
+    await app.shutdown();
+  } finally {
+    for (const folder of [dir, storage, userData]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
