@@ -170,3 +170,10 @@ details.tool.failed { border-color: var(--error); }
 
 .new-chat-choices { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .provider-tag { margin-left: 6px; font-size: 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 0 5px; }
+
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 8px max(24px, calc((100% - 760px) / 2)); border-bottom: 1px solid var(--border); }
+.chat-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.head-action { margin-left: auto; padding: 3px 10px; border-radius: var(--radius); border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); font-size: 12px; }
+.attachments { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.chip.attachment { display: inline-flex; gap: 4px; align-items: center; margin: 0; }
+.chip.attachment button { color: var(--muted); padding: 0 2px; }

@@ -93,7 +93,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -238,12 +238,17 @@ try {
     assert.equal(r.resume.restoredTurnEnds, 3);
     assert.deepEqual(r.resume.restoredCards, ['Allowed', 'Denied']);
     assert.match(r.resume.lastTurn, /success/);
+    assert.ok(r.resume.terminal, 'Open in terminal launched nothing');
+    assert.match(r.resume.terminal.line, /start "Claude Code chat"/);
+    assert.ok(r.resume.terminal.script.includes(`Set-Location -LiteralPath '${project.replace(/'/g, "''")}'`), r.resume.terminal.script);
+    assert.deepEqual(r.refusedLaunches, []);
     const starts = chatStarts();
     assert.equal(starts.length, 2);
     const first = starts[0], second = starts[1];
     const id = first[first.indexOf('--session-id') + 1];
     assert.match(id, /^[0-9a-f-]{36}$/);
     assert.equal(second[second.indexOf('--resume') + 1], id);
+    assert.ok(r.resume.terminal.script.includes(`'--resume' '${id}'`), 'the terminal resumes the same session');
     assert.equal(standinErrors(), '');
   });
   check('a chat with Codex: read-only by default, deny, allow, stop mid-command', () => {

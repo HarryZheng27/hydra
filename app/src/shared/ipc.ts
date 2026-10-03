@@ -3,11 +3,11 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
-import type { ChatAnswer, ChatEvent, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
-export type { ChatAnswer, ChatEvent, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
+export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
 
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
@@ -60,7 +60,9 @@ export interface Channels {
   'chats.list': { payload: null; result: ChatRecord[] };
   'chats.create': { payload: NewChatRequest; result: ChatRecord };
   'chats.open': { payload: { id: string }; result: OpenChat };
-  'chats.send': { payload: { id: string; text: string }; result: null };
+  'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
+  /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
+  'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
   'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
   'chats.stop': { payload: { id: string }; result: null };
   'chats.configure': { payload: { id: string; change: ChatSettingsChange }; result: ChatRecord };
@@ -100,6 +102,8 @@ const isText = (max: number) => (value: unknown): boolean => typeof value === 's
 const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
 const isEffort = oneOf('low', 'medium', 'high', 'xhigh', 'max');
 const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
+/** At most four images, each a known type and at most 5 MB (main checks the bytes too). */
+const isImages = (value: unknown): boolean => Array.isArray(value) && value.length <= 4 && value.every(image => shaped({ mediaType: oneOf('image/png', 'image/jpeg', 'image/gif', 'image/webp'), data: (data: unknown) => typeof data === 'string' && data.length <= 7_000_000 })(image));
 /** Full access is excluded in v1. */
 const isSandbox = oneOf('read-only', 'workspace-write');
 const isRequestId = (value: unknown): boolean => typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
@@ -129,7 +133,8 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'chats.list': isNull,
   'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox }),
   'chats.open': exactly<{ id: string }>({ id: isId }),
-  'chats.send': exactly<{ id: string; text: string }>({ id: isId, text: isText(200_000) }),
+  'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
+  'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
   // An empty model or effort means the CLI's default.
@@ -173,7 +178,8 @@ export interface HydraApi {
   listChats(): Promise<ChatRecord[]>;
   createChat(request: NewChatRequest): Promise<ChatRecord>;
   openChat(id: string): Promise<OpenChat>;
-  sendMessage(id: string, text: string): Promise<null>;
+  sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
+  openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
   answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
   stopChat(id: string): Promise<null>;
   configureChat(id: string, change: ChatSettingsChange): Promise<ChatRecord>;

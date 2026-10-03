@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ClaudeAdapter } from '../../../src/core/chat/claude';
 import { CodexAdapter } from '../../../src/core/chat/codex';
 import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import { MAX_IMAGE_BYTES } from '../../../src/core/chat/events';
 import { ChatSession, type Launch, type SessionTimings } from '../../../src/core/chat/session';
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry } from '../../../src/core/chat/store';
 
@@ -26,7 +27,26 @@ export interface ChatManagerDeps {
    * the wrong way marks the folder trusted there, which turns on the project's own config, hooks and MCP servers.
    */
   codexConfig?(): Promise<string | undefined>;
+  /** Opens a console window the user owns, running a CLI in a folder; Hydra never reads it. */
+  openConsole?(title: string, executable: string, args: string[], cwd: string): Promise<{ started: boolean; error?: string }>;
   timings?: SessionTimings;
+}
+
+/** Image formats a chat accepts, by their first bytes: the declared type must match the file. */
+const signatures: Record<ChatImage['mediaType'], (bytes: Buffer) => boolean> = {
+  'image/png': bytes => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/jpeg': bytes => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+  'image/gif': bytes => ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('latin1')),
+  'image/webp': bytes => bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP',
+};
+
+/** An attached image: a known type whose bytes match it, at most 5 MB. */
+export function checkImage(image: ChatImage): void {
+  const check = signatures[image.mediaType];
+  if (!check || typeof image.data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) throw new Error('That image isn\'t a PNG, JPEG, GIF or WebP.');
+  const bytes = Buffer.from(image.data, 'base64');
+  if (bytes.length > MAX_IMAGE_BYTES) throw new Error('Images can be at most 5 MB.');
+  if (!check(bytes)) throw new Error('That file isn\'t the image it says it is.');
 }
 
 export interface NewChat { cwd: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
@@ -135,6 +155,7 @@ export class ChatManager {
   /** Every message checks trust first: a running chat's process can be replaced (idle, a new mode, a crash). */
   async send(id: string, text: string, images?: ChatImage[]): Promise<void> {
     if (!text.trim() && !images?.length) throw new Error('Type a message first.');
+    for (const image of images ?? []) checkImage(image);
     if (this.closing) throw new Error('Hydra is quitting.');
     const record = await this.record(id);
     if (!(await this.deps.trusted(record.cwd))) {
@@ -161,6 +182,26 @@ export class ChatManager {
       const start = await this.deps.store.append(id, notice);
       this.deps.push(id, notice, start);
     }
+  }
+
+  /**
+   * Open in terminal: the CLI's own interactive resume of this chat, in a console window, for anything the chat pane
+   * can't show. The chat's own process is ended first, so two processes never drive one session at once.
+   */
+  async openTerminal(id: string): Promise<{ started: boolean; error?: string }> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
+    const session = this.sessions.get(id);
+    if (session?.busy) throw new Error('Stop the chat or let its turn end first.');
+    const log = await this.deps.store.read(id);
+    if (!record.providerSessionId || !log.some(entry => entry.event.type === 'session')) throw new Error('Send a message first: there is nothing to resume yet.');
+    const executable = await this.deps.executable(record.provider);
+    if (!executable) throw new Error(`${record.provider === 'claude' ? 'Claude Code' : 'Codex'} isn't installed. Check Your agents in Settings.`);
+    if (!this.deps.openConsole) throw new Error('Hydra can\'t open a terminal here.');
+    session?.close();
+    this.sessions.delete(id);
+    const args = record.provider === 'claude' ? ['--resume', record.providerSessionId] : ['resume', record.providerSessionId];
+    return this.deps.openConsole(record.provider === 'claude' ? 'Claude Code chat' : 'Codex chat', executable, args, record.cwd);
   }
 
   /** Ends the chats in a folder, for when it stops being a project. */
