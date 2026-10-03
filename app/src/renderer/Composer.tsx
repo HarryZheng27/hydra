@@ -1,5 +1,22 @@
-import { useState, type KeyboardEvent } from 'react';
-import type { ChatModel, ChatRecord, ClaudePermissionMode, CodexSandbox } from '../shared/ipc';
+import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import type { ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexSandbox } from '../shared/ipc';
+
+const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+// Claude's API takes an image of at most 5 MB of base64, about 3.75 MB of file.
+const MAX_IMAGES = 4, MAX_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
+type Attached = ChatImage & { name: string; size: number };
+
+/** Reads an image file as base64. Main checks its bytes again before anything reaches a CLI. */
+function readImage(file: File): Promise<Attached> {
+  return new Promise((resolve, reject) => {
+    if (!imageTypes.includes(file.type as ChatImage['mediaType'])) { reject(new Error(`${file.name || 'That file'} isn't a PNG, JPEG, GIF or WebP image.`)); return; }
+    if (file.size > MAX_BYTES) { reject(new Error(`${file.name || 'That image'} is over 3.7 MB.`)); return; }
+    const reader = new FileReader();
+    reader.onload = () => { const url = String(reader.result); resolve({ mediaType: file.type as ChatImage['mediaType'], data: url.slice(url.indexOf(',') + 1), name: file.name || 'pasted image', size: file.size }); };
+    reader.onerror = () => reject(new Error('Hydra couldn\'t read that image.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 /** Claude's model aliases; the CLI resolves each to the current model. "Default" passes none. */
 const claudeModels = [
@@ -19,7 +36,7 @@ const modes: Array<{ value: ClaudePermissionMode; label: string }> = [
 interface Props {
   record: ChatRecord;
   running: boolean;
-  onSend(text: string): void;
+  onSend(text: string, images?: ChatImage[]): void;
   onStop(): void;
   onConfigure(change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }): void;
   /** Codex's own model list, from the chat's latest model/list. */
@@ -34,11 +51,42 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
     ? [{ value: '', label: 'Default effort' }, ...(codexModel?.efforts ?? []).map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))]
     : efforts;
   const [text, setText] = useState('');
-  const send = () => { if (!text.trim()) return; onSend(text); setText(''); };
+  const [images, setImages] = useState<Attached[]>([]);
+  const [problem, setProblem] = useState<string>();
+  const picker = useRef<HTMLInputElement>(null);
+  const attach = async (files: File[]) => {
+    setProblem(undefined);
+    for (const file of files) {
+      try {
+        const image = await readImage(file);
+        setImages(current => (current.length >= MAX_IMAGES ? (setProblem(`At most ${MAX_IMAGES} images per message.`), current) : [...current, image]));
+      } catch (error) { setProblem(error instanceof Error ? error.message : String(error)); }
+    }
+  };
+  const paste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'));
+    if (files.length) { event.preventDefault(); void attach(files); }
+  };
+  const drop = (event: DragEvent<HTMLDivElement>) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); void attach(files); } };
+  const send = () => {
+    if (!text.trim() && !images.length) return;
+    onSend(text, images.map(({ mediaType, data }) => ({ mediaType, data })));
+    setText('');
+    setImages([]);
+  };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
   return (
-    <div className="composer">
-      <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} placeholder={running ? 'Hydra sends this when the current turn ends' : codex ? 'Message Codex' : 'Message Claude Code'} aria-label="Message" rows={3} />
+    <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
+      {(images.length > 0 || problem) && (
+        <div className="attachments">
+          {images.map((image, index) => (
+            <span key={index} className="chip attachment" title={image.name}>{image.name} · {Math.max(1, Math.round(image.size / 1024))} KB
+              <button aria-label={`Remove ${image.name}`} onClick={() => setImages(current => current.filter((_, i) => i !== index))}>×</button></span>
+          ))}
+          {problem && <span className="error">{problem}</span>}
+        </div>
+      )}
+      <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : codex ? 'Message Codex' : 'Message Claude Code'} aria-label="Message" rows={3} />
       <div className="composer-bar">
         <select aria-label="Model" value={record.model ?? ''} onChange={e => onConfigure({ model: e.target.value || undefined })}>
           {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -53,9 +101,11 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
           : <select aria-label="Permission mode" value={record.permissionMode ?? 'default'} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
               {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>}
+        <button className="attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)">Image…</button>
+        <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         <span className="composer-spacer" />
         {running && <button className="stop" onClick={onStop}>Stop</button>}
-        <button className="primary small send" onClick={send} disabled={!text.trim()}>Send</button>
+        <button className="primary small send" onClick={send} disabled={!text.trim() && !images.length}>Send</button>
       </div>
     </div>
   );

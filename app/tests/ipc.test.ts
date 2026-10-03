@@ -45,7 +45,7 @@ test('main registers exactly one transport channel', () => {
 });
 
 test('every channel has a validator, and parseCall agrees with it', () => {
-  assert.deepEqual([...channels].sort(), ['app.info', 'app.problems', 'chats.answer', 'chats.configure', 'chats.create', 'chats.list', 'chats.open', 'chats.remove', 'chats.send', 'chats.stop', 'onboarding.check', 'onboarding.signIn', 'projects.pick', 'projects.remove', 'projects.trust', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen']);
+  assert.deepEqual([...channels].sort(), ['app.info', 'app.problems', 'chats.answer', 'chats.configure', 'chats.create', 'chats.list', 'chats.open', 'chats.openTerminal', 'chats.remove', 'chats.send', 'chats.stop', 'chats.terminalClosed', 'onboarding.check', 'onboarding.signIn', 'projects.pick', 'projects.remove', 'projects.trust', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen']);
   assert.equal(parseCall({ channel: 'app.info', payload: null }).ok, true);
   const good: Array<[string, unknown]> = [
     ['settings.setTheme', { theme: 'system' }], ['settings.pickCliPath', { provider: 'codex' }], ['settings.clearCliPath', { provider: 'claude' }],

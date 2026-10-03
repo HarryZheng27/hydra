@@ -87,7 +87,7 @@ export class CodexAdapter implements ChatAdapter {
   }
 
   private turnStart(message: string, images: ChatImage[]): string {
-    const input: unknown[] = [{ type: 'text', text: message, text_elements: [] }];
+    const input: unknown[] = message.trim() ? [{ type: 'text', text: message, text_elements: [] }] : [];
     for (const image of images) input.push({ type: 'image', url: `data:${image.mediaType};base64,${image.data}` });
     const effort = this.checkedEffort();
     // G1's shape: the thread's own root only (no extra roots, which the unelevated sandbox refuses), no temp folders.

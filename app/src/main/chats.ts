@@ -3,6 +3,9 @@ import path from 'node:path';
 import { ClaudeAdapter } from '../../../src/core/chat/claude';
 import { CodexAdapter } from '../../../src/core/chat/codex';
 import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import { claudePermissionModes } from '../../../src/core/chat/events';
+import { claudeSessionIdPattern } from '../../../src/core/chat/claude';
+import { cmdUnsafe, isWindowsShim } from '../../../src/core/process';
 import { ChatSession, type Launch, type SessionTimings } from '../../../src/core/chat/session';
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry } from '../../../src/core/chat/store';
 
@@ -26,8 +29,36 @@ export interface ChatManagerDeps {
    * the wrong way marks the folder trusted there, which turns on the project's own config, hooks and MCP servers.
    */
   codexConfig?(): Promise<string | undefined>;
+  /** Opens a console window the user owns, running a CLI in a folder; Hydra never reads it. */
+  openConsole?(title: string, executable: string, args: string[], cwd: string): Promise<{ started: boolean; error?: string }>;
   timings?: SessionTimings;
 }
+
+/** Image formats a chat accepts, by their first bytes: the declared type must match the file. */
+const signatures: Record<ChatImage['mediaType'], (bytes: Buffer) => boolean> = {
+  'image/png': bytes => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/jpeg': bytes => bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+  'image/gif': bytes => ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('latin1')),
+  'image/webp': bytes => bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP',
+};
+
+/**
+ * An attached image: a known type whose bytes match it. Claude's API caps an image at 5 MB of base64, about 3.75 MB of
+ * image, and a refused image would be saved in the session and fail every later turn, so that is the limit for both
+ * providers. The image is passed on re-encoded from its checked bytes, never as the page sent it.
+ */
+export function checkImage(image: ChatImage): ChatImage {
+  const check = signatures[image.mediaType];
+  if (!check || typeof image.data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) throw new Error('That image isn\'t a PNG, JPEG, GIF or WebP.');
+  const bytes = Buffer.from(image.data, 'base64');
+  const data = bytes.toString('base64');
+  if (data.length > MAX_IMAGE_BASE64) throw new Error('Images can be at most about 3.7 MB.');
+  if (!check(bytes)) throw new Error('That file isn\'t the image it says it is.');
+  return { mediaType: image.mediaType, data };
+}
+
+/** Claude's limit for one image: 5 MB of base64. */
+export const MAX_IMAGE_BASE64 = 5 * 1024 * 1024;
 
 const normal = (folder: string): string => path.resolve(folder).replace(/[\\/]+$/, '').toLowerCase();
 /** True when `folder` is `cwd` or a folder above it (Codex may trust the repository root rather than a subfolder). */
@@ -59,6 +90,8 @@ export class ChatManager {
   private readonly titled = new Set<string>();
   /** Codex's config as it was before each Codex chat's current turn. */
   private readonly codexBefore = new Map<string, string | undefined>();
+  /** Chats the user opened in a terminal: no message is sent until they say that window is closed. */
+  private readonly inTerminal = new Set<string>();
   /** Set once the app is quitting: no chat starts after that. */
   private closing = false;
 
@@ -81,9 +114,9 @@ export class ChatManager {
     });
   }
 
-  async open(id: string): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean }> {
+  async open(id: string): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }> {
     const record = await this.record(id);
-    return { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false };
+    return { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id) };
   }
 
   private async record(id: string): Promise<ChatRecord> {
@@ -139,6 +172,12 @@ export class ChatManager {
       const patch: Partial<ChatRecord> = {};
       const session = events.find((event): event is Extract<ChatEvent, { type: 'session' }> => event.type === 'session');
       if (session) patch.providerSessionId = session.providerSessionId;
+      // Claude left plan mode (an approved plan): the next process starts in the mode it is in now.
+      const mode = session?.permissionMode;
+      if (mode && (claudePermissionModes as readonly string[]).includes(mode)) {
+        const current = await this.deps.store.get(id);
+        if (current?.provider === 'claude' && current.permissionMode !== mode) patch.permissionMode = mode as ClaudePermissionMode;
+      }
       const user = events.find((event): event is Extract<ChatEvent, { type: 'user' }> => event.type === 'user');
       if (user && !this.titled.has(id)) {
         this.titled.add(id);
@@ -159,6 +198,7 @@ export class ChatManager {
   /** Every message checks trust first: a running chat's process can be replaced (idle, a new mode, a crash). */
   async send(id: string, text: string, images?: ChatImage[]): Promise<void> {
     if (!text.trim() && !images?.length) throw new Error('Type a message first.');
+    const checked = images?.map(checkImage);
     if (this.closing) throw new Error('Hydra is quitting.');
     const record = await this.record(id);
     if (!(await this.deps.trusted(record.cwd))) {
@@ -166,7 +206,8 @@ export class ChatManager {
       this.sessions.delete(id);
       throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
     }
-    (await this.session(id)).send(text, images);
+    if (this.inTerminal.has(id)) throw new Error('This chat is open in a terminal. Close that window, then choose "I closed the terminal".');
+    (await this.session(id)).send(text, checked);
   }
 
   /** Says so if a Codex turn added this folder (or a folder above it) to Codex's own trusted projects. Hydra never edits that file. */
@@ -186,6 +227,41 @@ export class ChatManager {
     const start = await this.deps.store.append(id, notice);
     this.deps.push(id, notice, start);
   }
+
+  /**
+   * Open in terminal: the CLI's own interactive resume of this chat, in a console window, for anything the chat pane
+   * can't show. The chat's own process is ended first, so two processes never drive one session at once.
+   */
+  async openTerminal(id: string): Promise<{ started: boolean; error?: string }> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
+    const log = await this.deps.store.read(id);
+    const sessionId = record.providerSessionId ?? '';
+    if (!sessionId || !log.some(entry => entry.event.type === 'session')) throw new Error('Send a message first: there is nothing to resume yet.');
+    // The id goes on a command line: it must be the provider's own id shape, and can't read as an option.
+    const valid = record.provider === 'claude' ? claudeSessionIdPattern.test(sessionId) : /^[A-Za-z0-9][A-Za-z0-9-]{7,79}$/.test(sessionId);
+    if (!valid) throw new Error('This chat\'s session id isn\'t one Hydra can pass on.');
+    const executable = await this.deps.executable(record.provider);
+    if (!executable) throw new Error(`${record.provider === 'claude' ? 'Claude Code' : 'Codex'} isn't installed. Check Your agents in Settings.`);
+    // A .cmd shim hands its arguments to cmd.exe, which reads characters like & and % itself.
+    if (isWindowsShim(executable) && [executable, record.cwd].some(part => cmdUnsafe.test(part))) throw new Error('This folder\'s path has a character the CLI\'s launcher can\'t take safely.');
+    if (!this.deps.openConsole) throw new Error('Hydra can\'t open a terminal here.');
+    // Checked last, after every wait above: a turn running or starting now keeps the chat here.
+    if (this.sessions.get(id)?.busy || this.starting.has(id)) throw new Error('Stop the chat or let its turn end first.');
+    this.sessions.get(id)?.close();
+    this.sessions.delete(id);
+    this.inTerminal.add(id);
+    const args = record.provider === 'claude' ? ['--resume', sessionId] : ['resume', sessionId];
+    const result = await this.deps.openConsole(record.provider === 'claude' ? 'Claude Code chat' : 'Codex chat', executable, args, record.cwd);
+    if (!result.started) this.inTerminal.delete(id);
+    return result;
+  }
+
+  /** The user closed the terminal they opened this chat in: the chat can run here again (it resumes what they did). */
+  terminalClosed(id: string): void { this.inTerminal.delete(id); }
+
+  isInTerminal(id: string): boolean { return this.inTerminal.has(id); }
+
 
   /** Ends the chats in a folder, for when it stops being a project. */
   async closeFolder(cwd: string): Promise<void> {

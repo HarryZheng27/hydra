@@ -3,18 +3,18 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
-import type { ChatAnswer, ChatEvent, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
-export type { ChatAnswer, ChatEvent, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
+export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
 
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
 export const CHAT_EVENTS = 'hydra:chat-events';
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
-export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean }
+export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
 
@@ -60,7 +60,11 @@ export interface Channels {
   'chats.list': { payload: null; result: ChatRecord[] };
   'chats.create': { payload: NewChatRequest; result: ChatRecord };
   'chats.open': { payload: { id: string }; result: OpenChat };
-  'chats.send': { payload: { id: string; text: string }; result: null };
+  'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
+  /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
+  'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
+  /** The user closed the terminal they opened the chat in: it can run in the app again. */
+  'chats.terminalClosed': { payload: { id: string }; result: null };
   'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
   'chats.stop': { payload: { id: string }; result: null };
   'chats.configure': { payload: { id: string; change: ChatSettingsChange }; result: ChatRecord };
@@ -101,6 +105,8 @@ const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Z
 /** An effort word; each CLI checks it against its own list (Codex models offer `ultra`, for one). */
 const isEffort = (value: unknown): boolean => typeof value === 'string' && /^[a-z]{1,20}$/.test(value);
 const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
+/** At most four images, each a known type and at most 5 MB of base64, Claude's own limit (main checks the bytes too). */
+const isImages = (value: unknown): boolean => Array.isArray(value) && value.length <= 4 && value.every(image => shaped({ mediaType: oneOf('image/png', 'image/jpeg', 'image/gif', 'image/webp'), data: (data: unknown) => typeof data === 'string' && data.length <= 5 * 1024 * 1024 })(image));
 /**
  * Codex chats are read-only for now: write access waits for its live check (codexWriteVerified), and full access is
  * excluded in v1.
@@ -133,7 +139,9 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'chats.list': isNull,
   'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox }),
   'chats.open': exactly<{ id: string }>({ id: isId }),
-  'chats.send': exactly<{ id: string; text: string }>({ id: isId, text: isText(200_000) }),
+  'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
+  'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
+  'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
   // An empty model or effort means the CLI's default.
@@ -177,7 +185,9 @@ export interface HydraApi {
   listChats(): Promise<ChatRecord[]>;
   createChat(request: NewChatRequest): Promise<ChatRecord>;
   openChat(id: string): Promise<OpenChat>;
-  sendMessage(id: string, text: string): Promise<null>;
+  sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
+  openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
+  terminalClosed(id: string): Promise<null>;
   answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
   stopChat(id: string): Promise<null>;
   configureChat(id: string, change: ChatSettingsChange): Promise<ChatRecord>;

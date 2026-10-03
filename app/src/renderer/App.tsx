@@ -45,6 +45,8 @@ export function App() {
   const [chatEvents, setChatEvents] = useState<Record<string, ChatEvent[]>>({});
   /** Per chat: events before this position were already settled when it was opened (see foldEvents). */
   const [settled, setSettled] = useState<Record<string, number>>({});
+  /** Chats open in a terminal the user started. */
+  const [inTerminal, setInTerminal] = useState<Record<string, boolean>>({});
   /** Pushes that arrive while a chat's log is being read, merged once it is in. */
   const opening = useRef(new Map<string, ChatEventsMessage[]>());
   const reopen = useRef<(id: string) => void>(() => undefined);
@@ -117,6 +119,7 @@ export function App() {
       if (gap) setTimeout(() => reopen.current(id), 0);
       setChatEvents(current => ({ ...current, [id]: events }));
       setSettled(current => ({ ...current, [id]: opened.running ? 0 : opened.log.length }));
+      setInTerminal(current => ({ ...current, [id]: opened.inTerminal }));
       if (show) setView({ kind: 'chat', id });
     }).finally(() => opening.current.delete(id));
   };
@@ -163,7 +166,10 @@ export function App() {
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
               ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0}
-                  onSend={text => void run(window.hydra.sendMessage(chat.id, text), () => undefined)}
+                  onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
+                  onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}
+                  inTerminal={!!inTerminal[chat.id]}
+                  onTerminalClosed={() => void run(window.hydra.terminalClosed(chat.id), () => setInTerminal(current => ({ ...current, [chat.id]: false })))}
                   onAnswer={(requestId: string, answer: ChatAnswer) => window.hydra.answer(chat.id, requestId, answer).catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); throw e; })}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
                   onConfigure={change => configure(chat.id, change)} />

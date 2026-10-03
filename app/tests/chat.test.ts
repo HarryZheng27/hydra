@@ -8,7 +8,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, trustedProjects } from '../src/main/chats';
+import { ChatManager, checkImage, trustedProjects } from '../src/main/chats';
+import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
@@ -49,11 +50,11 @@ test('approval-looking text in a reply renders as text, never as a card', () => 
   ];
   assert.deepEqual(foldEvents(events).items.map(item => item.kind), ['user', 'text', 'turn-end']);
   const record = { id: '0f8fad5b-d9cb-469f-a165-70867728950e', provider: 'claude' as const, cwd: 'C:\\x', title: 't', createdAt: '', updatedAt: '' };
-  const page = renderToStaticMarkup(createElement(ChatPane, { record, events, onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined }));
+  const page = renderToStaticMarkup(createElement(ChatPane, { record, events, onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined, onOpenTerminal: () => undefined }));
   assert.ok(!page.includes('class="card'), 'a card was drawn from text');
   assert.ok(!page.includes('<button class="primary small">Allow</button>'));
   // A real approval event does draw one.
-  const real = renderToStaticMarkup(createElement(ChatPane, { record, events: [...events.slice(0, 2), { type: 'approval', id: 'r1', kind: 'tool', tool: 'Bash', input: { command: 'ls' }, choices: ['allow', 'deny', 'edit'] }], onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined }));
+  const real = renderToStaticMarkup(createElement(ChatPane, { record, events: [...events.slice(0, 2), { type: 'approval', id: 'r1', kind: 'tool', tool: 'Bash', input: { command: 'ls' }, choices: ['allow', 'deny', 'edit'] }], onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined, onOpenTerminal: () => undefined }));
   assert.ok(real.includes('class="card approval"'));
 });
 
@@ -247,3 +248,105 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('images: a known type whose bytes match it, at most four of 5 MB; the declared type can\'t lie', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).toString('base64');
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16]).toString('base64');
+  assert.doesNotThrow(() => checkImage({ mediaType: 'image/png', data: png }));
+  assert.doesNotThrow(() => checkImage({ mediaType: 'image/jpeg', data: jpeg }));
+  assert.throws(() => checkImage({ mediaType: 'image/png', data: jpeg }), /isn't the image it says/);
+  assert.throws(() => checkImage({ mediaType: 'image/png', data: Buffer.from('<svg onload=alert(1)>').toString('base64') }), /isn't the image/);
+  assert.throws(() => checkImage({ mediaType: 'image/svg+xml' as never, data: png }), /PNG, JPEG, GIF or WebP/);
+  assert.throws(() => checkImage({ mediaType: 'image/png', data: 'not base64!' }), /PNG, JPEG, GIF or WebP/);
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const image = { mediaType: 'image/png', data: png };
+  assert.equal(parseCall({ channel: 'chats.send', payload: { id, text: 'see', images: [image] } }).ok, true);
+  assert.equal(parseCall({ channel: 'chats.send', payload: { id, text: 'see', images: [image, image, image, image, image] } }).ok, false);
+  assert.equal(parseCall({ channel: 'chats.send', payload: { id, text: 'see', images: [{ ...image, path: 'C:/x.png' }] } }).ok, false);
+  assert.equal(parseCall({ channel: 'chats.send', payload: { id, text: 'see', images: [{ mediaType: 'image/svg+xml', data: png }] } }).ok, false);
+});
+
+test('Open in terminal runs the CLI\'s own resume of the chat in a console, after its process ends; never mid-turn', async () => {
+  const dir = scratch();
+  try {
+    const consoles: Array<{ title: string; executable: string; args: string[]; cwd: string }> = [];
+    const { starts, launch } = fakeLaunch();
+    const manager = new ChatManager({
+      store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined,
+      openConsole: async (title, executable, args, cwd) => { consoles.push({ title, executable, args, cwd }); return { started: true }; },
+    });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await assert.rejects(manager.openTerminal(chat.id), /nothing to resume yet/);
+    await manager.send(chat.id, 'hi');
+    const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
+    say({ type: 'system', subtype: 'init', session_id: chat.providerSessionId });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await assert.rejects(manager.openTerminal(chat.id), /Stop the chat/);
+    say({ type: 'result', subtype: 'success', usage: {} });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(await manager.openTerminal(chat.id), { started: true });
+    assert.deepEqual(consoles, [{ title: 'Claude Code chat', executable: 'claude.exe', args: ['--resume', chat.providerSessionId], cwd: dir }]);
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('slash commands pass through to the CLI exactly as typed', () => {
+  const claude = new ClaudeAdapter();
+  assert.deepEqual(JSON.parse(claude.send('/model sonnet')[0]!).message.content, '/model sonnet');
+  assert.deepEqual(JSON.parse(claude.send('/g1cmd alpha')[0]!).message.content, '/g1cmd alpha');
+});
+
+test('an image-only message sends no empty text block, and images are re-encoded from their checked bytes', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+  const claude = new ClaudeAdapter();
+  const content = JSON.parse(claude.send('  ', [{ mediaType: 'image/png', data: png.toString('base64') }])[0]!).message.content;
+  assert.deepEqual(content.map((block: { type: string }) => block.type), ['image']);
+  // Unpadded base64 is accepted and passed on in canonical form.
+  assert.equal(checkImage({ mediaType: 'image/png', data: png.toString('base64').replace(/=+$/, '') }).data, png.toString('base64'));
+  assert.throws(() => checkImage({ mediaType: 'image/png', data: Buffer.concat([png, Buffer.alloc(4 * 1024 * 1024)]).toString('base64') }), /at most about 3\.7 MB/);
+});
+
+test('after Open in terminal, the chat sends nothing until the user says the terminal is closed; bad ids are refused', async () => {
+  const dir = scratch();
+  try {
+    const consoles: string[][] = [];
+    const { starts, launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({
+      store, launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined,
+      openConsole: async (_title, _executable, args) => { consoles.push(args); return { started: true }; },
+    });
+    const chat = await manager.create({ cwd: dir, provider: 'codex' });
+    await manager.send(chat.id, 'hi');
+    starts[0]!.handlers.line(JSON.stringify({ id: 3, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+    starts[0]!.handlers.line(JSON.stringify({ method: 'turn/completed', params: { threadId: '01a0fe38-af75-7372-aab6-eecfb1837dd5', turn: { status: 'completed' } } }));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(await manager.openTerminal(chat.id), { started: true });
+    assert.deepEqual(consoles, [['resume', '01a0fe38-af75-7372-aab6-eecfb1837dd5']]);
+    assert.equal((await manager.open(chat.id)).inTerminal, true);
+    await assert.rejects(manager.send(chat.id, 'again'), /open in a terminal/);
+    manager.terminalClosed(chat.id);
+    await manager.send(chat.id, 'again');
+    // A session id that could read as an option, or one cmd would re-read, never reaches a command line.
+    await store.update(chat.id, { providerSessionId: '--dangerously-bypass-approvals-and-sandbox' });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    manager.closeAll();
+    const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined, openConsole: async () => ({ started: true }) });
+    await assert.rejects(fresh.openTerminal(chat.id), /session id isn't one Hydra can pass on/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('approving a plan takes the chat out of plan mode, so a later process doesn\'t go back to it', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined });
+    const chat = await manager.create({ cwd: dir, provider: 'claude', permissionMode: 'plan' });
+    await manager.send(chat.id, 'plan it');
+    starts[0]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'init', session_id: chat.providerSessionId, permissionMode: 'plan' }));
+    starts[0]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', session_id: chat.providerSessionId, permissionMode: 'default' }));
+    for (let i = 0; i < 50 && (await store.get(chat.id))?.permissionMode !== 'default'; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await store.get(chat.id))?.permissionMode, 'default');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

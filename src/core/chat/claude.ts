@@ -73,7 +73,7 @@ export class ClaudeAdapter implements ChatAdapter {
     this.interrupted = false;
     const content = images.length
       // G1's live check sent the text first, then the image; that is the order it proved.
-      ? [{ type: 'text', text: message }, ...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }))]
+      ? [...(message.trim() ? [{ type: 'text', text: message }] : []), ...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }))]
       : message;
     return [JSON.stringify({ type: 'user', message: { role: 'user', content } })];
   }
@@ -118,6 +118,10 @@ export class ClaudeAdapter implements ChatAdapter {
   }
 
   private system(message: Record<string, unknown>): ChatEvent[] {
+    // Approving a plan switches Claude out of plan mode (G1); the chat follows, so a later process doesn't go back to it.
+    if (message.subtype === 'status' && typeof message.permissionMode === 'string' && typeof message.session_id === 'string') {
+      return [{ type: 'session', providerSessionId: message.session_id, permissionMode: message.permissionMode }];
+    }
     if (message.subtype === 'init' && typeof message.session_id === 'string') {
       return [{ type: 'session', providerSessionId: message.session_id, ...(typeof message.model === 'string' ? { model: message.model } : {}), ...(typeof message.permissionMode === 'string' ? { permissionMode: message.permissionMode } : {}) }];
     }

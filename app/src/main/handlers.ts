@@ -20,7 +20,7 @@ export interface HandlerDeps {
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ started: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed'>;
 }
 
 /** What main does for each channel. Paths only ever come from main's own pickers, never from the renderer. */
@@ -97,7 +97,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return deps.chats.create({ cwd: project.path, ...rest });
     },
     'chats.open': ({ id }) => deps.chats.open(id),
-    'chats.send': async ({ id, text }) => { await deps.chats.send(id, text); return null; },
+    'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
+    'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
+    'chats.terminalClosed': ({ id }) => { deps.chats.terminalClosed(id); return null; },
     'chats.answer': ({ id, requestId, answer }) => { deps.chats.answer(id, requestId, answer); return null; },
     'chats.stop': ({ id }) => { deps.chats.stop(id); return null; },
     'chats.configure': ({ id, change }) => deps.chats.configure(id, change),
