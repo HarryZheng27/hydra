@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHAT_EVENTS, HYDRA_TREE, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraTreeMessage, type Payload, type Result } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
 
 // The renderer gets these typed functions and nothing else: no ipcRenderer, no channel names, no Node.
 const call = <C extends Channel>(channel: C, payload: Payload<C>): Promise<Result<C>> =>
@@ -36,6 +36,12 @@ const api: HydraApi = {
   connectHydra: provider => call('hydra.connect', { provider }),
   disconnectHydra: provider => call('hydra.disconnect', { provider }),
   hydraTree: () => call('hydra.tree', null),
+  agentsMessage: (projectId, message) => call('hydra.agents', { projectId, message }),
+  onHydraUi: listener => {
+    const handler = (_event: unknown, message: HydraUiMessage) => listener(message);
+    ipcRenderer.on(HYDRA_UI, handler);
+    return () => { ipcRenderer.removeListener(HYDRA_UI, handler); };
+  },
   onHydraTree: listener => {
     const handler = (_event: unknown, message: HydraTreeMessage) => listener(message);
     ipcRenderer.on(HYDRA_TREE, handler);

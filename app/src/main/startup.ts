@@ -6,7 +6,7 @@ import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
-import { CHAT_EVENTS, HYDRA_TREE, type Project } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_TREE, HYDRA_UI, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
@@ -119,6 +119,7 @@ export function start(): void {
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     tree: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_TREE, message); },
+    post: (project, message) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_UI, { projectId: project.id, message }); },
   });
   const syncHydra = (projects: Project[]) => { void hydra.sync(projects).catch(() => undefined); };
   // Before quitting: end every chat's process, then wait for the store to write what it still holds.
@@ -144,7 +145,7 @@ export function start(): void {
     signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
-    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree() },
+    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree(), agents: (project, message) => hydra.agents(project, message) },
     projectOpened: async cwd => { const project = (await state.load()).projects.find(candidate => samePath(candidate.path, cwd)); if (project) void hydra.open(project).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },

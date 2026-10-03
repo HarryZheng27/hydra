@@ -123,6 +123,14 @@ export class HydraProjects {
   private latest = new Map<string, Project>();
   constructor(private readonly options: HydraProjectsOptions) {}
 
+  /** A message from a project's Agents view (the IDE webview's ClientMessage): the controller parses and checks it. */
+  async agents(project: Project, message: unknown): Promise<void> {
+    await this.open(project);
+    const running = this.running.get(project.id);
+    if (!running) throw new Error(this.errors.get(project.id) ?? 'Hydra isn\'t running for this project yet.');
+    await running.controller.handle(message);
+  }
+
   /** Every running project's heads and plans. */
   tree(): HydraTreeMessage[] { return [...this.running.values()].map(running => running.tree); }
 

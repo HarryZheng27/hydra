@@ -14,6 +14,9 @@ export const IPC_TRANSPORT = 'hydra:call';
 export const CHAT_EVENTS = 'hydra:chat-events';
 /** Push: one project's heads and plans changed (G5). */
 export const HYDRA_TREE = 'hydra:tree';
+/** Push: a message from a project's controller to its Agents view (the IDE webview's own messages, G5). */
+export const HYDRA_UI = 'hydra:ui';
+export interface HydraUiMessage { projectId: string; message: unknown }
 
 /** A head as a chat card shows it: no paths, no logs, nothing a page could act on beyond its id. */
 export interface HeadCardView {
@@ -109,6 +112,8 @@ export interface Channels {
   'hydra.connections': { payload: null; result: HydraConnection[] };
   'hydra.connect': { payload: { provider: CliProvider }; result: HydraConnection[] };
   'hydra.disconnect': { payload: { provider: CliProvider }; result: HydraConnection[] };
+  /** A message from a project's Agents view to its controller (src/core/model.ts ClientMessage; the controller checks it). */
+  'hydra.agents': { payload: { projectId: string; message: unknown }; result: null };
   /** Every running project's heads and plans, for a page that just opened. */
   'hydra.tree': { payload: null; result: HydraTreeMessage[] };
   /** The user closed the terminal they opened the chat in: it can run in the app again. */
@@ -198,6 +203,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'hydra.connect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.disconnect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.tree': isNull,
+  'hydra.agents': exactly<{ projectId: string; message: unknown }>({ projectId: isId, message: value => !!value && typeof value === 'object' && !Array.isArray(value) && JSON.stringify(value).length <= 200_000 }),
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
@@ -257,6 +263,10 @@ export interface HydraApi {
   connectHydra(provider: CliProvider): Promise<HydraConnection[]>;
   disconnectHydra(provider: CliProvider): Promise<HydraConnection[]>;
   hydraTree(): Promise<HydraTreeMessage[]>;
+  /** Sends a message from the Agents view to the project's controller. */
+  agentsMessage(projectId: string, message: unknown): Promise<null>;
+  /** Calls `listener` with each message a project's controller sends its Agents view. */
+  onHydraUi(listener: (message: HydraUiMessage) => void): () => void;
   /** Calls `listener` whenever a project's heads or plans change; returns a function that stops it. */
   onHydraTree(listener: (message: HydraTreeMessage) => void): () => void;
   /** Calls `listener` with each chat's new events; returns a function that stops it. */

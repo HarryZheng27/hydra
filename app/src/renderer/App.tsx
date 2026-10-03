@@ -5,6 +5,7 @@ import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
 import { EmptyState } from './EmptyState';
 import { SettingsView } from './SettingsView';
+import { AgentsView } from './AgentsView';
 import { Setup } from './Setup';
 import { Sidebar } from './Sidebar';
 import { TitleBar } from './TitleBar';
@@ -29,6 +30,8 @@ function applyThemeVariables(theme: ThemeName): void {
   const root = document.documentElement;
   for (const [name, value] of Object.entries(themeVariables(theme))) root.style.setProperty(name, value);
   root.dataset.theme = theme;
+  // The Agents view's own light colours (webview/*.css) key on VS Code's body class.
+  document.body?.classList.toggle('vscode-light', theme === 'light');
   root.style.colorScheme = theme;
 }
 
@@ -37,6 +40,8 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>();
   const [state, setState] = useState<AppState>();
   const [view, setView] = useState<View>({ kind: 'home' });
+  /** Chat or Agents (G5): the title bar's switch. Agents shows the open project's heads, plans and lanes. */
+  const [mode, setMode] = useState<'chat' | 'agents'>('chat');
   const [error, setError] = useState<string>();
   const [setup, setSetup] = useState<OnboardingReport>();
   const [checking, setChecking] = useState(false);
@@ -167,7 +172,7 @@ export function App() {
 
   return (
     <div className={`app ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
-      <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} />
+      <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} mode={mode} onMode={setMode} />
       <div className="body">
         {sidebarOpen && state && (
           <Sidebar
@@ -186,7 +191,9 @@ export function App() {
         <main className="main">
           {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}
           {error && <div className="banner error" role="alert">{error}{/Your agents/.test(error) && <> <button className="link" onClick={() => setView({ kind: 'settings' })}>Open Your agents</button></>}</div>}
-          {view.kind === 'settings' && settings
+          {mode === 'agents'
+            ? (project?.trustedAt ? <AgentsView key={project.id} project={project} /> : <section className="empty"><h1>Agents</h1><p>{project ? 'Trust this project to run heads, plans and lanes in it: start a chat there.' : 'Open a project to see its heads, plans and lanes.'}</p></section>)
+            : view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
               ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]} hydra={project ? trees[project.id] : undefined}

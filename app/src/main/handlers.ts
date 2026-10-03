@@ -17,6 +17,8 @@ export interface HandlerDeps {
     connect(provider: CliProvider): Promise<HydraConnection[]>;
     disconnect(provider: CliProvider): Promise<HydraConnection[]>;
     tree(): HydraTreeMessage[];
+    /** A message from the project's Agents view: its controller starts if needed, then handles it. */
+    agents(project: Project, message: unknown): Promise<void>;
   };
   /** The projects changed (one trusted or removed): Hydra starts or stops its controllers (app/src/main/hydra.ts). */
   projectsChanged?(state: AppState): void;
@@ -149,6 +151,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'hydra.connect': ({ provider }) => requireHydra().connect(provider),
     'hydra.disconnect': ({ provider }) => requireHydra().disconnect(provider),
     'hydra.tree': async () => deps.hydra?.tree() ?? [],
+    'hydra.agents': async ({ projectId, message }) => {
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
+      if (!project) throw new Error('No such project.');
+      if (!project.trustedAt) throw new Error('Trust this project first: Hydra runs nothing in a folder you haven\'t trusted.');
+      await requireHydra().agents(project, message);
+      return null;
+    },
     'chats.terminalClosed': ({ id }) => { deps.chats.terminalClosed(id); return null; },
     'chats.answer': ({ id, requestId, answer }) => { deps.chats.answer(id, requestId, answer); return null; },
     'chats.stop': ({ id }) => { deps.chats.stop(id); return null; },

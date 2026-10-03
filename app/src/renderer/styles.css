@@ -278,3 +278,13 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .hydra-state.warning { color: var(--warning); }
 .hydra-jobs { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
 .hydra-jobs li { display: flex; gap: 8px; align-items: baseline; }
+/* The Agents view (G5): the IDE's canvas, its variables taken from the app's theme, inside the view only. */
+.ide-agents {
+  --primary: var(--bg); --text: var(--fg); --surface: var(--input-bg); --rail: var(--sidebar-bg);
+  --secondary: var(--button-bg); --secondary-hover: var(--button-hover); --green: var(--ok);
+  --selected: var(--selected-bg); --selected-border: var(--border); --error-text: var(--error);
+  --error-background: transparent; --error-border: var(--error); --body-text: var(--fg);
+  height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: var(--fg); background: var(--bg);
+}
+.ide-agents button { font: inherit; color: inherit; }
+.ide-agents .primary { background: var(--button-bg); color: var(--button-fg); }
