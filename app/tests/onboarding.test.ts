@@ -5,13 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createHandlers } from '../src/main/handlers';
-import { openSignIn, providerStatus, registrationStatus, signInArgs, signInLaunch, signInScript, type Spawner } from '../src/main/onboarding';
+import { spawn } from 'node:child_process';
+import { accountStatus, providerStatus, registrationStatus, signIn, signInArgs, statusArgs } from '../src/main/onboarding';
 import { standinCalls, writeStandins } from '../smoke/standins.mjs';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-onboarding-'));
 const windows = process.platform === 'win32';
 
-test('onboarding finds each CLI, reads its version, and runs nothing but the version and help checks', { skip: !windows }, async () => {
+test('onboarding finds each CLI, reads its version, and runs nothing but the version, help and sign-in status checks', { skip: !windows }, async () => {
   const dir = writeStandins(scratch());
   try {
     const claude = await providerStatus('claude', path.join(dir, 'claude.cmd'), dir);
@@ -23,7 +24,9 @@ test('onboarding finds each CLI, reads its version, and runs nothing but the ver
     const codex = await providerStatus('codex', path.join(dir, 'codex.cmd'), dir);
     assert.equal(codex.version, '0.157.1');
     assert.equal(codex.supported, true);
-    assert.deepEqual(standinCalls(dir), ['claude --version', 'claude --help', 'codex --version', 'codex --help', 'codex app-server --help']);
+    assert.equal(claude.account, 'signed-out');
+    assert.equal(codex.account, 'signed-in');
+    assert.deepEqual(standinCalls(dir), ['claude --version', 'claude --help', 'claude auth status --json', 'codex --version', 'codex --help', 'codex app-server --help', 'codex login status']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -65,72 +68,75 @@ test('the hydra registration is read from Claude\'s and Codex\'s config files, a
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('Sign in runs the CLI\'s own login in a console window, quoted, and waits for Enter', () => {
-  assert.deepEqual(signInArgs, { claude: ['auth', 'login', '--claudeai'], codex: ['login'] });
-  const script = signInScript('claude', "C:\\Users\\O'Neil\\claude.exe");
-  assert.ok(script.includes("& 'C:\\Users\\O''Neil\\claude.exe' 'auth' 'login' '--claudeai'"), script);
-  assert.match(script, /WindowTitle = 'Claude Code sign-in'/);
-  assert.match(script, /Read-Host 'Press Enter to close this window'/);
-  assert.match(signInScript('codex', 'C:\\x\\codex.cmd'), /& 'C:\\x\\codex\.cmd' 'login'/);
-  assert.throws(() => signInScript('codex', 'C:\\x\ny.exe'));
-  // cmd's `start` gives PowerShell its own console; cmd sees only the title, PowerShell's path and base64.
-  const launch = signInLaunch('codex', 'C:\\Users\\a&b %PATH% "q"\\codex.cmd');
-  assert.match(launch.executable, /cmd\.exe$/i);
-  const match = /^\/d \/s \/c "start "Codex sign-in" "([^"]+powershell\.exe)" -NoLogo -NoProfile -EncodedCommand ([A-Za-z0-9+/=]+)"$/.exec(launch.commandLine);
-  assert.ok(match, launch.commandLine);
-  assert.ok(!launch.commandLine.includes('a&b') && !launch.commandLine.includes('%PATH%'), 'the CLI path never reaches cmd');
-  assert.equal(Buffer.from(match[2]!, 'base64').toString('utf16le'), signInScript('codex', 'C:\\Users\\a&b %PATH% "q"\\codex.cmd'));
-});
-
-test('Sign in opens a window it never reads, and does nothing when the CLI is missing', { skip: !windows }, async () => {
+test('Sign in runs the CLI\'s own login out of sight, reads none of its output, then asks the CLI whether it worked', { skip: !windows }, async () => {
   const dir = writeStandins(scratch(), { codex: false });
   try {
-    const spawned: Array<{ executable: string; args: string[]; options: unknown }> = [];
-    let exitCode = 0;
-    const fake: Spawner = (executable, args, options) => {
-      spawned.push({ executable, args, options });
-      return { once: (event: string, listener: (value: never) => void) => { if (event === 'exit') setTimeout(() => listener(exitCode as never), 5); } } as never;
-    };
-    assert.deepEqual(await openSignIn('claude', path.join(dir, 'claude.cmd'), dir, fake), { started: true });
-    assert.equal(spawned.length, 1);
-    assert.deepEqual(spawned[0]!.options, { cwd: dir, windowsHide: true, windowsVerbatimArguments: true, stdio: 'ignore' });
-    assert.match(spawned[0]!.executable, /cmd\.exe$/i);
-    assert.equal(spawned[0]!.args.length, 1);
-    assert.match(Buffer.from(/-EncodedCommand ([A-Za-z0-9+/=]+)/.exec(spawned[0]!.args[0]!)![1]!, 'base64').toString('utf16le'), /claude\.cmd' 'auth' 'login' '--claudeai'/);
-    exitCode = 1;
-    assert.equal((await openSignIn('claude', path.join(dir, 'claude.cmd'), dir, fake)).started, false, 'a start that fails is not reported as opened');
-    const missing = await openSignIn('codex', path.join(dir, 'codex.cmd'), dir, fake);
-    assert.equal(missing.started, false);
-    assert.equal(spawned.length, 2, 'nothing was started for a missing CLI');
-    assert.deepEqual(standinCalls(dir), [], 'the CLI itself was never run here');
+    assert.deepEqual(signInArgs, { claude: ['auth', 'login', '--claudeai'] });
+    assert.deepEqual(statusArgs, { claude: ['auth', 'status', '--json'], codex: ['login', 'status'] });
+    const exe = path.join(dir, 'claude.cmd');
+    assert.equal(await accountStatus('claude', exe, dir), 'signed-out');
+    const started: Array<{ args: readonly string[]; options: Record<string, unknown> }> = [];
+    const recording = ((executable: string, args: readonly string[], options: Record<string, unknown>) => { started.push({ args, options }); return spawn(executable, args, options); }) as never;
+    const result = await signIn('claude', exe, dir, { openUrl: async () => { throw new Error('Claude opens its own browser'); }, spawn: recording });
+    assert.deepEqual(result, { signedIn: true });
+    assert.equal(started.length, 1);
+    assert.equal(started[0]!.options.windowsHide, true, 'no window');
+    assert.deepEqual(started[0]!.options.stdio, ['pipe', 'ignore', 'ignore'], 'its output is never read');
+    assert.deepEqual(standinCalls(dir), ['claude auth status --json', 'claude auth login --claudeai', 'claude auth status --json']);
+    assert.equal(await accountStatus('claude', exe, dir), 'signed-in');
+
+    const missing = await signIn('codex', path.join(dir, 'codex.cmd'), dir, { openUrl: async () => true });
+    assert.equal(missing.signedIn, false);
+    assert.match(missing.error ?? '', /isn't installed/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a page can\'t stack sign-in windows or checks: one sign-in per provider at a time, and a refresh joins a running check', async () => {
+test('a sign-in that never finishes is ended after the timeout and reported', { skip: !windows }, async () => {
+  const dir = scratch();
+  try {
+    // A login that waits for ever (as one would if the browser never came back).
+    fs.writeFileSync(path.join(dir, 'claude.cmd'), '@echo off\r\nif "%~1"=="auth" if "%~2"=="status" (echo {"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}& exit /b 1)\r\nping -n 6 127.0.0.1 >nul\r\n');
+    const result = await signIn('claude', path.join(dir, 'claude.cmd'), dir, { openUrl: async () => true, timeoutMs: 1500 });
+    assert.equal(result.signedIn, false);
+    assert.match(result.error ?? '', /didn't finish/);
+  } finally { await new Promise(resolve => setTimeout(resolve, 500)); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a page can\'t stack sign-ins or checks: one sign-in per provider at a time, and a refresh joins a running check', async () => {
   const signIns: string[] = [];
   let checks = 0;
   let nextStart = true;
+  let finishSignIn = () => undefined as void;
+  const tick = () => new Promise(resolve => setTimeout(resolve, 10));
   const releases: Array<() => void> = [];
   const store = { load: async () => ({ version: 1, theme: 'system', cliPaths: {} }) } as never;
   const handlers = createHandlers({
     info: { name: 'Hydra', version: '0', electron: '44', platform: 'win32' }, settings: store, state: store,
     pickFolder: async () => undefined, pickExecutable: async () => undefined, applyTheme: () => undefined,
     checkSetup: () => { const n = ++checks; return new Promise(resolve => { releases.push(() => resolve({ providers: [], registration: {} as never, checkedAt: String(n) })); }); },
-    signIn: async provider => { signIns.push(provider); return nextStart ? { started: true } : { started: false, error: 'missing' }; },
+    signIn: provider => { signIns.push(provider); return new Promise(resolve => { finishSignIn = () => resolve(nextStart ? { signedIn: true } : { signedIn: false, error: 'missing' }); }); },
     confirmTrust: async () => false,
     chats: {} as never,
   });
-  const tick = () => new Promise(resolve => setTimeout(resolve, 10));
-  assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'claude' }), { started: true });
-  assert.equal((await handlers['onboarding.signIn']({ provider: 'claude' })).started, false, 'a second window straight away is refused');
+  const first = handlers['onboarding.signIn']({ provider: 'claude' });
+  await tick();
+  assert.match((await handlers['onboarding.signIn']({ provider: 'claude' })).error ?? '', /already/, 'a second sign-in while one runs is refused');
+  finishSignIn();
+  assert.deepEqual(await first, { signedIn: true });
   nextStart = false;
-  assert.equal((await handlers['onboarding.signIn']({ provider: 'codex' })).error, 'missing');
+  const failed = handlers['onboarding.signIn']({ provider: 'codex' });
+  await tick();
+  finishSignIn();
+  assert.equal((await failed).error, 'missing');
   nextStart = true;
-  assert.deepEqual(await handlers['onboarding.signIn']({ provider: 'codex' }), { started: true }, 'a failed try can be retried at once');
+  const retry = handlers['onboarding.signIn']({ provider: 'codex' });
+  await tick();
+  finishSignIn();
+  assert.deepEqual(await retry, { signedIn: true }, 'a failed try can be retried at once');
   assert.deepEqual(signIns, ['claude', 'codex', 'codex']);
 
   // A plain check joins the running one; refreshes during it share one fresh check after it, never the older answer.
-  const first = handlers['onboarding.check']({ refresh: false });
+  const firstCheck = handlers['onboarding.check']({ refresh: false });
   await tick();
   const joined = handlers['onboarding.check']({ refresh: false });
   const refreshes = [handlers['onboarding.check']({ refresh: true }), handlers['onboarding.check']({ refresh: true })];
@@ -140,7 +146,7 @@ test('a page can\'t stack sign-in windows or checks: one sign-in per provider at
   await tick();
   assert.equal(checks, 2, 'one follow-up check for both refreshes');
   releases.shift()!();
-  assert.deepEqual([(await first).checkedAt, (await joined).checkedAt], ['1', '1']);
+  assert.deepEqual([(await firstCheck).checkedAt, (await joined).checkedAt], ['1', '1']);
   assert.deepEqual((await Promise.all(refreshes)).map(report => report.checkedAt), ['2', '2']);
   assert.equal((await handlers['onboarding.check']({ refresh: false })).checkedAt, '2', 'the latest answer is remembered');
   assert.equal(checks, 2);

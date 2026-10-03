@@ -252,16 +252,20 @@ if (role === 'first') {
     report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
     // Onboarding: the version and help checks, the registrations, and Sign in.
     await until(`document.querySelectorAll('.setup .provider').length === 2`, 'the onboarding checks', 30000);
-    report.setup = await ui(`[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, signIn: !p.querySelector('.primary').disabled }))`);
-    await ui(`document.querySelector('.setup .provider[data-provider=codex] .primary').click(); 1`);
-    await until(`!!document.querySelector('.setup .provider[data-provider=codex] .hint')`, 'the sign-in note');
-    report.signInNote = await ui(`document.querySelector('.setup .provider[data-provider=codex] .hint').textContent`);
+    const setupRows = `[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, account: p.querySelector('.provider-account')?.textContent ?? null, signIn: !!p.querySelector('.primary') && !p.querySelector('.primary').disabled }))`;
+    report.setup = await ui(setupRows);
+    // Sign in: Claude's own login runs out of sight (the stand-in "signs in"), and the row then says so, with no button.
+    report.consolesBeforeSignIn = report.signIns.length;
+    await ui(`document.querySelector('.setup .provider[data-provider=claude] .primary').click(); 1`);
+    await until(`document.querySelector('.setup .provider[data-provider=claude] .provider-account')?.textContent === 'Signed in' && !document.querySelector('.setup .provider[data-provider=claude] .primary')`, 'Claude to show signed in', 30000);
+    report.afterSignIn = await ui(setupRows);
+    report.consolesAfterSignIn = report.signIns.length;
     const checkedAt = await ui(`document.querySelector('.setup').dataset.checkedAt`);
     await ui(`[...document.querySelectorAll('.setup-head button')][0].click(); 1`);
     await until(`document.querySelector('.setup').dataset.checkedAt !== ${JSON.stringify(checkedAt)} && !document.querySelector('.setup[aria-busy=true]')`, 'the re-check', 30000);
     report.recheckDone = true;
-    // A second Sign in straight away is refused, so a page can't stack windows.
-    report.secondSignIn = await ui(`window.hydra.signIn('codex')`);
+    // A second Sign in while one runs is refused, so a page can't stack logins.
+    report.secondSignIn = await ui(`Promise.all([window.hydra.signIn('claude'), window.hydra.signIn('claude')])`);
     const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
     report.themes = { initial: await themeNow() };
     // `--smoke-shots=<dir>` saves what the hidden window draws, for a person to look at. Off in CI.

@@ -203,28 +203,24 @@ try {
     assert.deepEqual(a.stores.files.filter(f => f.endsWith('.tmp')), []);
     assert.deepEqual(a.consoleErrors, []);
   });
-  check('onboarding shows each CLI version and support, and the hydra registration, read-only', () => {
-    assert.deepEqual(a.setup.map(p => [p.provider, p.status, p.registration, p.signIn]), [
-      ['claude', '2.1.282 · supported', 'Hydra tools: registered', true],
-      ['codex', '0.157.1 · supported', 'Hydra tools: not registered', true],
+  check('onboarding shows each CLI version and support, whether it is signed in, and the hydra registration, read-only', () => {
+    assert.deepEqual(a.setup.map(p => [p.provider, p.status, p.registration, p.account, p.signIn]), [
+      ['claude', '2.1.282 · supported', 'Hydra tools: registered', 'Not signed in', true],
+      ['codex', '0.157.1 · supported', 'Hydra tools: not registered', 'Signed in', false],
     ]);
     assert.deepEqual([path.join(claudeConfig, '.claude.json'), path.join(codexHome, 'config.toml')].map(file => fs.readFileSync(file, 'utf8')), configBefore, 'a config file changed');
     assert.deepEqual(fs.readdirSync(claudeConfig), ['.claude.json']);
     assert.deepEqual(fs.readdirSync(codexHome), ['config.toml']);
   });
-  check('Sign in opens a console running the CLI login, and reads nothing back', () => {
-    assert.equal(a.signIns.length, 1);
-    assert.match(a.signIns[0].script, /codex\.cmd' 'login'/);
-    assert.equal(a.signIns[0].executable.toLowerCase(), 'cmd.exe');
-    assert.match(a.signIns[0].line, /^\/d \/s \/c "start "Codex sign-in" ".*powershell\.exe" -NoLogo -NoProfile -EncodedCommand <script>"$/);
-    assert.equal(a.signIns[0].detached, false, 'detached would leave PowerShell without a console');
-    assert.equal(a.signIns[0].verbatim, true);
-    assert.equal(a.signIns[0].stdio, 'ignore');
-    assert.equal(a.secondSignIn.started, false);
+  check('Sign in runs the CLI\'s own login out of sight: no window, no console, and the row then says signed in', () => {
+    assert.deepEqual(a.afterSignIn.map(p => [p.provider, p.account, p.signIn]), [['claude', 'Signed in', false], ['codex', 'Signed in', false]]);
+    assert.equal(a.consolesBeforeSignIn, 0);
+    assert.equal(a.consolesAfterSignIn, 0, 'no console window was opened');
     assert.deepEqual(a.refusedLaunches, [], 'something tried to start a visible process');
-    assert.match(a.signInNote, /sign-in window opened/);
+    assert.deepEqual(a.secondSignIn.map(r => r.signedIn).sort(), [false, true]);
+    assert.match(a.secondSignIn.find(r => !r.signedIn).error, /already/);
   });
-  check('no provider process starts except the version and help checks', () => {
+  check('no provider process starts except the version, help and sign-in checks, and the logins asked for', () => {
     const all = standinCalls(bin);
     assert.equal(a.recheckDone, true);
     // The chats' own processes, each started by a message the user sent (per provider: the first run, and the resume).
@@ -232,9 +228,11 @@ try {
     const chats = all.filter(isChat);
     assert.equal(chats.length, 4, all.join(', '));
     const calls = all.filter(call => !isChat(call));
-    // Three full checks (the first run, its Check again, and the restarted app): each runs exactly these five.
-    const once = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help'];
-    assert.deepEqual([...calls].sort(), once.flatMap(call => [call, call, call]).sort(), calls.join(', '));
+    const checks = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help', 'claude auth status --json', 'codex login status'];
+    assert.deepEqual(calls.filter(call => !checks.includes(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
+    // Every full check runs the five version and help checks.
+    const count = call => calls.filter(c => c === call).length;
+    assert.ok(count('claude --version') >= 3 && checks.slice(0, 5).every(call => count(call) === count('claude --version')), calls.join(', '));
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);

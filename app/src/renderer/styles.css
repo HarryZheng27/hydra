@@ -204,3 +204,5 @@ details.tool.failed { border-color: var(--error); }
 
 button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .chat-error.limit { color: var(--warning); }
+.provider-account { font-size: 12px; color: var(--muted); }
+.provider-account.signed-in { color: var(--ok); }

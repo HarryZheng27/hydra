@@ -147,6 +147,8 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
   - HSEC-82 and HSEC-87 say what this means: Codex's auto-review can approve a request itself.
 - **Claude Code starts when a chat opens,** not when the first message is sent (one chat at a time, trusted folders only, ended after 3 minutes unused). On Nico's machine a small Haiku turn took 11.2 s cold and 5.6 s warm.
 - **The working line** says "Starting Claude Code…" or "Claude Code is working… 42s": Opus can think for a minute with no visible output.
+- **Sign in runs out of sight** (Nico's ask): no terminal window. Claude Code's own `auth login` runs hidden and opens the browser; Codex signs in through its app-server, as the IDE does. Your agents now says whether each CLI is signed in, and offers Sign in only when it isn't (HSEC-81).
+- **The window opens at the Claude desktop app's size,** about 1020 x 736.
 - **`ChatOptions.extraArgs`** exists only for the live checks' isolation; no IPC payload can set it.
 
 **Follow-ups:**

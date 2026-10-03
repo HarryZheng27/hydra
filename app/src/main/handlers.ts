@@ -17,7 +17,7 @@ export interface HandlerDeps {
   /** Onboarding's version and help checks, and the registration lookup, for these CLI paths. */
   checkSetup(cliPaths: AppSettings['cliPaths']): Promise<OnboardingReport>;
   /** Opens the CLI's own sign-in in a console window. */
-  signIn(provider: CliProvider, configured: string | undefined): Promise<{ started: boolean; error?: string }>;
+  signIn(provider: CliProvider, configured: string | undefined): Promise<{ signedIn: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
   chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder'>;
@@ -50,9 +50,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     if (refresh || !report || report.key !== key) return begin(key, cliPaths);
     return report.value;
   };
-  // One sign-in window per provider every few seconds, so a page can't stack them up.
-  const lastSignIn = new Map<CliProvider, number>();
-  const SIGN_IN_GAP_MS = 5000;
+  // One sign-in per provider at a time, so a page can't stack up browser logins.
+  const signingIn = new Set<CliProvider>();
   return {
     'app.info': () => deps.info,
     'app.problems': async () => {
@@ -118,13 +117,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.remove': async ({ id }) => { await deps.chats.remove(id); return null; },
     'onboarding.check': ({ refresh }) => checkSetup(refresh),
     'onboarding.signIn': async ({ provider }) => {
-      const now = Date.now();
-      if (now - (lastSignIn.get(provider) ?? -Infinity) < SIGN_IN_GAP_MS) return { started: false, error: 'A sign-in window was just opened; finish there.' };
-      lastSignIn.set(provider, now);
-      const result = await deps.signIn(provider, (await deps.settings.load()).cliPaths[provider]);
-      // Only an opened window uses up the slot; a failed try can be retried at once.
-      if (!result.started) lastSignIn.delete(provider);
-      return result;
+      // One sign-in per provider at a time: a page can't stack browser logins.
+      if (signingIn.has(provider)) return { signedIn: false, error: 'Signing in already: finish in your browser.' };
+      signingIn.add(provider);
+      try { return await deps.signIn(provider, (await deps.settings.load()).cliPaths[provider]); } finally { signingIn.delete(provider); }
     },
   };
 }

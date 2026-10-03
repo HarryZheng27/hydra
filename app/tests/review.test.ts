@@ -202,7 +202,7 @@ test('Open in editor takes only a file the current diff lists', async () => {
   const handlers = createHandlers({
     info: { name: 'Hydra', version: '0', electron: '44', platform: 'win32' }, settings: store, state: store,
     pickFolder: async () => undefined, pickExecutable: async () => undefined, applyTheme: () => undefined,
-    checkSetup: async () => { throw new Error('unused'); }, signIn: async () => ({ started: false }), confirmTrust: async () => false,
+    checkSetup: async () => { throw new Error('unused'); }, signIn: async () => ({ signedIn: false }), confirmTrust: async () => false,
     chats: { reviewFolder: async () => 'C:\\repo' } as never,
     review: { diff: async () => { throw new Error('the check lists names only'); }, changed: async () => ['src/a.ts'], open: async (_cwd, file) => { opened.push(file); return 'folder'; } },
   });

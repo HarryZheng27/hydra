@@ -1,5 +1,6 @@
-// Stand-in `claude` and `codex` for the app's tests and smoke: Windows .cmd programs that answer only `--version` and
-// `--help` (and Codex's `app-server --help`), the way the real CLIs do, and log every call to <name>-calls.log beside
+// Stand-in `claude` and `codex` for the app's tests and smoke: Windows .cmd programs that answer only `--version`,
+// `--help` (and Codex's `app-server --help`), the sign-in status commands and Claude's `auth login` (it leaves a
+// `claude-signed-in` marker), the way the real CLIs do, and log every call to <name>-calls.log beside
 // them, retrying while the other one holds its file. A call that can't be logged fails (exit 9) rather than go unseen.
 // Anything else exits 3. They never start a model, so app CI needs no provider and no sign-in.
 import fs from 'node:fs';
@@ -31,10 +32,15 @@ const program = (name, version, help, extra = '', chat = '') => [
  */
 export function writeStandins(dir, { claude = '2.1.282', codex = '0.157.1', replay } = {}) {
   fs.mkdirSync(dir, { recursive: true });
-  if (claude) fs.writeFileSync(path.join(dir, 'claude.cmd'), program('claude', `${claude} (Claude Code)`, 'Usage: claude [options] --output-format stream-json --input-format stream-json --resume --permission-prompt-tool', '', replay ? `"${replay.node}" "${replay.script}" %*` : ''));
+  if (claude) fs.writeFileSync(path.join(dir, 'claude.cmd'), program('claude', `${claude} (Claude Code)`, 'Usage: claude [options] --output-format stream-json --input-format stream-json --resume --permission-prompt-tool',
+    [
+      'if "%~1"=="auth" if "%~2"=="status" if exist "%~dp0claude-signed-in" (echo {"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}& exit /b 0)',
+      'if "%~1"=="auth" if "%~2"=="status" (echo {"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}& exit /b 1)',
+      'if "%~1"=="auth" if "%~2"=="login" (type nul > "%~dp0claude-signed-in"& exit /b 0)',
+    ].join('\r\n'), replay ? `"${replay.node}" "${replay.script}" %*` : ''));
   // Codex's chat process replays its own fixture, into its own state folder.
   if (codex) fs.writeFileSync(path.join(dir, 'codex.cmd'), program('codex', `codex-cli ${codex}`, 'Commands: exec app-server login',
-    'if "%~1"=="app-server" if "%~2"=="--help" (echo app-server generate-json-schema& exit /b 0)',
+    'if "%~1"=="app-server" if "%~2"=="--help" (echo app-server generate-json-schema& exit /b 0)\r\nif "%~1"=="login" if "%~2"=="status" (echo Logged in using ChatGPT& exit /b 0)',
     replay ? `set "HYDRA_STANDIN_FIXTURE=%HYDRA_STANDIN_CODEX_FIXTURE%"& set "HYDRA_STANDIN_STATE=%HYDRA_STANDIN_CODEX_STATE%"& "${replay.node}" "${replay.script}" %*` : ''));
   return dir;
 }

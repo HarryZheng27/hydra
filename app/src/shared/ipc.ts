@@ -27,9 +27,11 @@ export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partia
 /** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
 export interface Project { id: string; path: string; name: string; trustedAt?: string }
 /** One provider CLI, as onboarding found it: only `--version` and `--help` were run. */
+/** What the CLI says about the user's sign-in: only this, never who they are. */
+export type AccountStatus = 'signed-in' | 'signed-out' | 'other' | 'unknown';
 export interface ProviderStatus {
   provider: CliProvider; name: string; found: boolean; executable?: string; configured: boolean;
-  version?: string; supported: boolean; minimum: string; requirement: string; advertised?: string[]; error?: string;
+  version?: string; supported: boolean; minimum: string; requirement: string; advertised?: string[]; error?: string; account?: AccountStatus;
 }
 /** Whether the user-level `hydra` MCP server is registered with a CLI, read from its config file. */
 export interface RegistrationStatus { registered: boolean; where: string; error?: string }
@@ -56,7 +58,8 @@ export interface Channels {
   /** Runs the version and help checks (again, with refresh) and reads the registrations. */
   'onboarding.check': { payload: { refresh: boolean }; result: OnboardingReport };
   /** Opens a console window running the CLI's own sign-in. Nothing is read back. */
-  'onboarding.signIn': { payload: { provider: CliProvider }; result: { started: boolean; error?: string } };
+  /** Resolves when the sign-in in the browser finishes, fails or times out. */
+  'onboarding.signIn': { payload: { provider: CliProvider }; result: { signedIn: boolean; error?: string } };
   /** Main asks, in its own dialog, before a folder may run chats; the page only names the project. */
   'projects.trust': { payload: { id: string }; result: AppState };
   'chats.list': { payload: null; result: ChatRecord[] };
@@ -190,7 +193,7 @@ export interface HydraApi {
   pickProject(): Promise<{ state: AppState; picked?: string }>;
   removeProject(id: string): Promise<AppState>;
   checkSetup(refresh: boolean): Promise<OnboardingReport>;
-  signIn(provider: CliProvider): Promise<{ started: boolean; error?: string }>;
+  signIn(provider: CliProvider): Promise<{ signedIn: boolean; error?: string }>;
   trustProject(id: string): Promise<AppState>;
   listChats(): Promise<ChatRecord[]>;
   createChat(request: NewChatRequest): Promise<ChatRecord>;
