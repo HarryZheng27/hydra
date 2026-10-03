@@ -6,6 +6,9 @@ const paths: Record<string, string> = {
   settings: 'M10 7a3 3 0 1 1 0 6a3 3 0 0 1 0-6zM10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4',
   chevron: 'M7.5 5l5 5l-5 5',
   close: 'M5.5 5.5l9 9M14.5 5.5l-9 9',
+  clone: 'M6 3.5v9M6 12.5a2 2 0 1 0 0 4a2 2 0 0 0 0-4zM14 7.5a2 2 0 1 0 0-4a2 2 0 0 0 0 4zM14 7.5c0 3-8 2-8 5',
+  arrowUp: 'M10 15.5v-11M5.5 9l4.5-4.5L14.5 9',
+  stop: 'M6.5 6.5h7v7h-7z',
 };
 
 /** A small line icon, drawn with the current text color. */

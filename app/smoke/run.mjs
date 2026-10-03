@@ -113,7 +113,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -173,7 +173,9 @@ try {
     assert.equal(a.ui.agentsDisabled, 'Agents');
     assert.deepEqual(a.ui.sidebar, ['New chat', 'Settings']);
     assert.equal(a.ui.search, true);
-    assert.match(a.ui.emptyButton, /Open a folder/);
+    assert.match(a.ui.emptyButton, /Open a project/);
+    assert.deepEqual(a.home.buttons, ['Open a project', 'Clone a repo']);
+    assert.equal(a.home.setupOnHome, false, 'Claude Code and Codex are in Settings, not on the home screen');
     assert.deepEqual(a.afterPick.projects, ['Project One']);
     assert.equal(a.afterPick.heading, 'Project One');
     assert.equal(a.sidebarAfterToggle, false);

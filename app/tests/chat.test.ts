@@ -223,19 +223,24 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
   const dir = scratch();
   try {
     let config = 'model = "gpt-6-luna"\n';
+    let reads = 0;
     const pushed: ChatEvent[] = [];
     const { starts, launch } = fakeLaunch();
-    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async () => 'codex.exe', trusted: async () => true, push: (_id, events) => pushed.push(...events), codexConfig: async () => config });
+    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async () => 'codex.exe', trusted: async () => true, push: (_id, events) => pushed.push(...events), codexConfig: async () => { reads++; return config; } });
+    // Waits for Hydra to read Codex's config, rather than for a fixed time (a loaded machine is slower).
+    const readsReach = async (count: number) => { for (let i = 0; i < 500 && reads < count; i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(reads >= count, `Codex's config read ${reads} times, expected ${count}`); };
     const chat = await manager.create({ cwd: dir, provider: 'codex' });
     const thread = '01a0fe38-af75-7372-aab6-eecfb1837dd5';
     const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
     const notice = () => pushed.some(event => event.type === 'error' && /as trusted in your/.test(event.message));
     const turn = async (id: string, change: string) => {
-      await new Promise(resolve => setTimeout(resolve, 150)); // Codex's config is read when the turn starts
+      const before = reads;
+      await readsReach(before + 1); // Codex's config is read when the turn starts
       config += change;
       say({ method: 'turn/started', params: { threadId: thread, turn: { id } } });
       say({ method: 'turn/completed', params: { threadId: thread, turn: { id, status: 'completed' } } });
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await readsReach(before + 2); // and again when it ends
+      await new Promise(resolve => setTimeout(resolve, 50));
     };
     await manager.send(chat.id, 'one');
     say({ id: 3, result: { thread: { id: thread }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } });

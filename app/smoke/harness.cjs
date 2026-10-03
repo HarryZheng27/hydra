@@ -250,7 +250,10 @@ if (role === 'first') {
       throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent).join(' | ')`)}`);
     };
     report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
-    // Onboarding: the version and help checks, the registrations, and Sign in.
+    report.home = await ui(`({ buttons: [...document.querySelectorAll('.start-actions button')].map(b => b.textContent), setupOnHome: !!document.querySelector('.empty .setup') })`);
+    // Onboarding lives in Settings: the version and help checks, the registrations, and Sign in.
+    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await until(`!!document.querySelector('.settings h1')`, 'Settings');
     await until(`document.querySelectorAll('.setup .provider').length === 2`, 'the onboarding checks', 30000);
     const setupRows = `[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, account: p.querySelector('.provider-account')?.textContent ?? null, signIn: !!p.querySelector('.primary') && !p.querySelector('.primary').disabled }))`;
     report.setup = await ui(setupRows);
@@ -266,6 +269,9 @@ if (role === 'first') {
     report.recheckDone = true;
     // A second Sign in while one runs is refused, so a page can't stack logins.
     report.secondSignIn = await ui(`Promise.all([window.hydra.signIn('claude'), window.hydra.signIn('claude')])`);
+    // Back to the home screen.
+    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('New chat')).click(); 1`);
+    await until(`document.querySelector('.empty h1')?.textContent === 'What are we working on?'`, 'the home screen');
     const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
     report.themes = { initial: await themeNow() };
     // `--smoke-shots=<dir>` saves what the hidden window draws, for a person to look at. Off in CI.
@@ -344,7 +350,7 @@ if (role === 'first') {
       await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('Codex'))`, 'the project view');
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('Codex')).click(); 1`);
-      await chat.until(`document.querySelector('.composer textarea')?.placeholder === 'Message Codex'`, 'the new Codex chat');
+      await chat.until(`!!document.querySelector('.composer select[aria-label=Approvals]')`, 'the new Codex chat');
       report.codex = {
         approvals: await ui(`[...document.querySelectorAll('.composer select[aria-label=Approvals] option')].map(o => o.textContent)`),
         approvalsDefault: await ui(`document.querySelector('.composer select[aria-label=Approvals]').value`),

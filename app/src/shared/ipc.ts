@@ -56,6 +56,8 @@ export interface Channels {
   'state.setSidebarOpen': { payload: { open: boolean }; result: AppState };
   /** Main shows a folder picker; the renderer never sends a path. `picked` is the chosen folder's project, new or not. */
   'projects.pick': { payload: null; result: { state: AppState; picked?: string } };
+  /** Clones a repository URL into a folder main asks for, and adds it as a project. */
+  'projects.clone': { payload: { url: string }; result: { state: AppState; picked?: string } };
   'projects.remove': { payload: { id: string }; result: AppState };
   /** Runs the version and help checks (again, with refresh) and reads the registrations. */
   'onboarding.check': { payload: { refresh: boolean }; result: OnboardingReport };
@@ -143,6 +145,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'state.get': isNull,
   'state.setSidebarOpen': exactly<{ open: boolean }>({ open: value => typeof value === 'boolean' }),
   'projects.pick': isNull,
+  'projects.clone': exactly<{ url: string }>({ url: value => typeof value === 'string' && value.length > 0 && value.length <= 500 }),
   'projects.remove': exactly<{ id: string }>({ id: isId }),
   'onboarding.check': exactly<{ refresh: boolean }>({ refresh: value => typeof value === 'boolean' }),
   'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
@@ -192,6 +195,7 @@ export interface HydraApi {
   getState(): Promise<AppState>;
   setSidebarOpen(open: boolean): Promise<AppState>;
   pickProject(): Promise<{ state: AppState; picked?: string }>;
+  cloneRepo(url: string): Promise<{ state: AppState; picked?: string }>;
   removeProject(id: string): Promise<AppState>;
   checkSetup(refresh: boolean): Promise<OnboardingReport>;
   signIn(provider: CliProvider): Promise<{ signedIn: boolean; error?: string }>;

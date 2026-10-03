@@ -43,6 +43,7 @@ export function Setup({ report, checking, onCheck, onSignIn }: Props) {
         <button onClick={onCheck} disabled={checking}>{checking ? 'Checking…' : 'Check again'}</button>
       </div>
       {!report && <p className="hint">{checking ? 'Looking for Claude Code and Codex…' : 'Not checked yet.'}</p>}
+      <div className="providers">
       {report?.providers.map(status => {
         const line = statusLine(status);
         const registration = report.registration[status.provider];
@@ -63,7 +64,7 @@ export function Setup({ report, checking, onCheck, onSignIn }: Props) {
           </div>
         );
       })}
-      {report && <p className="hint">Hydra runs your own installed Claude Code and Codex, on your own subscriptions. Sign in uses each tool's own login in your browser; Hydra never sees your account. Hydra IDE registers Hydra's tools with them; this app only checks.</p>}
+      </div>
     </section>
   );
 }

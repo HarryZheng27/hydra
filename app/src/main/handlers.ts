@@ -1,4 +1,5 @@
 import type { AppSettings, AppState, CliProvider, OnboardingReport, Project } from '../shared/ipc';
+import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
 import type { Handlers } from './ipc';
@@ -8,8 +9,10 @@ export interface HandlerDeps {
   info: { name: string; version: string; electron: string; platform: string };
   settings: JsonStore<AppSettings>;
   state: JsonStore<AppState>;
-  /** Main's own folder picker. Undefined when the user cancels. */
-  pickFolder(): Promise<string | undefined>;
+  /** Main's own folder picker (for a project, or where a clone goes). Undefined when the user cancels. */
+  pickFolder(purpose?: 'project' | 'clone'): Promise<string | undefined>;
+  /** Clones a repository into a new folder under `parent`, returning it (app/src/main/clone.ts). */
+  cloneRepo?(url: string, parent: string): Promise<string>;
   /** Main's own file picker for a provider's command-line tool. Undefined when the user cancels. */
   pickExecutable(provider: CliProvider): Promise<string | undefined>;
   /** Applies a theme setting to the window: the native theme and the title bar. */
@@ -74,6 +77,16 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'projects.pick': async () => {
       const folder = await deps.pickFolder();
       if (!folder) return { state: await deps.state.load() };
+      const state = await deps.state.update(current => addProject(current, folder));
+      return { state, picked: projectFor(state, folder)?.id };
+    },
+    'projects.clone': async ({ url }) => {
+      if (!deps.cloneRepo) throw new Error('Cloning isn\'t available here.');
+      const problem = repoUrlProblem(url);
+      if (problem) throw new Error(problem);
+      const parent = await deps.pickFolder('clone');
+      if (!parent) return { state: await deps.state.load() };
+      const folder = await deps.cloneRepo(url, parent);
       const state = await deps.state.update(current => addProject(current, folder));
       return { state, picked: projectFor(state, folder)?.id };
     },

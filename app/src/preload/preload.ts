@@ -15,6 +15,7 @@ const api: HydraApi = {
   getState: () => call('state.get', null),
   setSidebarOpen: open => call('state.setSidebarOpen', { open }),
   pickProject: () => call('projects.pick', null),
+  cloneRepo: url => call('projects.clone', { url }),
   removeProject: id => call('projects.remove', { id }),
   checkSetup: refresh => call('onboarding.check', { refresh }),
   signIn: provider => call('onboarding.signIn', { provider }),

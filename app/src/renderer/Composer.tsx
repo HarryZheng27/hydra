@@ -1,4 +1,5 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import { Icon } from './Icon';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
@@ -90,39 +91,42 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
     setImages([]);
   };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
+  // Like Claude desktop's prompt: one rounded box, the message on top, its controls along the bottom inside it.
   return (
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
-      {(images.length > 0 || problem) && (
-        <div className="attachments">
-          {images.map((image, index) => (
-            <span key={index} className="chip attachment" title={image.name}>{image.name} · {Math.max(1, Math.round(image.size / 1024))} KB
-              <button aria-label={`Remove ${image.name}`} onClick={() => setImages(current => current.filter((_, i) => i !== index))}>×</button></span>
-          ))}
-          {problem && <span className="error">{problem}</span>}
+      <div className="prompt-box">
+        {(images.length > 0 || problem) && (
+          <div className="attachments">
+            {images.map((image, index) => (
+              <span key={index} className="chip attachment" title={image.name}>{image.name} · {Math.max(1, Math.round(image.size / 1024))} KB
+                <button aria-label={`Remove ${image.name}`} onClick={() => setImages(current => current.filter((_, i) => i !== index))}>×</button></span>
+            ))}
+            {problem && <span className="error">{problem}</span>}
+          </div>
+        )}
+        <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={2} />
+        <div className="composer-bar">
+          <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>
+          <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+          {codex
+            ? <select className="quiet" aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
+                {approvalModes(defaults).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            : <select className="quiet" aria-label="Permission mode" title="What Claude Code asks you about first (a new chat starts on your own Claude Code setting); anything it asks comes here as a card." value={mode} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
+                {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>}
+          <span className="composer-spacer" />
+          <select className="quiet" aria-label="Model" value={model ?? ''} onChange={e => onConfigure({ model: e.target.value })}>
+            {!model && <option value="">Model</option>}
+            {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <select className="quiet" aria-label="Effort" value={effort ?? ''} onChange={e => onConfigure({ effort: e.target.value })}>
+            {!effort && <option value="">Effort</option>}
+            {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          {running && <button className="round stop" onClick={onStop} aria-label="Stop" title="Stop"><Icon name="stop" /></button>}
+          <button className="round send" onClick={send} disabled={!text.trim() && !images.length} aria-label="Send" title="Send (Enter)"><Icon name="arrowUp" /></button>
         </div>
-      )}
-      <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : codex ? 'Message Codex' : 'Message Claude Code'} aria-label="Message" rows={3} />
-      <div className="composer-bar">
-        <select aria-label="Model" value={model ?? ''} onChange={e => onConfigure({ model: e.target.value })}>
-          {!model && <option value="">Model</option>}
-          {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-        <select aria-label="Effort" value={effort ?? ''} onChange={e => onConfigure({ effort: e.target.value })}>
-          {!effort && <option value="">Effort</option>}
-          {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-        {codex
-          ? <select aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
-              {approvalModes(defaults).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          : <select aria-label="Permission mode" title="What Claude Code asks you about first (a new chat starts on your own Claude Code setting); anything it asks comes here as a card." value={mode} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
-              {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>}
-        <button className="attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)">Image…</button>
-        <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-        <span className="composer-spacer" />
-        {running && <button className="stop" onClick={onStop}>Stop</button>}
-        <button className="primary small send" onClick={send} disabled={!text.trim() && !images.length}>Send</button>
       </div>
     </div>
   );

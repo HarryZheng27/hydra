@@ -90,6 +90,11 @@ export function App() {
     try { await run(window.hydra.checkSetup(refresh), setSetup); } finally { setChecking(false); }
   }
   const setupPanel = <Setup report={setup} checking={checking} onCheck={() => void checkSetup(true)} onSignIn={provider => window.hydra.signIn(provider)} />;
+  /** The latest chats, newest first, for the home screen. */
+  const recents = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
+    id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
+    project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
+  }));
   const afterCliChange = (next: AppSettings) => { setSettings(next); void checkSetup(false); };
 
   const sidebarOpen = state?.sidebarOpen ?? true;
@@ -104,6 +109,14 @@ export function App() {
     setState(next);
     if (picked) setView({ kind: 'project', id: picked });
   });
+  /** Clone a repo: main asks where it goes, clones it, and the clone opens as a project. Errors show in the banner. */
+  const cloneRepo = async (url: string) => {
+    try {
+      const { state: next, picked } = await window.hydra.cloneRepo(url);
+      setState(next);
+      if (picked) setView({ kind: 'project', id: picked });
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
   const chat = view.kind === 'chat' ? chats.find(c => c.id === view.id) : undefined;
   const project = view.kind === 'project' ? state?.projects.find(p => p.id === view.id)
     : chat ? state?.projects.find(p => samePath(p.path, chat.cwd)) : undefined;
@@ -178,7 +191,7 @@ export function App() {
                   onAnswer={(requestId: string, answer: ChatAnswer) => window.hydra.answer(chat.id, requestId, answer).catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); throw e; })}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
                   onConfigure={change => configure(chat.id, change)} />
-              : <EmptyState project={project} onPickFolder={pickProject} onNewChat={(target, provider) => void newChat(target, provider)} setup={project ? undefined : setupPanel} />}
+              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} />}
         </main>
       </div>
     </div>

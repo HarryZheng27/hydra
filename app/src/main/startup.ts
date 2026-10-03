@@ -12,6 +12,7 @@ import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
 import { onboardingReport, signIn, stopSignIns } from './onboarding';
+import { cloneRepo } from './clone';
 import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
@@ -33,8 +34,8 @@ function confirmExternal(contents: WebContents, url: string): void {
   }, contents);
 }
 
-async function pickFolder(): Promise<string | undefined> {
-  const options = { title: 'Open a project folder', properties: ['openDirectory' as const, 'dontAddToRecent' as const] };
+async function pickFolder(purpose: 'project' | 'clone' = 'project'): Promise<string | undefined> {
+  const options = { title: purpose === 'clone' ? 'Choose where to put the repository' : 'Open a project folder', properties: ['openDirectory' as const, 'dontAddToRecent' as const] };
   const win = getMainWindow();
   const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return result.canceled ? undefined : result.filePaths[0];
@@ -117,7 +118,8 @@ export function start(): void {
     info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
     settings,
     state,
-    pickFolder: () => pickFolder(),
+    pickFolder: purpose => pickFolder(purpose),
+    cloneRepo: (url, parent) => cloneRepo(url, parent),
     pickExecutable: provider => pickExecutable(provider),
     applyTheme,
     // The checks run in user data, never a project folder, so no project's files are in reach.
