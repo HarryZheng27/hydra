@@ -140,9 +140,10 @@ test('Codex: write access stays off until its live check passes, and the model c
   const adapter = new CodexAdapter();
   adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', resume: '01a0fe38-af75-7372-aab6-eecfb1837dd5' });
   adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.feed(JSON.stringify({ id: 2, result: { data: [] } }));
   adapter.setModel('gpt-6-sol');
   assert.equal(JSON.parse(adapter.send('hi')[0]!).method, 'thread/resume', 'the thread is resumed with the first message');
-  const turn = JSON.parse(adapter.feed(JSON.stringify({ id: 2, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } })).replies[0]!);
+  const turn = JSON.parse(adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: '01a0fe38-af75-7372-aab6-eecfb1837dd5' }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } })).replies[0]!);
   assert.equal(turn.method, 'turn/start');
   assert.equal(turn.params.model, 'gpt-6-sol');
   assert.equal(turn.params.sandboxPolicy, undefined);
@@ -240,4 +241,20 @@ test('Codex: a process started ahead asks for no thread; a model the user\'s con
   const turn = JSON.parse(ready.replies[0]!);
   assert.equal(turn.method, 'turn/start');
   assert.equal(turn.params.model, 'gpt-6-astra', 'the turn runs on the default model');
+});
+
+test('Codex: a resumed chat checks its model too, and a failed turn\'s error shows once, readable', () => {
+  const adapter = new CodexAdapter();
+  const started = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', resume: 't-1' }).map(line => JSON.parse(line));
+  assert.ok(started.some(line => line.method === 'model/list'), 'the model list on resume as well');
+  adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.feed(JSON.stringify({ id: 2, result: { data: [{ id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: true, supportedReasoningEfforts: [] }] } }));
+  adapter.send('hi');
+  const ready = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, model: 'gpt-6.1-sol', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.equal(JSON.parse(ready.replies[0]!).params.model, 'gpt-6-astra', 'the resumed chat falls back too');
+  const raw = JSON.stringify({ type: 'error', status: 400, error: { type: 'invalid_request_error', message: 'That model is not supported.' } });
+  const notice = adapter.feed(JSON.stringify({ method: 'error', params: { threadId: 't-1', error: { message: raw }, willRetry: false } }));
+  assert.deepEqual(notice.events.map(event => event.type === 'error' && event.message), ['That model is not supported.']);
+  const done = adapter.feed(JSON.stringify({ method: 'turn/completed', params: { threadId: 't-1', turn: { id: 'x', status: 'failed', error: { message: raw } } } }));
+  assert.deepEqual(done.events.map(event => event.type), ['done'], 'not shown a second time');
 });

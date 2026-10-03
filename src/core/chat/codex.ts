@@ -16,6 +16,17 @@ import { extraArguments } from './claude';
  */
 const modelPattern = /^[A-Za-z0-9][A-Za-z0-9._:\-]{0,79}$/;
 const threadIdPattern = /^[A-Za-z0-9-]{8,80}$/;
+/** An API error Codex passes on as raw JSON ({"error":{"message":…}}) becomes its message. */
+function readable(message: string): string {
+  try {
+    const parsed: unknown = JSON.parse(message);
+    if (parsed && typeof parsed === 'object') {
+      const inner = (parsed as { error?: { message?: unknown } }).error?.message;
+      if (typeof inner === 'string' && inner) return inner.slice(0, 2000);
+    }
+  } catch { /* not JSON: as it is */ }
+  return message.slice(0, 2000);
+}
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
@@ -51,6 +62,8 @@ export class CodexAdapter implements ChatAdapter {
   private interrupted = false;
   /** A usage-limit error was already shown for this turn, so turn/completed's copy of it isn't. */
   private limitShown = false;
+  /** Errors already shown this turn: Codex reports a failed turn's error twice (an error notice, then the turn's own). */
+  private readonly turnErrors = new Set<string>();
   private models: ChatModel[] | undefined;
   /** A message sent before the thread was ready: it starts the turn once the thread exists. */
   private waiting: Waiting | undefined;
@@ -79,8 +92,9 @@ export class CodexAdapter implements ChatAdapter {
       this.request('initialize', { clientInfo: { name: 'hydra-app', title: 'Hydra', version: '0' }, capabilities: { experimentalApi: false } }),
       JSON.stringify({ method: 'initialized', params: {} }),
     ];
-    // A new thread checks its model and effort against the CLI's own list first.
-    if (!options.resume) lines.push(this.request('model/list', {}));
+    // Every chat checks its model and effort against the CLI's own list first, a resumed one too (its model may come
+    // from a config that has changed since).
+    lines.push(this.request('model/list', {}));
     return lines;
   }
 
@@ -249,7 +263,9 @@ export class CodexAdapter implements ChatAdapter {
         // An error Codex retries by itself isn't the end of anything.
         if (params.willRetry === true) return [];
         if (limit) this.limitShown = true;
-        return [{ type: 'error', message: text(error.message).slice(0, 2000) || 'Codex reported an error.', fatal: false, ...(limit ? { code: 'limit' as const } : {}) }];
+        const message = readable(text(error.message)) || 'Codex reported an error.';
+        this.turnErrors.add(message);
+        return [{ type: 'error', message, fatal: false, ...(limit ? { code: 'limit' as const } : {}) }];
       }
       case 'turn/completed': {
         if (!this.running) return [];
@@ -263,7 +279,9 @@ export class CodexAdapter implements ChatAdapter {
         this.limitShown = false;
         const events: ChatEvent[] = [];
         this.commands.clear();
-        if (status === 'error' && isRecord(turn.error) && text(turn.error.message) && !limitShown) events.push({ type: 'error', message: text(turn.error.message).slice(0, 2000), fatal: false });
+        const failure = isRecord(turn.error) ? readable(text(turn.error.message)) : '';
+        if (status === 'error' && failure && !limitShown && !this.turnErrors.has(failure)) events.push({ type: 'error', message: failure, fatal: false });
+        this.turnErrors.clear();
         events.push(...this.cancelAll(), { type: 'done', status, ...(status === 'interrupted' ? { detail: 'Codex was stopped, along with any command it was running.' } : {}) });
         return events;
       }

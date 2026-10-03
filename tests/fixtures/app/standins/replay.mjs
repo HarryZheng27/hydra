@@ -106,11 +106,18 @@ const write = line => new Promise(resolve => { if (!process.stdout.write(`${line
 let held; // a host line read while skipping optional requests, still to be matched
 for (const record of part) {
   if (record.dir === 'send') {
-    const line = held ?? await next();
+    let line = held ?? await next();
     held = undefined;
     if (line === undefined) process.exit(0); // the host closed stdin: it ended the chat
-    const actual = parse(line);
+    let actual = parse(line);
     const expected = parse(record.line);
+    // A model list the recording didn't ask for (G1 recorded resumes without one) gets an empty list.
+    while (actual?.method === 'model/list' && 'id' in actual && expected?.method !== 'model/list') {
+      await write(JSON.stringify({ id: actual.id, result: { data: [] } }));
+      line = await next();
+      if (line === undefined) process.exit(0);
+      actual = parse(line);
+    }
     if (expected?.method && optional.has(expected.method) && kind(actual) !== kind(expected)) {
       if ('id' in expected) skipped.add(expected.id);
       held = line;
