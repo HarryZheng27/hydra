@@ -12,6 +12,8 @@ const pkg = JSON.parse(await readFile(path.join(here, 'package.json'), 'utf8'));
 // One React for the app and anything it bundles from ../webview.
 const alias = { react: path.join(here, 'node_modules', 'react'), 'react-dom': path.join(here, 'node_modules', 'react-dom') };
 const define = { HYDRA_APP_VERSION: JSON.stringify(pkg.version) };
+// Hydra's programs carry Hydra's own version (the root package's), as the IDE's do.
+const hydraDefine = { HYDRA_VERSION: JSON.stringify(JSON.parse(await readFile(path.join(here, '..', 'package.json'), 'utf8')).version) };
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(path.join(dist, 'renderer'), { recursive: true });
@@ -22,6 +24,10 @@ await Promise.all([
   // Monaco's CSS comes out as renderer.css beside it. Its icon font is emitted too, but the CSP (default-src 'none', no font-src) never
   // loads it: styles.css hides the codicons, which only Monaco's diff host would show.
   build({ entryPoints: [path.join(here, 'src/renderer/index.tsx')], bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outfile: path.join(dist, 'renderer', 'renderer.js'), minify: true, alias, define: { ...define, 'process.env.NODE_ENV': '"production"' }, loader: { '.ttf': 'file' }, assetNames: '[name]', logLevel: 'warning' }),
+  // Hydra's own programs, as the IDE builds them (scripts/build.mjs), run by the app's executable with
+  // ELECTRON_RUN_AS_NODE=1: a chat's MCP bridge, the `hydra` command, and Claude's usage-limit hook.
+  ...[['hydraMcp.ts', 'hydra-mcp.cjs'], ['hydraCli.ts', 'hydra-cli.cjs'], ['hydraLimitHook.ts', 'hydra-limit-hook.cjs']].map(([entry, out]) =>
+    build({ entryPoints: [path.join(here, '..', 'src', entry)], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: path.join(dist, out), define: hydraDefine, logLevel: 'warning' })),
   build({ entryPoints: { 'editor.worker': path.join(here, 'src/renderer/editor.worker.ts') }, bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outdir: path.join(dist, 'renderer'), minify: true, logLevel: 'warning' }),
 ]);
 for (const file of ['index.html', 'styles.css']) await copyFile(path.join(here, 'src/renderer', file), path.join(dist, 'renderer', file));

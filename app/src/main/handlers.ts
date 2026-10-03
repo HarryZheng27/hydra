@@ -11,6 +11,10 @@ export interface HandlerDeps {
   state: JsonStore<AppState>;
   /** Main's own folder picker (for a project, or where a clone goes). Undefined when the user cancels. */
   pickFolder(purpose?: 'project' | 'clone'): Promise<string | undefined>;
+  /** The projects changed (one trusted or removed): Hydra starts or stops its controllers (app/src/main/hydra.ts). */
+  projectsChanged?(state: AppState): void;
+  /** A chat in this folder was created or opened: Hydra starts its project's controller (app/src/main/hydra.ts). */
+  projectOpened?(cwd: string): void;
   /** Clones a repository into a new folder under `parent`, returning it (app/src/main/clone.ts). */
   cloneRepo?(url: string, parent: string): Promise<string>;
   /** Main's own file picker for a provider's command-line tool. Undefined when the user cancels. */
@@ -95,21 +99,33 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const next = await deps.state.update(current => removeProject(current, id));
       // A folder that is no longer a project runs nothing: its chats' processes end now.
       if (project) await deps.chats.closeFolder?.(project.path);
+      deps.projectsChanged?.(next);
       return next;
     },
     'projects.trust': async ({ id }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === id);
       if (!project) throw new Error('No such project.');
       if (project.trustedAt) return deps.state.load();
-      return (await deps.confirmTrust(project)) ? deps.state.update(current => trustProject(current, id)) : deps.state.load();
+      if (!(await deps.confirmTrust(project))) return deps.state.load();
+      const next = await deps.state.update(current => trustProject(current, id));
+      deps.projectsChanged?.(next);
+      // The user is in this project now: its controller starts.
+      deps.projectOpened?.(project.path);
+      return next;
     },
     'chats.list': () => deps.chats.list(),
     'chats.create': async ({ projectId, ...rest }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
       if (!project) throw new Error('No such project.');
-      return deps.chats.create({ cwd: project.path, ...rest });
+      const created = await deps.chats.create({ cwd: project.path, ...rest });
+      deps.projectOpened?.(project.path);
+      return created;
     },
-    'chats.open': ({ id, background }) => deps.chats.open(id, { warm: !background }),
+    'chats.open': async ({ id, background }) => {
+      const opened = await deps.chats.open(id, { warm: !background });
+      if (!background) deps.projectOpened?.(opened.record.cwd);
+      return opened;
+    },
     'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
     'review.diff': async ({ id }) => {

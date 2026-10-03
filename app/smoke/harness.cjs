@@ -157,6 +157,21 @@ if (role === 'resume') {
     report.resume = { titles: await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent).sort()`) };
     const openByTitle = async part => { await ui(`[...document.querySelectorAll('.chat-link')].find(e => e.textContent.includes(${JSON.stringify('PART')}.replace('PART', ${JSON.stringify(part)}))).click(); 1`); await until(`!!document.querySelector('.composer textarea')`, 'the chat to open'); await wait(300); };
     await openByTitle('Bash tool');
+    // Hydra (G5): opening a chat starts its project's controller, which owns the project, so `hydra status` there finds the app.
+    {
+      const storage = process.env.HYDRA_APP_IDE_STORAGE;
+      const windows = path.join(storage, 'helpers', 'windows');
+      const recorded = () => { try { return fs.readdirSync(windows).some(name => name.endsWith('.json') && !name.endsWith('.summary.json')); } catch { return false; } };
+      const handshake = () => { try { return fs.readdirSync(path.join(storage, 'helpers', 'handshakes')).some(name => /^\d+-\d+\.json$/.test(name)); } catch { return false; } };
+      for (let i = 0; i < 300 && !(recorded() && handshake()); i++) await wait(100);
+      try {
+        // Asynchronously: this very process serves the endpoint `hydra` calls.
+        const output = await new Promise((resolve, reject) => require('node:child_process').execFile(process.execPath, [path.join(__dirname, '..', 'dist', 'hydra-cli.cjs'), 'status', '--json'], {
+          cwd: arg('folder'), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: path.join(storage, 'helpers') }, windowsHide: true, encoding: 'utf8', timeout: 30000,
+        }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr })) : resolve(stdout))));
+        report.hydraStatus = { appPid: process.pid, status: JSON.parse(output) };
+      } catch (error) { report.hydraStatus = { appPid: process.pid, error: String(error.stderr || error.message).slice(0, 500) }; }
+    }
     report.resume.title = await ui(`[...document.querySelectorAll('.chat-link.selected')].map(e => e.textContent)[0]`);
     await until(`!!document.querySelector('.composer textarea')`, 'the chat to open');
     report.resume.restoredTurnEnds = await turnEnds();
