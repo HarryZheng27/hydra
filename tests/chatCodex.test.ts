@@ -202,3 +202,20 @@ test('Codex: other server requests are refused, and approval-looking text is onl
   assert.equal(adapter.feed('not json').events[0]!.type, 'error');
   void path;
 });
+
+test('Codex: "your settings" leaves approvals to the user\'s config (its auto-review, say), still read-only', () => {
+  const adapter = new CodexAdapter();
+  const lines = adapter.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', approvals: 'settings' }).map(line => JSON.parse(line));
+  const thread = lines.find(line => line.method === 'thread/start');
+  assert.equal(thread.params.approvalsReviewer, undefined);
+  assert.equal(thread.params.approvalPolicy, undefined);
+  assert.equal(thread.params.sandbox, 'read-only');
+  const { events } = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', sandbox: { type: 'readOnly' } } }));
+  const session = events.find(event => event.type === 'session');
+  assert.ok(session && session.type === 'session' && session.permissionMode === 'on-request · auto_review', 'the reviewer Codex chose is reported');
+  const wider = new CodexAdapter();
+  wider.start({ provider: 'codex', cwd: 'C:\\repo', executable: 'codex', approvals: 'settings' });
+  const refused = wider.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, approvalsReviewer: 'auto_review', sandbox: { type: 'workspaceWrite' } } }));
+  assert.ok(refused.events.some(event => event.type === 'error' && event.fatal), 'more than read-only still stops the chat');
+  assert.throws(() => codexArguments({ provider: 'codex', cwd: '/', executable: 'codex', approvals: 'never' as never }), /isn't allowed/);
+});

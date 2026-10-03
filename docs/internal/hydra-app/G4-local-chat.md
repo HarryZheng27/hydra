@@ -139,6 +139,13 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
 - **Approving a plan** takes a Claude chat out of plan mode, following Claude's own switch.
 - **Questions and plan approval are Claude's.** Codex's question requests are refused, as G1 decided.
 - **The review pane covers only the chat folder,** and only when the repository's root is that folder or above it. git runs with the repository's filters emptied and lazy fetches off, and Open in editor checks the name against a names-only listing.
+- **New chats follow the user's own CLI settings** (from Nico's first try, 2026-10-03). Hydra had forced Claude's `--permission-mode default` and Codex's `approvalsReviewer: "user"`, which overrode his `defaultMode: "auto"` and `approvals_reviewer = "auto_review"`.
+  - "Your settings", the default, passes neither, so each CLI behaves as it does on its own. Anything it still asks about comes to Hydra's cards.
+  - The composer also offers Auto, Ask before edits, Accept edits and Plan first for Claude, and Ask me for Codex.
+  - Codex stays read-only either way, and bypass and full access are still never offered.
+  - HSEC-82 and HSEC-87 say what this means: Codex's auto-review can approve a request itself.
+- **Claude Code starts when a chat opens,** not when the first message is sent (one chat at a time, trusted folders only, ended after 3 minutes unused). On Nico's machine a small Haiku turn took 11.2 s cold and 5.6 s warm.
+- **The working line** says "Starting Claude Code…" or "Claude Code is working… 42s": Opus can think for a minute with no visible output.
 - **`ChatOptions.extraArgs`** exists only for the live checks' isolation; no IPC payload can set it.
 
 **Follow-ups:**

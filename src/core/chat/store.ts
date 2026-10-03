@@ -3,7 +3,7 @@ import { appendFile, mkdir, open, readFile, rm, writeFile } from 'node:fs/promis
 import path from 'node:path';
 import { replaceAtomic } from '../atomicFile';
 import { ownerOnlyProblem, restrictToOwner } from '../userHandshake';
-import type { ChatEvent, ChatProvider, ClaudePermissionMode, CodexSandbox } from './events';
+import type { ChatEvent, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from './events';
 
 /**
  * Hydra's own record of each chat (docs/internal/hydra-app/G4-local-chat.md): an append-only JSONL log of ChatEvents
@@ -23,6 +23,7 @@ export interface ChatRecord {
   effort?: string;
   permissionMode?: ClaudePermissionMode;
   sandbox?: CodexSandbox;
+  approvals?: CodexApprovals;
 }
 export interface LogEntry { t: string; event: ChatEvent }
 
@@ -47,9 +48,9 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
   if (typeof id !== 'string' || !chatIdPattern.test(id) || (provider !== 'claude' && provider !== 'codex')) return undefined;
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || typeof title !== 'string' || title.length > 200) return undefined;
   if (typeof createdAt !== 'string' || typeof updatedAt !== 'string') return undefined;
-  for (const key of ['providerSessionId', 'model', 'effort', 'permissionMode', 'sandbox'] as const) if (!optionalString(raw[key], 200)) return undefined;
+  for (const key of ['providerSessionId', 'model', 'effort', 'permissionMode', 'sandbox', 'approvals'] as const) if (!optionalString(raw[key], 200)) return undefined;
   const pick = (key: string) => (typeof raw[key] === 'string' ? { [key]: raw[key] } : {});
-  return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox') } as ChatRecord;
+  return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals') } as ChatRecord;
 }
 
 /** True when a file is non-empty and its last byte isn't a newline. */

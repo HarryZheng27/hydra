@@ -341,7 +341,18 @@ if (role === 'first') {
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('Codex'))`, 'the project view');
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('Codex')).click(); 1`);
       await chat.until(`document.querySelector('.composer textarea')?.placeholder === 'Message Codex'`, 'the new Codex chat');
-      report.codex = { sandboxes: await ui(`[...document.querySelectorAll('.composer select[aria-label=Sandbox] option')].map(o => o.textContent)`) };
+      report.codex = {
+        approvals: await ui(`[...document.querySelectorAll('.composer select[aria-label=Approvals] option')].map(o => o.textContent)`),
+        approvalsDefault: await ui(`document.querySelector('.composer select[aria-label=Approvals]').value`),
+      };
+      // G1's recordings route every approval to the user, so this chat asks: the stand-in checks the thread says so.
+      await ui(`(() => {
+        const select = document.querySelector('.composer select[aria-label=Approvals]');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'ask');
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return 1;
+      })()`);
+      await chat.until(`document.querySelector('.composer select[aria-label=Approvals]').value === 'ask'`, 'Ask me to apply');
       await chat.send('Run node -e console.log(6*7) and tell me the output.');
       await chat.until(`!!document.querySelector('.card.approval .card-actions')`, 'the first Codex approval');
       report.codex.choices = await ui(`[...document.querySelectorAll('.card.approval .card-actions button')].map(b => b.textContent)`);

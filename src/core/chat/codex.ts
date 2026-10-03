@@ -1,5 +1,5 @@
 import type { ChatAdapter, ChatAnswer, ChatEvent, ChatImage, ChatOptions, ChatModel } from './events';
-import { codexSandboxes } from './events';
+import { codexApprovalModes, codexSandboxes } from './events';
 import { extraArguments } from './claude';
 
 /**
@@ -25,6 +25,7 @@ export const codexWriteVerified = false;
 export function codexArguments(options: ChatOptions): string[] {
   if (options.sandbox === 'workspace-write' && !codexWriteVerified) throw new Error('Codex chats are read-only for now: letting Codex edit the folder hasn\'t passed its live check.');
   if (options.sandbox !== undefined && !codexSandboxes.includes(options.sandbox)) throw new Error(`Sandbox ${String(options.sandbox)} isn't allowed in a chat.`);
+  if (options.approvals !== undefined && !codexApprovalModes.includes(options.approvals)) throw new Error(`Approvals ${String(options.approvals)} isn't allowed in a chat.`);
   if (options.model !== undefined && !modelPattern.test(options.model)) throw new Error('That model name isn\'t valid.');
   if (options.resume !== undefined && !threadIdPattern.test(options.resume)) throw new Error('That Codex thread id isn\'t valid.');
   return ['app-server', '--listen', 'stdio://', ...extraArguments(options)];
@@ -68,7 +69,9 @@ export class CodexAdapter implements ChatAdapter {
       this.request('initialize', { clientInfo: { name: 'hydra-app', title: 'Hydra', version: '0' }, capabilities: { experimentalApi: false } }),
       JSON.stringify({ method: 'initialized', params: {} }),
     ];
-    const thread = { cwd: options.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', ...(options.model ? { model: options.model } : {}) };
+    // `settings`: the user's own approval policy and reviewer apply (Codex's auto-review, for one). Read-only either way.
+    const approvals = options.approvals === 'settings' ? {} : { approvalPolicy: 'on-request', approvalsReviewer: 'user' };
+    const thread = { cwd: options.cwd, ...approvals, sandbox: 'read-only', ...(options.model ? { model: options.model } : {}) };
     if (options.resume) {
       this.threadId = options.resume;
       lines.push(this.request('thread/resume', { threadId: options.resume, ...thread }));
@@ -175,11 +178,13 @@ export class CodexAdapter implements ChatAdapter {
       if (!isRecord(result.thread) || typeof result.thread.id !== 'string') return { events: [{ type: 'error', message: `Codex didn't say which thread it ${method === 'thread/start' ? 'started' : 'resumed'}, so the chat stopped.`, fatal: true }], replies: [] };
       // The thread must come back exactly as asked: approvals for the user to answer, and read-only. Anything else
       // (a profile or managed setting overriding it) stops the chat before a turn can run.
-      if (result.approvalsReviewer !== 'user' || !isRecord(result.sandbox) || result.sandbox.type !== 'readOnly') {
+      const own = this.options.approvals === 'settings';
+      if ((!own && result.approvalsReviewer !== 'user') || !isRecord(result.sandbox) || result.sandbox.type !== 'readOnly') {
         return { events: [{ type: 'error', message: 'Codex started this chat without sending its approvals to you, or with more than read-only access, so Hydra stopped it.', fatal: true }], replies: [] };
       }
       this.threadId = result.thread.id;
-      events.push({ type: 'session', providerSessionId: result.thread.id, ...(typeof result.model === 'string' ? { model: result.model } : {}), ...(typeof result.approvalPolicy === 'string' ? { permissionMode: result.approvalPolicy } : {}) });
+      const mode = [result.approvalPolicy, result.approvalsReviewer].filter((part): part is string => typeof part === 'string').join(' · ');
+      events.push({ type: 'session', providerSessionId: result.thread.id, ...(typeof result.model === 'string' ? { model: result.model } : {}), ...(mode ? { permissionMode: mode } : {}) });
     }
     if (method === 'turn/start' && isRecord(result.turn) && typeof result.turn.id === 'string') {
       this.turnId = result.turn.id;

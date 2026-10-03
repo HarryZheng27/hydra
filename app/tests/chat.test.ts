@@ -350,3 +350,40 @@ test('approving a plan takes the chat out of plan mode, so a later process doesn
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('new chats follow the user\'s own CLI settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
+  const dir = scratch();
+  try {
+    const launched = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined, warm: true });
+    const first = await manager.create({ cwd: dir, provider: 'claude' });
+    assert.equal(first.permissionMode, 'settings');
+    const codex = await manager.create({ cwd: dir, provider: 'codex' });
+    assert.equal(codex.approvals, 'settings');
+    assert.equal(codex.sandbox, 'read-only');
+    await manager.open(first.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(launched.starts.length, 1, 'the Claude CLI started when the chat opened');
+    assert.ok(!launched.starts[0]!.args.includes('--permission-mode'), 'your settings: no mode passed');
+    await manager.open(codex.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(launched.starts.length, 1, 'Codex chats aren\'t started ahead');
+    const second = await manager.create({ cwd: dir, provider: 'claude' });
+    let ended = 0;
+    const kill = launched.starts[0]!;
+    kill.handlers.exit = () => { ended++; };
+    await manager.open(second.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(launched.starts.length, 2);
+    await manager.send(second.id, 'hi');
+    assert.equal(launched.starts.length, 2, 'the message used the started process');
+    // A plan approval moves a plan-mode chat out of plan mode; a chat on the user's settings stays on them.
+    launched.starts[1]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', permissionMode: 'auto', session_id: second.providerSessionId }));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal((await store.get(second.id))!.permissionMode, 'settings');
+    manager.closeAll();
+    await store.flush();
+    void ended;
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

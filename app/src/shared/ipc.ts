@@ -3,11 +3,11 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
-import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexSandbox } from '../../../src/core/chat/events';
+import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
-export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexSandbox, LogEntry };
+export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox, LogEntry };
 
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
@@ -15,10 +15,10 @@ export const CHAT_EVENTS = 'hydra:chat-events';
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
 export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
-export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
+export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
 export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
-export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }
+export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 
 export type CliProvider = 'claude' | 'codex';
 export interface AppInfo { name: string; version: string; electron: string; platform: string }
@@ -110,7 +110,8 @@ const isText = (max: number) => (value: unknown): boolean => typeof value === 's
 const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
 /** An effort word; each CLI checks it against its own list (Codex models offer `ultra`, for one). */
 const isEffort = (value: unknown): boolean => typeof value === 'string' && /^[a-z]{1,20}$/.test(value);
-const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
+const isPermissionMode = oneOf('settings', 'auto', 'default', 'acceptEdits', 'plan');
+const isApprovals = oneOf('settings', 'ask');
 /** At most four images, each a known type and at most 5 MB of base64, Claude's own limit (main checks the bytes too). */
 const isImages = (value: unknown): boolean => Array.isArray(value) && value.length <= 4 && value.every(image => shaped({ mediaType: oneOf('image/png', 'image/jpeg', 'image/gif', 'image/webp'), data: (data: unknown) => typeof data === 'string' && data.length <= 5 * 1024 * 1024 })(image));
 /**
@@ -143,7 +144,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'projects.trust': exactly<{ id: string }>({ id: isId }),
   'chats.list': isNull,
-  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox }),
+  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }),
   'chats.open': exactly<{ id: string }>({ id: isId }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
@@ -154,7 +155,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
   // An empty model or effort means the CLI's default.
-  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode, sandbox: isSandbox }) }),
+  'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }) }),
   'chats.remove': exactly<{ id: string }>({ id: isId }),
 };
 

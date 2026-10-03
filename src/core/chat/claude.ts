@@ -27,7 +27,8 @@ export function claudeArguments(options: ChatOptions): string[] {
   return [
     '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
     ...(options.resume ? ['--resume', id] : ['--session-id', id]),
-    '--permission-prompt-tool', 'stdio', '--permission-mode', mode,
+    // What Claude still asks about comes to Hydra's cards; `settings` lets the user's own mode decide what that is.
+    '--permission-prompt-tool', 'stdio', ...(mode === 'settings' ? [] : ['--permission-mode', mode]),
     ...(options.model ? ['--model', options.model] : []),
     ...(options.effort ? ['--effort', options.effort] : []),
     ...extraArguments(options),

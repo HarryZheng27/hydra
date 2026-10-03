@@ -16,8 +16,9 @@ export interface ProcessHandlers { line(line: string): void; exit(code: number |
 /** Starts a CLI. The host decides how (core's processLaunch on Windows), and must never show a window. */
 export type Launch = (executable: string, args: string[], cwd: string, handlers: ProcessHandlers) => ChatProcess;
 
-export interface SessionTimings { idleMs: number; stopGraceMs: number }
-export const defaultTimings: SessionTimings = { idleMs: 10 * 60_000, stopGraceMs: 5_000 };
+/** `warmMs`: how long a process started ahead of a message waits for one. */
+export interface SessionTimings { idleMs: number; stopGraceMs: number; warmMs?: number }
+export const defaultTimings: SessionTimings = { idleMs: 10 * 60_000, stopGraceMs: 5_000, warmMs: 3 * 60_000 };
 
 type Turn = { text: string; images?: ChatImage[] };
 
@@ -34,6 +35,8 @@ export class ChatSession {
   private retiring: ChatProcess | undefined;
   /** The options changed since the running process started: it is replaced before the next turn. */
   private stale = false;
+  /** The process was started ahead of a message and hasn't run a turn yet. */
+  private warmed = false;
 
   constructor(
     private readonly makeAdapter: () => ChatAdapter,
@@ -95,6 +98,24 @@ export class ChatSession {
     this.endProcess();
   }
 
+  /**
+   * Starts the CLI ahead of the first message, so its startup (loading the user's MCP servers and hooks) overlaps
+   * their typing. Nothing is sent; a process no message reaches ends after `warmMs`. A failure here says nothing: the
+   * next message starts the CLI again and reports it.
+   */
+  warm(): void {
+    if (this.closed || this.process || this.turnRunning || this.queue.length) return;
+    if (!this.spawn(true)) return;
+    this.warmed = true;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => { if (!this.turnRunning && !this.queue.length) this.endProcess(); }, this.timings.warmMs ?? this.timings.idleMs);
+  }
+
+  /** Ends a process started by `warm()` that no message has used, when another chat is warmed instead. */
+  cool(): void {
+    if (this.warmed && this.process && !this.turnRunning && !this.queue.length) this.endProcess();
+  }
+
   /** Switches model: in place when the CLI can, and for every later process either way. */
   setModel(model: string): void {
     this.options = { ...this.options, model };
@@ -102,7 +123,7 @@ export class ChatSession {
   }
 
   /** Changes model, effort or mode for the next process. The running one, if any, is ended when idle. */
-  reconfigure(change: Partial<Pick<ChatOptions, 'model' | 'effort' | 'permissionMode' | 'sandbox'>>): void {
+  reconfigure(change: Partial<Pick<ChatOptions, 'model' | 'effort' | 'permissionMode' | 'sandbox' | 'approvals'>>): void {
     this.options = { ...this.options, ...change };
     // Mid-turn, the process finishes its turn and is replaced before anything else is sent, so a tighter
     // permission mode applies to every later message.
@@ -116,11 +137,12 @@ export class ChatSession {
     // (spawn() reports its own failure; the message isn't shown as sent)
     const turn = this.queue.shift()!;
     this.turnRunning = true;
+    this.warmed = false;
     this.emit([{ type: 'user', text: turn.text, ...(turn.images?.length ? { images: turn.images.length } : {}) }]);
     for (const line of this.adapter!.send(turn.text, turn.images)) this.process!.write(line);
   }
 
-  private spawn(): boolean {
+  private spawn(quiet = false): boolean {
     const adapter = this.makeAdapter();
     // Resume once the CLI has reported its session (Claude saves it then); a first start that died earlier starts again.
     const options: ChatOptions = this.started && this.providerSessionId
@@ -128,6 +150,7 @@ export class ChatSession {
       : this.options;
     let args: string[];
     try { args = adapter.args(options); } catch (error) {
+      if (quiet) return false;
       this.queue.length = 0;
       this.emit([{ type: 'error', message: error instanceof Error ? error.message : String(error), fatal: true, code: 'spawn' }, { type: 'done', status: 'error' }]);
       return false;
@@ -140,6 +163,7 @@ export class ChatSession {
         error: error => this.onError(process, error),
       });
     } catch (error) {
+      if (quiet) return false;
       this.queue.length = 0;
       this.emit([{ type: 'error', message: `Hydra couldn't start ${options.provider === 'claude' ? 'Claude Code' : 'Codex'}: ${error instanceof Error ? error.message : String(error)}`, fatal: true, code: 'spawn' }, { type: 'done', status: 'error' }]);
       return false;
@@ -190,6 +214,7 @@ export class ChatSession {
 
   private endProcess(): void {
     clearTimeout(this.idleTimer);
+    this.warmed = false;
     // Requests the process was waiting on can't be answered any more.
     const cancelled = this.adapter?.cancelAll() ?? [];
     if (cancelled.length) this.emit(cancelled);
@@ -219,6 +244,7 @@ export class ChatSession {
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
     this.queue.length = 0;
     const events: ChatEvent[] = [{ type: 'error', message: missing ? 'The CLI isn\'t installed where Hydra looked. Check Your agents in Settings.' : `The CLI failed: ${error.message}`, fatal: true, code: missing ? 'missing-cli' : 'spawn' }];
-    if (this.turnRunning) this.finishTurn([...events, { type: 'done', status: 'error' }]); else this.emit(events);
+    // Between turns (a process started ahead of a message, or an idle one) nothing is shown: the next message reports it.
+    if (this.turnRunning) this.finishTurn([...events, { type: 'done', status: 'error' }]);
   }
 }

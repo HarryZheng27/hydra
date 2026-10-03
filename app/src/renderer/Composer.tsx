@@ -1,5 +1,5 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import type { ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexSandbox } from '../shared/ipc';
+import type { ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 // Claude's API takes an image of at most 5 MB of base64, about 3.75 MB of file.
@@ -24,13 +24,19 @@ const claudeModels = [
 ];
 const efforts = [{ value: '', label: 'Default effort' }, ...['low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))];
 /**
- * A Codex chat is read-only for now: letting it edit the folder waits for its live check, and full access is never
- * offered. Approved file changes still apply.
+ * Who answers a Codex chat's approvals. A Codex chat is read-only for now either way: letting it edit the folder waits
+ * for its live check, and full access is never offered. Approved file changes still apply.
  */
-const sandboxes: Array<{ value: CodexSandbox; label: string }> = [{ value: 'read-only', label: 'Read-only' }];
-/** Bypass permissions isn't offered: a chat always asks before tools the CLI would ask about (HSEC-82). */
+const approvalModes: Array<{ value: CodexApprovals; label: string }> = [
+  { value: 'settings', label: 'Your Codex settings' }, { value: 'ask', label: 'Ask me' },
+];
+/**
+ * "Your settings" passes no mode, so Claude Code follows the user's own (their defaultMode, such as auto). Bypass
+ * permissions isn't offered (HSEC-82).
+ */
 const modes: Array<{ value: ClaudePermissionMode; label: string }> = [
-  { value: 'default', label: 'Ask before edits' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan first' },
+  { value: 'settings', label: 'Your Claude settings' }, { value: 'auto', label: 'Auto' }, { value: 'default', label: 'Ask before edits' },
+  { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan first' },
 ];
 
 interface Props {
@@ -38,7 +44,7 @@ interface Props {
   running: boolean;
   onSend(text: string, images?: ChatImage[]): void;
   onStop(): void;
-  onConfigure(change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox }): void;
+  onConfigure(change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }): void;
   /** Codex's own model list, from the chat's latest model/list. */
   models?: ChatModel[];
 }
@@ -95,10 +101,10 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
           {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
         {codex
-          ? <select aria-label="Sandbox" value={record.sandbox ?? 'read-only'} onChange={e => onConfigure({ sandbox: e.target.value as CodexSandbox })} title="Codex runs read-only; file changes you approve still apply">
-              {sandboxes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          ? <select aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (such as its auto-review) or you. Codex runs read-only here; file changes it gets approved still apply.">
+              {approvalModes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
-          : <select aria-label="Permission mode" value={record.permissionMode ?? 'default'} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
+          : <select aria-label="Permission mode" title="Your Claude settings: Claude Code decides what to ask, as it does outside Hydra; what it asks comes here as a card." value={record.permissionMode ?? 'default'} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
               {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>}
         <button className="attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)">Image…</button>
