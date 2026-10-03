@@ -3,7 +3,7 @@ import path from 'node:path';
 import { cmdUnsafe } from '../../../src/core/process';
 
 /**
- * A console window the user owns, running one of their CLIs unmodified: Sign in (onboarding) and Open in terminal
+ * A console window the user owns, running one of their CLIs unmodified: Open in terminal
  * (a chat's interactive resume). Hydra never reads it: stdio is ignored.
  *
  * A hidden `cmd /c start` gives PowerShell a console of its own, which the user sees. (Node's `detached` would give it
