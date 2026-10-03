@@ -168,7 +168,8 @@ export function App() {
             projects={state.projects}
             chats={chats}
             view={view}
-            onNewChat={() => (project ? void newChat(project) : setView({ kind: 'home' }))}
+            // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
+            onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
             onOpenChat={openChat}
             onOpenProject={id => setView({ kind: 'project', id })}
             onAddProject={pickProject}
