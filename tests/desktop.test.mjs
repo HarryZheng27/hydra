@@ -138,7 +138,7 @@ test('installed update trust stays disabled without owner values and rejects inc
 });
 test('installer branding preserves optional unchecked desktop shortcut and rejects upstream drift', () => {
   const original = [
-    '[Setup]', 'DefaultGroupName={#NameLong}', 'CloseApplications=force', '[InstallDelete]',
+    '[Setup]', 'DefaultGroupName={#NameLong}', 'CloseApplications=force', '[InstallDelete]', '[UninstallDelete]', 'Type: filesandordirs; Name: "{app}\\_"',
     'AppPublisher=Microsoft Corporation', 'AppPublisherURL=https://code.visualstudio.com/',
     'AppSupportURL=https://code.visualstudio.com/', 'AppUpdatesURL=https://code.visualstudio.com/',
     'OutputBaseFilename=VSCodeSetup',
@@ -180,6 +180,17 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
   assert.match(result, /Result := HydraCheckInstall\(\);\n  if Result <> '' then Exit;\n  HydraRememberOldShortcuts\(\);/);
   assert.match(result, /if CurStep = ssPostInstall then\n  begin\n    HydraReplaceOldShortcuts\(\);\n    LogContextMenuInstallState\(\);/);
   assert.throws(() => brandedInstaller(original.replace('DefaultGroupName={#NameLong}', 'DefaultGroupName=Code')), /Pinned installer changed: DefaultGroupName/);
+  // With a fresh log, uninstall still empties the folder: the installer's own folders and
+  // Electron's files, never the uninstaller, its log, or a whole-folder delete.
+  const removed = result.slice(result.indexOf('[UninstallDelete]\n') + 18).split('\nType: filesandordirs; Name: "{app}\\_"')[0].split('\n');
+  assert.deepEqual(removed, [
+    'Type: filesandordirs; Name: "{app}\\resources"', 'Type: filesandordirs; Name: "{app}\\locales"',
+    'Type: filesandordirs; Name: "{app}\\tools"', 'Type: filesandordirs; Name: "{app}\\policies"',
+    'Type: files; Name: "{app}\\*.dll"', 'Type: files; Name: "{app}\\*.pak"', 'Type: files; Name: "{app}\\*.bin"',
+    'Type: files; Name: "{app}\\icudtl.dat"', 'Type: files; Name: "{app}\\LICENSES.chromium.html"',
+    'Type: files; Name: "{app}\\vk_swiftshader_icd.json"', 'Type: files; Name: "{app}\\{#ExeBasename}.VisualElementsManifest.xml"'
+  ]);
+  assert.ok(!/Name: "\{app\}"|unins|\*\.exe|\*\.dat/.test(removed.join('\n')));
   assert.throws(() => brandedInstaller(original.replace('    LogContextMenuInstallState();', '    LogState();')), /Pinned installer changed: +if CurStep = ssPostInstall/);
   assert.throws(() => brandedInstaller(original.replace('[Code]\n', '[Code]\nprocedure InitializeWizard();\nbegin\nend;\n')), /defines InitializeWizard/);
 });

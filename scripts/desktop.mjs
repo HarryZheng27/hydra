@@ -123,6 +123,10 @@ export function isolatedEditorTypes(upstream, declaration, typeRoots) {
 }
 /** Hydra's Inno Setup includes, copied next to the pinned code.iss that brandedInstaller includes them from. */
 export const installerIncludes = ['hydra-update-mode.iss', 'hydra-uninstall.iss', 'hydra-wizard.iss', 'hydra-shortcuts.iss'];
+export const hydraUninstallDelete = [
+  ...['resources', 'locales', 'tools', 'policies'].map(name => `Type: filesandordirs; Name: "{app}\\${name}"`),
+  ...['*.dll', '*.pak', '*.bin', 'icudtl.dat', 'LICENSES.chromium.html', 'vk_swiftshader_icd.json', '{#ExeBasename}.VisualElementsManifest.xml'].map(name => `Type: files; Name: "{app}\\${name}"`)
+].join('\n');
 export function brandedInstaller(text) {
   const replaceOnce = (before, after) => {
     if (text.split(before).length !== 2) throw new Error(`Pinned installer changed: ${before}`);
@@ -146,6 +150,11 @@ export function brandedInstaller(text) {
   // Hydra app's (desktop/hydra-shortcuts.iss). "new" would not do: it leaves
   // the old log and adds a second uninstaller beside it.
   replaceOnce('DefaultGroupName={#NameLong}', 'DefaultGroupName={#NameLong}\nUsePreviousGroup=no\nUninstallLogMode=overwrite');
+  // A fresh log no longer lists files only an earlier version installed. So that
+  // uninstalling still empties the install folder (a leftover folder makes a
+  // later install refuse it), it also removes what the installer puts there:
+  // its folders and Electron's runtime files, never unins000.* or anything else.
+  replaceOnce('[UninstallDelete]\n', `[UninstallDelete]\n${hydraUninstallDelete}\n`);
   // hydra-wizard.iss defines InitializeWizard; a pinned installer with its own would be a duplicate.
   if (/procedure\s+InitializeWizard\s*\(/i.test(text)) throw new Error('Pinned installer changed: it defines InitializeWizard; merge hydra-wizard.iss into it.');
   replaceOnce('[Code]\nfunction IsBackgroundUpdate(): Boolean;', '[Code]\n#include "hydra-update-mode.iss"\n#include "hydra-wizard.iss"\n#include "hydra-shortcuts.iss"\nfunction IsBackgroundUpdate(): Boolean;');
