@@ -258,3 +258,24 @@ test('Codex: a resumed chat checks its model too, and a failed turn\'s error sho
   const done = adapter.feed(JSON.stringify({ method: 'turn/completed', params: { threadId: 't-1', turn: { id: 'x', status: 'failed', error: { message: raw } } } }));
   assert.deepEqual(done.events.map(event => event.type), ['done'], 'not shown a second time');
 });
+
+test('Codex: the fallback holds whichever comes back first, the thread or the model list; a model Codex hides still runs', () => {
+  const adapter = new CodexAdapter();
+  adapter.start({ provider: 'codex', cwd: 'C:\repo', executable: 'codex' });
+  adapter.feed(JSON.stringify({ id: 1, result: {} }));
+  adapter.send('hi');
+  const thread = adapter.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-1' }, model: 'gpt-6.1-sol', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.deepEqual(thread.replies, [], 'the turn waits for the model list');
+  const list = adapter.feed(JSON.stringify({ id: 2, result: { data: [{ id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: true, supportedReasoningEfforts: [] }, { id: 'gpt-old', hidden: true, isDefault: false }] } }));
+  assert.ok(list.events.some(event => event.type === 'error' && /doesn't offer gpt-6\.1-sol/.test(event.message)));
+  assert.equal(JSON.parse(list.replies[0]!).params.model, 'gpt-6-astra');
+
+  const hidden = new CodexAdapter();
+  hidden.start({ provider: 'codex', cwd: 'C:\repo', executable: 'codex' });
+  hidden.feed(JSON.stringify({ id: 1, result: {} }));
+  hidden.feed(JSON.stringify({ id: 2, result: { data: [{ id: 'gpt-6-astra', isDefault: true }, { id: 'gpt-old', hidden: true, isDefault: false }] } }));
+  hidden.send('hi');
+  const ready = hidden.feed(JSON.stringify({ id: 3, result: { thread: { id: 't-2' }, model: 'gpt-old', approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } }));
+  assert.ok(!ready.events.some(event => event.type === 'error'), 'a hidden model Codex knows is left alone');
+  assert.equal(JSON.parse(ready.replies[0]!).params.model, undefined);
+});

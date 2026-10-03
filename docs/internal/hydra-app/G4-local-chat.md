@@ -192,6 +192,10 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
   - there's no Cancel while it waits;
   - the Codex sign-in path has no automated test.
 - **The UI pass at the end** follows [UI-direction.md](UI-direction.md).
+- **Clone a repo** has no Cancel button. Git Credential Manager may show its own sign-in window for https.
+- **Codex:** a Stop sent before the thread exists ends the turn only after the 5 s grace period.
+- **The menus** need full screen-reader support (the highlighted option, Home and End, Tab to close).
+- **The app smoke** sometimes times out waiting for the first window when run straight after the test suite; a rerun passes.
 - **Codex write access:** find why the elevated Windows sandbox fails from a spawned app-server (`~/.codex/logs_2.sqlite`, G1). Then live-check the per-turn `sandboxPolicy` route, and switch `codexWriteVerified` on if it neither persists trust nor fails.
 - **Codex's model list** comes only from a new thread's `model/list`: before the first message, and after a resume, the composer offers just the default.
 - **The review pane** hides Monaco's gutter icons, because the CSP loads no fonts. The build still emits the font and its `@font-face`, which could be dropped.

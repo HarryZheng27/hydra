@@ -10,11 +10,15 @@ test('Clone a repo takes only https and SSH repository URLs, never a local path,
   for (const url of ['https://github.com/owner/repo', 'https://github.com/owner/repo.git', 'git@github.com:owner/repo.git', 'ssh://git@example.com:2222/team/repo', 'https://gitlab.example.com/group/sub/repo']) {
     assert.equal(repoUrlProblem(url), undefined, url);
   }
-  for (const url of ['C:\\Users\\me\\repo', 'file:///C:/repo', 'ext::sh -c touch% /tmp/x', '--upload-pack=calc', 'http://github.com/owner/repo', 'https://github.com/owner/repo --config x', 'https://github.com/../etc', 'https://user:pass@github.com/o/r', '']) {
+  for (const url of ['git@-oProxyCommand=calc:x', 'git@host:-x/y', 'https://-h/x', 'C:\\Users\\me\\repo', 'file:///C:/repo', 'ext::sh -c touch% /tmp/x', '--upload-pack=calc', 'http://github.com/owner/repo', 'https://github.com/owner/repo --config x', 'https://github.com/../etc', 'https://user:pass@github.com/o/r', '']) {
     assert.ok(repoUrlProblem(url), url);
   }
   assert.equal(repoName('https://github.com/owner/repo.git'), 'repo');
   assert.equal(repoName('git@github.com:owner/my-app'), 'my-app');
+  // A clone named .git would make the picked folder a repository its author configured.
+  for (const url of ['https://h/x/.git.git', 'https://h/x/.GIT.git', 'https://h/x/.git..git', 'https://h/x/git', 'https://h/x/.hidden', 'https://h/x/name.', 'https://h/x/CON', 'https://h/x/nul.txt']) {
+    assert.throws(() => repoName(url), /can't name a folder/, url);
+  }
 });
 
 test('a clone goes into a new folder under the one picked, with no submodules and no local transports; an existing folder is refused', async () => {
@@ -27,6 +31,9 @@ test('a clone goes into a new folder under the one picked, with no submodules an
     fs.mkdirSync(path.join(parent, 'repo'));
     await assert.rejects(cloneRepo('https://github.com/owner/repo', parent, async () => undefined), /already exists/);
     await assert.rejects(cloneRepo('file:///C:/x', parent, async () => { throw new Error('ran'); }), /https or SSH/);
+    // A failed clone leaves no half-made folder behind.
+    await assert.rejects(cloneRepo('https://github.com/owner/other', parent, async (args) => { fs.mkdirSync(args.at(-1)!); throw new Error('network'); }), /network/);
+    assert.equal(fs.existsSync(path.join(parent, 'other')), false);
   } finally { fs.rmSync(parent, { recursive: true, force: true }); }
 });
 

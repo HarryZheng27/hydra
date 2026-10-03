@@ -55,6 +55,10 @@ export class CodexAdapter implements ChatAdapter {
   private threadId: string | undefined;
   /** Whether this process has asked for its thread yet (it waits for the first message). */
   private threadAsked = false;
+  /** The model Codex says the thread runs on, its mode line, and every model id model/list named (hidden ones too). */
+  private threadModel: string | undefined;
+  private threadMode = '';
+  private knownModels: Set<string> | undefined;
   /** Codex's default model, when the user's config names one Codex doesn't offer this account. */
   private fallbackModel: string | undefined;
   private turnId: string | undefined;
@@ -96,6 +100,21 @@ export class CodexAdapter implements ChatAdapter {
     // from a config that has changed since).
     lines.push(this.request('model/list', {}));
     return lines;
+  }
+
+  private effectiveModel(): string | undefined { return this.options.model ?? this.fallbackModel ?? this.threadModel; }
+
+  /**
+   * A model Codex doesn't know for this account (the user's config naming one their Codex can't run, say) fails every
+   * turn: the chat uses Codex's default instead, and says so once. Checked once both the thread and the list are in.
+   */
+  private checkThreadModel(): ChatEvent[] {
+    const model = this.threadModel;
+    const fallback = this.models?.find(m => m.isDefault);
+    if (this.options.model || this.fallbackModel || !model || !this.knownModels || !fallback || this.knownModels.has(model)) return [];
+    this.fallbackModel = fallback.id;
+    const from = this.options.resume ? 'this chat\'s earlier model' : 'from your Codex config';
+    return [{ type: 'error', message: `Codex doesn't offer ${model} (${from}) to your account, so this chat uses ${fallback.label}.`, fatal: false }];
   }
 
   /** thread/start or thread/resume, with the options as they are when the first message is sent. */
@@ -189,16 +208,23 @@ export class CodexAdapter implements ChatAdapter {
     if (isRecord(message.error)) {
       const detail = text(message.error.message).slice(0, 500) || 'an error';
       events.push({ type: 'error', message: `Codex refused ${method}: ${detail}`, fatal: method === 'thread/start' || method === 'thread/resume' || method === 'initialize' });
-      if (method === 'turn/start' && this.running) { this.running = false; events.push({ type: 'done', status: 'error' }); }
+      if (method === 'turn/start' && this.running) { this.running = false; this.turnErrors.clear(); events.push({ type: 'done', status: 'error' }); }
       return { events, replies: [] };
     }
     if (method === 'model/list' && Array.isArray(result.data)) {
+      // Every model Codex knows, hidden ones too, decides whether the thread's model can run; the menu shows the rest.
+      this.knownModels = new Set(result.data.filter(isRecord).map(model => model.id).filter((id): id is string => typeof id === 'string'));
       this.models = result.data.filter(isRecord).filter(model => model.hidden !== true && typeof model.id === 'string').map(model => ({
         id: String(model.id), label: text(model.displayName) || String(model.id), isDefault: model.isDefault === true,
         efforts: Array.isArray(model.supportedReasoningEfforts) ? model.supportedReasoningEfforts.filter(isRecord).map(option => text(option.reasoningEffort)).filter(Boolean) : [],
         ...(typeof model.defaultReasoningEffort === 'string' ? { defaultEffort: model.defaultReasoningEffort } : {}),
       }));
       events.push({ type: 'models', models: this.models });
+      // The thread may have answered first: check its model now, and say which one the chat uses.
+      if (this.threadId && this.threadModel) {
+        const notice = this.checkThreadModel();
+        if (notice.length) events.push(...notice, { type: 'session', providerSessionId: this.threadId, model: this.effectiveModel()!, ...(this.threadMode ? { permissionMode: this.threadMode } : {}) });
+      }
       if (this.options.model && !this.models.some(model => model.id === this.options.model)) events.push({ type: 'error', message: `Codex doesn't offer ${this.options.model}; it will use its default model.`, fatal: false });
       if (this.options.effort && this.checkedEffort() === undefined) events.push({ type: 'error', message: `That model doesn't support ${this.options.effort} effort; Codex will use its default.`, fatal: false });
     }
@@ -214,13 +240,9 @@ export class CodexAdapter implements ChatAdapter {
       const mode = [result.approvalPolicy, result.approvalsReviewer].filter((part): part is string => typeof part === 'string').join(' · ');
       // A model from the user's own Codex config that Codex doesn't offer this account fails every turn (a ChatGPT
       // account can't use some): the chat uses Codex's default model instead, and says so.
-      let model = typeof result.model === 'string' ? result.model : undefined;
-      const fallback = this.models?.find(m => m.isDefault);
-      if (!this.options.model && model && this.models && fallback && !this.models.some(m => m.id === model)) {
-        events.push({ type: 'error', message: `Codex doesn't offer ${model} (from your Codex config) to your account, so this chat uses ${fallback.label}.`, fatal: false });
-        this.fallbackModel = model = fallback.id;
-      }
-      events.push({ type: 'session', providerSessionId: result.thread.id, ...(model ? { model } : {}), ...(mode ? { permissionMode: mode } : {}) });
+      this.threadModel = typeof result.model === 'string' ? result.model : undefined;
+      this.threadMode = mode;
+      events.push(...this.checkThreadModel(), { type: 'session', providerSessionId: result.thread.id, ...(this.effectiveModel() ? { model: this.effectiveModel()! } : {}), ...(mode ? { permissionMode: mode } : {}) });
     }
     if (method === 'turn/start' && isRecord(result.turn) && typeof result.turn.id === 'string') {
       this.turnId = result.turn.id;
