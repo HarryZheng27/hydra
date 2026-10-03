@@ -98,10 +98,14 @@ function shaped<T>(required: Record<string, (value: unknown) => boolean>, option
 }
 const isText = (max: number) => (value: unknown): boolean => typeof value === 'string' && value.length <= max;
 const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
-const isEffort = oneOf('low', 'medium', 'high', 'xhigh', 'max');
+/** An effort word; each CLI checks it against its own list (Codex models offer `ultra`, for one). */
+const isEffort = (value: unknown): boolean => typeof value === 'string' && /^[a-z]{1,20}$/.test(value);
 const isPermissionMode = oneOf('default', 'acceptEdits', 'plan');
-/** Full access is excluded in v1. */
-const isSandbox = oneOf('read-only', 'workspace-write');
+/**
+ * Codex chats are read-only for now: write access waits for its live check (codexWriteVerified), and full access is
+ * excluded in v1.
+ */
+const isSandbox = oneOf('read-only');
 const isRequestId = (value: unknown): boolean => typeof value === 'string' && /^[\x21-\x7e]{1,200}$/.test(value);
 /** An edited tool input: a JSON object of at most 1 MB. */
 const isToolInput = (value: unknown): boolean => { if (!isRecordValue(value)) return false; try { return JSON.stringify(value).length <= 1_000_000; } catch { return false; } };

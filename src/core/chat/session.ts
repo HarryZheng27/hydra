@@ -165,7 +165,16 @@ export class ChatSession {
       if (this.turnRunning) this.finishTurn([{ type: 'done', status: 'error', detail: 'The CLI\'s output couldn\'t be read.' }]);
       return;
     }
-    if (done) { this.finishTurn(events); return; }
+    if (done) {
+      // Codex keeps an interrupted command running until its app-server exits (G1), so a stopped turn ends it.
+      if (adapter.endAfterInterrupt && events.some(event => event.type === 'done' && event.status === 'interrupted')) {
+        this.finishTurn(events);
+        this.endProcess();
+        return;
+      }
+      this.finishTurn(events);
+      return;
+    }
     this.emit(events);
   }
 

@@ -83,6 +83,13 @@ function detail(message) {
     const content = message.message?.content;
     return JSON.stringify(typeof content === 'string' ? ['text'] : (content ?? []).map(block => block.type));
   }
+  // Codex: what decides a thread's safety and which thread or turn a request is about. (approvalPolicy is left out:
+  // G1 recorded different policies per scenario; the app always asks for on-request.)
+  const p = message?.params ?? {};
+  if (message?.method === 'thread/start') return JSON.stringify({ sandbox: p.sandbox, approvalsReviewer: p.approvalsReviewer });
+  if (message?.method === 'thread/resume') return JSON.stringify({ threadId: p.threadId, sandbox: p.sandbox, approvalsReviewer: p.approvalsReviewer });
+  if (message?.method === 'turn/start') return JSON.stringify({ threadId: p.threadId, sandboxPolicy: p.sandboxPolicy ?? null });
+  if (message?.method === 'turn/interrupt') return JSON.stringify({ threadId: p.threadId, turnId: p.turnId });
   return '';
 }
 
