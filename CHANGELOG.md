@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **The editor is now "Hydra IDE".** Its Start Menu entry, desktop shortcut and title bar say Hydra IDE; the name "Hydra" goes to the upcoming Hydra app. Updating renames the old Hydra shortcuts and keeps your taskbar pins, settings, extensions and data. Uninstalling the IDE later never removes the app's Hydra shortcut.
+
 ## 0.27.1 (2026-10-01)
 
 - **`hydra close`** closes the Hydra window that owns the current folder. It refuses while heads, lanes or a plan are still working, unless you add `--force`. ([#281](https://github.com/ndunl075/hydra/pull/281))

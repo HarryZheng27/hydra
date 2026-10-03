@@ -19,7 +19,7 @@ async function waitTheme(kind) {
   assert.equal(vscode.window.activeColorTheme.kind, kind, 'Actual native theme must match the saved/default appearance');
 }
 exports.run = async () => {
-  assert.equal(vscode.env.appName, 'Hydra');
+  assert.equal(vscode.env.appName, 'Hydra IDE');
   const workbench = vscode.workspace.getConfiguration('workbench');
   const window = vscode.workspace.getConfiguration('window');
   assert.equal(workbench.inspect('colorTheme').defaultValue, 'Hydra Dark');

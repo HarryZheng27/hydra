@@ -762,7 +762,7 @@ Set-Content -LiteralPath $OutputPath -Value $Nonce -Encoding utf8
   Save-WorkflowReport
   if ($phaseOne.status -ne 'passed') { throw "Packaged workflow phase 1 failed: $($phaseOne.error)" }
   $phaseOneMismatches = @()
-  if ($phaseOne.appName -ne 'Hydra') { $phaseOneMismatches += 'appName' }
+  if ($phaseOne.appName -ne 'Hydra IDE') { $phaseOneMismatches += 'appName' }
   if ($phaseOne.workspace -ne $workspace) { $phaseOneMismatches += 'workspace' }
   if (-not $phaseOne.extensionPath.StartsWith($extensions + '\', [StringComparison]::OrdinalIgnoreCase)) {
     $phaseOneMismatches += 'extensionPath'

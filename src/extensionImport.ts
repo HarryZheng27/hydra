@@ -6,7 +6,7 @@ interface DesktopProfile extends ProfileResources { knownSettings: string[]; the
 export class SettingsImport {
   private plan?: ImportPlan;
   private busy = false;
-  readonly available = vscode.env.appName === 'Hydra' && !vscode.env.remoteName;
+  readonly available = vscode.env.appName === 'Hydra IDE' && !vscode.env.remoteName;
   constructor(private readonly context: vscode.ExtensionContext) {}
   private async profile(): Promise<DesktopProfile> {
     if (!this.available) throw new Error('Settings import is available in the local Hydra desktop IDE.');
