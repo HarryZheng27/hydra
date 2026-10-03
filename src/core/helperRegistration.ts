@@ -6,6 +6,7 @@ import path from 'node:path';
 import { replaceAtomic } from './atomicFile';
 import { leadGuidanceMarkdown } from './helperTools';
 import { processLaunch } from './process';
+import { helpersRootCandidates } from './hydraCli';
 import { addClaudeLimitHook, readClaudeLimitHooks, removeClaudeLimitHook, type LimitHookGroup } from './claudeLimitHook';
 
 /**
@@ -51,9 +52,18 @@ export function bridgeTargetExists(command: string | undefined, args: readonly s
  * This Hydra's own entry (same program and script, older shape) isn't: it is upgraded. Neither is one that looks in
  * another helpers folder (a development or test window's), or that isn't run as Node.
  */
-export function reachesThisHydra(entry: RegisteredBridge, spec: HelperServerSpec, exists: (file: string) => boolean = existsSync): boolean {
+export function reachesThisHydra(entry: RegisteredBridge, spec: HelperServerSpec, exists: (file: string) => boolean = existsSync, standard = isStandardHelpersDir(spec.env.HYDRA_HELPERS_DIR)): boolean {
   if (samePath(entry.command, spec.command) && samePath(entry.script, spec.args[0])) return false;
-  return bridgeTargetExists(entry.command, entry.script ? [entry.script] : [], exists) && entry.runAsNode === '1' && samePath(entry.helpersDir, spec.env.HYDRA_HELPERS_DIR);
+  if (!bridgeTargetExists(entry.command, entry.script ? [entry.script] : [], exists) || entry.runAsNode !== '1') return false;
+  // A window on its own profile (a probe's --user-data-dir, a portable copy) never takes over another installed
+  // Hydra's entry: only a Hydra on the standard storage repairs one that looks in another helpers folder.
+  return samePath(entry.helpersDir, spec.env.HYDRA_HELPERS_DIR) || !standard;
+}
+
+/** Whether a helpers folder is the standard one an installed Hydra uses (the IDE's and the app's shared storage), not a separate profile's. */
+export function isStandardHelpersDir(dir: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!dir) return false;
+  return helpersRootCandidates({ ...env, HYDRA_HELPERS_DIR: undefined }, process.platform, homedir()).some(root => samePath(root, dir));
 }
 
 /**

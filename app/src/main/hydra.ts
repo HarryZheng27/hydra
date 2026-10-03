@@ -135,12 +135,16 @@ export class HydraProjects {
     const running = [...this.running.values()].find(candidate => !candidate.controller.disabled);
     if (running) return running.controller;
     // Built once, even when two clicks ask for it at once.
-    this.registration ??= (async () => {
-      const folder = path.join(this.options.userData, 'hydra', 'registration');
-      await mkdir(folder, { recursive: true });
-      return this.build({ id: 'registration', path: folder, name: 'Hydra registration', trustedAt: new Date(0).toISOString() });
-    })();
-    this.registration.catch(() => { this.registration = undefined; });
+    if (this.closing) throw new Error('Hydra is closing.');
+    if (!this.registration) {
+      const building: Promise<Running> = (async () => {
+        const folder = path.join(this.options.userData, 'hydra', 'registration');
+        await mkdir(folder, { recursive: true });
+        return this.build({ id: 'registration', path: folder, name: 'Hydra registration', trustedAt: new Date(0).toISOString() });
+      })();
+      this.registration = building;
+      building.catch(() => { if (this.registration === building) this.registration = undefined; });
+    }
     return (await this.registration).controller;
   }
   async connections(): Promise<HydraConnection[]> {

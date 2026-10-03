@@ -250,14 +250,15 @@ export function readClaudeLimitHooks(text: string | undefined): unknown[] {
  * script still there, writing into this Hydra's events folder. This Hydra's own hook in an older shape, and anything
  * else, are not, and are repaired, as the bridge's entry is (helperRegistration.ts reachesThisHydra).
  */
-export function limitHookReachesThisHydra(text: string | undefined, mine: LimitHookGroup, exists: (file: string) => boolean = existsSync): boolean {
+export function limitHookReachesThisHydra(text: string | undefined, mine: LimitHookGroup, exists: (file: string) => boolean = existsSync, standard = true): boolean {
   const found = readClaudeLimitHooks(text);
   if (found.length !== 1) return false;
   const theirs = limitHookPaths(found[0]), ours = limitHookPaths(mine);
   if (!theirs.executable || !theirs.script || !exists(theirs.executable) || !exists(theirs.script)) return false;
-  const same = (a?: string, b?: string) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+  const same = (a?: string, b?: string) => !!a && !!b && (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
   if (same(theirs.executable, ours.executable) && same(theirs.script, ours.script)) return false;
-  return same(limitHookEventsDir(found[0]), limitHookEventsDir(mine));
+  // A window on its own profile never takes over another installed Hydra's hook (helperRegistration.ts reachesThisHydra).
+  return same(limitHookEventsDir(found[0]), limitHookEventsDir(mine)) || !standard;
 }
 /** The events folder a Hydra usage-limit hook writes into. */
 function limitHookEventsDir(group: unknown): string | undefined {
