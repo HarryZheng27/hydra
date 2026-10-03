@@ -199,7 +199,7 @@ export class ClaudeAdapter implements ChatAdapter {
     const failed = !interrupted && (message.is_error === true || (typeof message.subtype === 'string' && message.subtype !== 'success'));
     if (failed) {
       const detail = typeof message.result === 'string' ? message.result : String(message.subtype ?? 'error');
-      events.push({ type: 'error', message: detail.slice(0, 2000), fatal: false, ...(/usage limit|hit your limit|limit reached/i.test(detail) ? { code: 'limit' as const } : {}) });
+      events.push({ type: 'error', message: detail.slice(0, 2000), fatal: false, ...(/usage limit|hit your limit/i.test(detail) ? { code: 'limit' as const } : {}) });
     }
     events.push({ type: 'done', status: interrupted ? 'interrupted' : failed ? 'error' : 'success' });
     this.running = false;

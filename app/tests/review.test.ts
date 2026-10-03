@@ -79,6 +79,7 @@ test('a repository\'s clean and process filters don\'t run when the review hashe
   try {
     fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
     fs.writeFileSync(path.join(dir, 'b.txt'), 'one\n');
+    fs.writeFileSync(path.join(dir, 'c.txt'), 'one\n');
     git('add', '.');
     git('commit', '-q', '-m', 'first');
     const script = path.join(dir, 'evil.cmd');
@@ -86,15 +87,42 @@ test('a repository\'s clean and process filters don\'t run when the review hashe
     fs.writeFileSync(path.join(dir, '.gitattributes'), 'a.txt filter=one\nb.txt filter=two\n');
     git('config', 'filter.one.clean', script.replace(/\\/g, '/'));
     git('config', 'filter.two.process', script.replace(/\\/g, '/'));
+    fs.writeFileSync(path.join(dir, '.gitattributes'), 'a.txt filter=one\nb.txt filter=two\nc.txt filter=\n');
+    fs.appendFileSync(path.join(dir, '.git', 'config'), `[filter ""]\n\tclean = ${script.replace(/\\/g, '/')}\n`);
     fs.writeFileSync(path.join(dir, 'a.txt'), 'two\n');
     fs.writeFileSync(path.join(dir, 'b.txt'), 'two\n');
+    fs.writeFileSync(path.join(dir, 'c.txt'), 'two\n');
     const past = new Date(Date.now() - 86_400_000);
     fs.utimesSync(path.join(dir, 'a.txt'), past, past); // stat-dirty, so git hashes them
     fs.utimesSync(path.join(dir, 'b.txt'), past, past);
+    fs.utimesSync(path.join(dir, 'c.txt'), past, past);
     const result = await workingTreeDiff(dir);
     assert.ok(result.files.some(file => file.path === 'a.txt'));
     assert.equal(fs.existsSync(marker), false, 'a filter from the repository\'s config ran');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the review never fetches a partial clone\'s missing objects, which would run the remote\'s upload-pack', async () => {
+  const source = repo();
+  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-partial-'));
+  const marker = path.join(clone, 'ran.txt');
+  try {
+    fs.writeFileSync(path.join(source.dir, 'f.txt'), 'one\n');
+    source.git('add', '.');
+    source.git('commit', '-q', '-m', 'first');
+    source.git('config', 'uploadpack.allowFilter', 'true');
+    const git = (...args: string[]) => { const result = spawnSync('git', args, { cwd: clone, encoding: 'utf8', windowsHide: true }); if (result.status !== 0) throw new Error(result.stderr); };
+    git('clone', '-q', '--no-checkout', '--filter=blob:none', `file://${source.dir.replace(/\\/g, '/')}`, 'c');
+    const dir = path.join(clone, 'c');
+    spawnSync('git', ['read-tree', 'HEAD'], { cwd: dir, windowsHide: true });
+    const script = path.join(clone, 'evil.cmd');
+    fs.writeFileSync(script, `@echo ran> "${marker}"\r\n`);
+    spawnSync('git', ['config', 'remote.origin.uploadpack', script.replace(/\\/g, '/')], { cwd: dir, windowsHide: true });
+    fs.writeFileSync(path.join(dir, 'f.txt'), 'two\n');
+    const result = await workingTreeDiff(dir);
+    assert.ok(result.error || result.files.some(file => file.path === 'f.txt'), 'the review neither listed the change nor said why');
+    assert.equal(fs.existsSync(marker), false, 'a lazy fetch ran the remote\'s upload-pack');
+  } finally { fs.rmSync(source.dir, { recursive: true, force: true }); fs.rmSync(clone, { recursive: true, force: true }); }
 });
 
 test('the review covers only the chat folder: a subfolder\'s chat, a work tree moved elsewhere, a junction that leads out', async () => {
@@ -118,11 +146,14 @@ test('the review covers only the chat folder: a subfolder\'s chat, a work tree m
     const files = (await workingTreeDiff(path.join(dir, 'sub'))).files;
     assert.ok(!files.some(file => file.modified.includes('secret')), 'the review read a file through a junction');
 
-    fs.writeFileSync(path.join(outside, 'id_rsa'), 'key\n');
-    elsewhere.git('config', 'core.worktree', outside.replace(/\\/g, '/'));
-    const moved = await workingTreeDiff(elsewhere.dir);
-    assert.equal(moved.files.length, 0);
-    assert.match(moved.error ?? '', /somewhere else|isn't a git repository/);
+    const inner = path.join(elsewhere.dir, 'inner');
+    fs.mkdirSync(inner);
+    fs.renameSync(path.join(elsewhere.dir, '.git'), path.join(inner, '.git'));
+    fs.writeFileSync(path.join(elsewhere.dir, 'id_rsa'), 'key\n');
+    fs.writeFileSync(path.join(inner, 'mine.txt'), 'mine\n');
+    spawnSync('git', ['config', 'core.worktree', elsewhere.dir.replace(/\\/g, '/')], { cwd: inner, windowsHide: true });
+    const scoped = await workingTreeDiff(inner);
+    assert.deepEqual(scoped.files.map(file => file.path), ['inner/mine.txt'], 'a work tree above the folder showed a file beside it');
   } finally {
     fs.rmSync(path.join(dir, 'sub', 'docs'), { recursive: true, force: true });
     for (const folder of [dir, outside, elsewhere.dir]) fs.rmSync(folder, { recursive: true, force: true });
