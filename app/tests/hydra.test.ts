@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { OwnershipLock } from '../../src/core/ownership';
 import { findWindowFor } from '../../src/core/helperDiscovery';
+import { evaluateLeadChain } from '../../src/core/leadVerification';
 import { folderKey, ideStorageRoot, vscodeFolderUri } from '../src/main/host';
 import { HydraProjects } from '../src/main/hydra';
 import type { Project } from '../src/shared/ipc';
@@ -28,6 +29,8 @@ const project = (dir: string): Project => ({ id: '0f8fad5b-d9cb-469f-a165-708677
 test('a project\'s storage is the IDE\'s own for a window of that folder: the same URI and the same key', () => {
   assert.equal(vscodeFolderUri('C:\\Users\\ndunl\\Documents\\orven'), 'file:///c%3A/Users/ndunl/Documents/orven');
   assert.equal(vscodeFolderUri('D:\\my repo\\R&D'), 'file:///d%3A/my%20repo/R%26D');
+  // A share: VS Code makes the server the URI's authority.
+  assert.equal(vscodeFolderUri('\\\\Server\\share\\repo'), 'file://server/share/repo');
   // A key the IDE wrote on Nico's machine for this folder (checked against 27 of its window folders).
   assert.equal(folderKey('C:\\Users\\ndunl\\Documents\\hydra'), '12f29467c0a73187');
   assert.match(ideStorageRoot({ APPDATA: 'C:\\Users\\x\\AppData\\Roaming' }), /^C:\\Users\\x\\AppData\\Roaming\\Hydra\\User\\globalStorage\\nico-dunlap\.hydra-agent-manager$/);
@@ -40,7 +43,7 @@ test('coexistence: a repository the app owns is refused by another Hydra, and on
   try {
     // The app owns it: another Hydra window (the IDE) can't take it, and `hydra` finds the app there.
     const app = projects(storage, userData);
-    await app.start(project(dir));
+    await app.open(project(dir));
     assert.deepEqual(app.status().map(status => [status.running, status.owned]), [[true, true]]);
     const ide = new OwnershipLock();
     await assert.rejects(ide.acquire(path.join(storage, 'ownership'), dir), /already managed/);
@@ -53,13 +56,58 @@ test('coexistence: a repository the app owns is refused by another Hydra, and on
     const owner = new OwnershipLock();
     await owner.acquire(path.join(storage, 'ownership'), dir);
     const second = projects(storage, userData);
-    await second.start(project(dir));
+    await second.open(project(dir));
     const [status] = second.status();
     assert.equal(status?.owned, false);
     assert.match(status?.error ?? '', /another window already manages/);
     assert.equal(await findWindowFor(path.join(storage, 'helpers'), dir), undefined, 'no endpoint for a project it doesn\'t own');
     await second.shutdown();
     await owner.release();
+  } finally {
+    for (const folder of [dir, storage, userData]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test('lead verification in the app: a chat\'s bridge is a lead; a bridge inside any project\'s head is refused in every project', { timeout: 120_000 }, async () => {
+  const a = repo(), b = repo();
+  const storage = scratch('storage'), userData = scratch('userdata');
+  try {
+    const app = projects(storage, userData);
+    const projectA = { ...project(a), id: '1f8fad5b-d9cb-469f-a165-70867728950e' };
+    const projectB = { ...project(b), id: '2f8fad5b-d9cb-469f-a165-70867728950e' };
+    await app.open(projectA); await app.open(projectB);
+    // A head of project A (its process, as A's heads service reports it).
+    const controllerA = app.controller(projectA.id)!;
+    Object.defineProperty(controllerA, 'helperProcessIds', { value: () => new Set([4242]) });
+    const denied = new Set(app.headsOutside(projectB.id));
+    assert.ok(denied.has(4242), 'project B refuses project A\'s heads');
+    assert.ok(!new Set(app.headsOutside(projectA.id)).has(4242), 'A refuses its own through its own service');
+    // Both through the app's main process; the chat's chain has no head in it, the other one does.
+    const main = { pid: process.pid, ppid: 1, created: 1, name: 'electron.exe' };
+    const chat = [{ pid: 9001, ppid: 9000, created: 4, name: 'node.exe' }, { pid: 9000, ppid: process.pid, created: 3, name: 'claude.exe' }, main];
+    const head = [{ pid: 9101, ppid: 4242, created: 4, name: 'node.exe' }, { pid: 4242, ppid: process.pid, created: 3, name: 'claude.exe' }, main];
+    const rules = { allowedAncestors: new Set([process.pid]), deniedAncestors: denied };
+    assert.deepEqual(evaluateLeadChain(chat, rules), { ok: true, provider: 'claude' });
+    assert.equal(evaluateLeadChain(head, rules).ok, false);
+    await app.shutdown();
+  } finally {
+    for (const folder of [a, b, storage, userData]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test('a project removed while its controller starts never keeps the repository', { timeout: 120_000 }, async () => {
+  const dir = repo();
+  const storage = scratch('storage'), userData = scratch('userdata');
+  try {
+    const app = projects(storage, userData);
+    const starting = app.open(project(dir));
+    await app.sync([]);
+    await starting;
+    assert.deepEqual(app.status().filter(status => status.running), []);
+    const lock = new OwnershipLock();
+    await lock.acquire(path.join(storage, 'ownership'), dir);
+    await lock.release();
+    await app.shutdown();
   } finally {
     for (const folder of [dir, storage, userData]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
   }

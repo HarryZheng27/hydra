@@ -34,7 +34,6 @@ const sameOrInside = (child: string, parent: string): boolean => {
   return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 };
 
-/** True when `target` is the IDE's user data folder or inside it. Windows paths compare case-insensitively. */
 /**
  * The one folder inside the IDE's data the app uses (G5): the Hydra extension's own global storage, which the IDE's
  * windows and the app share for heads, plans, ownership and discovery. The app's own data never goes there, and
@@ -46,6 +45,7 @@ export function ideHydraStorage(env: NodeJS.ProcessEnv = process.env): string {
   const appData = env.APPDATA ?? path.join(env.USERPROFILE ?? '', 'AppData', 'Roaming');
   return path.join(ideUserData(appData), 'User', 'globalStorage', EXTENSION_STORAGE_ID);
 }
+/** True when `target` is the IDE's user data folder or inside it. Windows paths compare case-insensitively. */
 export const insideIdeUserData = (target: string, appData: string): boolean => sameOrInside(target, ideUserData(appData));
 
 /**

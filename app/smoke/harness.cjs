@@ -153,7 +153,11 @@ if (role === 'resume') {
     const wc = win.webContents;
     await loaded(wc);
     const { ui, until, send, turnEnds } = chatDriver(wc);
-    // Hydra (G5): the trusted project's controller owns it, so `hydra status` there finds the app.
+    await until(`document.querySelectorAll('.chat-link').length === 2`, 'the saved chats in the sidebar');
+    report.resume = { titles: await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent).sort()`) };
+    const openByTitle = async part => { await ui(`[...document.querySelectorAll('.chat-link')].find(e => e.textContent.includes(${JSON.stringify('PART')}.replace('PART', ${JSON.stringify(part)}))).click(); 1`); await until(`!!document.querySelector('.composer textarea')`, 'the chat to open'); await wait(300); };
+    await openByTitle('Bash tool');
+    // Hydra (G5): opening a chat starts its project's controller, which owns the project, so `hydra status` there finds the app.
     {
       const storage = process.env.HYDRA_APP_IDE_STORAGE;
       const windows = path.join(storage, 'helpers', 'windows');
@@ -168,10 +172,6 @@ if (role === 'resume') {
         report.hydraStatus = { appPid: process.pid, status: JSON.parse(output) };
       } catch (error) { report.hydraStatus = { appPid: process.pid, error: String(error.stderr || error.message).slice(0, 500) }; }
     }
-    await until(`document.querySelectorAll('.chat-link').length === 2`, 'the saved chats in the sidebar');
-    report.resume = { titles: await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent).sort()`) };
-    const openByTitle = async part => { await ui(`[...document.querySelectorAll('.chat-link')].find(e => e.textContent.includes(${JSON.stringify('PART')}.replace('PART', ${JSON.stringify(part)}))).click(); 1`); await until(`!!document.querySelector('.composer textarea')`, 'the chat to open'); await wait(300); };
-    await openByTitle('Bash tool');
     report.resume.title = await ui(`[...document.querySelectorAll('.chat-link.selected')].map(e => e.textContent)[0]`);
     await until(`!!document.querySelector('.composer textarea')`, 'the chat to open');
     report.resume.restoredTurnEnds = await turnEnds();

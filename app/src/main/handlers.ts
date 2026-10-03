@@ -13,6 +13,8 @@ export interface HandlerDeps {
   pickFolder(purpose?: 'project' | 'clone'): Promise<string | undefined>;
   /** The projects changed (one trusted or removed): Hydra starts or stops its controllers (app/src/main/hydra.ts). */
   projectsChanged?(state: AppState): void;
+  /** A chat in this folder was created or opened: Hydra starts its project's controller (app/src/main/hydra.ts). */
+  projectOpened?(cwd: string): void;
   /** Clones a repository into a new folder under `parent`, returning it (app/src/main/clone.ts). */
   cloneRepo?(url: string, parent: string): Promise<string>;
   /** Main's own file picker for a provider's command-line tool. Undefined when the user cancels. */
@@ -113,9 +115,15 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.create': async ({ projectId, ...rest }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
       if (!project) throw new Error('No such project.');
-      return deps.chats.create({ cwd: project.path, ...rest });
+      const created = await deps.chats.create({ cwd: project.path, ...rest });
+      deps.projectOpened?.(project.path);
+      return created;
     },
-    'chats.open': ({ id, background }) => deps.chats.open(id, { warm: !background }),
+    'chats.open': async ({ id, background }) => {
+      const opened = await deps.chats.open(id, { warm: !background });
+      if (!background) deps.projectOpened?.(opened.record.cwd);
+      return opened;
+    },
     'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
     'review.diff': async ({ id }) => {

@@ -26,6 +26,9 @@ export function vscodeFolderUri(folder: string): string {
   const drive = /^([A-Za-z]):[\\/]?(.*)$/.exec(resolved);
   const encode = (text: string) => text.replace(/[^A-Za-z0-9\-._~/]/g, character => [...Buffer.from(character, 'utf8')].map(byte => `%${byte.toString(16).toUpperCase().padStart(2, '0')}`).join(''));
   if (drive) return `file:///${drive[1]!.toLowerCase()}%3A/${encode(drive[2]!.replace(/\\/g, '/'))}`;
+  // A share (`\\server\share\x`): VS Code makes the server the URI's authority.
+  const unc = /^[\\/]{2}([^\\/]+)[\\/]?(.*)$/.exec(resolved);
+  if (unc) return `file://${encode(unc[1]!.toLowerCase())}/${encode(unc[2]!.replace(/\\/g, '/'))}`;
   return `file://${encode(resolved.replace(/\\/g, '/'))}`;
 }
 /** The IDE's per-window storage key for a window with just this folder. */
@@ -55,6 +58,8 @@ export interface ElectronHostOptions {
   post?: (message: unknown) => void;
   /** Shows a notice in the app's window. */
   notice?: (level: NoticeLevel, message: string) => void;
+  /** `hydra close` here: the project's controller stops. */
+  closeWindow?: () => void;
   /** Opens a console window the user owns (Open in terminal's): for a CLI's own interactive flow. */
   openConsole?: (title: string, executable: string, args: string[], cwd: string) => Promise<{ started: boolean; error?: string }>;
 }
@@ -63,6 +68,7 @@ const globToRegExp = (glob: string): RegExp => {
   let out = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]!;
+    if (c === '/' && glob.slice(i + 1, i + 3) === '**' && i + 3 === glob.length) { out += '(?:/.*)?'; break; }
     if (c === '*' && glob[i + 1] === '*') { out += '.*'; i++; if (glob[i + 1] === '/') i++; }
     else if (c === '*') out += '[^/]*';
     else if (c === '{') { const end = glob.indexOf('}', i); out += `(?:${glob.slice(i + 1, end).split(',').map(part => part.replace(/[.+^$()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')).join('|')})`; i = end; }
@@ -146,7 +152,7 @@ export class ElectronHost implements Host {
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
     return result.canceled ? undefined : result.filePaths[0];
   }
-  async closeWindow(): Promise<void> { /* a project has no window of its own */ }
+  async closeWindow(): Promise<void> { this.options.closeWindow?.(); }
 
   focused(): boolean { return !!BrowserWindow.getFocusedWindow(); }
   onFocusChange(listener: (focused: boolean) => void): Disposable {
@@ -168,13 +174,33 @@ export class ElectronHost implements Host {
   /** The app's main process starts every chat's CLI, so its descendants are this project's leads (src/core/leadVerification.ts). */
   windowProcessIds(): number[] { return [process.pid]; }
   watch(folder: string, pattern: string, listener: () => void): Disposable {
-    const match = globToRegExp(pattern.replace(/\\/g, '/'));
-    let watcher: FSWatcher | undefined;
+    const glob = pattern.replace(/\\/g, '/');
+    const match = globToRegExp(glob);
+    // Only the pattern's fixed leading folder is watched (`.hydra` for `.hydra/{packs.json,packs/**}`), never the whole
+    // repository: a build or an install there would flood the main process. Until that folder exists, the project's
+    // top level is watched (not recursively) for it to appear.
+    const fixed = glob.split('/').findIndex(part => /[*?{[]/.test(part));
+    const prefix = glob.split('/').slice(0, fixed < 0 ? -1 : fixed).join('/');
+    let inner: FSWatcher | undefined, outer: FSWatcher | undefined;
+    const fire = (name: string) => { if (match.test(name)) listener(); };
+    const arm = () => {
+      if (inner || !prefix) return;
+      try {
+        inner = watchFolder(path.join(folder, prefix), { recursive: true }, (_event, name) => fire(name ? `${prefix}/${String(name).replace(/\\/g, '/')}` : prefix));
+        inner.on('error', () => { inner?.close(); inner = undefined; });
+        listener();
+      } catch { /* not there yet */ }
+    };
     try {
-      watcher = watchFolder(folder, { recursive: true }, (_event, name) => { if (name && match.test(String(name).replace(/\\/g, '/'))) listener(); });
-      watcher.on('error', () => undefined);
+      outer = watchFolder(folder, { recursive: !prefix }, (_event, name) => {
+        const changed = String(name ?? '').replace(/\\/g, '/');
+        if (prefix && changed === prefix.split('/')[0]) arm();
+        fire(changed);
+      });
+      outer.on('error', () => undefined);
+      arm();
     } catch (error) { this.log(`[host] can't watch ${pattern} in ${folder}: ${error instanceof Error ? error.message : String(error)}`); }
-    const disposable = { dispose: () => watcher?.close() };
+    const disposable = { dispose: () => { inner?.close(); outer?.close(); const at = this.kept.indexOf(disposable); if (at >= 0) this.kept.splice(at, 1); } };
     this.kept.push(disposable);
     return disposable;
   }

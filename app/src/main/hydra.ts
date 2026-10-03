@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AuditLog } from '../../../src/core/audit';
@@ -16,9 +17,12 @@ import { ElectronHost, folderKey, type ValueStore } from './host';
 
 /**
  * Hydra in the app (docs/internal/hydra-app/G5-orchestration.md, milestone 1): one controller per trusted project,
- * built as the IDE builds one per window (src/extension.ts's Manager), over the IDE's own storage. Each owns its
- * project's repository while the app runs, so the IDE refuses it and the app refuses one the IDE owns; each has its
- * own endpoint and discovery record, so `hydra` and a chat's bridge find it by folder.
+ * built as the IDE builds one per window (src/extension.ts's Manager), over the IDE's own storage. A project's
+ * controller starts when the user opens it (a chat there), as the IDE's starts when a window opens a folder, and runs
+ * until the project is removed or the app quits. It owns the project's repository meanwhile, so the IDE refuses it
+ * and the app refuses one the IDE owns (a refused project is tried again the next time it is opened); each has its
+ * own endpoint and discovery record, so `hydra` and a chat's bridge find it by folder. One process runs every
+ * project's heads, so each project refuses every project's heads as leads (`otherHeads`).
  */
 
 /** A JSON object of small values, read once and written whole (atomically) after each change. */
@@ -28,10 +32,16 @@ export class JsonValues implements ValueStore {
   private readonly listeners = new Set<(key: string) => void>();
   constructor(private readonly file: string) {}
   async load(): Promise<this> {
+    let text: string;
+    try { text = await readFile(this.file, 'utf8'); } catch (error) {
+      // Only a missing file starts empty: one that can't be read now (antivirus, a lock) must not be overwritten.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return this;
+      throw error;
+    }
     try {
-      const parsed: unknown = JSON.parse(await readFile(this.file, 'utf8'));
+      const parsed: unknown = JSON.parse(text);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) this.values = parsed as Record<string, unknown>;
-    } catch { /* missing or unreadable: start empty */ }
+    } catch { throw new Error(`${path.basename(this.file)} isn't valid JSON; Hydra won't overwrite it.`); }
     return this;
   }
   get<T>(key: string, fallback: T): T { return Object.prototype.hasOwnProperty.call(this.values, key) && this.values[key] !== undefined ? structuredClone(this.values[key]) as T : fallback; }
@@ -41,7 +51,7 @@ export class JsonValues implements ValueStore {
     const text = JSON.stringify(this.values, null, 2);
     const write = this.queue.then(async () => {
       await mkdir(path.dirname(this.file), { recursive: true });
-      const temporary = `${this.file}.${process.pid}.tmp`;
+      const temporary = `${this.file}.${randomBytes(6).toString('hex')}.tmp`;
       await (await import('node:fs/promises')).writeFile(temporary, text, 'utf8');
       await replaceAtomic(temporary, this.file);
     });
@@ -82,6 +92,8 @@ export class HydraProjects {
   private globalState?: JsonValues;
   private audit?: AuditLog;
   private closing = false;
+  /** The trusted projects as they are now (sync), so a controller checks trust and removal against the latest. */
+  private latest = new Map<string, Project>();
   constructor(private readonly options: HydraProjectsOptions) {}
 
   private async shared(): Promise<{ settings: JsonValues; globalState: JsonValues; audit: AuditLog }> {
@@ -92,11 +104,23 @@ export class HydraProjects {
     return { settings: this.settings, globalState: this.globalState, audit: this.audit };
   }
 
-  /** Starts a controller for each trusted project not yet running, and stops those whose project is gone or untrusted. */
+  /** The projects as they are now: a removed or untrusted project's controller stops (or, still starting, never runs). */
   async sync(projects: Project[]): Promise<void> {
-    const wanted = new Map(projects.filter(project => project.trustedAt).map(project => [project.id, project]));
-    for (const id of [...this.running.keys()]) if (!wanted.has(id)) await this.stop(id);
-    await Promise.all([...wanted.values()].map(project => this.start(project)));
+    this.latest = new Map(projects.filter(project => project.trustedAt).map(project => [project.id, project]));
+    const ids = new Set([...this.running.keys(), ...this.starting.keys()]);
+    await Promise.all([...ids].filter(id => !this.latest.has(id)).map(id => this.stop(id)));
+  }
+
+  /** The user opened a project (a chat in it): its controller starts if it isn't running, or tries again if refused. */
+  open(project: Project): Promise<void> {
+    if (!project.trustedAt) return Promise.resolve();
+    this.latest.set(project.id, project);
+    return this.start(project);
+  }
+
+  /** Every running project's heads' processes but this one's, refused as its leads too. */
+  headsOutside(id: string): number[] {
+    return [...this.running.values()].filter(running => running.project.id !== id).flatMap(running => [...running.controller.helperProcessIds()]);
   }
 
   status(): ProjectHydraStatus[] {
@@ -110,7 +134,11 @@ export class HydraProjects {
   controller(id: string): HydraController | undefined { return this.running.get(id)?.controller; }
 
   start(project: Project): Promise<void> {
-    if (this.closing || this.running.has(project.id)) return Promise.resolve();
+    if (this.closing) return Promise.resolve();
+    const current = this.running.get(project.id);
+    if (current && !current.controller.disabled) return Promise.resolve();
+    // Refused before (another Hydra owned it): try again now.
+    if (current) return this.stop(project.id).then(() => this.start(project));
     let pending = this.starting.get(project.id);
     if (!pending) {
       pending = this.boot(project).catch(error => {
@@ -137,7 +165,9 @@ export class HydraProjects {
     const host = new ElectronHost({
       folder: project.path, paths, settings, state, globalState,
       machine: name => (name === 'claudePath' ? cliPaths.claude : name === 'codexPath' ? cliPaths.codex : undefined),
-      trusted: () => !!project.trustedAt, log, version: this.options.version, development: this.options.development,
+      trusted: () => !!this.latest.get(project.id)?.trustedAt, log, version: this.options.version, development: this.options.development,
+      // `hydra close` in this project: its controller stops, as the IDE's window closes.
+      closeWindow: () => { void this.stop(project.id); },
       post: message => this.options.post?.(project, message),
       notice: (level, message) => this.options.notice?.(project, level, message),
       ...(this.options.openConsole ? { openConsole: this.options.openConsole } : {}),
@@ -189,13 +219,14 @@ export class HydraProjects {
       openOfficial: async () => undefined,
       report: error => { const message = error instanceof Error ? error.message : String(error); log(`[error] ${message}`); this.options.notice?.(project, 'error', message); },
     };
-    controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker });
+    controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id) });
     await controller.start();
     if (controller.disabled) {
       // Another Hydra (the IDE, say) owns this repository: nothing runs here for it.
       this.errors.set(project.id, `Hydra in another window already manages ${project.name}.`);
     } else this.errors.delete(project.id);
-    if (this.closing) { await controller.shutdown().catch(() => undefined); host.dispose(); return; }
+    // Quit began, or the project was removed or untrusted while this started: nothing of it stays.
+    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await controller.shutdown().catch(() => undefined); await quota.shutdown().catch(() => undefined); quota.dispose(); lanes.dispose(); host.dispose(); return; }
     this.running.set(project.id, { project, host, controller, lanes, quota, state });
   }
 
@@ -207,6 +238,7 @@ export class HydraProjects {
     this.running.delete(id);
     await running.controller.shutdown().catch(error => this.options.log(`[hydra] ${running.project.name}: shutdown: ${error instanceof Error ? error.message : String(error)}`));
     await running.quota.shutdown().catch(() => undefined);
+    running.quota.dispose();
     running.lanes.dispose();
     running.host.dispose();
     await running.state.flush();

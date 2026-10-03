@@ -109,7 +109,8 @@ export function start(): void {
   // Hydra (G5): one controller per trusted project, over the IDE's own storage. Milestone 1 never rewrites the user's
   // Claude and Codex connections (development), whatever build this is; milestone 2 adds the registration rule.
   const hydra = new HydraProjects({
-    storage: ideStorageRoot(), dist: distDir, appRoot: app.getAppPath(),
+    // Under the appData folder this app uses (a test that moves appData moves this too), unless set outright.
+    storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir, appRoot: app.getAppPath(),
     // The built-in packs: the repository's packs/ beside app/ (a packaged app ships its own, G6).
     extension: path.resolve(app.getAppPath(), '..'),
     userData, version: HYDRA_APP_VERSION, development: true,
@@ -141,6 +142,7 @@ export function start(): void {
     signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
+    projectOpened: async cwd => { const project = (await state.load()).projects.find(candidate => samePath(candidate.path, cwd)); if (project) void hydra.open(project).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
   });
@@ -153,6 +155,7 @@ export function start(): void {
     nativeTheme.themeSource = (await settings.load()).theme;
     nativeTheme.on('updated', repaintTitleBar);
     createMainWindow(distDir);
-    syncHydra((await state.load()).projects);
+    // Controllers start when a project is opened (a chat in it), not here: launching the app takes no repository.
+    void hydra.sync((await state.load()).projects);
   });
 }
