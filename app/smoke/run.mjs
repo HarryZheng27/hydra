@@ -270,10 +270,11 @@ try {
     assert.equal(standinErrors(), '');
   });
   check('a chat with Codex: read-only by default, deny, allow, stop mid-command', () => {
-    assert.deepEqual(a.codex.approvals, ['Your Codex settings', 'Ask me']);
+    assert.deepEqual(a.codex.approvals, ['Codex decides', 'Ask me'], 'the first follows the user\'s own Codex config, named for what it does');
     assert.equal(a.codex.approvalsDefault, 'settings', 'a new chat follows the user\'s own Codex settings');
     assert.deepEqual(a.codex.choices, ['Allow', 'Allow for this session', 'Deny']);
-    assert.ok(a.codex.models.length > 1 && a.codex.models[0] === 'Default model', 'models from Codex\'s own model/list');
+    assert.ok(a.codex.models.length > 1 && !a.codex.models.some(label => /default/i.test(label)), 'models from Codex\'s own model/list, no "default" entry');
+    assert.equal(a.codex.model, 'x', 'the menu shows the model the user\'s Codex config chooses');
     assert.deepEqual(a.codex.outcomes, ['Denied', 'Allowed']);
     assert.deepEqual(a.codex.turnEnds, ['success', 'success', 'interrupted']);
     assert.match(a.codex.output, /42/, 'the allowed command\'s output');

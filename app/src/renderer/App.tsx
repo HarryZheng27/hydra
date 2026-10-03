@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatEvent, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -47,6 +47,7 @@ export function App() {
   const [settled, setSettled] = useState<Record<string, number>>({});
   /** Chats open in a terminal the user started. */
   const [inTerminal, setInTerminal] = useState<Record<string, boolean>>({});
+  const [defaults, setDefaults] = useState<Record<string, ChatDefaults>>({});
   /** Pushes that arrive while a chat's log is being read, merged once it is in. */
   const opening = useRef(new Map<string, ChatEventsMessage[]>());
   const reopen = useRef<(id: string) => void>(() => undefined);
@@ -120,6 +121,7 @@ export function App() {
       setChatEvents(current => ({ ...current, [id]: events }));
       setSettled(current => ({ ...current, [id]: opened.running ? 0 : opened.log.length }));
       setInTerminal(current => ({ ...current, [id]: opened.inTerminal }));
+      setDefaults(current => ({ ...current, [id]: opened.defaults }));
       if (show) setView({ kind: 'chat', id });
     }).finally(() => opening.current.delete(id));
   };
@@ -137,6 +139,8 @@ export function App() {
       setChatEvents(events => ({ ...events, [record.id]: [] }));
       setSettled(current => ({ ...current, [record.id]: 0 }));
       setView({ kind: 'chat', id: record.id });
+      // Opening it starts Claude Code now, while the user types, and brings the user's own defaults.
+      openChat(record.id);
     });
   };
   const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }) =>
@@ -165,7 +169,7 @@ export function App() {
           {view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
-              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0}
+              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]}
                   onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
                   onOpenSettings={() => setView({ kind: 'settings' })}
                   onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}

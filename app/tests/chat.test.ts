@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, checkImage, trustedProjects } from '../src/main/chats';
+import { ChatManager, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
 import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
@@ -414,4 +414,14 @@ test('nothing starts ahead for a chat removed, quitting, or opened in the backgr
     assert.equal(launched.starts.length, 0, 'quit began while the CLI was starting');
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the composer shows the user\'s own model, effort and mode, read from their CLI settings and nothing else', () => {
+  assert.deepEqual(claudeDefaults(JSON.stringify({ model: 'opus', effortLevel: 'medium', permissions: { defaultMode: 'auto', allow: ['Bash'] }, env: { SECRET: 'x' } })), { model: 'opus', effort: 'medium', mode: 'auto' });
+  assert.deepEqual(claudeDefaults(JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } })), {}, 'bypass is never shown as the mode');
+  assert.deepEqual(claudeDefaults('{ broken'), {});
+  assert.deepEqual(claudeDefaults(JSON.stringify({ model: 'opus; rm -rf /' })), {}, 'only a plain model name');
+  assert.deepEqual(codexDefaults('model = "gpt-6.1-sol"\nmodel_reasoning_effort = "medium" # mine\napprovals_reviewer = "auto_review"\n[projects.\'C:\\\\x\']\nmodel = "other"\n'),
+    { model: 'gpt-6.1-sol', effort: 'medium', approvals: 'auto_review' });
+  assert.deepEqual(codexDefaults(undefined), {});
 });

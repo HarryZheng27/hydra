@@ -361,6 +361,7 @@ if (role === 'first') {
       await chat.until(`!!document.querySelector('.card.approval .card-actions')`, 'the first Codex approval');
       report.codex.choices = await ui(`[...document.querySelectorAll('.card.approval .card-actions button')].map(b => b.textContent)`);
       report.codex.models = await ui(`[...document.querySelectorAll('.composer select[aria-label=Model] option')].map(o => o.textContent)`);
+      report.codex.model = await ui(`document.querySelector('.composer select[aria-label=Model]').value`);
       await chat.click('.card.approval .card-actions button', 'Deny');
       await chat.until(`document.querySelectorAll('.turn-end').length >= 1`, 'Codex turn one to end');
       await chat.send('Run it again, please.');

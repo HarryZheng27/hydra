@@ -29,7 +29,7 @@ export function Setup({ report, checking, onCheck, onSignIn }: Props) {
   const [signing, setSigning] = useState<Partial<Record<CliProvider, boolean>>>({});
   const signIn = async (provider: CliProvider) => {
     setSigning(current => ({ ...current, [provider]: true }));
-    setNotes(current => ({ ...current, [provider]: 'Finish signing in in your browser.' }));
+    setNotes(current => ({ ...current, [provider]: `Finish signing in in your browser. No tab opened? Run ${provider === 'claude' ? 'claude auth login' : 'codex login'} in a terminal.` }));
     const result = await onSignIn(provider).catch(error => ({ signedIn: false, error: String(error?.message ?? error) }));
     setSigning(current => ({ ...current, [provider]: false }));
     setNotes(current => ({ ...current, [provider]: result.signedIn ? undefined : result.error ?? 'Sign-in didn\'t finish. Try again.' }));

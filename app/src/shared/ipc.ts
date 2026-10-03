@@ -14,7 +14,9 @@ export const IPC_TRANSPORT = 'hydra:call';
 export const CHAT_EVENTS = 'hydra:chat-events';
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
-export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }
+/** The user's own CLI defaults (model, effort, mode), which the composer shows when a chat doesn't choose its own. */
+export interface ChatDefaults { model?: string; effort?: string; mode?: string; approvals?: string }
+export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean; defaults: ChatDefaults }
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
 export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
@@ -26,9 +28,9 @@ export interface AppInfo { name: string; version: string; electron: string; plat
 export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>> }
 /** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
 export interface Project { id: string; path: string; name: string; trustedAt?: string }
-/** One provider CLI, as onboarding found it: only `--version` and `--help` were run. */
 /** What the CLI says about the user's sign-in: only this, never who they are. */
 export type AccountStatus = 'signed-in' | 'signed-out' | 'other' | 'unknown';
+/** One provider CLI, as onboarding found it: its version, help and sign-in status checks. */
 export interface ProviderStatus {
   provider: CliProvider; name: string; found: boolean; executable?: string; configured: boolean;
   version?: string; supported: boolean; minimum: string; requirement: string; advertised?: string[]; error?: string; account?: AccountStatus;
@@ -57,7 +59,6 @@ export interface Channels {
   'projects.remove': { payload: { id: string }; result: AppState };
   /** Runs the version and help checks (again, with refresh) and reads the registrations. */
   'onboarding.check': { payload: { refresh: boolean }; result: OnboardingReport };
-  /** Opens a console window running the CLI's own sign-in. Nothing is read back. */
   /** Resolves when the sign-in in the browser finishes, fails or times out. */
   'onboarding.signIn': { payload: { provider: CliProvider }; result: { signedIn: boolean; error?: string } };
   /** Main asks, in its own dialog, before a folder may run chats; the page only names the project. */

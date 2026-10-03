@@ -32,8 +32,42 @@ export interface ChatManagerDeps {
   /** Opens a console window the user owns, running a CLI in a folder; Hydra never reads it. */
   openConsole?(title: string, executable: string, args: string[], cwd: string): Promise<{ started: boolean; error?: string }>;
   timings?: SessionTimings;
+  /** The user's own CLI config file's text (Claude's settings.json, Codex's config.toml), for the composer's defaults. */
+  cliConfig?(provider: ChatProvider): Promise<string | undefined>;
   /** Start a Claude chat's CLI when the chat is opened, ahead of its next message (the app sets this; tests don't). */
   warm?: boolean;
+}
+
+/**
+ * What the user's own CLI settings choose when a chat doesn't: model, effort and mode, so the composer shows real values
+ * rather than "default". Only these keys are read; nothing else in the file is kept.
+ */
+export interface ChatDefaults { model?: string; effort?: string; mode?: string; approvals?: string }
+const shortValue = (value: unknown): string | undefined => (typeof value === 'string' && /^[\w.\-\[\]]{1,80}$/.test(value) ? value : undefined);
+export function claudeDefaults(text: string | undefined): ChatDefaults {
+  let settings: Record<string, unknown>;
+  try { settings = JSON.parse(text ?? '{}') as Record<string, unknown>; } catch { return {}; }
+  if (!settings || typeof settings !== 'object') return {};
+  const permissions = settings.permissions && typeof settings.permissions === 'object' ? settings.permissions as Record<string, unknown> : {};
+  const mode = shortValue(permissions.defaultMode);
+  const out: ChatDefaults = {};
+  const model = shortValue(settings.model), effort = shortValue(settings.effortLevel);
+  if (model) out.model = model;
+  if (effort) out.effort = effort;
+  // Bypass is never run (HSEC-82): a chat on these settings is stopped, so it isn't shown as the mode.
+  if (mode && (claudePermissionModes as readonly string[]).includes(mode)) out.mode = mode;
+  return out;
+}
+export function codexDefaults(text: string | undefined): ChatDefaults {
+  const out: ChatDefaults = {};
+  for (const line of (text ?? '').split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break; // only the top-level keys, before the first table
+    const match = /^\s*(model|model_reasoning_effort|approvals_reviewer)\s*=\s*"([^"]*)"\s*(#.*)?$/.exec(line);
+    const value = match && shortValue(match[2]);
+    if (!match || !value) continue;
+    if (match[1] === 'model') out.model = value; else if (match[1] === 'model_reasoning_effort') out.effort = value; else out.approvals = value;
+  }
+  return out;
 }
 
 /** Image formats a chat accepts, by their first bytes: the declared type must match the file. */
@@ -121,9 +155,11 @@ export class ChatManager {
   }
 
   /** `warm: false` for an open the user doesn't see (the page catching up on a background chat). */
-  async open(id: string, { warm = true }: { warm?: boolean } = {}): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean }> {
+  async open(id: string, { warm = true }: { warm?: boolean } = {}): Promise<{ record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean; defaults: ChatDefaults }> {
     const record = await this.record(id);
-    const opened = { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id) };
+    const config = await this.deps.cliConfig?.(record.provider).catch(() => undefined);
+    const defaults = record.provider === 'claude' ? claudeDefaults(config) : codexDefaults(config);
+    const opened = { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id), defaults };
     if (warm) this.warm(id, record);
     return opened;
   }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatAnswer, ChatEvent, ChatImage, ChatRecord, ClaudePermissionMode, CodexApprovals } from '../shared/ipc';
+import type { ChatAnswer, ChatDefaults, ChatEvent, ChatImage, ChatRecord, ClaudePermissionMode, CodexApprovals } from '../shared/ipc';
 import { foldEvents, type ChatItem } from './chatModel';
 import { Composer } from './Composer';
 import { Markdown } from './markdown';
@@ -7,6 +7,8 @@ import { ReviewPane } from './ReviewPane';
 
 interface Props {
   record: ChatRecord;
+  /** The user's own CLI defaults, shown when the chat doesn't choose its own. */
+  defaults?: ChatDefaults;
   events: ChatEvent[];
   /** Events before this position were settled when the chat was opened. */
   settledBefore?: number;
@@ -24,6 +26,8 @@ interface Props {
 
 /** The CLI's latest model list in this chat (Codex sends one when a thread starts). */
 const latestModels = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'models') return event.models; } return []; };
+
+const latestSessionModel = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.model) return event.model; } return undefined; };
 
 const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
 
@@ -136,7 +140,7 @@ function Working({ provider, starting }: { provider: ChatRecord['provider']; sta
   return <div className="working" role="status">{starting ? `Starting ${name}…` : `${name} is working…`}{seconds >= 5 ? ` ${seconds}s` : ''}</div>;
 }
 
-export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
+export function ChatPane({ record, defaults, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
   const [reviewing, setReviewing] = useState(false);
   // Each request is answered once: a second click on the same card sends nothing.
@@ -186,7 +190,7 @@ export function ChatPane({ record, events, settledBefore = 0, onSend, onAnswer, 
         {view.running && !view.pending.length && <Working provider={record.provider} starting={events[events.length - 1]?.type === 'user'} />}
         <div ref={end} />
       </div>
-      <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} />
+      <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} />
     </section>
   );
 }

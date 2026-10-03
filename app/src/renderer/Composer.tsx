@@ -1,5 +1,5 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import type { ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
+import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 // Claude's API takes an image of at most 5 MB of base64, about 3.75 MB of file.
@@ -18,25 +18,28 @@ function readImage(file: File): Promise<Attached> {
   });
 }
 
-/** Claude's model aliases; the CLI resolves each to the current model. "Default" passes none. */
-const claudeModels = [
-  { value: '', label: 'Default model' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }, { value: 'haiku', label: 'Haiku' },
-];
-const efforts = [{ value: '', label: 'Default effort' }, ...['low', 'medium', 'high', 'xhigh', 'max'].map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))];
+/** Claude's model aliases; the CLI resolves each to the current model. */
+const claudeModels = [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }];
+const titleCase = (value: string) => value[0]!.toUpperCase() + value.slice(1);
+const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** A model id the CLI reported (claude-opus-5-5) as the alias the menu offers (opus). */
+const claudeAlias = (id: string | undefined) => (id ? claudeModels.find(model => id.toLowerCase().includes(model.value))?.value ?? id : undefined);
+/** The options, with the current value added if the list doesn't have it, so the menu always shows what's in use. */
+const withValue = (options: Array<{ value: string; label: string }>, value: string | undefined) =>
+  value && !options.some(option => option.value === value) ? [{ value, label: value }, ...options] : options;
 /**
  * Who answers a Codex chat's approvals. A Codex chat is read-only for now either way: letting it edit the folder waits
  * for its live check, and full access is never offered. Approved file changes still apply.
  */
-const approvalModes: Array<{ value: CodexApprovals; label: string }> = [
-  { value: 'settings', label: 'Your Codex settings' }, { value: 'ask', label: 'Ask me' },
+const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string }> => [
+  { value: 'settings', label: defaults?.approvals === 'auto_review' ? 'Auto-review' : 'Codex decides' }, { value: 'ask', label: 'Ask me' },
 ];
 /**
  * "Your settings" passes no mode, so Claude Code follows the user's own (their defaultMode, such as auto). Bypass
  * permissions isn't offered (HSEC-82).
  */
 const modes: Array<{ value: ClaudePermissionMode; label: string }> = [
-  { value: 'settings', label: 'Your Claude settings' }, { value: 'auto', label: 'Auto' }, { value: 'default', label: 'Ask before edits' },
-  { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan first' },
+  { value: 'auto', label: 'Auto' }, { value: 'default', label: 'Ask before edits' }, { value: 'acceptEdits', label: 'Accept edits' }, { value: 'plan', label: 'Plan first' },
 ];
 
 interface Props {
@@ -47,15 +50,21 @@ interface Props {
   onConfigure(change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }): void;
   /** Codex's own model list, from the chat's latest model/list. */
   models?: ChatModel[];
+  /** The user's own CLI defaults: what the chat uses when it doesn't choose. */
+  defaults?: ChatDefaults;
+  /** The model the CLI said it is using. */
+  sessionModel?: string;
 }
 
-export function Composer({ record, running, onSend, onStop, onConfigure, models = [] }: Props) {
+export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel }: Props) {
   const codex = record.provider === 'codex';
-  const codexModel = models.find(model => model.id === record.model) ?? models.find(model => model.isDefault);
-  const modelOptions = codex ? [{ value: '', label: 'Default model' }, ...models.map(model => ({ value: model.id, label: model.label }))] : claudeModels;
-  const effortOptions = codex
-    ? [{ value: '', label: 'Default effort' }, ...(codexModel?.efforts ?? []).map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))]
-    : efforts;
+  // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
+  const model = record.model ?? defaults?.model ?? (codex ? sessionModel ?? models.find(m => m.isDefault)?.id : claudeAlias(sessionModel)) ?? (codex ? undefined : 'opus');
+  const codexModel = models.find(m => m.id === model) ?? models.find(m => m.isDefault);
+  const effort = record.effort ?? defaults?.effort ?? (codex ? codexModel?.defaultEffort : undefined);
+  const modelOptions = withValue(codex ? models.map(m => ({ value: m.id, label: m.label })) : claudeModels, model);
+  const effortOptions = withValue((codex ? codexModel?.efforts ?? [] : claudeEfforts).map(value => ({ value, label: titleCase(value) })), effort);
+  const mode = !record.permissionMode || record.permissionMode === 'settings' ? (defaults?.mode as ClaudePermissionMode | undefined) ?? 'default' : record.permissionMode;
   const [text, setText] = useState('');
   const [images, setImages] = useState<Attached[]>([]);
   const [problem, setProblem] = useState<string>();
@@ -94,17 +103,19 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
       )}
       <textarea value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : codex ? 'Message Codex' : 'Message Claude Code'} aria-label="Message" rows={3} />
       <div className="composer-bar">
-        <select aria-label="Model" value={record.model ?? ''} onChange={e => onConfigure({ model: e.target.value || undefined })}>
+        <select aria-label="Model" value={model ?? ''} onChange={e => onConfigure({ model: e.target.value })}>
+          {!model && <option value="">Model</option>}
           {modelOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
-        <select aria-label="Effort" value={record.effort ?? ''} onChange={e => onConfigure({ effort: e.target.value || undefined })}>
+        <select aria-label="Effort" value={effort ?? ''} onChange={e => onConfigure({ effort: e.target.value })}>
+          {!effort && <option value="">Effort</option>}
           {effortOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
         {codex
           ? <select aria-label="Approvals" value={record.approvals ?? 'ask'} onChange={e => onConfigure({ approvals: e.target.value as CodexApprovals })} title="Who answers Codex's approvals: your Codex settings (its auto-review can approve a file change, or a command outside the sandbox, without asking you) or you. Hydra starts Codex read-only.">
-              {approvalModes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              {approvalModes(defaults).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
-          : <select aria-label="Permission mode" title="Your Claude settings: Claude Code decides what to ask, as it does outside Hydra; what it asks comes here as a card." value={record.permissionMode ?? 'default'} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
+          : <select aria-label="Permission mode" title="What Claude Code asks you about first (a new chat starts on your own Claude Code setting); anything it asks comes here as a card." value={mode} onChange={e => onConfigure({ permissionMode: e.target.value as ClaudePermissionMode })}>
               {modes.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>}
         <button className="attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)">Image…</button>

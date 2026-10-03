@@ -11,7 +11,7 @@ import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
-import { onboardingReport, signIn } from './onboarding';
+import { onboardingReport, signIn, stopSignIns } from './onboarding';
 import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
@@ -99,6 +99,7 @@ export function start(): void {
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),
+    cliConfig: provider => readFile(provider === 'claude' ? providerPaths().claudeSettings : providerPaths().codexConfig, 'utf8').catch(() => undefined),
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
     push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
   });
@@ -108,6 +109,7 @@ export function start(): void {
     if (flushed) return;
     event.preventDefault();
     try { chats.closeAll(); } catch { /* quit anyway */ }
+    try { stopSignIns(); } catch { /* quit anyway */ }
     const timeout = new Promise(resolve => setTimeout(resolve, 5000));
     void Promise.race([chatStore.flush().catch(() => undefined), timeout]).finally(() => { flushed = true; app.quit(); });
   });

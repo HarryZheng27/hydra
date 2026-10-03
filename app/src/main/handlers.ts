@@ -16,7 +16,7 @@ export interface HandlerDeps {
   applyTheme(theme: ThemeSetting): void;
   /** Onboarding's version and help checks, and the registration lookup, for these CLI paths. */
   checkSetup(cliPaths: AppSettings['cliPaths']): Promise<OnboardingReport>;
-  /** Opens the CLI's own sign-in in a console window. */
+  /** The CLI's own sign-in, out of sight in the browser; resolves when it ends. */
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ signedIn: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;

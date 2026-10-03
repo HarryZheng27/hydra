@@ -16,8 +16,9 @@ import type { AccountStatus, CliProvider, OnboardingReport, ProviderStatus, Regi
  * - whether the user is signed in is asked of each CLI (`claude auth status --json`, `codex login status`), and only a
  *   yes or no is kept (core's publicClaudeAccount discards identity fields);
  * - Sign in runs the CLI's own login out of sight: Claude Code's `auth login` opens the browser itself, and Codex's
- *   app-server hands back its login page (checked by core's loginUrl), which opens in the browser. Hydra reads no
- *   output from either and never sees a credential.
+ *   app-server hands back its login page (checked by core's loginUrl), which opens in the browser. Claude's output is
+ *   never read; of Codex's protocol messages only the login page and the signed-in status are used. Hydra never sees a
+ *   credential, and a sign-in still running when the app quits is stopped (`stopSignIns`).
  * No other provider process starts: G4 runs the start-up self-check (cliSelfCheck.ts) before a chat.
  */
 export const providerNames: Record<CliProvider, string> = { claude: 'Claude Code', codex: 'Codex' };
@@ -72,11 +73,16 @@ export const SIGN_IN_TIMEOUT_MS = 5 * 60_000;
 export async function accountStatus(provider: CliProvider, executable: string, cwd: string): Promise<AccountStatus> {
   const probe = await runProbe(executable, statusArgs[provider], cwd, { timeoutMs: 15_000, maxBytes: 16_384 }).catch(() => undefined);
   if (!probe || probe.error) return 'unknown';
-  if (provider === 'codex') return probe.exitCode === 0 ? 'signed-in' : probe.exitCode === 1 ? 'signed-out' : 'unknown';
+  // Codex's first line says how ("Logged in using ChatGPT"); an API key isn't the user's subscription. Only that is kept.
+  if (provider === 'codex') return probe.exitCode === 0 ? (/^Logged in using ChatGPT\b/.test(probe.stdout.trim()) ? 'signed-in' : 'other') : probe.exitCode === 1 ? 'signed-out' : 'unknown';
   let state: AccountState;
   try { state = publicClaudeAccount(probe.exitCode, probe.error, probe.stdout); } catch { return 'unknown'; }
   return state.status === 'signed-in' ? 'signed-in' : state.status === 'signed-out' ? 'signed-out' : state.status === 'other' ? 'other' : 'unknown';
 }
+
+/** Sign-ins running now, so quitting can stop them (a hidden login would otherwise outlive the app). */
+const running = new Set<() => void>();
+export function stopSignIns(): void { for (const stop of [...running]) stop(); running.clear(); }
 
 export interface SignInDeps {
   /** Opens a provider's login page in the user's browser; false if it didn't open. */
@@ -94,8 +100,10 @@ function claudeSignIn(executable: string, cwd: string, deps: SignInDeps): Promis
   return new Promise(resolve => {
     const child = (deps.spawn ?? spawn)(launch.executable, launch.args, { cwd, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'ignore', 'ignore'] });
     let done = false;
-    const finish = (signedIn: boolean) => { if (done) return; done = true; clearTimeout(timer); resolve(signedIn); };
-    const timer = setTimeout(() => { if (child.pid) void terminateProcessTree(child.pid).catch(() => undefined); finish(false); }, deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS);
+    const finish = (signedIn: boolean) => { if (done) return; done = true; clearTimeout(timer); running.delete(stop); resolve(signedIn); };
+    const stop = () => { if (child.pid && child.exitCode === null) void terminateProcessTree(child.pid).catch(() => undefined); finish(false); };
+    const timer = setTimeout(stop, deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS);
+    running.add(stop);
     child.on('error', () => finish(false));
     child.on('exit', code => finish(code === 0));
   });
@@ -105,7 +113,9 @@ function claudeSignIn(executable: string, cwd: string, deps: SignInDeps): Promis
 function codexSignIn(executable: string, cwd: string, deps: SignInDeps): Promise<boolean> {
   return new Promise(resolve => {
     let done = false;
-    const finish = (signedIn: boolean) => { if (!done) { done = true; resolve(signedIn); } };
+    const stop = () => { void flow.cancel().catch(() => undefined); finish(false); };
+    const finish = (signedIn: boolean) => { if (!done) { done = true; running.delete(stop); resolve(signedIn); } };
+    running.add(stop);
     const flow = new CodexAccountFlow((notify, failed) => accountRpc(executable, cwd, notify, failed), state => {
       if (state.status === 'signed-in' || state.status === 'other') finish(true);
       else if (state.status === 'error' || state.status === 'cancelled' || state.status === 'signed-out') finish(false);
