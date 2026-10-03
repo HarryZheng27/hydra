@@ -52,7 +52,7 @@ G1 and G2 can run at the same time, in separate sessions. G6 and G7 can too.
 | --- | --- | --- |
 | G1 | Done | [#294](https://github.com/ndunl075/hydra/pull/294) |
 | G2 | Done | #290, #291, #292, #293, #295, #296, #297 |
-| G3 | In progress | |
+| G3 | Done | [#298](https://github.com/ndunl075/hydra/pull/298), [#299](https://github.com/ndunl075/hydra/pull/299), [#300](https://github.com/ndunl075/hydra/pull/300), [#301](https://github.com/ndunl075/hydra/pull/301) |
 | G4 | Not started | |
 | G5 | Not started | |
 | G6 | Not started | |

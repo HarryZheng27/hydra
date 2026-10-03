@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AppInfo, AppSettings, AppState } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, OnboardingReport } from '../shared/ipc';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { EmptyState } from './EmptyState';
 import { SettingsView } from './SettingsView';
+import { Setup } from './Setup';
 import { Sidebar } from './Sidebar';
 import { TitleBar } from './TitleBar';
 
@@ -33,6 +34,8 @@ export function App() {
   const [state, setState] = useState<AppState>();
   const [view, setView] = useState<View>({ kind: 'home' });
   const [error, setError] = useState<string>();
+  const [setup, setSetup] = useState<OnboardingReport>();
+  const [checking, setChecking] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const systemDark = useSystemDark();
   const theme = resolveTheme(settings?.theme ?? 'system', systemDark);
@@ -43,6 +46,7 @@ export function App() {
     void window.hydra.appInfo().then(setInfo, fail);
     void window.hydra.getSettings().then(setSettings, fail);
     void window.hydra.getState().then(setState, fail);
+    void checkSetup(false);
     void window.hydra.problems().then(list => setProblems(list), fail);
   }, []);
 
@@ -50,6 +54,14 @@ export function App() {
   const run = async <T,>(call: Promise<T>, apply: (value: T) => void): Promise<void> => {
     try { apply(await call); setError(undefined); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
+
+  /** Onboarding's version and help checks. Main remembers the answer until a refresh or a new CLI path. */
+  async function checkSetup(refresh: boolean): Promise<void> {
+    setChecking(true);
+    try { await run(window.hydra.checkSetup(refresh), setSetup); } finally { setChecking(false); }
+  }
+  const setupPanel = <Setup report={setup} checking={checking} onCheck={() => void checkSetup(true)} onSignIn={provider => window.hydra.signIn(provider)} />;
+  const afterCliChange = (next: AppSettings) => { setSettings(next); void checkSetup(false); };
 
   const sidebarOpen = state?.sidebarOpen ?? true;
   // The sidebar follows the click at once; saving it is best effort, and a failed save only shows its error.
@@ -84,8 +96,8 @@ export function App() {
           {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}
           {error && <div className="banner error" role="alert">{error}</div>}
           {view.kind === 'settings' && settings
-            ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), setSettings)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), setSettings)} />
-            : <EmptyState project={project} onPickFolder={pickProject} />}
+            ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
+            : <EmptyState project={project} onPickFolder={pickProject} setup={project ? undefined : setupPanel} />}
         </main>
       </div>
     </div>

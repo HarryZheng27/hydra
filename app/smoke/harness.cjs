@@ -42,6 +42,36 @@ report.saveDialogs = 0;
 electron.dialog.showSaveDialog = async () => { report.saveDialogs++; write(); return { canceled: true }; };
 electron.dialog.showSaveDialogSync = () => { report.saveDialogs++; write(); return undefined; };
 
+// Sign in would open a console window, so the harness never lets one start. It fails closed: every cmd.exe launch
+// (the app starts cmd only for Sign in) is recorded and answered with a fake that exits 0, and any other launch that
+// isn't hidden is refused outright. Everything else, the hidden version and help checks, runs for real against
+// run.mjs's stand-in CLIs.
+const childProcess = require('node:child_process');
+const realSpawn = childProcess.spawn;
+report.signIns = [];
+report.refusedLaunches = [];
+childProcess.spawn = (executable, args, options = {}) => {
+  const { EventEmitter } = require('node:events');
+  const fake = code => { const child = new EventEmitter(); child.unref = () => undefined; setTimeout(() => child.emit('exit', code), 10); return child; };
+  const line = Array.isArray(args) ? args.join(' ') : '';
+  if (/(^|[\\/])cmd(\.exe)?$/i.test(String(executable))) {
+    const encoded = /-EncodedCommand ([A-Za-z0-9+/=]+)/.exec(line);
+    report.signIns.push({
+      executable: path.basename(String(executable)), line: line.replace(/-EncodedCommand [A-Za-z0-9+/=]+/, '-EncodedCommand <script>'),
+      script: encoded ? Buffer.from(encoded[1], 'base64').toString('utf16le') : '', windowsHide: options.windowsHide,
+      verbatim: options.windowsVerbatimArguments, stdio: options.stdio, detached: !!options.detached,
+    });
+    write();
+    return fake(0);
+  }
+  if (options.windowsHide !== true || options.detached) {
+    report.refusedLaunches.push(`${path.basename(String(executable))} ${line}`.slice(0, 200));
+    write();
+    return fake(1);
+  }
+  return realSpawn(executable, args, options);
+};
+
 app.on('browser-window-created', (_event, win) => {
   event('window-created');
   win.show = () => event('show');
@@ -156,6 +186,18 @@ if (role === 'first') {
       throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent).join(' | ')`)}`);
     };
     report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
+    // Onboarding: the version and help checks, the registrations, and Sign in.
+    await until(`document.querySelectorAll('.setup .provider').length === 2`, 'the onboarding checks', 30000);
+    report.setup = await ui(`[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, signIn: !p.querySelector('.primary').disabled }))`);
+    await ui(`document.querySelector('.setup .provider[data-provider=codex] .primary').click(); 1`);
+    await until(`!!document.querySelector('.setup .provider[data-provider=codex] .hint')`, 'the sign-in note');
+    report.signInNote = await ui(`document.querySelector('.setup .provider[data-provider=codex] .hint').textContent`);
+    const checkedAt = await ui(`document.querySelector('.setup').dataset.checkedAt`);
+    await ui(`[...document.querySelectorAll('.setup-head button')][0].click(); 1`);
+    await until(`document.querySelector('.setup').dataset.checkedAt !== ${JSON.stringify(checkedAt)} && !document.querySelector('.setup[aria-busy=true]')`, 'the re-check', 30000);
+    report.recheckDone = true;
+    // A second Sign in straight away is refused, so a page can't stack windows.
+    report.secondSignIn = await ui(`window.hydra.signIn('codex')`);
     const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
     report.themes = { initial: await themeNow() };
     // `--smoke-shots=<dir>` saves what the hidden window draws, for a person to look at. Off in CI.

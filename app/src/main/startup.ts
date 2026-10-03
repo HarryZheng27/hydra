@@ -2,6 +2,7 @@ import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, type WebContents } from 'electron';
 import type { CliProvider } from '../shared/ipc';
 import { createHandlers } from './handlers';
+import { onboardingReport, openSignIn } from './onboarding';
 import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
@@ -72,6 +73,9 @@ export function start(): void {
     pickFolder: () => pickFolder(),
     pickExecutable: provider => pickExecutable(provider),
     applyTheme,
+    // The checks run in user data, never a project folder, so no project's files are in reach.
+    checkSetup: cliPaths => onboardingReport(cliPaths, userData),
+    signIn: (provider, configured) => openSignIn(provider, configured, userData),
   });
 
   app.on('window-all-closed', () => app.quit());

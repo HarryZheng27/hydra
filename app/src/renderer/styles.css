@@ -94,3 +94,20 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .segmented button.active { background: var(--button-bg); color: var(--button-fg); border-color: var(--button-bg); }
 .hint { margin: 0 0 4px; color: var(--muted); }
 .about { margin-top: 32px; font-size: 12px; color: var(--faint); }
+
+/* Onboarding */
+.setup { width: 100%; max-width: 560px; margin-top: 24px; text-align: left; }
+.settings .setup { max-width: none; }
+.setup-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.setup-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.setup-head button { padding: 3px 10px; border-radius: var(--radius); border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); font-size: 12px; }
+.provider { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.provider-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.provider-name { font-weight: 600; }
+.provider-status.ok, .ok { color: var(--ok); }
+.provider-status.warning, .warning { color: var(--warning); }
+.provider-status.error, .error { color: var(--error); }
+.provider .path, .provider-registration { color: var(--muted); font-size: 12px; }
+.primary.small { margin-top: 0; padding: 4px 12px; flex: none; }
+.primary:disabled { opacity: .45; }
+.setup .hint { margin-top: 8px; font-size: 12px; }

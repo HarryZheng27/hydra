@@ -16,6 +16,8 @@ const api: HydraApi = {
   setSidebarOpen: open => call('state.setSidebarOpen', { open }),
   pickProject: () => call('projects.pick', null),
   removeProject: id => call('projects.remove', { id }),
+  checkSetup: refresh => call('onboarding.check', { refresh }),
+  signIn: provider => call('onboarding.signIn', { provider }),
 };
 
 contextBridge.exposeInMainWorld('hydra', Object.freeze(api));

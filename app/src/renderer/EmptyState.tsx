@@ -1,8 +1,9 @@
+import type { ReactNode } from 'react';
 import type { Project } from '../shared/ipc';
 import { Icon } from './Icon';
 
 /** What the main pane shows before there's a chat: pick a folder, or the chosen project. */
-export function EmptyState({ project, onPickFolder }: { project?: Project; onPickFolder(): void }) {
+export function EmptyState({ project, onPickFolder, setup }: { project?: Project; onPickFolder(): void; setup?: ReactNode }) {
   if (project) {
     return (
       <section className="empty">
@@ -17,6 +18,7 @@ export function EmptyState({ project, onPickFolder }: { project?: Project; onPic
       <h1>What are we working on?</h1>
       <p>Choose a project folder. Hydra runs your own Claude Code or Codex in it.</p>
       <button className="primary" onClick={onPickFolder}><Icon name="folder" /><span>Open a folder…</span></button>
+      {setup}
     </section>
   );
 }
