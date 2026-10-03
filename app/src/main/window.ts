@@ -18,9 +18,9 @@ export function createMainWindow(distDir: string): BrowserWindow {
   const theme = currentTheme();
   const win = new BrowserWindow({
     title: PRODUCT_NAME,
-    // The Claude desktop app's default shape (Nico's ask): about 1020 x 736 DIPs, which fits a 1280 x 800 screen.
-    width: 1020,
-    height: 736,
+    // The Claude desktop app's default shape (Nico's ask), measured side by side on his 1280 x 800 screen.
+    width: 1017,
+    height: 734,
     center: true,
     minWidth: 720,
     minHeight: 480,
