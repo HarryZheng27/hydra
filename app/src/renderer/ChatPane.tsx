@@ -166,6 +166,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
         <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
         <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
       </header>
+      {hydra?.error && <div className="banner hydra-banner" role="status">{hydra.error}</div>}
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
       {reviewing && <ReviewPane chatId={record.id} />}
       <div className="transcript" role="log" aria-live="polite" hidden={reviewing}>

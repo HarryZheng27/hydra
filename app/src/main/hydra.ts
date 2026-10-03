@@ -280,7 +280,7 @@ export class HydraProjects {
       openOfficial: async () => undefined,
       report: error => { const message = error instanceof Error ? error.message : String(error); log(`[error] ${message}`); this.options.notice?.(project, 'error', message); },
     };
-    const tree: HydraTreeMessage = { projectId: project.id, heads: [], plans: [] };
+    const tree: HydraTreeMessage = { projectId: project.id, heads: [], plans: [], owned: false };
     let latest: { heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>> } = {};
     function publish(update: TreeUpdate): void {
       latest = { ...latest, ...(update.heads ? { heads: update.heads } : {}), ...(update.plans ? { plans: update.plans } : {}), ...(update.planJobs ? { planJobs: update.planJobs } : {}) };
@@ -302,6 +302,11 @@ export class HydraProjects {
       // Another Hydra (the IDE, say) owns this repository: nothing runs here for it.
       this.errors.set(project.id, `Hydra in another window already manages ${project.name}.`);
     } else this.errors.delete(project.id);
+    // The window says whether Hydra runs here (and why not), as well as the heads and plans.
+    running.tree.owned = !controller.disabled;
+    if (controller.disabled) running.tree.error = `Hydra IDE manages ${project.name}, so its heads and plans run there. Close it there to run them here.`;
+    else delete running.tree.error;
+    this.options.tree?.(running.tree);
     // Quit began, or the project was removed or untrusted while this started: nothing of it stays.
     if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose(running); return; }
     this.running.set(project.id, running);

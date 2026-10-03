@@ -27,7 +27,12 @@ export interface PlanCardView {
   jobs: { key: string; title: string; status: string; reason?: string }[];
 }
 /** One project's heads and plans, as its controller last published them. */
-export interface HydraTreeMessage { projectId: string; heads: HeadCardView[]; plans: PlanCardView[] }
+export interface HydraTreeMessage {
+  projectId: string; heads: HeadCardView[]; plans: PlanCardView[];
+  /** Whether Hydra runs here: this app owns the project, or another Hydra (the IDE) does and it runs there. */
+  owned: boolean;
+  error?: string;
+}
 /** One CLI's `hydra` entry: Hydra's own here, another Hydra's (still installed), or none. */
 export interface HydraConnection {
   provider: CliProvider; name: string; connected: boolean;

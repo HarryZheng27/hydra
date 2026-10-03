@@ -7,11 +7,15 @@ import type { ChatItem } from './chatModel';
  * from the project's controller (src/host/controller.ts's tree). Everything on it is text; nothing on it acts yet
  * (the Agents view does, milestone 3).
  */
-export interface HydraView { heads: HeadCardView[]; plans: PlanCardView[] }
+export interface HydraView { heads: HeadCardView[]; plans: PlanCardView[]; owned?: boolean; error?: string }
 
-/** Claude names a tool `mcp__hydra__hydra_start_head`; Codex names its MCP tools by server and tool too. */
-const toolOf = (name: string): 'head' | 'plan' | undefined => (/(^|[_.])hydra_start_head$/.test(name) ? 'head' : /(^|[_.])hydra_plan_create$/.test(name) ? 'plan' : undefined);
-const idIn = (output: string | undefined, key: 'job_id' | 'plan_id'): string | undefined => new RegExp(`"${key}"\\s*:\\s*"([a-f0-9]{12})"`).exec(output ?? '')?.[1];
+/** Only Hydra's own server's tools: Claude names them `mcp__hydra__<tool>`, Codex `hydra/<tool>`. */
+const toolOf = (name: string): 'head' | 'plan' | undefined => {
+  const tool = /^(?:mcp__hydra__|hydra\/)(hydra_start_head|hydra_plan_create)$/.exec(name)?.[1];
+  return tool === 'hydra_start_head' ? 'head' : tool === 'hydra_plan_create' ? 'plan' : undefined;
+};
+/** The id in the tool's result: Claude's is the bridge's JSON text; Codex's is that text JSON-encoded again. */
+const idIn = (output: string | undefined, key: 'job_id' | 'plan_id'): string | undefined => new RegExp(`\\\\?"${key}\\\\?"\\s*:\\s*\\\\?"([a-f0-9]{12})`).exec(output ?? '')?.[1];
 
 const stateTone = (state: string): string => (/^(done|merged|success)$/.test(state) ? 'ok' : /^(failed|error|cancelled|incomplete|interrupted)$/.test(state) ? 'error' : /^(blocked|question|waiting)$/.test(state) ? 'warning' : 'running');
 
