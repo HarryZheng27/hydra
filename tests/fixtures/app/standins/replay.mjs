@@ -7,24 +7,25 @@
 //                          "args:" notes), and calls.log, one line per start with its arguments
 //
 // It runs in lockstep with the recording. At each line the host sent, it waits for the host's next line and checks it
-// is the same kind of message (type and subtype, method, or approval decision); anything else exits 2 with the reason
-// on stderr. Request ids the host chooses are mapped onto the recorded ones, so recorded replies answer the host's
+// is the same message: the same kind (type and subtype, method, or approval decision), and for an approval the same
+// updated input, for a user message the same kinds of content blocks. Anything else exits 2 with the reason on stderr
+// and in errors.log. Each line it has checked is counted in consumed.log, so a test can wait until all were seen. Request ids the host chooses are mapped onto the recorded ones, so recorded replies answer the host's
 // requests. Then it writes what the CLI wrote. At the end of its part it waits for stdin to close, as a CLI would.
 // It never starts a model or touches the network.
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
-const fixture = process.env.HYDRA_STANDIN_FIXTURE;
+const fixture = process.env.HYDRA_STANDIN_FIXTURE ?? '';
 const state = process.env.HYDRA_STANDIN_STATE;
-if (!fixture || !state) { process.stderr.write('replay: set HYDRA_STANDIN_FIXTURE and HYDRA_STANDIN_STATE\n'); process.exit(2); }
-fs.mkdirSync(state, { recursive: true });
 const args = process.argv.slice(2);
 
-// Version and help answer like the real CLIs, for onboarding's checks.
+// Version and help answer like the real CLIs, for onboarding's checks, before anything needs a fixture.
 const provider = /[\\/]codex[\\/]/.test(fixture) ? 'codex' : 'claude';
 if (args[0] === '--version') { process.stdout.write(provider === 'claude' ? '2.1.282 (Claude Code)\n' : 'codex-cli 0.157.1\n'); process.exit(0); }
 if (args.includes('--help')) { process.stdout.write('--output-format stream-json --input-format stream-json --resume --permission-prompt-tool app-server generate-json-schema\n'); process.exit(0); }
+if (!fixture || !state) { process.stderr.write('replay: set HYDRA_STANDIN_FIXTURE and HYDRA_STANDIN_STATE\n'); process.exit(2); }
+fs.mkdirSync(state, { recursive: true });
 
 const counterFile = path.join(state, 'process-count');
 const index = Number(fs.existsSync(counterFile) ? fs.readFileSync(counterFile, 'utf8') : '0');
@@ -63,6 +64,20 @@ function kind(message) {
 const flag = args.indexOf('--resume') >= 0 ? args.indexOf('--resume') : args.indexOf('--session-id');
 const sessionId = flag >= 0 ? args[flag + 1] : undefined;
 const withSession = line => (sessionId ? line.replace(/\[session-\d+\]/g, sessionId) : line);
+const withSessionValue = value => JSON.parse(withSession(JSON.stringify(value)));
+
+/** What must match beyond the kind: an approval's decision and input, and a user message's kinds of content. */
+function detail(message) {
+  if (message?.type === 'control_response') {
+    const reply = message.response?.response ?? {};
+    return JSON.stringify({ behavior: reply.behavior, updatedInput: reply.updatedInput ?? null });
+  }
+  if (message?.type === 'user') {
+    const content = message.message?.content;
+    return JSON.stringify(typeof content === 'string' ? ['text'] : (content ?? []).map(block => block.type));
+  }
+  return '';
+}
 
 const ids = new Map(); // recorded host request id -> the host's own id
 const lines = [];
@@ -81,6 +96,8 @@ for (const record of part) {
     const actual = parse(line);
     const expected = parse(record.line);
     if (kind(actual) !== kind(expected)) fail(`expected ${kind(expected)} from the host, got ${kind(actual)}: ${line.slice(0, 200)}`);
+    if (detail(actual) !== detail(withSessionValue(expected))) fail(`expected ${detail(expected).slice(0, 300)} from the host, got ${detail(actual).slice(0, 300)}`);
+    fs.appendFileSync(path.join(state, 'consumed.log'), `${index}\n`);
     if (expected.type === 'control_request') ids.set(expected.request_id, actual.request_id);
     if (expected.method && 'id' in expected) ids.set(expected.id, actual.id);
     continue;

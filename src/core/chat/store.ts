@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { replaceAtomic } from '../atomicFile';
 import { ownerOnlyProblem, restrictToOwner } from '../userHandshake';
@@ -50,6 +50,18 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
   for (const key of ['providerSessionId', 'model', 'effort', 'permissionMode', 'sandbox'] as const) if (!optionalString(raw[key], 200)) return undefined;
   const pick = (key: string) => (typeof raw[key] === 'string' ? { [key]: raw[key] } : {});
   return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox') } as ChatRecord;
+}
+
+/** True when a file is non-empty and its last byte isn't a newline. */
+async function endsTorn(file: string): Promise<boolean> {
+  const handle = await open(file, 'r');
+  try {
+    const { size } = await handle.stat();
+    if (!size) return false;
+    const last = Buffer.alloc(1);
+    await handle.read(last, 0, 1, size - 1);
+    return last[0] !== 0x0a;
+  } finally { await handle.close(); }
 }
 
 /** A chat title from its first message: one line, at most 80 characters. */
@@ -130,7 +142,7 @@ export class ChatStore {
       await this.writePrivate(this.file(record.id), '');
       this.checked.add(record.id);
       chats.set(record.id, record);
-      await this.saveIndex(chats);
+      try { await this.saveIndex(chats); } catch (error) { chats.delete(record.id); throw error; }
       return record;
     });
   }
@@ -143,7 +155,7 @@ export class ChatStore {
       const next = parseRecord({ ...current, ...patch, id, provider: current.provider, createdAt: current.createdAt, updatedAt: now.toISOString() });
       if (!next) throw new Error('That change isn\'t valid.');
       chats.set(id, next);
-      await this.saveIndex(chats);
+      try { await this.saveIndex(chats); } catch (error) { chats.set(id, current); throw error; }
       return next;
     });
   }
@@ -155,13 +167,16 @@ export class ChatStore {
       const chats = await this.ready();
       if (!chats.has(id)) throw new Error('No such chat.');
       const file = this.file(id);
+      let prefix = '';
       if (!this.checked.has(id)) {
         const problem = await this.security.problem(file);
         if (problem) throw new Error(`Hydra won't write to this chat's log: ${problem}`);
+        // A crash can leave half a line; end it, so it doesn't swallow the next entry.
+        prefix = (await endsTorn(file)) ? '\n' : '';
         this.checked.add(id);
       }
       const t = now.toISOString();
-      await appendFile(file, events.map(event => `${JSON.stringify({ t, event })}\n`).join(''), 'utf8');
+      await appendFile(file, prefix + events.map(event => `${JSON.stringify({ t, event })}\n`).join(''), 'utf8');
     });
   }
 

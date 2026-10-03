@@ -39,10 +39,12 @@ function resultText(content: unknown): string {
 
 function parseQuestions(input: Record<string, unknown>): ChatQuestion[] | undefined {
   if (!Array.isArray(input.questions) || !input.questions.length || input.questions.length > 8) return undefined;
+  // A question without options can't be answered from a card.
   const questions: ChatQuestion[] = [];
   for (const raw of input.questions) {
     if (!isRecord(raw) || typeof raw.question !== 'string' || !Array.isArray(raw.options)) return undefined;
     const options = raw.options.filter(isRecord).map(option => ({ label: text(option.label), ...(typeof option.description === 'string' ? { description: option.description } : {}) })).filter(option => option.label);
+    if (!options.length) return undefined;
     questions.push({ question: raw.question, ...(typeof raw.header === 'string' ? { header: raw.header } : {}), multiSelect: raw.multiSelect === true, options });
   }
   return questions;
@@ -55,6 +57,8 @@ export class ClaudeAdapter implements ChatAdapter {
   private running = false;
   private interrupted = false;
   private messageId = 'm0';
+  /** Claude's total_cost_usd counts up within one process; each turn reports its own share. */
+  private costSoFar = 0;
   /** Tool calls already reported, so the same tool_use in a later assistant message isn't reported twice. */
   private readonly toolCalls = new Set<string>();
 
@@ -68,7 +72,8 @@ export class ClaudeAdapter implements ChatAdapter {
     this.running = true;
     this.interrupted = false;
     const content = images.length
-      ? [...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } })), { type: 'text', text: message }]
+      // G1's live check sent the text first, then the image; that is the order it proved.
+      ? [{ type: 'text', text: message }, ...images.map(image => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }))]
       : message;
     return [JSON.stringify({ type: 'user', message: { role: 'user', content } })];
   }
@@ -135,6 +140,13 @@ export class ClaudeAdapter implements ChatAdapter {
   private assistant(message: Record<string, unknown>): ChatEvent[] {
     if (message.parent_tool_use_id || !isRecord(message.message) || !Array.isArray(message.message.content)) return [];
     const events: ChatEvent[] = [];
+    // A reply Claude Code makes itself (/model, /effort) has no stream events: its text comes only here.
+    if (message.message.model === '<synthetic>') {
+      for (const [index, block] of message.message.content.entries()) {
+        if (isRecord(block) && block.type === 'text' && typeof block.text === 'string' && block.text) events.push({ type: 'text', delta: block.text, block: `${text(message.uuid) || this.messageId}:synthetic:${index}` });
+      }
+      return events;
+    }
     for (const block of message.message.content) {
       if (!isRecord(block) || block.type !== 'tool_use' || typeof block.id !== 'string' || typeof block.name !== 'string' || this.toolCalls.has(block.id)) continue;
       this.toolCalls.add(block.id);
@@ -155,14 +167,21 @@ export class ClaudeAdapter implements ChatAdapter {
   }
 
   private result(message: Record<string, unknown>): ChatEvent[] {
-    // One message can produce more than one result (G1); every result ends whatever turn is running.
-    const usage = isRecord(message.usage) ? message.usage : {};
     const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
+    const total = number(message.total_cost_usd);
+    const cost = total !== undefined ? Math.max(0, total - this.costSoFar) : undefined;
+    if (total !== undefined) this.costSoFar = Math.max(this.costSoFar, total);
+    // One message can produce more than one result (G1). Only a result that can be this turn's end ends it:
+    // - none is running: a late result for a turn already over;
+    // - queued_turn_count > 0: the CLI still holds a message of ours, so this result is for an earlier one;
+    // - a request is waiting and Hydra didn't interrupt: the CLI is blocked on it, so this isn't the end either.
+    if (!this.running || (number(message.queued_turn_count) ?? 0) > 0 || (this.requests.size > 0 && !this.interrupted)) return [];
+    const usage = isRecord(message.usage) ? message.usage : {};
     const events: ChatEvent[] = [];
     const cached = (number(usage.cache_read_input_tokens) ?? 0) + (number(usage.cache_creation_input_tokens) ?? 0);
     events.push({
       type: 'usage', inputTokens: number(usage.input_tokens), outputTokens: number(usage.output_tokens), ...(cached ? { cachedTokens: cached } : {}),
-      ...(number(message.total_cost_usd) !== undefined ? { costUsd: number(message.total_cost_usd) } : {}),
+      ...(cost !== undefined ? { costUsd: cost } : {}),
     });
     const interrupted = this.interrupted && message.subtype === 'error_during_execution';
     const failed = !interrupted && (message.is_error === true || (typeof message.subtype === 'string' && message.subtype !== 'success'));
@@ -174,7 +193,13 @@ export class ClaudeAdapter implements ChatAdapter {
     this.running = false;
     this.interrupted = false;
     // A turn that ended leaves nothing to answer: the CLI won't wait on those requests any more.
-    for (const id of this.requests.keys()) events.push({ type: 'resolved', id, outcome: 'cancelled', by: 'hydra' });
+    events.push(...this.cancelAll());
+    return events;
+  }
+
+  /** Every pending request, marked cancelled: the CLI won't wait on them any more. */
+  cancelAll(): ChatEvent[] {
+    const events: ChatEvent[] = [...this.requests.keys()].map(id => ({ type: 'resolved', id, outcome: 'cancelled', by: 'hydra' }));
     this.requests.clear();
     return events;
   }

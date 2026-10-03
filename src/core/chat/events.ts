@@ -87,6 +87,8 @@ export interface ChatAdapter {
   setModel?(model: string): string[];
   /** Requests still waiting for an answer. */
   pending(): string[];
+  /** Marks every pending request cancelled, for when the process goes away. */
+  cancelAll(): ChatEvent[];
   /** True once the CLI has said a turn is over and none is running. */
   readonly idle: boolean;
 }

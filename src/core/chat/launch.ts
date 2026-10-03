@@ -14,20 +14,26 @@ export const MAX_LINE = 32 * 1024 * 1024;
 export function nodeLaunch(env: NodeJS.ProcessEnv = process.env, wrap: (executable: string, args: string[]) => { executable: string; args: string[] } = processLaunch): Launch {
   return (executable: string, args: string[], cwd: string, handlers: ProcessHandlers): ChatProcess => {
     const launch = wrap(executable, args);
-    const child = spawn(launch.executable, launch.args, { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Off Windows the CLI leads its own process group, so ending the tree reaches everything it started.
+    const child = spawn(launch.executable, launch.args, { cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] });
     const decoder = new StringDecoder('utf8');
-    let pending = '';
+    // The unfinished line, kept as pieces so a long line isn't rejoined and rescanned on every chunk.
+    let pieces: string[] = [];
+    let pendingLength = 0;
     let stderr = '';
     let ended = false;
     child.stdout.on('data', (chunk: Buffer) => {
-      pending += decoder.write(chunk);
+      let text = decoder.write(chunk);
       let newline: number;
-      while ((newline = pending.indexOf('\n')) >= 0) {
-        const line = pending.slice(0, newline).replace(/\r$/, '');
-        pending = pending.slice(newline + 1);
+      while ((newline = text.indexOf('\n')) >= 0) {
+        const line = (pieces.join('') + text.slice(0, newline)).replace(/\r$/, '');
+        pieces = [];
+        pendingLength = 0;
+        text = text.slice(newline + 1);
         handlers.line(line);
       }
-      if (pending.length > MAX_LINE) { pending = ''; handlers.line('\u0000line too long'); }
+      if (text) { pieces.push(text); pendingLength += text.length; }
+      if (pendingLength > MAX_LINE) { pieces = []; pendingLength = 0; handlers.line('\u0000line too long'); }
     });
     child.stderr.on('data', (chunk: Buffer) => { stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4000); });
     child.stdin.on('error', () => undefined);
@@ -35,7 +41,7 @@ export function nodeLaunch(env: NodeJS.ProcessEnv = process.env, wrap: (executab
     child.on('close', code => {
       if (ended) return;
       ended = true;
-      const rest = pending + decoder.end();
+      const rest = pieces.join('') + decoder.end();
       if (rest.trim()) handlers.line(rest);
       handlers.exit(code);
     });

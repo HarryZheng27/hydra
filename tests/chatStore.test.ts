@@ -80,3 +80,17 @@ test('on Windows, chat logs and the index are readable only by the user', { skip
     assert.equal(await ownerOnlyProblem(path.join(dir, 'index.json')), undefined);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('after a crash leaves half a line, the next entries are kept, not swallowed', async () => {
+  const dir = scratch();
+  try {
+    const store = new ChatStore(dir, fakeSecurity);
+    const chat = await store.create({ provider: 'claude', cwd: dir });
+    await store.append(chat.id, [{ type: 'user', text: 'a' }]);
+    fs.appendFileSync(path.join(dir, `${chat.id}.jsonl`), '{"t":"2026-10-03T00:00:00Z","event":{"type":"te');
+    const restarted = new ChatStore(dir, fakeSecurity);
+    await restarted.append(chat.id, [{ type: 'user', text: 'after crash' }]);
+    await restarted.append(chat.id, [{ type: 'user', text: 'later' }]);
+    assert.deepEqual((await restarted.read(chat.id)).map(entry => (entry.event as { text: string }).text), ['a', 'after crash', 'later']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

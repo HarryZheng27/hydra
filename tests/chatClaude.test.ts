@@ -48,6 +48,7 @@ class Harness {
   }
   of<T extends ChatEvent['type']>(type: T) { return this.events.filter((event): event is Extract<ChatEvent, { type: T }> => event.type === type); }
   errors() { try { return fs.readFileSync(path.join(this.state, 'errors.log'), 'utf8'); } catch { return ''; } }
+  consumed() { try { return fs.readFileSync(path.join(this.state, 'consumed.log'), 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } }
   calls() { try { return fs.readFileSync(path.join(this.state, 'calls.log'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as { index: number; args: string[] }); } catch { return []; } }
   /** Ends the stand-ins, then removes their folders (Windows keeps a process's working folder busy until it exits). */
   async cleanup() {
@@ -122,9 +123,11 @@ async function runScenario(scenario: string, choose: (index: number, args: strin
   const h = new Harness(scenario);
   try {
     let session: ChatSession | undefined;
+    let expected = 0;
     for (const [i, part] of parts(scenario).entries()) {
       const mode = choose(i, part.args);
       if (mode === 'skip') { fs.writeFileSync(path.join(h.state, 'process-count'), String(i + 1)); continue; }
+      expected += part.records.filter(record => record.dir === 'send').length;
       if (mode === 'new') { session?.close(); session = newSession(h, part.args.includes('--permission-mode plan') ? 'plan' : 'default'); }
       else {
         // The live check killed the process here; so does this test. The next message resumes.
@@ -133,6 +136,8 @@ async function runScenario(scenario: string, choose: (index: number, args: strin
       }
       await drivePart(h, session!, part);
     }
+    // Every line the host sent was checked by the stand-in before the chat closes, including any after the last turn.
+    await h.until(() => h.consumed() >= expected || !!h.errors(), `the stand-in to check all ${expected} host lines`);
     session?.close();
     assert.equal(h.errors(), '', 'the stand-in saw the host send something the recording didn\'t');
     return h;

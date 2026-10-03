@@ -32,6 +32,8 @@ export class ChatSession {
   private closed = false;
   /** The process we ended on purpose: its exit is expected and reports nothing. */
   private retiring: ChatProcess | undefined;
+  /** The options changed since the running process started: it is replaced before the next turn. */
+  private stale = false;
 
   constructor(
     private readonly makeAdapter: () => ChatAdapter,
@@ -97,7 +99,9 @@ export class ChatSession {
   /** Changes model, effort or mode for the next process. The running one, if any, is ended when idle. */
   reconfigure(change: Partial<Pick<ChatOptions, 'model' | 'effort' | 'permissionMode' | 'sandbox'>>): void {
     this.options = { ...this.options, ...change };
-    if (!this.turnRunning) this.endProcess();
+    // Mid-turn, the process finishes its turn and is replaced before anything else is sent, so a tighter
+    // permission mode applies to every later message.
+    if (this.turnRunning) this.stale = true; else this.endProcess();
   }
 
   private pump(): void {
@@ -111,8 +115,9 @@ export class ChatSession {
 
   private spawn(): boolean {
     const adapter = this.makeAdapter();
-    const options: ChatOptions = this.started || this.providerSessionId
-      ? { ...this.options, resume: this.providerSessionId ?? this.options.sessionId, sessionId: undefined }
+    // Resume once the CLI has reported its session (Claude saves it then); a first start that died earlier starts again.
+    const options: ChatOptions = this.started && this.providerSessionId
+      ? { ...this.options, resume: this.providerSessionId, sessionId: undefined }
       : this.options;
     let args: string[];
     try { args = adapter.args(options); } catch (error) {
@@ -134,7 +139,7 @@ export class ChatSession {
     }
     this.adapter = adapter;
     this.process = process;
-    this.started = true;
+    this.stale = false;
     for (const line of adapter.start(options)) process.write(line);
     return true;
   }
@@ -143,7 +148,7 @@ export class ChatSession {
     const adapter = this.adapter!;
     const { events, replies } = adapter.feed(line);
     for (const reply of replies) this.process?.write(reply);
-    for (const event of events) if (event.type === 'session') this.providerSessionId = event.providerSessionId;
+    for (const event of events) if (event.type === 'session') { this.providerSessionId = event.providerSessionId; this.started = true; }
     const fatal = events.some(event => event.type === 'error' && event.fatal);
     const done = events.some(event => event.type === 'done');
     if (fatal) {
@@ -161,6 +166,7 @@ export class ChatSession {
     clearTimeout(this.stopTimer);
     this.turnRunning = false;
     this.emit(events);
+    if (this.stale) this.endProcess();
     if (this.queue.length) { this.pump(); return; }
     clearTimeout(this.idleTimer);
     if (this.process && !this.closed) this.idleTimer = setTimeout(() => { if (!this.turnRunning && !this.queue.length) this.endProcess(); }, this.timings.idleMs);
@@ -168,6 +174,9 @@ export class ChatSession {
 
   private endProcess(): void {
     clearTimeout(this.idleTimer);
+    // Requests the process was waiting on can't be answered any more.
+    const cancelled = this.adapter?.cancelAll() ?? [];
+    if (cancelled.length) this.emit(cancelled);
     const process = this.process;
     this.process = undefined;
     this.adapter = undefined;
@@ -177,6 +186,8 @@ export class ChatSession {
   private onExit(process: ChatProcess, code: number | null): void {
     if (process === this.retiring) { this.retiring = undefined; return; }
     if (process !== this.process) return;
+    const cancelled = this.adapter?.cancelAll() ?? [];
+    if (cancelled.length) this.emit(cancelled);
     this.process = undefined;
     this.adapter = undefined;
     if (this.turnRunning) {
