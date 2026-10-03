@@ -146,7 +146,7 @@ export function start(): void {
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
     hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree(), agents: (project, message) => hydra.agents(project, message) },
-    projectOpened: async cwd => { const project = (await state.load()).projects.find(candidate => samePath(candidate.path, cwd)); if (project) void hydra.open(project).catch(() => undefined); },
+    projectOpened: cwd => { void state.load().then(loaded => { const project = loaded.projects.find(candidate => samePath(candidate.path, cwd)); if (project) return hydra.open(project); return undefined; }).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
   });

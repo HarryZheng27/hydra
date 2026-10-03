@@ -109,7 +109,9 @@ test('the stores live in user data and no app code reads CLI paths from anywhere
   const sources = ['handlers.ts', 'settings.ts', 'startup.ts'].map(name => fs.readFileSync(path.join(__dirname, '..', 'src', 'main', name), 'utf8')).join('\n');
   assert.match(sources, /createSettingsStore\(userData\)/);
   assert.match(sources, /const userData = app\.getPath\('userData'\)/);
-  for (const forbidden of ['.hydra', '.vscode', 'process.cwd()', 'hydra.claudePath', 'hydra.codexPath']) assert.ok(!sources.includes(forbidden), forbidden);
+  for (const forbidden of ['.vscode', 'process.cwd()', 'hydra.claudePath', 'hydra.codexPath']) assert.ok(!sources.includes(forbidden), forbidden);
+  // A project's .hydra folder, as a path (not the main process's `hydra` object, deps.hydra).
+  assert.ok(!/(^|[^\w$)\]])\.hydra\b/m.test(sources), '.hydra');
 });
 
 test('a file Hydra cannot read is never overwritten: defaults for this session, and every write refused', async () => {

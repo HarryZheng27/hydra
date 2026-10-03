@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { addClaudeAllowRule, addCodexBlock, addGuidanceBlock, removeGuidanceBlock, claudeAllowRule, claudeStatus, codexStatus, connectCodex, disconnectCodex, providerPaths, removeClaudeAllowRule, removeCodexBlock, bridgeTargetExists, shouldRepairConnection, type HelperServerSpec } from '../src/core/helperRegistration';
-import { limitHookGroup, limitHookTargetsExist } from '../src/core/claudeLimitHook';
+import { addClaudeAllowRule, addCodexBlock, addGuidanceBlock, removeGuidanceBlock, claudeAllowRule, claudeStatus, codexStatus, connectCodex, disconnectCodex, providerPaths, removeClaudeAllowRule, removeCodexBlock, bridgeTargetExists, isStandardHelpersDir, shouldRepairConnection, type HelperServerSpec } from '../src/core/helperRegistration';
+import { limitHookGroup, limitHookReachesThisHydra } from '../src/core/claudeLimitHook';
 
 const spec: HelperServerSpec = { command: 'C:\\Program Files\\Hydra\\Hydra.exe', args: ['C:\\Program Files\\Hydra\\resources\\app\\extensions\\hydra\\dist\\hydra-mcp.cjs'], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: 'C:\\Users\\n\\AppData\\Roaming\\Hydra\\helpers' } };
 
@@ -238,13 +238,18 @@ test('turning off Memory (claude-mem) never uninstalls anything, and Repair refu
   assert.match(connectors, /Hydra won't set it up or repair it; anything already installed stays\./);
 });
 
-test('another Hydra\'s entry is left alone while what it runs is there, and repaired only once it is gone (G5)', async () => {
+test('another Hydra\'s entry is left alone while it reaches this one, and repaired otherwise (G5)', { skip: process.platform === 'darwin' }, async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hydra-reg-'));
+  const saved = { APPDATA: process.env.APPDATA, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+  // This Hydra is on the standard storage (an installed IDE or app), here under the scratch folder.
+  process.env.APPDATA = dir; process.env.XDG_CONFIG_HOME = dir;
+  const helpers = path.join(dir, 'Hydra', 'User', 'globalStorage', 'nico-dunlap.hydra-agent-manager', 'helpers');
   try {
+    assert.equal(isStandardHelpersDir(helpers), true);
     const other = path.join(dir, 'Other Hydra.exe'), otherScript = path.join(dir, 'hydra-mcp.cjs');
     await writeFile(other, ''); await writeFile(otherScript, '');
-    const mine: HelperServerSpec = { command: path.join(dir, 'Mine.exe'), args: [path.join(dir, 'mine', 'hydra-mcp.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: dir } };
-    const theirs: HelperServerSpec = { command: other, args: [otherScript], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: dir } };
+    const mine: HelperServerSpec = { command: path.join(dir, 'Mine.exe'), args: [path.join(dir, 'mine', 'hydra-mcp.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: helpers } };
+    const theirs: HelperServerSpec = { command: other, args: [otherScript], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: helpers } };
     // Claude's user-level entry.
     const paths = { ...providerPaths(), claudeJson: path.join(dir, '.claude.json'), codexConfig: path.join(dir, 'config.toml') };
     await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: theirs } }));
@@ -264,19 +269,68 @@ test('another Hydra\'s entry is left alone while what it runs is there, and repa
     claude = await claudeStatus(paths, mine);
     assert.deepEqual([claude.current, claude.targetExists, shouldRepairConnection(claude)], [true, undefined, false]);
     assert.equal(bridgeTargetExists(undefined, []), false);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    assert.equal(bridgeTargetExists(other, []), false, 'an entry with no script counts as missing');
+    await writeFile(otherScript, '');
+    // Another Hydra that looks in another helpers folder (a development or test window's) doesn't reach this one.
+    const elsewhere = { ...theirs, env: { ...theirs.env, HYDRA_HELPERS_DIR: path.join(dir, 'dev-helpers') } };
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: elsewhere } }));
+    await writeFile(paths.codexConfig, addCodexBlock('', elsewhere));
+    claude = await claudeStatus(paths, mine); codex = await codexStatus(paths.codexConfig, mine);
+    assert.deepEqual([claude.targetExists, shouldRepairConnection(claude), codex.targetExists, shouldRepairConnection(codex)], [false, true, false, true]);
+    // Nor does one not run as Node.
+    const notNode = { ...theirs, env: { HYDRA_HELPERS_DIR: helpers } };
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: notNode } }));
+    claude = await claudeStatus(paths, mine);
+    assert.deepEqual([claude.targetExists, shouldRepairConnection(claude)], [false, true]);
+    // The same folder spelled with other case still reaches this one.
+    const cased = { ...theirs, env: { ...theirs.env, HYDRA_HELPERS_DIR: helpers.toUpperCase() } };
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: cased } }));
+    claude = await claudeStatus(paths, mine);
+    if (process.platform === 'win32') assert.equal(shouldRepairConnection(claude), false);
+    // This Hydra's own entry in an older shape (same program and script) is upgraded, even though both exist.
+    await writeFile(mine.command, ''); await mkdir(path.dirname(mine.args[0]!), { recursive: true }); await writeFile(mine.args[0]!, '');
+    const older = { ...mine, args: [...mine.args, '--old'] };
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: older } }));
+    await writeFile(paths.codexConfig, addCodexBlock('', older));
+    claude = await claudeStatus(paths, mine); codex = await codexStatus(paths.codexConfig, mine);
+    assert.deepEqual([claude.current, shouldRepairConnection(claude), codex.current, shouldRepairConnection(codex)], [false, true, false, true]);
+    // A window on its own profile (a probe's --user-data-dir) never takes over the installed Hydra's entry.
+    const probe: HelperServerSpec = { ...mine, env: { ...mine.env, HYDRA_HELPERS_DIR: path.join(dir, 'probe', 'helpers') } };
+    assert.equal(isStandardHelpersDir(probe.env.HYDRA_HELPERS_DIR), false);
+    await writeFile(paths.claudeJson, JSON.stringify({ mcpServers: { hydra: theirs } }));
+    await writeFile(paths.codexConfig, addCodexBlock('', theirs));
+    claude = await claudeStatus(paths, { ...probe, command: path.join(dir, 'Probe.exe') }); codex = await codexStatus(paths.codexConfig, { ...probe, command: path.join(dir, 'Probe.exe') });
+    assert.deepEqual([shouldRepairConnection(claude), shouldRepairConnection(codex)], [false, false]);
+    // ...but does repair one whose program is gone.
+    await rm(otherScript);
+    claude = await claudeStatus(paths, { ...probe, command: path.join(dir, 'Probe.exe') });
+    assert.equal(shouldRepairConnection(claude), true);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
-test('another Hydra\'s Claude usage-limit hook counts as present while its program and script are there (G5)', async () => {
+test('another Hydra\'s Claude usage-limit hook is left alone only while it reaches this one (G5)', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hydra-hook-'));
   try {
-    const exe = path.join(dir, "O'Neil Hydra.exe"), script = path.join(dir, 'hydra-limit-hook.cjs');
+    const exe = path.join(dir, "O'Neil Hydra.exe"), script = path.join(dir, 'hydra-limit-hook.cjs'), events = path.join(dir, 'events');
     await writeFile(exe, ''); await writeFile(script, '');
-    const group = limitHookGroup({ executable: exe, script, eventsDir: path.join(dir, 'events'), platform: 'win32', systemRoot: 'C:\Windows' });
-    const settings = JSON.stringify({ hooks: { StopFailure: [group] } });
-    assert.equal(limitHookTargetsExist(settings), true);
+    const mine = limitHookGroup({ executable: path.join(dir, 'Mine.exe'), script: path.join(dir, 'mine-hydra-limit-hook.cjs'), eventsDir: events, platform: 'win32', systemRoot: 'C:\\Windows' });
+    const theirs = limitHookGroup({ executable: exe, script, eventsDir: events, platform: 'win32', systemRoot: 'C:\\Windows' });
+    const settings = (group: unknown) => JSON.stringify({ hooks: { StopFailure: [group] } });
+    assert.equal(limitHookReachesThisHydra(settings(theirs), mine), true);
+    // Writing into another events folder (a development or test window's): repaired.
+    const elsewhere = limitHookGroup({ executable: exe, script, eventsDir: path.join(dir, 'dev-events'), platform: 'win32', systemRoot: 'C:\\Windows' });
+    assert.equal(limitHookReachesThisHydra(settings(elsewhere), mine), false);
+    // This Hydra's own hook (same program and script) in an older shape: repaired.
+    await writeFile(path.join(dir, 'Mine.exe'), ''); await writeFile(path.join(dir, 'mine-hydra-limit-hook.cjs'), '');
+    const own = limitHookGroup({ executable: path.join(dir, 'Mine.exe'), script: path.join(dir, 'mine-hydra-limit-hook.cjs'), eventsDir: events, platform: 'win32', systemRoot: 'D:\\Windows' });
+    assert.equal(limitHookReachesThisHydra(settings(own), mine), false);
+    // A window on its own profile leaves another installed Hydra's hook alone, wherever it writes.
+    assert.equal(limitHookReachesThisHydra(settings(elsewhere), mine, undefined, false), true);
     await rm(script);
-    assert.equal(limitHookTargetsExist(settings), false);
-    assert.equal(limitHookTargetsExist('{}'), false);
+    assert.equal(limitHookReachesThisHydra(settings(theirs), mine), false);
+    assert.equal(limitHookReachesThisHydra('{}', mine), false);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

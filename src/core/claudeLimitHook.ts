@@ -246,24 +246,33 @@ export function readClaudeLimitHooks(text: string | undefined): unknown[] {
   } catch { return []; }
 }
 /**
- * Whether the program and script every Hydra usage-limit hook in Claude's settings runs are still there. A hook that
- * points at another Hydra still installed (the IDE's or the app's) is left alone, as the bridge's entry is (G5).
+ * Whether Claude's Hydra usage-limit hook is another Hydra's that reaches this one (G5): one hook, its program and
+ * script still there, writing into this Hydra's events folder. This Hydra's own hook in an older shape, and anything
+ * else, are not, and are repaired, as the bridge's entry is (helperRegistration.ts reachesThisHydra).
  */
-export function limitHookTargetsExist(text: string | undefined, exists: (file: string) => boolean = existsSync): boolean {
+export function limitHookReachesThisHydra(text: string | undefined, mine: LimitHookGroup, exists: (file: string) => boolean = existsSync, standard = true): boolean {
   const found = readClaudeLimitHooks(text);
-  if (!found.length) return false;
-  for (const group of found as LimitHookGroup[]) {
-    for (const hook of group.hooks ?? []) {
-      let program: string | undefined, script: string | undefined;
-      if (hook.command?.toLowerCase().endsWith('powershell.exe')) {
-        const quoted = [...(hook.args?.at(-1) ?? '').matchAll(/'((?:[^']|'')*)'/g)].map(match => match[1]!.replace(/''/g, "'"));
-        // `$env:ELECTRON_RUN_AS_NODE='1'; & 'program' 'script' 'events'`: the quoted values after the 1.
-        [program, script] = quoted.slice(1);
-      } else [program, script] = (hook.args ?? []).slice(2);
-      if (!program || !script || !exists(program) || !exists(script)) return false;
-    }
-  }
-  return true;
+  if (found.length !== 1) return false;
+  const theirs = limitHookPaths(found[0]), ours = limitHookPaths(mine);
+  if (!theirs.executable || !theirs.script || !exists(theirs.executable) || !exists(theirs.script)) return false;
+  const same = (a?: string, b?: string) => !!a && !!b && (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+  if (same(theirs.executable, ours.executable) && same(theirs.script, ours.script)) return false;
+  // A window on its own profile never takes over another installed Hydra's hook (helperRegistration.ts reachesThisHydra).
+  return same(limitHookEventsDir(found[0]), limitHookEventsDir(mine)) || !standard;
+}
+/** The events folder a Hydra usage-limit hook writes into. */
+function limitHookEventsDir(group: unknown): string | undefined {
+  if (!isHydraLimitGroup(group)) return undefined;
+  const hook = (group as LimitHookGroup).hooks[0]!;
+  const args = Array.isArray(hook.args) ? hook.args : [];
+  if (hook.command === '/bin/sh') return typeof args[4] === 'string' ? args[4] : undefined;
+  const run = args[args.length - 1];
+  if (typeof run !== 'string') return undefined;
+  const call = run.indexOf('; & ');
+  const executable = call < 0 ? undefined : readPowershellLiteral(run, call + 4);
+  const script = executable && run[executable.end] === ' ' ? readPowershellLiteral(run, executable.end + 1) : undefined;
+  const events = script && run[script.end] === ' ' ? readPowershellLiteral(run, script.end + 1) : undefined;
+  return events?.value;
 }
 export function limitHookState(text: string | undefined, group: LimitHookGroup): 'missing' | 'current' | 'stale' {
   const found = readClaudeLimitHooks(text);
