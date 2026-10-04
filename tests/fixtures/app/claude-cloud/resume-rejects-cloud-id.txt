@@ -1,0 +1,2 @@
+# claude -p --resume <cloud session id>
+Error: --resume requires a valid session ID or session title when used with --print. Usage: claude -p --resume <session-id|title>. Provided value "session_01StandIn00000000000005" is not a UUID and does not match any session title.

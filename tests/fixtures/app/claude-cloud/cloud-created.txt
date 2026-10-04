@@ -1,0 +1,16 @@
+# claude --cloud in an untrusted clone of a GitHub repository: trust prompt, then the session (exited 0)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Accessing workspace:
+<project>
+Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not,
+take a moment to review what's in this folder first.
+Claude Code'll be able to read, edit, and execute files here.
+Security guide
+❯ No, exit
+Yes, I trust this folder
+Enter to confirm · Esc to cancel
+  No, exit
+❯ Yes, I trust this folder
+                                                                                                                                                                Created cloud session: README sandbox note
+View: https://claude.ai/code/session_01StandIn00000000000001?from=cli&m=0
+Resume with: claude --teleport session_01StandIn00000000000001

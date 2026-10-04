@@ -92,9 +92,9 @@ Main starts every process: chat CLIs, heads, gates, node-pty lanes, Edge for scr
 
 ## Cloud
 Cloud agents can't reach Hydra's endpoint (loopback only). Their work is checked when it comes back.
-- **Claude:** `claude --cloud "<prompt>"` prints a session id and a claude.ai/code URL. It needs the repository on GitHub and a paid plan. The CLI reports no status or progress; only the web page does. `claude --teleport <id>` brings the session back. The docs list no Windows limit, but a third-party guide disagrees; G7 checks. See [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web).
+- **Claude** (G7's spike S3, [G7-cloud.md](hydra-app/G7-cloud.md#spike-s3-2026-10-04)): `claude --cloud "<prompt>"` needs a terminal (the app uses a pseudo-terminal), prints the session's title, a claude.ai/code URL and `claude --teleport <id>`, and exits. It needs a paid plan, but not GitHub: it uploads a snapshot of the folder's tracked files as they are on disk, uncommitted edits included, untracked and ignored files not. The CLI reports no status. `claude --teleport <id>` works on Windows and resumes the conversation in a terminal, but the session's copy has no remote, so its file changes can't come back. See [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web).
 - **Codex:** `codex cloud exec --env <id> "<prompt>"`, `codex cloud status <task>`, `codex cloud diff <task>`, `codex apply <task>`. It needs a Codex cloud environment.
-- **Cloud chat:** start it, show the link, and offer **Bring back** into a fresh worktree.
+- **Cloud chat:** start it and show the link. **Continue here** opens a fresh worktree; for Claude that resumes the conversation in a terminal there (the cloud's file changes stay in the cloud), for Codex it applies the task's diff.
 - **Cloud head** (plan job `where: "cloud"`): Codex only, because it reports status and diffs. Hydra polls, applies the diff to the job's branch, then runs gates and cross-review locally before it can land. Claude cloud heads wait until its CLI reports status.
 
 ## Security for new surfaces

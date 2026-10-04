@@ -56,4 +56,4 @@ G1 and G2 can run at the same time, in separate sessions. G6 and G7 can too.
 | G4 | Done | [#302](https://github.com/ndunl075/hydra/pull/302), [#304](https://github.com/ndunl075/hydra/pull/304), [#305](https://github.com/ndunl075/hydra/pull/305), [#306](https://github.com/ndunl075/hydra/pull/306), [#307](https://github.com/ndunl075/hydra/pull/307) |
 | G5 | Done | [#308](https://github.com/ndunl075/hydra/pull/308), [#309](https://github.com/ndunl075/hydra/pull/309), [#310](https://github.com/ndunl075/hydra/pull/310), [#311](https://github.com/ndunl075/hydra/pull/311), [#312](https://github.com/ndunl075/hydra/pull/312) |
 | G6 | Done | [#303](https://github.com/ndunl075/hydra/pull/303), [#313](https://github.com/ndunl075/hydra/pull/313), [#314](https://github.com/ndunl075/hydra/pull/314), [#315](https://github.com/ndunl075/hydra/pull/315), [#316](https://github.com/ndunl075/hydra/pull/316), [#317](https://github.com/ndunl075/hydra/pull/317) |
-| G7 | Not started | |
+| G7 | In progress: spike S3's Claude half done; Codex waits for a cloud environment | |

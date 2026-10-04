@@ -1,0 +1,43 @@
+# claude --teleport of the listing session: [redacted] and git-ignored files were not uploaded
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Accessing workspace:
+<project>
+Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not,
+take a moment to review what's in this folder first.
+Claude Code'll be able to read, edit, and execute files here.
+Security guide
+❯ No, exit
+Yes, I trust this folder
+Enter to confirm · Esc to cancel
+  No, exit
+❯ Yes, I trust this folder
+◐ Teleporting session…
+session_01StandIn00000000000004
+◐ Validating session
+◯ Fetching session logs
+◯ Getting branch info
+◯ Checking out branch
+◑✔ Validating session
+◑ Fetching session logs
+◐✔ Fetching session logs
+✔ Getting branch info
+◐ Checking out branch
+ ▐▛███▛█   Claude Code v2.1.282
+▝▜██████▀  Opus 5.5 with medium effort · Claude Max
+ ▝▝   ▝▝   <project>
+❯ List every file in the repository root, including hidden ones, with ls -la, and reply with just that listing. Change nothing.
+  Listed 1 directory
+● total 32
+  drwxr-xr-x 6 root root 4096 Oct  4 19:55 .
+  drwxr-xr-x 3 root root 4096 Oct  4 19:55 ..
+  drwxr-xr-x 8 root root 4096 Oct  4 19:55 .git
+  drwxr-xr-x 3 root root 4096 Oct  4 19:55 .hydra
+  -rw-r--r-- 1 root root  352 Oct  4 19:55 README.md
+  -rw-r--r-- 1 root root  223 Oct  4 19:55 package.json
+  drwxr-xr-x 2 root root 4096 Oct  4 19:55 src
+  drwxr-xr-x 2 root root 4096 Oct  4 19:55 test
+● Session resumed
+                                                                                                                                            ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+1 agent
