@@ -458,10 +458,11 @@ if (role === 'first') {
     await shot('project-'+(await themeNow()).theme);
     report.afterPick = await ui(`({ projects: [...document.querySelectorAll('.project-name span')].map(e => e.textContent), heading: document.querySelector('.empty h1')?.textContent })`);
     await ui(`document.querySelector('.titlebar .icon-button').click(); 1`);
-    await until(`!document.querySelector('.sidebar')`, 'the sidebar to hide');
-    report.sidebarAfterToggle = await ui(`!!document.querySelector('.sidebar')`);
+    // Closed, the sidebar stays in the page so it can slide, but is inert: nothing in it can be reached.
+    await until(`!document.querySelector('.sidebar-slot:not([inert]) .sidebar')`, 'the sidebar to hide');
+    report.sidebarAfterToggle = await ui(`!!document.querySelector('.sidebar-slot:not([inert]) .sidebar')`);
     await ui(`document.querySelector('.titlebar .icon-button').click(); 1`);
-    await until(`!!document.querySelector('.sidebar')`, 'the sidebar to show');
+    await until(`!!document.querySelector('.sidebar-slot:not([inert]) .sidebar')`, 'the sidebar to show');
     // Picking the same folder again, from Settings, leads back to its project and adds nothing.
     await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
     await until(`!!document.querySelector('.settings h1')`, 'Settings');
