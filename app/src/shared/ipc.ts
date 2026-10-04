@@ -73,6 +73,8 @@ export interface ChatSettingsChange { model?: string; effort?: string; permissio
 
 export type CliProvider = 'claude' | 'codex';
 export interface AppInfo { name: string; version: string; electron: string; platform: string }
+/** In-app updates: `available` is false for a preview or development copy, with the reason. */
+export interface UpdateStatusView { available: boolean; reason?: string; automatic: boolean; busy: boolean; version: string }
 /** Preferences, in settings.json. CLI paths are machine-only: set from main's file picker, never from a project. */
 export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>> }
 /** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
@@ -103,6 +105,10 @@ export interface Channels {
   'settings.clearCliPath': { payload: { provider: CliProvider }; result: AppSettings };
   'state.get': { payload: null; result: AppState };
   'state.setSidebarOpen': { payload: { open: boolean }; result: AppState };
+  /** In-app updates (G6): whether this copy updates itself, the daily check, and a check now (main shows its own dialogs). */
+  'updates.status': { payload: null; result: UpdateStatusView };
+  'updates.check': { payload: null; result: UpdateStatusView };
+  'updates.setAutomatic': { payload: { on: boolean }; result: UpdateStatusView };
   /** Main shows a folder picker; the renderer never sends a path. `picked` is the chosen folder's project, new or not. */
   'projects.pick': { payload: null; result: { state: AppState; picked?: string } };
   /** Clones a repository URL into a folder main asks for, and adds it as a project. */
@@ -205,6 +211,9 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'settings.clearCliPath': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'state.get': isNull,
   'state.setSidebarOpen': exactly<{ open: boolean }>({ open: value => typeof value === 'boolean' }),
+  'updates.status': isNull,
+  'updates.check': isNull,
+  'updates.setAutomatic': exactly<{ on: boolean }>({ on: value => typeof value === 'boolean' }),
   'projects.pick': isNull,
   'projects.clone': exactly<{ url: string }>({ url: value => typeof value === 'string' && value.length > 0 && value.length <= 500 }),
   'projects.remove': exactly<{ id: string }>({ id: isId }),
@@ -262,6 +271,9 @@ export interface HydraApi {
   clearCliPath(provider: CliProvider): Promise<AppSettings>;
   getState(): Promise<AppState>;
   setSidebarOpen(open: boolean): Promise<AppState>;
+  updateStatus(): Promise<UpdateStatusView>;
+  checkForUpdates(): Promise<UpdateStatusView>;
+  setAutomaticUpdates(on: boolean): Promise<UpdateStatusView>;
   pickProject(): Promise<{ state: AppState; picked?: string }>;
   cloneRepo(url: string): Promise<{ state: AppState; picked?: string }>;
   removeProject(id: string): Promise<AppState>;

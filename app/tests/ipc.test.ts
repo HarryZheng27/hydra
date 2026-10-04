@@ -45,7 +45,7 @@ test('main registers exactly one transport channel', () => {
 });
 
 test('every channel has a validator, and parseCall agrees with it', () => {
-  assert.deepEqual([...channels].sort(), ['app.info', 'app.problems', 'chats.answer', 'chats.configure', 'chats.create', 'chats.list', 'chats.open', 'chats.openTerminal', 'chats.remove', 'chats.send', 'chats.stop', 'chats.terminalClosed', 'hydra.agents', 'hydra.connect', 'hydra.connections', 'hydra.control', 'hydra.disconnect', 'hydra.reply', 'hydra.tree', 'onboarding.check', 'onboarding.signIn', 'projects.clone', 'projects.pick', 'projects.remove', 'projects.trust', 'review.diff', 'review.open', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen']);
+  assert.deepEqual([...channels].sort(), ['app.info', 'app.problems', 'chats.answer', 'chats.configure', 'chats.create', 'chats.list', 'chats.open', 'chats.openTerminal', 'chats.remove', 'chats.send', 'chats.stop', 'chats.terminalClosed', 'hydra.agents', 'hydra.connect', 'hydra.connections', 'hydra.control', 'hydra.disconnect', 'hydra.reply', 'hydra.tree', 'onboarding.check', 'onboarding.signIn', 'projects.clone', 'projects.pick', 'projects.remove', 'projects.trust', 'review.diff', 'review.open', 'settings.clearCliPath', 'settings.get', 'settings.pickCliPath', 'settings.setTheme', 'state.get', 'state.setSidebarOpen', 'updates.check', 'updates.setAutomatic', 'updates.status']);
   assert.equal(parseCall({ channel: 'app.info', payload: null }).ok, true);
   const good: Array<[string, unknown]> = [
     ['settings.setTheme', { theme: 'system' }], ['settings.pickCliPath', { provider: 'codex' }], ['settings.clearCliPath', { provider: 'claude' }],
@@ -59,7 +59,7 @@ test('no payload field accepts a path, a command or free text', () => {
   const samples: Record<string, Record<string, unknown>> = {
     'settings.setTheme': { theme: 'dark' }, 'settings.pickCliPath': { provider: 'claude' }, 'settings.clearCliPath': { provider: 'codex' },
     'state.setSidebarOpen': { open: true }, 'projects.remove': { id: '0f8fad5b-d9cb-469f-a165-70867728950e' },
-    'onboarding.check': { refresh: false }, 'onboarding.signIn': { provider: 'codex' },
+    'onboarding.check': { refresh: false }, 'onboarding.signIn': { provider: 'codex' }, 'updates.setAutomatic': { on: true },
   };
   for (const channel of channels) {
     const sample = samples[channel];

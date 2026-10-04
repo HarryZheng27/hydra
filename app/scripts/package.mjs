@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EXE, APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, releaseVersion, versionStrings, installerDefinitions } from './packageConfig.mjs';
+import { EXE, APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, releaseChannel, releaseVersion, versionStrings, installerDefinitions } from './packageConfig.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const appDir = path.dirname(here);
@@ -30,9 +30,13 @@ function copyTree(from, to, skip = () => false) {
 }
 const sha256 = data => createHash('sha256').update(data).digest('hex');
 
-async function packageApp() {
+async function packageApp(channel) {
   const pkg = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
   const version = releaseVersion(pkg.version);
+  // A stable app updates itself by comparing its version with the release tag's, so it must carry Hydra's own version:
+  // otherwise it would be offered every release, and its installer refused as a downgrade, forever.
+  const hydraVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
+  if (channel === 'stable' && version !== hydraVersion) throw new Error(`A stable app must have Hydra's version: app/package.json has ${version}, package.json has ${hydraVersion}.`);
   const dist = path.join(appDir, 'dist');
   for (const file of ['main.cjs', 'preload.cjs', 'hydra-mcp.cjs', 'hydra-uninstall.cjs', 'renderer/index.html']) {
     if (!fs.existsSync(path.join(dist, file))) throw new Error(`dist/${file} is missing: run npm run build first.`);
@@ -54,7 +58,7 @@ async function packageApp() {
   // 2. The app's files: a minimal manifest, dist/, and node-pty.
   const stage = path.join(out, 'stage');
   fs.mkdirSync(stage, { recursive: true });
-  fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({ name: pkg.name, productName: pkg.productName, description: pkg.description, version, license: pkg.license, main: pkg.main }, null, 2) + '\n');
+  fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({ name: pkg.name, productName: pkg.productName, description: pkg.description, version, license: pkg.license, main: pkg.main, hydraChannel: channel }, null, 2) + '\n');
   copyTree(dist, path.join(stage, 'dist'), source => excluded(source));
   const pty = path.dirname(require.resolve('node-pty/package.json'));
   for (const part of NODE_PTY_PARTS) {
@@ -125,7 +129,8 @@ function buildInstaller({ version, icon }, outputDir = installerDir) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Packaging the app needs Windows x64.');
-  const packaged = await packageApp();
+  // --channel=stable: a stable release, which updates itself (app/src/main/updates.ts). Anything else is a preview, which never does.
+  const packaged = await packageApp(releaseChannel(process.argv.find(arg => arg.startsWith('--channel='))?.slice('--channel='.length)));
   if (process.argv.includes('--installer')) buildInstaller(packaged);
   // --prior=<x.y.z>: the same package as an older release, for the installer test's update case (scripts/app-installer-test.ps1).
   const prior = process.argv.find(arg => arg.startsWith('--prior='))?.slice('--prior='.length);

@@ -22,8 +22,17 @@ const maxSumsBytes = 64 * 1024;
 const apiTimeoutMs = 15_000;
 /** A download that receives nothing for this long is abandoned. */
 const idleTimeoutMs = 60_000;
-const installerName = 'HydraSetup.exe';
-const sumsName = 'SHA256SUMS';
+/**
+ * Which Hydra updates itself: the IDE (HydraSetup.exe, SHA256SUMS) or the Hydra app (HydraAppSetup.exe,
+ * SHA256SUMS-app). A release's SHA256SUMS keeps exactly one line, the IDE's, because every installed IDE and
+ * scripts/install.ps1 refuse anything else; the app's installer has its own one-line file.
+ */
+export type UpdateProduct = 'ide' | 'app';
+export interface ProductFiles { installer: string; sums: string }
+export const productFiles: Readonly<Record<UpdateProduct, ProductFiles>> = {
+  ide: { installer: 'HydraSetup.exe', sums: 'SHA256SUMS' },
+  app: { installer: 'HydraAppSetup.exe', sums: 'SHA256SUMS-app' },
+};
 
 /** The slice of fetch this module uses; the global fetch fits, and tests inject their own. */
 export type FetchLike = (url: string, init: { headers?: Record<string, string>; redirect: 'manual'; signal?: AbortSignal }) => Promise<Response>;
@@ -85,7 +94,7 @@ function withTimeout(ms: number, outer?: AbortSignal): { signal: AbortSignal; do
  * release tagged v<x.y.z> with HydraSetup.exe and SHA256SUMS served from that tag's own
  * download folder. Never throws: anything else comes back as a reason for the log.
  */
-export async function latestRelease(fetchImpl: FetchLike = fetch, options: { signal?: AbortSignal; userAgent?: string } = {}): Promise<LatestReleaseResult> {
+export async function latestRelease(fetchImpl: FetchLike = fetch, options: { signal?: AbortSignal; userAgent?: string; product?: UpdateProduct } = {}): Promise<LatestReleaseResult> {
   const timeout = withTimeout(apiTimeoutMs, options.signal);
   let payload: unknown;
   try {
@@ -98,11 +107,12 @@ export async function latestRelease(fetchImpl: FetchLike = fetch, options: { sig
   } catch (error) {
     return { reason: `couldn't reach GitHub: ${describe(error)}` };
   } finally { timeout.done(); }
-  return releaseFromPayload(payload);
+  return releaseFromPayload(payload, options.product);
 }
 
 /** The validation half of latestRelease, on an already parsed payload. */
-export function releaseFromPayload(payload: unknown): LatestReleaseResult {
+export function releaseFromPayload(payload: unknown, product: UpdateProduct = 'ide'): LatestReleaseResult {
+  const { installer: installerName, sums: sumsName } = productFiles[product];
   if (!payload || typeof payload !== 'object') return { reason: 'the release is not a JSON object' };
   const release = payload as { tag_name?: unknown; prerelease?: unknown; draft?: unknown; html_url?: unknown; assets?: unknown };
   const tag = release.tag_name;
@@ -154,12 +164,13 @@ function safeUrl(value: string): string {
   try { const url = new URL(value); return `${url.protocol}//${url.host}${url.pathname}`; } catch { return 'an invalid URL'; }
 }
 
-/** Exactly one non-empty line, `<64 hex>  HydraSetup.exe` (sha256sum's text or binary marker). */
-export function parseSums(text: string): string {
+/** Exactly one non-empty line, `<64 hex>  HydraSetup.exe` (sha256sum's text or binary marker), or the app's installer in SHA256SUMS-app. */
+export function parseSums(text: string, product: UpdateProduct = 'ide'): string {
+  const { installer: installerName, sums: sumsName } = productFiles[product];
   const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
   if (lines.length !== 1) throw new Error(`${sumsName} must have exactly one line, and has ${lines.length}`);
-  const match = /^([0-9a-fA-F]{64}) [ *]HydraSetup\.exe$/.exec(lines[0]!.trim());
-  if (!match) throw new Error(`${sumsName} has no ${installerName} line`);
+  const match = /^([0-9a-fA-F]{64}) [ *](\S+)$/.exec(lines[0]!.trim());
+  if (!match || match[2] !== installerName) throw new Error(`${sumsName} has no ${installerName} line`);
   return match[1]!.toLowerCase();
 }
 
@@ -175,6 +186,8 @@ export interface DownloadOptions {
   /** Bytes received so far, and the declared total when the server sent one. */
   onProgress?: (received: number, total?: number) => void;
   maxBytes?: number;
+  /** The IDE's installer (the default) or the app's. */
+  product?: UpdateProduct;
 }
 
 /**
@@ -186,17 +199,19 @@ export interface DownloadOptions {
 export async function downloadVerified(release: LatestRelease, dir: string, options: DownloadOptions = {}): Promise<{ file: string; sha256: string; reused: boolean }> {
   const fetchImpl = options.fetch ?? fetch;
   const cap = options.maxBytes ?? maxInstallerBytes;
+  const product = options.product ?? 'ide';
+  const { installer: installerName, sums: sumsName } = productFiles[product];
   if (!parseVersion(release.version) || release.tag !== `v${release.version}`) throw new Error('The release version is not x.y.z.');
   for (const url of [release.installerUrl, release.sumsUrl]) if (!url.startsWith(downloadPrefix(release.tag))) throw new Error(`Refused a download outside ${downloadPrefix(release.tag)}.`);
 
   const sumsTimeout = withTimeout(apiTimeoutMs, options.signal);
   let expected: string;
   try {
-    expected = parseSums((await readCapped(await getFollowing(fetchImpl, release.sumsUrl, sumsTimeout.signal), maxSumsBytes)).toString('utf8'));
+    expected = parseSums((await readCapped(await getFollowing(fetchImpl, release.sumsUrl, sumsTimeout.signal), maxSumsBytes)).toString('utf8'), product);
   } catch (error) { throw new Error(`Couldn't read ${sumsName}: ${describe(error)}`); } finally { sumsTimeout.done(); }
 
   await mkdir(dir, { recursive: true });
-  const file = path.join(dir, `HydraSetup-${release.version}.exe`);
+  const file = path.join(dir, `${installerName.replace(/\.exe$/, '')}-${release.version}.exe`);
   if (await sha256File(file).then(hash => hash === expected, () => false)) return { file, sha256: expected, reused: true };
 
   const partial = `${file}.${randomBytes(4).toString('hex')}.partial`;
@@ -234,7 +249,7 @@ export async function downloadVerified(release: LatestRelease, dir: string, opti
     if (total !== undefined && received !== total) throw new Error(`the download ended early (${received} of ${total} bytes)`);
     await handle.close(); closed = true;
     const actual = hash.digest('hex');
-    if (actual !== expected) throw new Error(`HydraSetup.exe doesn't match ${sumsName} (expected ${expected}, got ${actual}); the download was deleted`);
+    if (actual !== expected) throw new Error(`${installerName} doesn't match ${sumsName} (expected ${expected}, got ${actual}); the download was deleted`);
     await rename(partial, file);
     return { file, sha256: actual, reused: false };
   } catch (error) {
@@ -250,14 +265,21 @@ export async function downloadVerified(release: LatestRelease, dir: string, opti
 
 // ---- Eligibility ----
 
-export interface EligibilityInput { platform: string; production: boolean; execPath: string; exists: (file: string) => boolean; testRun?: boolean }
+export interface EligibilityInput {
+  platform: string; production: boolean; execPath: string; exists: (file: string) => boolean; testRun?: boolean;
+  product?: UpdateProduct;
+  /** The app's release channel, from its package: only a stable release updates itself, never a preview. */
+  channel?: string;
+}
 
 /** Only an installed Hydra on Windows (unins000.exe beside the running exe), in a production window, updates itself. */
 export function updateEligibility(input: EligibilityInput): { eligible: true; installDir: string } | { eligible: false; reason: string } {
+  const product = input.product ?? 'ide';
   if (input.platform !== 'win32') return { eligible: false, reason: 'In-app updates are Windows-only for now.' };
-  if (!input.production || input.testRun) return { eligible: false, reason: "This is a development window, so Hydra doesn't update it." };
+  if (!input.production || input.testRun) return { eligible: false, reason: product === 'app' ? "This is a development copy of Hydra, so it doesn't update itself." : "This is a development window, so Hydra doesn't update it." };
+  if (product === 'app' && input.channel !== 'stable') return { eligible: false, reason: 'This is a Hydra preview, which doesn\'t update itself. Download the next one from the releases page.' };
   const installDir = path.win32.dirname(input.execPath);
-  if (!input.exists(path.win32.join(installDir, 'unins000.exe'))) return { eligible: false, reason: "This Hydra wasn't installed with HydraSetup.exe, so it can't update itself." };
+  if (!input.exists(path.win32.join(installDir, 'unins000.exe'))) return { eligible: false, reason: `This Hydra wasn't installed with ${productFiles[product].installer}, so it can't update itself.` };
   return { eligible: true, installDir };
 }
 
@@ -277,6 +299,8 @@ export function runningNotice(heads: number, lanes: number, stopped: boolean): s
 // ---- The update helper ----
 
 export const installerArguments = ['/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NORESTARTAPPLICATIONS', '/MERGETASKS=!runcode'] as const;
+/** The app's installer runs in update mode (desktop/hydra-update-mode.iss): silent, no task changes, no restart. */
+export const appInstallerArguments = ['/HYDRAUPDATE=1', '/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART'] as const;
 /** How long the helper waits for Hydra to close before giving up on the update. */
 export const helperWaitMinutes = 10;
 /**
@@ -297,7 +321,13 @@ export function psQuote(value: string): string {
   return `'${value.replace(/['\u2018\u2019\u201a\u201b]/g, quote => quote + quote)}'`;
 }
 
-export interface HelperScriptInput { installer: string; installDir: string; exe: string; log: string }
+export interface HelperScriptInput { installer: string; installDir: string; exe: string; log: string; product?: UpdateProduct }
+
+/** Where the bridges live under the install folder: the IDE's built-in extension, or the app's archive. */
+export const bridgeFolder: Readonly<Record<UpdateProduct, string>> = {
+  ide: '\\resources\\app\\extensions\\hydra-agent-manager\\dist\\',
+  app: '\\resources\\app.asar\\dist\\',
+};
 
 /**
  * The PowerShell started through WMI just before Hydra quits (updateLauncherArguments): wait (bounded) until
@@ -320,7 +350,7 @@ export function updateHelperScript(input: HelperScriptInput): string {
     'function Get-HydraProcesses {',
     '  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $PID -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) })',
     '}',
-    `$bridgeScripts = @(${helperBridgeScripts.map(name => psQuote(`\\resources\\app\\extensions\\hydra-agent-manager\\dist\\${name}`)).join(', ')})`,
+    `$bridgeScripts = @(${helperBridgeScripts.map(name => psQuote(`${bridgeFolder[input.product ?? 'ide']}${name}`)).join(', ')})`,
     'function Test-Bridge($process) {',
     '  $line = [string]$process.CommandLine',
     '  foreach ($script in $bridgeScripts) { if ($line.IndexOf($script, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true } }',
@@ -350,7 +380,7 @@ export function updateHelperScript(input: HelperScriptInput): string {
     "Write-Log ('Running ' + $installer)",
     '$code = -1',
     'try {',
-    `  $process = Start-Process -FilePath $installer -ArgumentList ${installerArguments.map(argument => psQuote(argument)).join(',')} -Wait -PassThru`,
+    `  $process = Start-Process -FilePath $installer -ArgumentList ${(input.product === 'app' ? appInstallerArguments : installerArguments).map(argument => psQuote(argument)).join(',')} -Wait -PassThru`,
     '  $code = $process.ExitCode',
     '} catch {',
     "  Write-Log ('The installer did not start: ' + $_.Exception.Message)",

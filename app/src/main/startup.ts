@@ -22,6 +22,8 @@ import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
 import { createSettingsStore, createStateStore } from './settings';
+import { AppUpdates, createUpdateStore } from './updates';
+import { readFileSync } from 'node:fs';
 import { applyTheme, createMainWindow, focusMainWindow, getMainWindow, repaintTitleBar } from './window';
 
 declare const HYDRA_APP_VERSION: string;
@@ -151,7 +153,26 @@ export function start(): void {
     const timeout = new Promise(resolve => setTimeout(resolve, 5000));
     void Promise.race([Promise.all([chatStore.flush().catch(() => undefined), hydra.shutdown().catch(() => undefined)]), timeout]).finally(() => { flushed = true; app.quit(); });
   });
+  // In-app updates (G6): only an installed stable release checks; its channel is in the packaged package.json.
+  const channel = (() => { try { return JSON.parse(readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8')).hydraChannel as string | undefined; } catch { return undefined; } })();
+  const updateDialog = async (options: { message: string; detail?: string; buttons: string[]; cancelId: number; type?: 'info' | 'error' }) => {
+    const win = getMainWindow(), box = { type: options.type ?? 'info' as const, title: PRODUCT_NAME, message: options.message, ...(options.detail ? { detail: options.detail } : {}), buttons: options.buttons, cancelId: options.cancelId, defaultId: 0, noLink: true };
+    return (win && !win.isDestroyed() ? await dialog.showMessageBox(win, box) : await dialog.showMessageBox(box)).response;
+  };
+  const updates = new AppUpdates({
+    version: HYDRA_APP_VERSION, channel, packaged: app.isPackaged, execPath: process.execPath,
+    store: createUpdateStore(userData), tempDir: app.getPath('temp'),
+    ask: dialogOptions => updateDialog(dialogOptions),
+    tell: async (message, error) => { await updateDialog({ message, buttons: ['OK'], cancelId: 0, type: error ? 'error' : 'info' }); },
+    openExternal: url => shell.openExternal(url),
+    progress: fraction => { const win = getMainWindow(); if (win && !win.isDestroyed()) win.setProgressBar(fraction ?? -1); },
+    running: () => hydra.runningCounts(),
+    quit: () => app.quit(),
+    log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
+  });
+  app.on('will-quit', () => updates.stop());
   const handlers = createHandlers({
+    updates,
     info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
     settings,
     state,
@@ -184,5 +205,6 @@ export function start(): void {
     win.webContents.on('did-finish-load', () => { hydra.windowLoaded(); hostUi.resendAll(); });
     // Controllers start when a project is opened (a chat in it), not here: launching the app takes no repository.
     void hydra.sync((await state.load()).projects);
+    updates.start();
   });
 }
