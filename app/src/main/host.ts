@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, watch as watchFolder, type FSWatcher } from 'node:fs';
+import { lstat, open, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, nativeTheme, shell, type MessageBoxOptions } from 'electron';
 import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, HostTerminal, InputOptions, NoticeLevel, PickItem } from '../../../src/host/host';
-import { markdownWithImages, readViewFile, type HostUi } from './hostUi';
+import { VIEW_TEXT_LIMIT, localPreviewUrl, markdownWithImages, readViewFile, unifiedDiff, type HostUi } from './hostUi';
 import { ideHydraStorage } from './identity';
 import { getMainWindow } from './window';
 
@@ -80,6 +81,17 @@ const globToRegExp = (glob: string): RegExp => {
   return new RegExp(`^${out}$`, 'i');
 };
 
+/** One side of a file in a diff: its text up to the viewer's limit; a link is named, not followed. */
+async function readSide(file: string): Promise<string> {
+  const info = await lstat(file).catch(() => undefined);
+  if (!info) return '';
+  if (info.isSymbolicLink()) return '(a link; Hydra doesn\'t follow it)\n';
+  if (!info.isFile()) return '';
+  if (info.size <= VIEW_TEXT_LIMIT) return readFile(file, 'utf8').catch(() => '');
+  const handle = await open(file, 'r');
+  try { const buffer = Buffer.alloc(VIEW_TEXT_LIMIT); const { bytesRead } = await handle.read(buffer, 0, VIEW_TEXT_LIMIT, 0); return buffer.subarray(0, bytesRead).toString('utf8'); } finally { await handle.close(); }
+}
+
 export class ElectronHost implements Host {
   readonly settings: HostSettings;
   readonly state: HostState;
@@ -149,7 +161,11 @@ export class ElectronHost implements Host {
 
   // ---- Opening things: the app has no editor; it shows files in their folder and pages in the browser. ----
   async openFolder(folder: string): Promise<void> { this.log(`[host] open folder ${folder}: open it as a project in the app`); }
-  async openPreview(): Promise<boolean> { return false; }
+  /** Preview app (a lane's): the user asked for it, so a page on this machine opens in their browser. */
+  async openPreview(url: string): Promise<boolean> {
+    const local = localPreviewUrl(url);
+    return local ? this.openUrl(local) : false;
+  }
   /** Markdown Hydra wrote (evidence, a handoff, a report): in the window's viewer, with its screenshots. */
   async openMarkdown(file: string): Promise<void> {
     if (!this.options.ui) { shell.showItemInFolder(file); return; }
@@ -161,7 +177,28 @@ export class ElectronHost implements Host {
     this.textSources.set(scheme, provide);
     return { dispose: () => { if (this.textSources.get(scheme) === provide) this.textSources.delete(scheme); } };
   }
-  async openChanges(title: string): Promise<void> { this.log(`[host] ${title}: use Review changes in the chat`); }
+  /** A multi-file diff (a lane's Review changes): each file's two sides as one unified diff, in the window's viewer. */
+  async openChanges(title: string, resources: [ChangeSide, ChangeSide, ChangeSide][]): Promise<void> {
+    if (!this.options.ui) { this.log(`[host] ${title}: no window to show the changes in`); return; }
+    const side = async (change: ChangeSide): Promise<string> => {
+      // A worktree file: never through a link an agent made, and never more than the viewer shows.
+      if ('file' in change) return readSide(change.file);
+      const provide = this.textSources.get(change.scheme);
+      return provide ? provide(change.path, change.query).catch(() => '') : '';
+    };
+    const label = (change: ChangeSide, fallback: string) => ('file' in change ? fallback : change.path.replace(/^\/+/, '')) || fallback;
+    const parts: string[] = [`# ${title}`];
+    let size = 0, shownFiles = 0;
+    for (const [shown, left, right] of resources.slice(0, 300)) {
+      // Past what the viewer shows, nothing more is read or diffed.
+      if (size > VIEW_TEXT_LIMIT) break;
+      const name = label(left, label(right, path.basename('file' in shown ? shown.file : shown.path)));
+      const part = await unifiedDiff(name, await side(left), await side(right));
+      parts.push(part); size += part.length; shownFiles++;
+    }
+    if (resources.length > shownFiles) parts.push(`# …and ${resources.length - shownFiles} more files`);
+    this.options.ui.ui.view(this.options.ui.projectId, { title, format: 'diff', content: parts.join('\n') });
+  }
   /** A file Hydra keeps (a report, a head's log): read-only in the window's viewer; Markdown as Markdown. */
   async openFile(file: string): Promise<void> {
     if (!this.options.ui) { shell.showItemInFolder(file); return; }

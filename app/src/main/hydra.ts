@@ -12,11 +12,11 @@ import type { Disposable, HostPaths, NoticeLevel } from '../../../src/host/host'
 import { LanesController } from '../../../src/host/lanes';
 import { createPackService } from '../../../src/host/packs';
 import { QuotaService } from '../../../src/host/quota';
-import type { CliProvider, HeadCardView, HydraConnection, HydraTreeMessage, PlanCardView, Project } from '../shared/ipc';
+import type { CliProvider, HeadCardView, HydraConnection, HydraTreeMessage, PlanCardView, Project, HydraControl, HydraStopState } from '../shared/ipc';
 import type { HelperJobView } from '../../../src/core/model';
 import type { Plan } from '../../../src/core/plans';
 import type { StartHelperRun } from '../../../src/core/helperRunner';
-import type { HostUi } from './hostUi';
+import { readViewFile, type HostUi } from './hostUi';
 import type { PlanJobView } from '../../../src/core/planRunner';
 import type { TreeUpdate } from '../../../src/host/controller';
 import { ElectronHost, folderKey, type ValueStore } from './host';
@@ -150,6 +150,27 @@ export class HydraProjects {
     const running = this.running.get(project.id);
     if (!running) throw new Error(this.errors.get(project.id) ?? 'Hydra isn\'t running for this project yet.');
     await running.controller.handle(message);
+  }
+
+  /**
+   * The Agents view's own controls (G5 milestone 4), as the IDE's commands: whether Hydra is stopped here, Stop all
+   * (which asks first, in main's own dialog), Resume, and the audit log, read-only in the window's viewer.
+   */
+  async control(project: Project, action: HydraControl): Promise<HydraStopState> {
+    if (action === 'auditLog') {
+      const { audit } = await this.shared();
+      await audit.flush();
+      const file = path.join(this.options.storage, 'audit', 'audit.jsonl');
+      const { content, truncated } = await readViewFile(file).catch(() => ({ content: '', truncated: false }));
+      if (!content.trim()) this.options.ui?.notice(project.id, 'info', 'No audit events yet.', []).catch(() => undefined);
+      else this.options.ui?.view(project.id, { title: `audit.jsonl${truncated ? ' (its last part)' : ''}`, format: 'text', content });
+    }
+    const running = this.running.get(project.id);
+    if (!running) return { running: false, stopped: false };
+    if (action === 'stopAll') await running.host.command('hydra.stopAllAgents');
+    if (action === 'resume') await running.host.command('hydra.resumeAgents');
+    const state = await running.host.command<{ stopped: boolean; since?: string; reason?: string }>('hydra.getStopState');
+    return { running: true, stopped: state.stopped, ...(state.since ? { since: state.since } : {}), ...(state.reason ? { reason: state.reason.slice(0, 500) } : {}) };
   }
 
   /** The window loaded a page: no Agents view shows until one opens and says so. */
@@ -333,6 +354,10 @@ export class HydraProjects {
     // Only a running project's cards reach the window: none while it starts, is refused or is stopped.
     const notifyTree = (message: HydraTreeMessage) => { if (this.running.get(project.id)?.tree === message) this.options.tree?.(message); };
     controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id), ...(this.options.startRun ? { helperService: { startRun: this.options.startRun } } : {}) });
+    // The controller's and lanes' commands, as the IDE's extension registers them: main calls them (Stop all,
+    // Resume, the stop state, a limit offer's Settings); nothing in the page can name one.
+    controller.registerCommands((name, run) => { host.register(name, run); });
+    lanes.registerCommands((name, run) => { host.register(name, run); });
     return { project, host, controller, lanes, quota, state, tree };
   }
 

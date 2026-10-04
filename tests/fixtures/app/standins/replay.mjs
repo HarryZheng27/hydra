@@ -38,9 +38,19 @@ if (!fixture || !state) { process.stderr.write('replay: set HYDRA_STANDIN_FIXTUR
 fs.mkdirSync(state, { recursive: true });
 
 const counterFile = path.join(state, 'process-count');
-const index = Number(fs.existsSync(counterFile) ? fs.readFileSync(counterFile, 'utf8') : '0');
-fs.writeFileSync(counterFile, String(index + 1));
-fs.appendFileSync(path.join(state, 'calls.log'), `${JSON.stringify({ index, args })}\n`);
+const counter = () => Number(fs.existsSync(counterFile) ? fs.readFileSync(counterFile, 'utf8') : '0');
+/** Takes the next process's place in the fixture, and logs the start. */
+const claim = () => { const taken = counter(); fs.writeFileSync(counterFile, String(taken + 1)); fs.appendFileSync(path.join(state, 'calls.log'), `${JSON.stringify({ index: taken, args })}\n`); return taken; };
+// Claude's process takes its place as it starts. Codex's waits until the host starts or resumes a thread: the app may
+// start an app-server and replace it before that (a chat switching to "Ask me" first), and a server replaced before
+// its first thread must not use up a place, or the next one would replay the wrong part. Until then it answers the
+// opening (initialize), which every Codex part shares, from the part it would take.
+const appServer = args[0] === 'app-server';
+// Every start is logged (starts.log), claimed or not, so an extra launch is never hidden.
+fs.appendFileSync(path.join(state, 'starts.log'), `${JSON.stringify({ args })}\n`);
+let index = appServer ? counter() : claim();
+let claimed = !appServer;
+const seen = []; // the kinds of the host's lines matched so far, for a jump to a later part to check
 
 const records = fs.readFileSync(fixture, 'utf8').split(/\r?\n/).filter(Boolean).slice(1).map(line => JSON.parse(line));
 // Parts, one per process the live check started: Claude's fixtures mark each with an "args:" note; Codex's begin each
@@ -56,7 +66,7 @@ for (const record of records) {
 // when the host doesn't send one, it is skipped with its response.
 const optional = new Set(['mcpServerStatus/list', 'windowsSandbox/readiness', 'thread/read', 'account/rateLimits/read', 'model/list']);
 const skipped = new Set();
-const part = parts[index];
+let part = parts[index];
 if (!part) { process.stderr.write(`replay: ${path.basename(fixture)} has no process ${index + 1}\n`); process.exit(2); }
 
 const fail = reason => { process.stderr.write(`replay: ${reason}\n`); fs.appendFileSync(path.join(state, 'errors.log'), `${reason}\n`); process.exit(2); };
@@ -148,20 +158,39 @@ const write = line => new Promise(resolve => { if (!process.stdout.write(`${line
 let held; // a host line read while skipping optional requests, still to be matched
 let threadAsked = false; // an unrecorded model/list is answered only at the start, before the thread
 let live = ''; // the result text of the latest live call, JSON-escaped for __HYDRA_RESULT__
-for (const record of part) {
+for (let at = 0; at < part.length; at++) {
+  let record = part[at];
   if (record.dir === 'call') { live = JSON.stringify(await hydraCall(record.tool, record.arguments ?? {})).slice(1, -1); continue; }
   if (record.dir === 'send') {
     let line = held ?? await next();
     held = undefined;
     if (line === undefined) process.exit(0); // the host closed stdin: it ended the chat
     let actual = parse(line);
-    const expected = parse(record.line);
+    let expected = parse(record.line);
     // A model list the recording didn't ask for (G1 recorded resumes without one) gets an empty list.
     while (actual?.method === 'model/list' && 'id' in actual && expected?.method !== 'model/list' && !threadAsked) {
       await write(JSON.stringify({ id: actual.id, result: { data: [] } }));
       line = await next();
       if (line === undefined) process.exit(0);
       actual = parse(line);
+    }
+    if (!claimed && /^thread\//.test(actual?.method ?? '')) {
+      // Now this server is the chat's: it takes its place, which may be a later part than the one it opened with.
+      claimed = true;
+      const taken = claim();
+      if (taken !== index) {
+        index = taken; part = parts[index];
+        if (!part) { process.stderr.write(`replay: ${path.basename(fixture)} has no process ${index + 1}\n`); process.exit(2); }
+        at = part.findIndex(candidate => candidate.dir === 'send' && /^thread\//.test(parse(candidate.line)?.method ?? ''));
+        if (at < 0) fail(`process ${index + 1} of ${path.basename(fixture)} starts no thread`);
+        // Its opening was answered from the part it would have taken: the host must have sent what this part's
+        // opening expects (requests the app may leave out aside), or a difference would pass unseen.
+        const opening = part.slice(0, at).filter(candidate => candidate.dir === 'send').map(candidate => parse(candidate.line)).filter(message => !(message?.method && optional.has(message.method))).map(kind);
+        const sent = seen.filter(sentKind => !optional.has(sentKind.replace(/^method:/, '')));
+        if (JSON.stringify(opening) !== JSON.stringify(sent)) fail(`process ${index + 1} opens with ${opening.join(', ')}, but the host sent ${sent.join(', ')}`);
+        record = part[at];
+        expected = parse(record.line);
+      }
     }
     if (expected?.method && optional.has(expected.method) && kind(actual) !== kind(expected)) {
       if ('id' in expected) skipped.add(expected.id);
@@ -172,6 +201,7 @@ for (const record of part) {
     if (detail(actual) !== detail(withSessionValue(expected))) fail(`expected ${detail(expected).slice(0, 300)} from the host, got ${detail(actual).slice(0, 300)}`);
     if (/^thread\//.test(actual?.method ?? '')) threadAsked = true;
     fs.appendFileSync(path.join(state, 'consumed.log'), `${index}\n`);
+    seen.push(kind(actual));
     if (expected.type === 'control_request') ids.set(expected.request_id, actual.request_id);
     if (expected.method && 'id' in expected) ids.set(expected.id, actual.id);
     continue;

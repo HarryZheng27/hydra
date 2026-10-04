@@ -1,4 +1,4 @@
-import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project } from '../shared/ipc';
+import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project, HydraControl, HydraStopState } from '../shared/ipc';
 import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
@@ -19,6 +19,8 @@ export interface HandlerDeps {
     tree(): HydraTreeMessage[];
     /** A message from the project's Agents view: its controller starts if needed, then handles it. */
     agents(project: Project, message: unknown): Promise<void>;
+    /** The Agents view's controls (stop state, Stop all, Resume, audit log). */
+    control(project: Project, action: HydraControl): Promise<HydraStopState>;
     /** The window's answer to one of Hydra's questions (hostUi.ts drops one that isn't pending). */
     reply(requestId: string, value: unknown): void;
   };
@@ -155,6 +157,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'hydra.connect': ({ provider }) => requireHydra().connect(provider),
     'hydra.disconnect': ({ provider }) => requireHydra().disconnect(provider),
     'hydra.tree': async () => deps.hydra?.tree() ?? [],
+    'hydra.control': async ({ projectId, action }) => {
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
+      if (!project) throw new Error('No such project.');
+      if (!project.trustedAt) return { running: false, stopped: false };
+      return requireHydra().control(project, action);
+    },
     'hydra.reply': async ({ requestId, value }) => { requireHydra().reply(requestId, value); return null; },
     'hydra.agents': async ({ projectId, message }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
