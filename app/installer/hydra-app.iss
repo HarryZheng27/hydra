@@ -83,45 +83,76 @@ Filename: "{app}\{#ExeBasename}.exe"; Description: "{cm:LaunchProgram,{#NameLong
 [Code]
 #include "..\..\desktop\hydra-update-mode.iss"
 #include "..\..\desktop\hydra-wizard.iss"
-#include "hydra-app-uninstall.iss"
-
 function CreateFileW(FileName: String; Access, ShareMode, Security, Disposition, Flags, Template: Cardinal): Integer;
   external 'CreateFileW@kernel32.dll stdcall';
 function CloseHandle(Handle: Integer): Boolean;
   external 'CloseHandle@kernel32.dll stdcall';
 
-// True while {app}\Hydra.exe is running: as the app, or as Node for a Claude
-// Code or Codex chat using Hydra's tools. Windows refuses write access to a
-// running executable, so this asks for it and lets go at once. A virus scan of
-// a just-installed file, or the app's crash handler still exiting, holds it for
-// a moment too, so only ten seconds of refusals count as running.
-function HydraAppInUse(): Boolean;
+// True when Windows refuses write access to Path because something has it
+// open or running (ERROR_SHARING_VIOLATION). A missing file, or any other
+// error, is not "in use".
+function HydraFileHeld(Path: String): Boolean;
 var
-  Exe: String;
-  Handle, Attempt, Error: Integer;
+  Handle, Error: Integer;
 begin
   Result := False;
-  Exe := ExpandConstant('{app}\{#ExeBasename}.exe');
-  if not FileExists(Exe) then Exit;
+  if not FileExists(Path) then Exit;
+  // GENERIC_WRITE, no sharing, OPEN_EXISTING.
+  Handle := CreateFileW(Path, $40000000, 0, 0, 3, 0, 0);
+  if Handle <> -1 then begin
+    CloseHandle(Handle);
+    Exit;
+  end;
+  Error := DLLGetLastError();
+  Result := Error = 32;
+  if not Result then Log('Hydra: could not check ' + Path + ': ' + SysErrorMessage(Error));
+end;
+
+// The files an update or uninstall replaces that run as programs: Hydra.exe
+// (the app, or Node for a Claude Code or Codex chat using Hydra's tools), and
+// node-pty's native files a lane's terminal runs from beside the archive.
+function HydraAppFileHeld(): String;
+var
+  Files: TArrayOfString;
+  Unpacked: String;
+  I: Integer;
+begin
+  Result := '';
+  Unpacked := ExpandConstant('{app}\resources\app.asar.unpacked\node_modules\node-pty\prebuilds\win32-x64\');
+  SetArrayLength(Files, 7);
+  Files[0] := ExpandConstant('{app}\{#ExeBasename}.exe');
+  Files[1] := Unpacked + 'pty.node';
+  Files[2] := Unpacked + 'conpty.node';
+  Files[3] := Unpacked + 'winpty.dll';
+  Files[4] := Unpacked + 'winpty-agent.exe';
+  Files[5] := Unpacked + 'conpty\conpty.dll';
+  Files[6] := Unpacked + 'conpty\OpenConsole.exe';
+  for I := 0 to GetArrayLength(Files) - 1 do
+    if HydraFileHeld(Files[I]) then begin
+      Result := Files[I];
+      Exit;
+    end;
+end;
+
+// True while the app is running. A virus scan of a just-installed file, or the
+// app's crash handler still exiting, holds one for a moment too, so only ten
+// seconds of refusals count as running.
+function HydraAppInUse(): Boolean;
+var
+  Held: String;
+  Attempt: Integer;
+begin
+  Result := False;
   for Attempt := 1 to 10 do begin
-    // GENERIC_WRITE, no sharing, OPEN_EXISTING.
-    Handle := CreateFileW(Exe, $40000000, 0, 0, 3, 0, 0);
-    if Handle <> -1 then begin
-      CloseHandle(Handle);
-      Result := False;
-      Exit;
-    end;
-    Error := DLLGetLastError();
-    if Error <> 32 then begin  // not ERROR_SHARING_VIOLATION
-      Log('Hydra: could not check ' + Exe + ': ' + SysErrorMessage(Error));
-      Result := False;
-      Exit;
-    end;
-    Result := True;
+    Held := HydraAppFileHeld();
+    if Held = '' then Exit;
     if Attempt < 10 then Sleep(1000);
   end;
-  Log('Hydra: ' + Exe + ' stayed in use for ten seconds.');
+  Log('Hydra: ' + Held + ' stayed in use for ten seconds.');
+  Result := True;
 end;
+
+#include "hydra-app-uninstall.iss"
 
 function HydraShortcutTarget(Path: String): String;
 var
