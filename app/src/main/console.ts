@@ -15,12 +15,20 @@ export const psQuote = (value: string): string => `'${value.replace(/['\u2018\u2
 
 const titlePattern = /^[A-Za-z0-9 .:()-]{1,60}$/;
 
+/** What a window says before its CLI draws anything, where that takes a while. */
+const consoleNotes: Record<string, string> = {
+  // `claude --teleport` fetches the cloud session for about 15 seconds before it draws (G7 live check).
+  'Claude Code cloud session': 'Fetching the cloud session from claude.ai. This takes about 15 seconds.',
+};
+
 /** The script a console runs: an optional folder, the CLI with its arguments, then a wait for Enter. */
 export function consoleScript(title: string, executable: string, args: string[], cwd?: string): string {
   if (!titlePattern.test(title)) throw new Error('That window title isn\'t allowed.');
   for (const part of [executable, ...args, ...(cwd ? [cwd] : [])]) if (/[\r\n\u0000]/.test(part)) throw new Error('A path or argument has a line break in it.');
+  const note = consoleNotes[title];
   return [
     `$Host.UI.RawUI.WindowTitle = ${psQuote(title)}`,
+    ...(note ? [`Write-Host ${psQuote(note)}`] : []),
     ...(cwd ? [`Set-Location -LiteralPath ${psQuote(cwd)}`] : []),
     `& ${[executable, ...args].map(psQuote).join(' ')}`,
     `Write-Host ''`,
