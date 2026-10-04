@@ -17,6 +17,16 @@ export const HYDRA_TREE = 'hydra:tree';
 /** Push: a message from a project's controller to its Agents view (the IDE webview's own messages, G5). */
 export const HYDRA_UI = 'hydra:ui';
 export interface HydraUiMessage { projectId: string; message: unknown }
+/** Push: Hydra's own questions, notices and read-only documents for the window (main/hostUi.ts, G5). */
+export const HYDRA_HOST = 'hydra:host';
+export interface HydraPickItemView { label: string; description: string; detail: string; picked: boolean }
+export interface HydraViewImage { alt: string; src: string }
+export type HydraHostMessage =
+  | { kind: 'pick'; requestId: string; projectId: string; title: string; placeHolder: string; items: HydraPickItemView[]; many: boolean; error?: string }
+  | { kind: 'input'; requestId: string; projectId: string; title: string; prompt: string; placeHolder: string; value: string; error?: string }
+  | { kind: 'notice'; requestId?: string; projectId: string; level: 'info' | 'warning' | 'error'; message: string; actions: string[]; error?: string }
+  | { kind: 'view'; projectId: string; title: string; format: 'text' | 'markdown' | 'diff'; content: string; images: HydraViewImage[] }
+  | { kind: 'dismiss'; requestId: string };
 
 /** A head as a chat card shows it: no paths, no logs, nothing a page could act on beyond its id. */
 export interface HeadCardView {
@@ -114,6 +124,8 @@ export interface Channels {
   'hydra.disconnect': { payload: { provider: CliProvider }; result: HydraConnection[] };
   /** A message from a project's Agents view to its controller (src/core/model.ts ClientMessage; the controller checks it). */
   'hydra.agents': { payload: { projectId: string; message: unknown }; result: null };
+  /** The window's answer to one of Hydra's questions (HYDRA_HOST): an item's index, indexes, text, an action, or null to dismiss. */
+  'hydra.reply': { payload: { requestId: string; value: number | number[] | string | null }; result: null };
   /** Every running project's heads and plans, for a page that just opened. */
   'hydra.tree': { payload: null; result: HydraTreeMessage[] };
   /** The user closed the terminal they opened the chat in: it can run in the app again. */
@@ -203,6 +215,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'hydra.connect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.disconnect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.tree': isNull,
+  'hydra.reply': exactly<{ requestId: string; value: number | number[] | string | null }>({ requestId: isId, value: value => value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 10_000) || (Array.isArray(value) && value.length <= 10_000 && value.every(index => typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < 10_000)) || (typeof value === 'string' && value.length <= 20_000) }),
   'hydra.agents': exactly<{ projectId: string; message: unknown }>({ projectId: isId, message: value => !!value && typeof value === 'object' && !Array.isArray(value) && JSON.stringify(value).length <= 200_000 }),
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
@@ -267,6 +280,10 @@ export interface HydraApi {
   agentsMessage(projectId: string, message: unknown): Promise<null>;
   /** Calls `listener` with each message a project's controller sends its Agents view. */
   onHydraUi(listener: (message: HydraUiMessage) => void): () => void;
+  /** Answers one of Hydra's questions. */
+  hydraReply(requestId: string, value: number | number[] | string | null): Promise<null>;
+  /** Calls `listener` with each of Hydra's questions, notices and documents for the window. */
+  onHydraHost(listener: (message: HydraHostMessage) => void): () => void;
   /** Calls `listener` whenever a project's heads or plans change; returns a function that stops it. */
   onHydraTree(listener: (message: HydraTreeMessage) => void): () => void;
   /** Calls `listener` with each chat's new events; returns a function that stops it. */

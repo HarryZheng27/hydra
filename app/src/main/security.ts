@@ -16,6 +16,8 @@ export const APP_URL = `${APP_ORIGIN}/index.html`;
 /**
  * G1's CSP (docs/internal/hydra-app/G1-spikes.md, S4 item 4): no remote anything, scripts and workers only from the
  * app, Trusted Types for script sinks. Inline styles are allowed because Monaco and xterm insert <style> elements.
+ * Images only as data: URLs, which only main makes, from gate screenshots it read itself (hostUi.ts, G5): nothing is
+ * fetched for an image.
  * It rides on every app:// response, since a worker takes its CSP from its own response.
  */
 export const CONTENT_SECURITY_POLICY = [
@@ -23,6 +25,7 @@ export const CONTENT_SECURITY_POLICY = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "worker-src 'self'",
+  'img-src data:',
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'",

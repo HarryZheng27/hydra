@@ -66,7 +66,7 @@ export function AgentsView({ project }: { project: Project }) {
       }
     });
     send({ type: 'ready' });
-    return stop;
+    return () => { stop(); void window.hydra.agentsMessage(project.id, { type: 'hidden' }).catch(() => undefined); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 

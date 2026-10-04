@@ -3,6 +3,7 @@ import { existsSync, watch as watchFolder, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, nativeTheme, shell, type MessageBoxOptions } from 'electron';
 import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, HostTerminal, InputOptions, NoticeLevel, PickItem } from '../../../src/host/host';
+import { markdownWithImages, readViewFile, type HostUi } from './hostUi';
 import { ideHydraStorage } from './identity';
 import { getMainWindow } from './window';
 
@@ -58,6 +59,8 @@ export interface ElectronHostOptions {
   post?: (message: unknown) => void;
   /** Shows a notice in the app's window. */
   notice?: (level: NoticeLevel, message: string) => void;
+  /** Hydra's lists, text boxes, notices with actions and documents in the app's window (hostUi.ts), for this project. */
+  ui?: { ui: HostUi; projectId: string };
   /** `hydra close` here: the project's controller stops. */
   closeWindow?: () => void;
   /** Opens a console window the user owns (Open in terminal's): for a CLI's own interactive flow. */
@@ -105,8 +108,13 @@ export class ElectronHost implements Host {
   }
 
   log(line: string): void { this.options.log(line); }
-  /** A notice in the app's window; actions aren't offered yet (G5 milestone 5), so it resolves as dismissed. */
-  async notify(level: NoticeLevel, message: string): Promise<string | undefined> { this.options.notice?.(level, message); this.log(`[notice] ${message}`); return undefined; }
+  /** A notice in the app's window, with its actions as buttons; it resolves with the one clicked. */
+  async notify(level: NoticeLevel, message: string, ...actions: string[]): Promise<string | undefined> {
+    this.log(`[notice] ${message}`);
+    if (this.options.ui) return this.options.ui.ui.notice(this.options.ui.projectId, level, message, actions);
+    this.options.notice?.(level, message);
+    return undefined;
+  }
 
   // ---- Modal questions: main's own native dialog, so the page can never answer one (G2: "in-window equivalents"). ----
   private async box(options: MessageBoxOptions): Promise<number> {
@@ -120,10 +128,19 @@ export class ElectronHost implements Host {
     const response = await this.box({ type: level, message, ...(detail ? { detail } : {}), buttons: [...actions, 'Cancel'], cancelId: actions.length, defaultId: actions.length, noLink: true });
     return actions[response];
   }
-  /** Lists and text boxes need the app's own in-window picker (G5 milestone 5); until then they resolve as dismissed. */
-  async pick<T extends PickItem>(_items: T[], options: { title?: string }): Promise<T | undefined> { this.log(`[host] a list (${options.title ?? 'untitled'}) isn't shown in the app yet`); return undefined; }
-  async pickMany<T extends PickItem>(_items: T[], options: { title: string }): Promise<T[] | undefined> { this.log(`[host] a list (${options.title}) isn't shown in the app yet`); return undefined; }
-  async input(options: InputOptions): Promise<string | undefined> { this.log(`[host] a text box (${options.title ?? options.prompt ?? 'untitled'}) isn't shown in the app yet`); return undefined; }
+  /** Lists and text boxes: the app's own, in its window (hostUi.ts); without a window they resolve as dismissed. */
+  async pick<T extends PickItem>(items: T[], options: { title?: string; placeHolder?: string }): Promise<T | undefined> {
+    if (this.options.ui) return this.options.ui.ui.pick(this.options.ui.projectId, items, options);
+    this.log(`[host] a list (${options.title ?? 'untitled'}) has no window to show in`); return undefined;
+  }
+  async pickMany<T extends PickItem>(items: T[], options: { title: string; placeHolder?: string }): Promise<T[] | undefined> {
+    if (this.options.ui) return this.options.ui.ui.pickMany(this.options.ui.projectId, items, options);
+    this.log(`[host] a list (${options.title}) has no window to show in`); return undefined;
+  }
+  async input(options: InputOptions): Promise<string | undefined> {
+    if (this.options.ui) return this.options.ui.ui.input(this.options.ui.projectId, options);
+    this.log(`[host] a text box (${options.title ?? options.prompt ?? 'untitled'}) has no window to show in`); return undefined;
+  }
   async copy(text: string): Promise<void> { clipboard.writeText(text); }
   async withProgress<T>(title: string, task: (progress: { report(value: { message?: string }): void }) => Promise<T>): Promise<T> {
     this.log(`[progress] ${title}`);
@@ -133,15 +150,32 @@ export class ElectronHost implements Host {
   // ---- Opening things: the app has no editor; it shows files in their folder and pages in the browser. ----
   async openFolder(folder: string): Promise<void> { this.log(`[host] open folder ${folder}: open it as a project in the app`); }
   async openPreview(): Promise<boolean> { return false; }
-  async openMarkdown(file: string): Promise<void> { shell.showItemInFolder(file); }
+  /** Markdown Hydra wrote (evidence, a handoff, a report): in the window's viewer, with its screenshots. */
+  async openMarkdown(file: string): Promise<void> {
+    if (!this.options.ui) { shell.showItemInFolder(file); return; }
+    const { content } = await readViewFile(file);
+    const view = await markdownWithImages(content, path.dirname(file));
+    this.options.ui.ui.view(this.options.ui.projectId, { title: path.basename(file), format: 'markdown', ...view });
+  }
   registerTextSource(scheme: string, provide: (path: string, query: string) => Promise<string>): Disposable {
     this.textSources.set(scheme, provide);
     return { dispose: () => { if (this.textSources.get(scheme) === provide) this.textSources.delete(scheme); } };
   }
   async openChanges(title: string): Promise<void> { this.log(`[host] ${title}: use Review changes in the chat`); }
-  async openFile(file: string): Promise<void> { shell.showItemInFolder(file); }
-  async openText(_content: string, language: string): Promise<void> { this.log(`[host] a ${language} document isn't shown in the app yet`); }
-  async openFileBeside(file: string): Promise<void> { shell.showItemInFolder(file); }
+  /** A file Hydra keeps (a report, a head's log): read-only in the window's viewer; Markdown as Markdown. */
+  async openFile(file: string): Promise<void> {
+    if (!this.options.ui) { shell.showItemInFolder(file); return; }
+    if (/\.md$/i.test(file)) { await this.openMarkdown(file); return; }
+    const { content, truncated } = await readViewFile(file);
+    this.options.ui.ui.view(this.options.ui.projectId, { title: `${path.basename(file)}${truncated ? ' (its last part)' : ''}`, format: 'text', content });
+  }
+  /** A document Hydra made (a head's changes, as a diff): read-only in the window's viewer. */
+  async openText(content: string, language: string): Promise<void> {
+    if (!this.options.ui) { this.log(`[host] a ${language} document has no window to show in`); return; }
+    const title = /^# (.+)$/m.exec(content)?.[1] ?? (language === 'diff' ? 'Changes' : 'Document');
+    this.options.ui.ui.view(this.options.ui.projectId, { title, format: language === 'diff' ? 'diff' : 'text', content });
+  }
+  async openFileBeside(file: string): Promise<void> { await this.openFile(file); }
   async openUrl(url: string): Promise<boolean> {
     if (!/^https?:\/\//i.test(url)) return false;
     try { await shell.openExternal(url); return true; } catch { return false; }

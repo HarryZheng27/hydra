@@ -12,7 +12,7 @@ import { standinCalls, writeStandins } from './standins.mjs';
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // G1's CSP (docs/internal/hydra-app/G1-spikes.md, S4 item 4), written out here so the smoke checks the app against
 // the decision, not against itself.
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify";
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify";
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const work = path.join(appDir, '.smoke', String(Date.now()));
@@ -28,6 +28,9 @@ fs.mkdirSync(project, { recursive: true });
   git('config', 'user.email', 'smoke@example.invalid');
   git('config', 'user.name', 'Smoke');
   fs.writeFileSync(path.join(project, 'hello.ts'), 'export const greeting = "one";\n');
+  // G5: the project's one gate, which every head's and plan's work must pass (git is on the smoke's PATH).
+  fs.mkdirSync(path.join(project, '.hydra'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.hydra', 'gates.json'), JSON.stringify({ gates: [{ id: 'smoke', type: 'command', required: true, command: ['git', '--version'], timeoutSeconds: 60 }] }));
   git('add', '.');
   git('commit', '-q', '-m', 'first');
   fs.writeFileSync(path.join(project, 'hello.ts'), 'export const greeting = "two";\nexport const extra = 1;\n');
@@ -58,16 +61,18 @@ const gitFolder = (() => {
 })();
 // Hydra's storage (the IDE's, which the app shares): the smoke's own folder, never the user's.
 const ideStorage = path.join(work, 'ide-storage');
-const env = { ...process.env, HYDRA_APP_IDE_STORAGE: ideStorage, PATH: [bin, ...(gitFolder ? [gitFolder] : []), path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState };
+const env = { ...process.env, HYDRA_APP_IDE_STORAGE: ideStorage, PATH: [bin, ...(gitFolder ? [gitFolder] : []), path.join(systemRoot, 'System32'), systemRoot].join(path.delimiter), CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: codexHome, HYDRA_STANDIN_FIXTURE: chatFixture, HYDRA_STANDIN_STATE: standinState, HYDRA_STANDIN_CODEX_FIXTURE: codexFixture, HYDRA_STANDIN_CODEX_STATE: codexState,
+  // G5: stand-in heads (an unpackaged app only), and the chat stand-in's live calls through Hydra's own bridge.
+  HYDRA_APP_STANDIN_HEADS: '1', HYDRA_STANDIN_BRIDGE: path.join(appDir, 'dist', 'hydra-mcp.cjs'), HYDRA_STANDIN_HELPERS_DIR: path.join(work, 'ide-storage', 'helpers') };
 delete env.ELECTRON_RUN_AS_NODE; // Claude Code's shell sets it; Electron would start as plain Node.
 
 function launch(role) {
-  const child = spawn(electron, [path.join(appDir, 'smoke', 'harness.cjs'), `--smoke-role=${role}`, `--smoke-out=${out}`, `--smoke-appdata=${appData}`, `--smoke-folder=${project}`, `--smoke-timeout=150000`, ...process.argv.slice(2).filter(a => a.startsWith('--smoke-shots='))], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(electron, [path.join(appDir, 'smoke', 'harness.cjs'), `--smoke-role=${role}`, `--smoke-out=${out}`, `--smoke-appdata=${appData}`, `--smoke-folder=${project}`, `--smoke-timeout=240000`, ...process.argv.slice(2).filter(a => a.startsWith('--smoke-shots='))], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout.on('data', d => { log += d; });
   child.stderr.on('data', d => { log += d; });
   const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
-  const killer = setTimeout(() => child.kill(), 180000);
+  const killer = setTimeout(() => child.kill(), 270000);
   void exited.then(() => clearTimeout(killer));
   return { exited, log: () => log };
 }
@@ -115,7 +120,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'onHydraTree', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'agentsMessage', 'hydraReply', 'onHydraHost', 'onHydraUi', 'onHydraTree', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -172,7 +177,7 @@ try {
     assert.equal(a.ui.titleBar, true);
     assert.equal(a.ui.sidebarToggle, true);
     assert.equal(a.ui.chatTab, 'Chat');
-    assert.equal(a.ui.agentsDisabled, 'Agents');
+    assert.equal(a.ui.agentsDisabled, undefined, 'Agents is live (G5): with no project open it says to open one');
     assert.deepEqual(a.ui.sidebar, ['New chat', 'Settings']);
     assert.equal(a.ui.search, true);
     assert.match(a.ui.emptyButton, /Open a project/);
@@ -228,15 +233,19 @@ try {
     const all = standinCalls(bin);
     assert.equal(a.recheckDone, true);
     // The chats' own processes, each started by a message the user sent (per provider: the first run, and the resume).
-    const isChat = call => call.startsWith('claude -p ') || call.startsWith('codex app-server --listen');
+    const isChat = call => (call.startsWith('claude -p ') && / --(session-id|resume) /.test(call)) || call.startsWith('codex app-server --listen');
     const chats = all.filter(isChat);
-    // Claude: the first run and the resume. Codex: the first run and the resume, plus one more when the app-server
-    // started as the chat opened was replaced as the chat switched to Ask me before its first message.
-    assert.equal(chats.filter(call => call.startsWith('claude -p ')).length, 2, all.join(', '));
+    // Claude: the first run, the resume, and the chat that starts a head (G5). Codex: the first run and the resume, plus
+    // one more when the app-server started as the chat opened was replaced as the chat switched to Ask me before its
+    // first message.
+    assert.equal(chats.filter(call => call.startsWith('claude -p ')).length, 3, all.join(', '));
     const codexServers = chats.filter(call => call.startsWith('codex app-server')).length;
     assert.ok(codexServers === 2 || codexServers === 3, all.join(', '));
     const calls = all.filter(call => !isChat(call));
-    const checks = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help', 'claude auth status --json', 'codex login status'];
+    // Hydra's start-up check of a head's CLI (cliSelfCheck.ts), and its look for Codex's sandbox: no plan in the smoke
+    // asks for a review, so no other Claude or Codex run starts.
+    const checks = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help', 'claude auth status --json', 'codex login status',
+      'claude -p --input-format stream-json --output-format stream-json --verbose --strict-mcp-config', 'codex exec --help'];
     assert.deepEqual(calls.filter(call => !checks.includes(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
     const count = call => calls.filter(c => c === call).length;
     // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
@@ -257,6 +266,31 @@ try {
     assert.equal(call.error, undefined, call.error);
     assert.equal(call.isError, false, call.text);
     assert.match(call.text, /"heads"/);
+  });
+  check('a chat calls a lead tool: a head starts in a worktree, its gate runs, and its card shows in the chat and on the canvas', () => {
+    const agents = r.agents;
+    assert.ok(agents, `no Agents results: ${r.error ?? ''}`);
+    assert.equal(standinErrors(), '', 'the chat stand-in\'s live call failed');
+    assert.equal(agents.chatCard.title, 'Smoke head');
+    assert.match(agents.chatCard.state, /done|merged/i);
+    assert.match(agents.chatCard.text, /smoke/);
+    assert.match(agents.canvasHead.title, /Smoke head|smoke job/i);
+    assert.match(agents.diffView.title, /Smoke head \(Hydra head [0-9a-f]{12}\)/);
+    assert.ok(agents.diffView.added.some(line => /stand-in head/.test(line)), JSON.stringify(agents.diffView));
+    assert.match(agents.evidenceView.title, /-evidence\.md$/);
+    assert.match(agents.evidenceView.text, /smoke/);
+    assert.deepEqual(agents.shownInExplorer, [], 'nothing opened outside the app');
+  });
+  check('a plan with stand-ins lands on its integration branch, its gate passes, and Merge plan merges it', () => {
+    const agents = r.agents;
+    assert.ok(agents?.planCreated, 'no plan');
+    assert.equal(agents.planCreated.isError, false, agents.planCreated.text);
+    assert.equal(agents.planWait.isError, false, agents.planWait.text);
+    assert.match(agents.planWait.text, /"state"\s*:\s*"done"/);
+    assert.deepEqual(agents.mergedFiles, ['one.txt', 'three.txt', 'two.txt'], 'the plan\'s three files are merged (the lone head\'s stays on its branch)');
+    assert.match(agents.planStatus, /passed/i, 'Merge plan shows once the integration gate passed');
+    assert.match(agents.planStatusAfter, /merged/i);
+    assert.match(agents.mergedLog ?? '', /plan|Smoke plan/i);
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);
@@ -285,7 +319,7 @@ try {
     assert.ok(r.resume.terminal.script.includes(`Set-Location -LiteralPath '${project.replace(/'/g, "''")}'`), r.resume.terminal.script);
     assert.deepEqual(r.refusedLaunches, []);
     const starts = chatStarts();
-    assert.equal(starts.length, 2);
+    assert.equal(starts.length, 3, 'the chat, its resume, and the chat that starts a head (G5)');
     const first = starts[0], second = starts[1];
     const id = first[first.indexOf('--session-id') + 1];
     assert.match(id, /^[0-9a-f-]{36}$/);

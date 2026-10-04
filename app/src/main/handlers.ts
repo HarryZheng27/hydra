@@ -19,6 +19,8 @@ export interface HandlerDeps {
     tree(): HydraTreeMessage[];
     /** A message from the project's Agents view: its controller starts if needed, then handles it. */
     agents(project: Project, message: unknown): Promise<void>;
+    /** The window's answer to one of Hydra's questions (hostUi.ts drops one that isn't pending). */
+    reply(requestId: string, value: unknown): void;
   };
   /** The projects changed (one trusted or removed): Hydra starts or stops its controllers (app/src/main/hydra.ts). */
   projectsChanged?(state: AppState): void;
@@ -153,6 +155,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'hydra.connect': ({ provider }) => requireHydra().connect(provider),
     'hydra.disconnect': ({ provider }) => requireHydra().disconnect(provider),
     'hydra.tree': async () => deps.hydra?.tree() ?? [],
+    'hydra.reply': async ({ requestId, value }) => { requireHydra().reply(requestId, value); return null; },
     'hydra.agents': async ({ projectId, message }) => {
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
       if (!project) throw new Error('No such project.');

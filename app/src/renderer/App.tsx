@@ -6,6 +6,7 @@ import { ChatPane } from './ChatPane';
 import { EmptyState } from './EmptyState';
 import { SettingsView } from './SettingsView';
 import { AgentsView } from './AgentsView';
+import { HostLayer } from './HostLayer';
 import { Setup } from './Setup';
 import { Sidebar } from './Sidebar';
 import { TitleBar } from './TitleBar';
@@ -172,6 +173,7 @@ export function App() {
 
   return (
     <div className={`app ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
+      <HostLayer />
       <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} mode={mode} onMode={setMode} />
       <div className="body">
         {sidebarOpen && state && (
