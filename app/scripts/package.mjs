@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EXE, APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, releaseChannel, releaseVersion, versionStrings, installerDefinitions } from './packageConfig.mjs';
+import { EXE, APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, previewNumber, releaseChannel, releaseVersion, versionStrings, installerDefinitions } from './packageConfig.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const appDir = path.dirname(here);
@@ -117,8 +117,8 @@ function isccPath() {
   return found;
 }
 
-function buildInstaller({ version, icon }, outputDir = installerDir) {
-  const definitions = installerDefinitions({ version, sourceDir: packageDir, outputDir, setupIcon: icon });
+function buildInstaller({ version, preview, icon }, outputDir = installerDir) {
+  const definitions = installerDefinitions({ version, preview, sourceDir: packageDir, outputDir, setupIcon: icon });
   fs.mkdirSync(outputDir, { recursive: true });
   execFileSync(isccPath(), ['/Q', ...Object.entries(definitions).map(([key, value]) => `/D${key}=${value}`), path.join(appDir, 'installer', 'hydra-app.iss')], { stdio: 'inherit', windowsHide: true });
   const setup = path.join(outputDir, 'HydraAppSetup.exe');
@@ -130,9 +130,13 @@ function buildInstaller({ version, icon }, outputDir = installerDir) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Packaging the app needs Windows x64.');
   // --channel=stable: a stable release, which updates itself (app/src/main/updates.ts). Anything else is a preview, which never does.
-  const packaged = await packageApp(releaseChannel(process.argv.find(arg => arg.startsWith('--channel='))?.slice('--channel='.length)));
-  if (process.argv.includes('--installer')) buildInstaller(packaged);
+  const channel = releaseChannel(process.argv.find(arg => arg.startsWith('--channel='))?.slice('--channel='.length));
+  // --preview=<n>: an app preview's installer, version x.y.z.n (app-preview.yml). A stable release never is one.
+  const preview = previewNumber(process.argv.find(arg => arg.startsWith('--preview='))?.slice('--preview='.length));
+  if (preview !== undefined && channel === 'stable') throw new Error('A stable package is never a preview.');
+  const packaged = await packageApp(channel);
+  if (process.argv.includes('--installer')) buildInstaller({ ...packaged, preview });
   // --prior=<x.y.z>: the same package as an older release, for the installer test's update case (scripts/app-installer-test.ps1).
   const prior = process.argv.find(arg => arg.startsWith('--prior='))?.slice('--prior='.length);
-  if (prior) buildInstaller({ ...packaged, version: prior }, path.join(out, 'installer-prior'));
+  if (prior) buildInstaller({ ...packaged, version: prior, preview: undefined }, path.join(out, 'installer-prior'));
 }

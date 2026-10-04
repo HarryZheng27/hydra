@@ -194,6 +194,7 @@ function Resolve-HydraRelease {
   $assets = @($release.assets)
   $installerAssets = @($assets | Where-Object { $_.name -eq $InstallerName })
   $sumsAssets = @($assets | Where-Object { $_.name -eq $SumsName })
+  if ($installerAssets.Count -eq 0 -and $InstallerName -eq 'HydraAppSetup.exe') { throw "$tag doesn't include the Hydra app yet. App previews are on https://github.com/$Repo/releases." }
   if ($installerAssets.Count -ne 1) { throw "$tag does not have exactly one $InstallerName asset." }
   if ($sumsAssets.Count -ne 1) { throw "$tag does not have exactly one $SumsName asset." }
   $installerUrl = $installerAssets[0].browser_download_url

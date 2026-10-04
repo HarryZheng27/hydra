@@ -50,17 +50,17 @@ test('a release carries both tested installers, each with its own one-line check
   assert.match(step(release, "Check the tag names this build's version and isn't taken").join('\n'), /app\/package\.json's version \$appVersion isn't the root's \$version/);
 });
 
-test('a stable release builds the app as a stable package through the App workflow, only on a manual run', () => {
+test('a release builds the app through the App workflow, only on a manual run: a stable package for a full release, a preview for a prerelease', () => {
   const app = job('app');
   assert.ok(app.includes("    if: github.event_name == 'workflow_dispatch'"));
   assert.ok(app.includes('    uses: ./.github/workflows/app.yml'));
-  assert.ok(app.includes('      channel: stable'));
+  assert.ok(app.includes("      channel: ${{ inputs.prerelease && 'preview' || 'stable' }}"));
   assert.doesNotMatch(app.join('\n'), /permissions|: write\b/);
   const appWorkflow = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'app.yml'), 'utf8').replace(/\r\n/g, '\n');
   // The App workflow builds, tests and uploads only; it never writes, so another workflow may call it.
   assert.doesNotMatch(appWorkflow, /: write\b/);
   assert.match(appWorkflow, /workflow_call:\n {4}inputs:\n {6}channel:/);
-  assert.ok(appWorkflow.includes("--channel=${{ inputs.channel == 'stable' && 'stable' || 'preview' }}"));
+  assert.ok(appWorkflow.includes("--channel=${{ inputs.channel == 'stable' && 'stable' || 'preview' }} ${{ inputs.preview && format('--preview={0}', inputs.preview) || '' }}"));
   assert.ok(appWorkflow.includes('          name: Hydra-app-win32-x64-installer'));
   assert.ok(appWorkflow.includes('./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe'));
 });
@@ -74,6 +74,10 @@ test('an app preview is a prerelease with a suffixed tag, published only from a 
   const job = preview.slice(preview.indexOf('\n  preview:'));
   assert.match(job, /\n {4}needs: app\n {4}if: inputs\.preview != ''\n/);
   assert.match(job, /-notmatch '\^\[1-9\]\[0-9\]\{0,3\}\$'/);
+  // From main only, and only once x.y.z is released: a preview installs as x.y.z.n, between it and the next release.
+  assert.match(job, /if \(\$env:GITHUB_REF -ne 'refs\/heads\/main'\) \{ throw/);
+  assert.match(job, /gh release view "v\$version" [^\n]*\n[^\n]*isn't released yet/);
+  assert.match(preview, / {6}preview: \$\{\{ inputs\.preview \}\}\n/);
   assert.match(job, /\$tag = "v\$version-app\.\$env:PREVIEW"/);
   assert.match(job, /gh release view \$tag[^\n]*\n[^\n]*already exists/);
   assert.match(job, /WriteAllText\(\(Join-Path \$PWD 'release\/SHA256SUMS-app'\), "\$hash {2}HydraAppSetup\.exe`n"\)/);

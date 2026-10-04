@@ -218,7 +218,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/app.yml
     with:
-      channel: stable
+      # A prerelease of the IDE carries an app that doesn't update itself either.
+      channel: ${{ inputs.prerelease && 'preview' || 'stable' }}
 
   # Release trust (Step 4): only a manual run with a release tag publishes,
   # and only after the desktop job's build, smoke, installer, upgrade and MSIX checks, and the app's checks, have all passed.

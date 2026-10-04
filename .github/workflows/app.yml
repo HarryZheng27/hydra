@@ -37,6 +37,10 @@ on:
         description: 'The packaged app''s release channel: stable or preview.'
         type: string
         default: preview
+      preview:
+        description: 'An app preview''s number n: its installer is version <version>.n (app-preview.yml).'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -68,7 +72,7 @@ jobs:
       # G6: the packaged app (fuses, integrity-checked archive) and its per-user installer, with an older copy of the
       # same package for the update case; the lifecycle test runs only here, on a disposable runner. Only the desktop
       # workflow's stable release asks for the stable channel; everything else is a preview, which never updates itself.
-      - run: node scripts/package.mjs --installer --prior=0.0.1 --channel=${{ inputs.channel == 'stable' && 'stable' || 'preview' }}
+      - run: node scripts/package.mjs --installer --prior=0.0.1 --channel=${{ inputs.channel == 'stable' && 'stable' || 'preview' }} ${{ inputs.preview && format('--preview={0}', inputs.preview) || '' }}
         working-directory: app
       - run: ./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe -PriorInstallerPath app/out/installer-prior/HydraAppSetup.exe
         shell: pwsh

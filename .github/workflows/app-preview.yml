@@ -19,6 +19,7 @@ jobs:
     uses: ./.github/workflows/app.yml
     with:
       channel: preview
+      preview: ${{ inputs.preview }}
 
   # A prerelease with a suffixed tag, so releases/latest, the IDE's updater, scripts/install.ps1 and the app's own
   # updater never pick it. This job alone may write: the release, and the installer's build-provenance attestation.
@@ -42,9 +43,15 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:PREVIEW -notmatch '^[1-9][0-9]{0,3}$') { throw "The preview number '$env:PREVIEW' must be a whole number from 1." }
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw "Previews are published from main, not $env:GITHUB_REF." }
           $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
           $appVersion = (Get-Content -LiteralPath app/package.json -Raw | ConvertFrom-Json).version
           if ($appVersion -ne $version) { throw "app/package.json's version $appVersion isn't the root's $version." }
+          # A preview of x.y.z installs as x.y.z.n: above the released x.y.z, below the next release. So x.y.z must
+          # already be released; a version that is still to be released gets no previews.
+          gh release view "v$version" --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) { throw "v$version isn't released yet. Preview the app from main while its version is the latest release's." }
+          $global:LASTEXITCODE = 0
           $tag = "v$version-app.$env:PREVIEW"
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists." }
@@ -76,7 +83,7 @@ jobs:
           $notes = @(
             "Hydra app preview $env:PREVIEW_TAG, built from $env:GITHUB_SHA by run $env:GITHUB_RUN_ID after every app check passed.",
             '',
-            'A preview never updates itself: install the next one by hand. If you use Hydra IDE, this release is not for you, and its updater skips it.',
+            "A preview never updates itself: install the next one over it by hand (its installer is version $env:HYDRA_VERSION.$env:PREVIEW), or the next release. If you use Hydra IDE, this release is not for you, and its updater skips it.",
             '',
             'To check the installer you downloaded:',
             '- Its SHA-256 must match `SHA256SUMS-app`: `Get-FileHash .\HydraAppSetup.exe -Algorithm SHA256` in PowerShell.',

@@ -36,7 +36,17 @@ export function releaseChannel(value) {
 export function versionStrings(version) {
   return { ProductName: 'Hydra', FileDescription: 'Hydra', CompanyName: 'Nico Dunlap', ProductVersion: version, FileVersion: version, OriginalFilename: EXE, InternalName: 'Hydra', LegalCopyright: 'MIT License' };
 }
-/** The definitions app/installer/hydra-app.iss expects. */
-export function installerDefinitions({ version, sourceDir, outputDir, setupIcon }) {
-  return { Version: releaseVersion(version), RawVersion: version, SourceDir: sourceDir, OutputDir: outputDir, SetupIcon: setupIcon };
+/** A preview's number: 1 to 9999. */
+export function previewNumber(value) {
+  if (value === undefined) return undefined;
+  if (!/^[1-9][0-9]{0,3}$/.test(value)) throw new Error(`The preview number ${JSON.stringify(value)} must be a whole number from 1 to 9999.`);
+  return value;
+}
+/**
+ * The definitions app/installer/hydra-app.iss expects. A preview's installer is version x.y.z.n, so preview n+1
+ * installs over preview n (an equal version is refused), and the next x.y.z release over both.
+ */
+export function installerDefinitions({ version, preview, sourceDir, outputDir, setupIcon }) {
+  const installed = preview === undefined ? releaseVersion(version) : `${releaseVersion(version)}.${previewNumber(preview)}`;
+  return { Version: installed, RawVersion: installed, SourceDir: sourceDir, OutputDir: outputDir, SetupIcon: setupIcon };
 }
