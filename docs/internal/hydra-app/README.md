@@ -54,6 +54,6 @@ G1 and G2 can run at the same time, in separate sessions. G6 and G7 can too.
 | G2 | Done | #290, #291, #292, #293, #295, #296, #297 |
 | G3 | Done | [#298](https://github.com/ndunl075/hydra/pull/298), [#299](https://github.com/ndunl075/hydra/pull/299), [#300](https://github.com/ndunl075/hydra/pull/300), [#301](https://github.com/ndunl075/hydra/pull/301) |
 | G4 | Done | [#302](https://github.com/ndunl075/hydra/pull/302), [#304](https://github.com/ndunl075/hydra/pull/304), [#305](https://github.com/ndunl075/hydra/pull/305), [#306](https://github.com/ndunl075/hydra/pull/306), [#307](https://github.com/ndunl075/hydra/pull/307) |
-| G5 | Not started | |
+| G5 | Done but the live check (Nico) | [#308](https://github.com/ndunl075/hydra/pull/308), [#309](https://github.com/ndunl075/hydra/pull/309), [#310](https://github.com/ndunl075/hydra/pull/310), [#311](https://github.com/ndunl075/hydra/pull/311), [#312](https://github.com/ndunl075/hydra/pull/312) |
 | G6 | Done | [#303](https://github.com/ndunl075/hydra/pull/303), [#313](https://github.com/ndunl075/hydra/pull/313), [#314](https://github.com/ndunl075/hydra/pull/314), [#315](https://github.com/ndunl075/hydra/pull/315), [#316](https://github.com/ndunl075/hydra/pull/316), [#317](https://github.com/ndunl075/hydra/pull/317) |
 | G7 | Not started | |
