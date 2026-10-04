@@ -49,6 +49,12 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .mode.active { background: var(--bg); color: var(--fg); box-shadow: 0 0 0 1px var(--border); }
 
 /* Sidebar */
+/* The sidebar slides with its toggle: near instant, and not at all with reduced motion. */
+.sidebar-slot { width: var(--sidebar-width); flex: none; display: flex; overflow: hidden; transition: width 110ms cubic-bezier(.2, 0, 0, 1); }
+.sidebar-closed .sidebar-slot { width: 0; }
+.sidebar-slot > .sidebar { transition: opacity 110ms ease-out; }
+.sidebar-closed .sidebar-slot > .sidebar { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .sidebar-slot, .sidebar-slot > .sidebar { transition: none; } }
 .sidebar { width: var(--sidebar-width); flex: none; display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--sidebar-bg); color: var(--sidebar-fg); border-right: 1px solid var(--sidebar-border); }
 .side-action { flex: none; width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--radius); text-align: left; }
 .side-action:hover, .side-action.selected { background: var(--hover); color: var(--fg); }
