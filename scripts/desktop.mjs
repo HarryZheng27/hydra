@@ -149,7 +149,9 @@ export function brandedInstaller(text) {
   // shortcut an earlier version made, such as Hydra.lnk, which is now the
   // Hydra app's (desktop/hydra-shortcuts.iss). "new" would not do: it leaves
   // the old log and adds a second uninstaller beside it.
-  replaceOnce('DefaultGroupName={#NameLong}', 'DefaultGroupName={#NameLong}\nUsePreviousGroup=no\nUninstallLogMode=overwrite');
+  // HydraSetup.exe keeps its identity: its PE product name stays "Hydra", which the signed update helper checks
+  // (native/desktop-update-pe-identity.cpp). Inno would otherwise take AppName, which is nameLong, "Hydra IDE".
+  replaceOnce('DefaultGroupName={#NameLong}', 'DefaultGroupName={#NameLong}\nUsePreviousGroup=no\nUninstallLogMode=overwrite\nVersionInfoProductName=Hydra');
   // A fresh log no longer lists files only an earlier version installed. So that
   // uninstalling still empties the install folder (a leftover folder makes a
   // later install refuse it), it also removes what the installer puts there:
