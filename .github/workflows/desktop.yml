@@ -221,8 +221,9 @@ jobs:
       # A prerelease of the IDE carries an app that doesn't update itself either.
       channel: ${{ inputs.prerelease && 'preview' || 'stable' }}
 
-  # Both of this build's installers side by side (G6): install both, uninstall each in turn, in both orders, and the
-  # other keeps its program, registration, shortcuts and data. Manual runs only, like the app job it needs.
+  # Both of this build's installers side by side (G6), in both install and uninstall orders, desktop shortcuts included:
+  # neither touches the other's shortcuts, and the one that stays keeps its program, registration, shortcuts and data.
+  # Manual runs only, like the app job it needs.
   coexistence:
     needs: [desktop, app]
     if: github.event_name == 'workflow_dispatch'
@@ -242,7 +243,7 @@ jobs:
           path: installers/app
       - name: Coexistence test
         shell: pwsh
-        run: ./scripts/coexistence-test.ps1 -IdeInstallerPath installers/ide/HydraSetup.exe -AppInstallerPath installers/app/HydraAppSetup.exe
+        run: ./scripts/coexistence-test.ps1 -IdeInstallerPath installers/ide/HydraSetup.exe -AppInstallerPath installers/app/HydraAppSetup.exe -DesktopShortcuts
       - uses: actions/upload-artifact@v4
         if: always()
         with:

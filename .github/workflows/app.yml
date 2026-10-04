@@ -52,7 +52,7 @@ permissions:
 jobs:
   app:
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -81,6 +81,7 @@ jobs:
       - run: ./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe -PriorInstallerPath app/out/installer-prior/HydraAppSetup.exe
         shell: pwsh
       # Side by side with an installed Hydra IDE: the pinned release the IDE's upgrade test uses, checked by its SHA-256.
+      # It predates the rename to Hydra IDE, so desktop shortcuts are tested only with this build's IDE (desktop.yml).
       - name: Coexistence with Hydra IDE
         shell: pwsh
         env:

@@ -106,7 +106,7 @@ test('both installers are tested side by side before a release, and the app besi
   assert.ok(coexistence.includes('    needs: [desktop, app]'));
   assert.ok(coexistence.includes("    if: github.event_name == 'workflow_dispatch'"));
   assert.doesNotMatch(coexistence.join('\n'), /permissions|: write\b/);
-  assert.match(step(coexistence, 'Coexistence test').join('\n'), /coexistence-test\.ps1 -IdeInstallerPath installers\/ide\/HydraSetup\.exe -AppInstallerPath installers\/app\/HydraAppSetup\.exe/);
+  assert.match(step(coexistence, 'Coexistence test').join('\n'), /coexistence-test\.ps1 -IdeInstallerPath installers\/ide\/HydraSetup\.exe -AppInstallerPath installers\/app\/HydraAppSetup\.exe -DesktopShortcuts/);
   const appWorkflow = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'app.yml'), 'utf8').replace(/\r\n/g, '\n');
   // The App workflow uses the pinned IDE release, checked by its SHA-256 before it runs.
   assert.match(appWorkflow, /gh release download \$baseline\.tag [^\n]*--pattern HydraSetup\.exe/);

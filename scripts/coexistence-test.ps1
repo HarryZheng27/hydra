@@ -1,12 +1,17 @@
-# Hydra IDE and the Hydra app installed side by side (G6). Both are installed, then uninstalled one at a time, in
-# both orders: whichever stays keeps its program, its registration and its shortcuts, and the data both use (the
-# app's own, the Hydra storage they share, and the IDE's settings) is untouched.
+# Hydra IDE and the Hydra app installed side by side (G6), in both orders: one is installed, then the other, which
+# must leave the first's shortcuts alone; then the first is uninstalled, and the second keeps its program, its
+# registration and its shortcuts; then the second goes. The data both use (the app's own, the Hydra storage they
+# share, and the IDE's settings) is untouched throughout.
 #   -IdeInstallerPath  a HydraSetup.exe (the pinned release in the App workflow; this build's in the desktop workflow)
 #   -AppInstallerPath  a HydraAppSetup.exe
+#   -DesktopShortcuts  both also make a desktop shortcut. Only with an IDE from after the rename to Hydra IDE: an older
+#                      IDE's desktop shortcut is also Hydra.lnk, and it may replace the app's (Releases.md: the first
+#                      app preview follows the rename release).
 # Installing the IDE would replace a developer's own Hydra IDE, so this runs only on a disposable GitHub-hosted runner.
 param(
   [Parameter(Mandatory = $true)][string]$IdeInstallerPath,
-  [Parameter(Mandatory = $true)][string]$AppInstallerPath
+  [Parameter(Mandatory = $true)][string]$AppInstallerPath,
+  [switch]$DesktopShortcuts
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -21,10 +26,14 @@ if ((Test-Path -LiteralPath $ideKey) -or (Test-Path -LiteralPath $appKey)) { thr
 $testRoot = Join-Path $env:RUNNER_TEMP ('hydra-coexistence-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 $products = @{
-  ide = @{ name = 'Hydra IDE'; installer = $ideInstaller; key = $ideKey; dir = (Join-Path $testRoot 'Hydra'); args = @('/MERGETASKS="!runcode,!associatewithfiles,!addtopath"') }
-  app = @{ name = 'the Hydra app'; installer = $appInstaller; key = $appKey; dir = (Join-Path $testRoot 'Hydra App'); args = @() }
+  ide = @{ name = 'Hydra IDE'; installer = $ideInstaller; key = $ideKey; folder = 'Hydra'; args = @($(if ($DesktopShortcuts) { '/MERGETASKS="desktopicon,!runcode,!associatewithfiles,!addtopath"' } else { '/MERGETASKS="!runcode,!associatewithfiles,!addtopath"' })) }
+  app = @{ name = 'the Hydra app'; installer = $appInstaller; key = $appKey; folder = 'Hydra App'; args = @($(if ($DesktopShortcuts) { '/TASKS="desktopicon"' } else { '/TASKS=""' })) }
 }
-foreach ($product in $products.Values) { $product.exe = Join-Path $product.dir 'Hydra.exe' }
+# Each order installs into folders of its own, so nothing one left can trip the next.
+function Use-Folders([string]$label) {
+  foreach ($product in $products.Values) { $product.dir = Join-Path (Join-Path $testRoot $label) $product.folder; $product.exe = Join-Path $product.dir 'Hydra.exe' }
+}
+Use-Folders 'none'
 
 # The data neither uninstall may touch without /HYDRAREMOVEDATA.
 $sentinels = @(
@@ -64,8 +73,9 @@ function Uninstall-Product($product, [string]$label) {
   if (-not (Test-Path -LiteralPath $uninstaller)) { return }
   $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $testRoot ($label + '-uninstall.log')) + '"')) -WindowStyle Hidden -Wait -PassThru
   if ($process.ExitCode -ne 0) { throw "Uninstalling $($product.name) ($label) failed: $($process.ExitCode)" }
-  for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $product.exe); $i++) { Start-Sleep -Milliseconds 500 }
+  for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $product.dir); $i++) { Start-Sleep -Milliseconds 500 }
   if ((Test-Path -LiteralPath $product.exe) -or (Test-Path -LiteralPath $product.key)) { throw "Uninstalling $($product.name) left its program or registration." }
+  if (Test-Path -LiteralPath $product.dir) { throw "Uninstalling $($product.name) left files: $((Get-ChildItem -LiteralPath $product.dir -Recurse -File | Select-Object -First 10 | ForEach-Object FullName) -join ', ')" }
 }
 function Assert-Installed($product, $shortcuts, [string]$when) {
   if (-not (Test-Path -LiteralPath $product.exe) -or -not (Test-Path -LiteralPath $product.key)) { throw "$when removed $($product.name)'s program or registration." }
@@ -80,13 +90,17 @@ try {
   foreach ($first in @('ide', 'app')) {
     $second = if ($first -eq 'ide') { 'app' } else { 'ide' }
     $label = "$first-first"
-    Install-Product $products.ide "$label-ide"
-    Install-Product $products.app "$label-app"
-    $shortcuts = @{ ide = (Get-Shortcuts $products.ide.exe); app = (Get-Shortcuts $products.app.exe) }
-    foreach ($name in 'ide', 'app') { if ($shortcuts[$name].Count -eq 0) { throw "$($products[$name].name) made no shortcut." } }
-    # Neither product's shortcut is the other's.
-    foreach ($link in $shortcuts.ide.Keys) { if ($shortcuts.app.ContainsKey($link)) { throw "Both products claim $link." } }
-    Assert-Installed $products.ide $shortcuts.ide 'Installing the app'
+    Use-Folders $label
+    $shortcuts = @{}
+    Install-Product $products[$first] "$label-$first"
+    $shortcuts[$first] = Get-Shortcuts $products[$first].exe
+    Install-Product $products[$second] "$label-$second"
+    Assert-Installed $products[$first] $shortcuts[$first] "Installing $($products[$second].name) after it"
+    $shortcuts[$second] = Get-Shortcuts $products[$second].exe
+    $expected = if ($DesktopShortcuts) { 2 } else { 1 }
+    foreach ($name in 'ide', 'app') { if ($shortcuts[$name].Count -ne $expected) { throw "$($products[$name].name) has $($shortcuts[$name].Count) shortcut(s), not $expected." } }
+    # The app's is the Start Menu's Hydra.lnk; the IDE's is in its own Start Menu folder.
+    if (-not $shortcuts.app.ContainsKey((Join-Path ([Environment]::GetFolderPath('Programs')) 'Hydra.lnk'))) { throw 'The app has no Start Menu Hydra.lnk.' }
     Uninstall-Product $products[$first] "$label-$first"
     Assert-Installed $products[$second] $shortcuts[$second] "Uninstalling $($products[$first].name)"
     Assert-DataKept "Uninstalling $($products[$first].name)"
@@ -100,6 +114,8 @@ try {
   $logs = Join-Path $env:GITHUB_WORKSPACE 'coexistence-test-logs'
   New-Item -ItemType Directory -Path $logs -Force | Out-Null
   Get-ChildItem -LiteralPath $testRoot -Filter '*.log' | Copy-Item -Destination $logs
+  $cleanupLog = Join-Path $env:TEMP 'hydra-uninstall.log'
+  if (Test-Path -LiteralPath $cleanupLog) { Copy-Item -LiteralPath $cleanupLog -Destination $logs }
 }
 $results
-Write-Output 'PASS: Hydra IDE and the Hydra app install side by side, and uninstalling either, in both orders, leaves the other its program, registration, shortcuts and data.'
+Write-Output "PASS: Hydra IDE and the Hydra app install side by side in both orders$(if ($DesktopShortcuts) { ', desktop shortcuts included' }); neither install touches the other's shortcuts, and uninstalling either leaves the other its program, registration, shortcuts and data."

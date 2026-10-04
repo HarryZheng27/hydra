@@ -41,7 +41,7 @@ Hydra comes two ways. Both run the same heads, plans, gates and lanes, and can b
 - **Hydra IDE** is the full code editor described above, built on VS Code. Choose it if you want to edit code yourself in the same window. Its installer is `HydraSetup.exe`.
 - **Hydra** (the app) is a lighter desktop app built around the chat: you chat with Claude Code or Codex directly, and Hydra's heads, plans, the Agents view and lanes are around it, without an editor. It's newer: it ships first as previews, then in releases as `HydraAppSetup.exe`. See the [app guide](docs/App.md).
 
-A repository is driven by one of them at a time: whichever opens it first owns it, and the other says so and leaves it alone.
+A repository is driven by one of them at a time: whichever opens it first owns it, and the other runs no heads or plans there until it's closed in the first.
 
 ## Install
 
@@ -58,9 +58,9 @@ Windows 10 or 11, x64. Either:
 
 The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info → Run anyway**. To check a download yourself, see [Checking an installer](docs/Releases.md#checking-an-installer).
 
-It installs as **Hydra IDE**, the name on its Start Menu entry and desktop shortcut. Installed copies offer each new release in-app.
+It installs as **Hydra IDE**, the name on its Start Menu entry and desktop shortcut. Installed copies offer each new release in-app. Updating and uninstalling are covered in [Releases](docs/Releases.md#updating).
 
-**The Hydra app:** download `HydraAppSetup.exe` from a release that includes it (app previews are tagged `v<version>-app.<n>` on the [releases page](https://github.com/ndunl075/hydra/releases)), or run the same one-liner after `$env:HYDRA_INSTALL_APP = '1'`. It installs as **Hydra**, also per user with no admin prompt, into its own folder. See the [app guide](docs/App.md). Updating and uninstalling are covered in [Releases](docs/Releases.md#updating).
+**The Hydra app:** download `HydraAppSetup.exe` from a release that includes it (app previews are tagged `v<version>-app.<n>` on the [releases page](https://github.com/ndunl075/hydra/releases)), or run the same one-liner after `$env:HYDRA_INSTALL_APP = '1'` (and `Remove-Item Env:HYDRA_INSTALL_APP` after, so a later one-liner in that window installs Hydra IDE again). It installs as **Hydra**, also per user with no admin prompt, into its own folder. Its [updates](docs/App.md#updates) and [uninstalling](docs/App.md#uninstalling) are in the app guide.
 
 ### Requirements
 

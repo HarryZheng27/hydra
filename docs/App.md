@@ -12,7 +12,7 @@ Windows 10 or 11, x64, with [Git](https://git-scm.com/) and the [Claude Code](ht
 - **In PowerShell:**
 
   ```powershell
-  $env:HYDRA_INSTALL_APP = '1'; irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex
+  $env:HYDRA_INSTALL_APP = '1'; irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex; Remove-Item Env:HYDRA_INSTALL_APP
   ```
 
   This installs the app from the latest full release, checked against its `SHA256SUMS-app` ([Installing](Releases.md#installing)). It doesn't install previews.
@@ -30,7 +30,7 @@ It installs for your user only, with no admin prompt, into `%LOCALAPPDATA%\Progr
 Once a project has a chat, Hydra runs for it, as it does in an IDE window:
 
 - **Heads and plans:** the chat can start heads and plans with Hydra's lead tools; each shows as a card in the chat and on the **Agents** view, with its gates, review and evidence. **Merge plan** and **Open PR** work as in the IDE.
-- **Lanes:** a real Claude Code or Codex terminal in its own worktree, with **Review changes** and **Preview app**.
+- **Lanes:** a real Claude Code or Codex terminal in its own worktree, with **Diff**, **Merge**, **Run gates**, **Preview app** and **Open PR**.
 - **Stop all** and **Resume**, and the audit log, from the Agents view.
 - **Hydra Settings** (packs, gates, providers and the rest) opens in its own window. **Settings → Connectors** connects Hydra's tools to Claude Code and Codex.
 
@@ -40,7 +40,7 @@ The [user guide](Heads.md) covers heads, plans, gates, packs and lanes in detail
 
 An installed **stable** app checks for a new release 30 seconds after it starts and then once a day, and offers **Update**, **Release notes**, **Skip this version** or **Later**. Update downloads `HydraAppSetup.exe`, checks it against the release's `SHA256SUMS-app`, and asks once more; Hydra then closes, installs the update into the same folder and reopens. Nothing is downloaded or installed without those clicks. **Settings → Updates** has **Check for updates** and turns the daily check off.
 
-A **preview** never updates itself: install the next preview over it by hand, or the next release. Settings says which one you have.
+A **preview** never updates itself: install the next preview over it by hand, or the next release. A preview's **Settings → Updates** says so.
 
 ## Your data
 
@@ -53,7 +53,7 @@ A **preview** never updates itself: install the next preview over it by hand, or
 
 The two install into separate folders, under separate names and registrations, with separate shortcuts; installing, updating or uninstalling one never touches the other's. They share Hydra's storage, so either one sees the heads and plans the other started.
 
-A repository is driven by one of them at a time. Whichever opens it first owns it; the other says the folder is open in the other one and runs nothing there until it's closed. The `hydra` command and Claude Code's or Codex's `hydra` tools reach whichever one owns the folder.
+A repository is driven by one of them at a time. Whichever opens it first owns it, and the other runs no heads or plans there: the app says Hydra IDE manages the project, and the IDE says the workspace is already managed in another window. Close it in the owner, then reopen the project in the app, or reload the IDE's window. The `hydra` command and Claude Code's or Codex's `hydra` tools reach whichever one owns the folder.
 
 ## Uninstalling
 
