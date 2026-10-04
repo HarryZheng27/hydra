@@ -67,6 +67,15 @@ begin
     and not HydraHasSwitch('/LOADINF');
 end;
 
+// The IDE's versions are x.y.z. The Hydra app's installer (app/installer/hydra-app.iss)
+// defines HydraPreviewVersions, because it numbers a preview x.y.z.n: preview n+1 then
+// installs over preview n, and the next x.y.z over both. The IDE never defines it.
+#ifdef HydraPreviewVersions
+  #define HydraMaxVersionDots "3"
+#else
+  #define HydraMaxVersionDots "2"
+#endif
+
 function HydraStableVersion(S: String): Boolean;
 var
   I, Dots, SegmentStart: Integer;
@@ -77,13 +86,13 @@ begin
   if Length(S) = 0 then Exit;
   for I := 1 to Length(S) do begin
     if S[I] = '.' then begin
-      if (I = SegmentStart) or (Dots = 2) or
+      if (I = SegmentStart) or (Dots = {#HydraMaxVersionDots}) or
         ((I - SegmentStart > 1) and (S[SegmentStart] = '0')) then Exit;
       Dots := Dots + 1;
       SegmentStart := I + 1;
     end else if (S[I] < '0') or (S[I] > '9') then Exit;
   end;
-  Result := (Dots = 2) and (SegmentStart <= Length(S)) and
+  Result := ((Dots = 2) or (Dots = {#HydraMaxVersionDots})) and (SegmentStart <= Length(S)) and
     ((Length(S) - SegmentStart = 0) or (S[SegmentStart] <> '0'));
 end;
 

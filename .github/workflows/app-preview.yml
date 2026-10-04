@@ -1,0 +1,96 @@
+name: App preview
+
+# A manual run only. It builds and tests the app's installer (the App workflow's own job), then, given a preview
+# number, publishes the app preview v<version>-app.<n> as a prerelease (docs/Releases.md). Without a number it is a
+# dry run that only uploads the installer. Nico triggers it, never an agent.
+on:
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: 'Publish the app preview v<package.json version>-app.<this number> once every check passes. Leave empty for a dry run.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    uses: ./.github/workflows/app.yml
+    with:
+      channel: preview
+      preview: ${{ inputs.preview }}
+
+  # A prerelease with a suffixed tag, so releases/latest, the IDE's updater, scripts/install.ps1 and the app's own
+  # updater never pick it. This job alone may write: the release, and the installer's build-provenance attestation.
+  preview:
+    needs: app
+    if: inputs.preview != ''
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      PREVIEW: ${{ inputs.preview }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the preview tag is new and names this build's version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:PREVIEW -notmatch '^[1-9][0-9]{0,3}$') { throw "The preview number '$env:PREVIEW' must be a whole number from 1." }
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw "Previews are published from main, not $env:GITHUB_REF." }
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $appVersion = (Get-Content -LiteralPath app/package.json -Raw | ConvertFrom-Json).version
+          if ($appVersion -ne $version) { throw "app/package.json's version $appVersion isn't the root's $version." }
+          # A preview of x.y.z installs as x.y.z.n: above the released x.y.z, below the next release. So x.y.z must
+          # already be released; a version that is still to be released gets no previews.
+          gh release view "v$version" --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) { throw "v$version isn't released yet. Preview the app from main while its version is the latest release's." }
+          $global:LASTEXITCODE = 0
+          $tag = "v$version-app.$env:PREVIEW"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists." }
+          $global:LASTEXITCODE = 0
+          "PREVIEW_TAG=$tag" >> $env:GITHUB_ENV
+          "HYDRA_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Download the tested app installer
+        uses: actions/download-artifact@v4
+        with:
+          name: Hydra-app-win32-x64-installer
+          path: release
+      - name: Write SHA256SUMS-app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hash = (Get-FileHash -LiteralPath release/HydraAppSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          # One line, the format sha256sum -c reads. The IDE's SHA256SUMS is never written here.
+          [IO.File]::WriteAllText((Join-Path $PWD 'release/SHA256SUMS-app'), "$hash  HydraAppSetup.exe`n")
+      - name: Attest the app installer's build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/HydraAppSetup.exe
+      - name: Publish the app preview
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $notes = @(
+            "Hydra app preview $env:PREVIEW_TAG, built from $env:GITHUB_SHA by run $env:GITHUB_RUN_ID after every app check passed.",
+            '',
+            "A preview never updates itself: install the next one over it by hand (its installer is version $env:HYDRA_VERSION.$env:PREVIEW), or the next release. If you use Hydra IDE, this release is not for you, and its updater skips it.",
+            '',
+            'To check the installer you downloaded:',
+            '- Its SHA-256 must match `SHA256SUMS-app`: `Get-FileHash .\HydraAppSetup.exe -Algorithm SHA256` in PowerShell.',
+            "- Its build provenance: ``gh attestation verify HydraAppSetup.exe --repo $env:GITHUB_REPOSITORY``.",
+            '',
+            'The installer is not code-signed yet, so Windows SmartScreen may warn before it runs.'
+          ) -join "`n"
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'notes.md'), $notes)
+          gh release create $env:PREVIEW_TAG release/HydraAppSetup.exe release/SHA256SUMS-app --repo $env:GITHUB_REPOSITORY --prerelease --target $env:GITHUB_SHA --title "Hydra app preview $env:HYDRA_VERSION-app.$env:PREVIEW" --notes-file (Join-Path $env:RUNNER_TEMP 'notes.md')
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing the preview failed.' }

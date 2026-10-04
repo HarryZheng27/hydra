@@ -1,6 +1,6 @@
 // The Hydra app's Windows installer: a per-user install with no admin prompt.
 // app/scripts/package.mjs compiles it with these definitions:
-//   Version, RawVersion  the app's release version (x.y.z, stable only)
+//   Version, RawVersion  the app's version: x.y.z, or x.y.z.n for preview n
 //   SourceDir            the packaged app (Hydra.exe, resources\app.asar, ...)
 //   OutputDir            where HydraAppSetup.exe goes
 //   SetupIcon            the Hydra icon (.ico)
@@ -81,6 +81,8 @@ Name: "{autodesktop}\{#NameLong}"; Filename: "{app}\{#ExeBasename}.exe"; AppUser
 Filename: "{app}\{#ExeBasename}.exe"; Description: "{cm:LaunchProgram,{#NameLong}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+// A preview's version is x.y.z.n (package.mjs --preview=n), so the next preview installs over it.
+#define HydraPreviewVersions
 #include "..\..\desktop\hydra-update-mode.iss"
 #include "..\..\desktop\hydra-wizard.iss"
 function CreateFileW(FileName: String; Access, ShareMode, Security, Disposition, Flags, Template: Cardinal): Integer;

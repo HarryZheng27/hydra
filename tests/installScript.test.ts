@@ -72,7 +72,7 @@ test('install.ps1 supports -Version, -DryRun, -InstallerPath/-SumsPath, and the 
 
 test('install.ps1 refuses to overwrite a running Hydra instead of killing it', () => {
   assert.match(script, /Get-Process -Name 'Hydra'/);
-  assert.match(script, /Hydra is running\. Close it, then run this installer again\./);
+  assert.match(script, /\$productName is running\. Close it, then run this installer again\./);
 });
 
 test('install.ps1 wraps its work in a function so a piped run does not leak variables into the caller\'s session', () => {
@@ -93,4 +93,23 @@ test('install.ps1 parses as valid PowerShell (parse only; nothing is executed)',
   ].join('\n');
   const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0, `PowerShell parse errors:\n${result.stderr}`);
+});
+
+test('install.ps1 -App installs the Hydra app from HydraAppSetup.exe and its own SHA256SUMS-app, never touching the IDE\'s files', () => {
+  const text = readFileSync(scriptPath, 'utf8').replace(/\r\n/g, '\n');
+  // Piped to iex, the switch is an environment variable, as the version is.
+  assert.match(text, /\[switch\]\$App = \(\$env:HYDRA_INSTALL_APP -eq '1'\)/);
+  assert.match(text, /Install-Hydra -Version \$Version -DryRun:\$DryRun -InstallerPath \$InstallerPath -SumsPath \$SumsPath -App:\$App/);
+  const app = text.slice(text.indexOf('  if ($App) {'), text.indexOf('  } else {', text.indexOf('  if ($App) {')));
+  assert.match(app, /\$installerName = 'HydraAppSetup\.exe'/);
+  assert.match(app, /\$sumsName = 'SHA256SUMS-app'/);
+  assert.match(app, /\$installFolder = Join-Path \$env:LOCALAPPDATA 'Programs\\Hydra App'/);
+  // The app's installer has no runcode task, and the same silent, no-restart flags otherwise.
+  assert.match(app, /\$installerArguments = @\('\/SILENT', '\/SP-', '\/SUPPRESSMSGBOXES', '\/NORESTART'\)/);
+  const ide = text.slice(text.indexOf('  } else {', text.indexOf('  if ($App) {')));
+  assert.match(ide, /\$installerName = 'HydraSetup\.exe'\n {4}\$sumsName = 'SHA256SUMS'\n {4}\$installFolder = Join-Path \$env:LOCALAPPDATA 'Programs\\Hydra'\n/);
+  // Both go through the same release checks: a full v<x.y.z> release, exactly one installer and one checksum file
+  // from the tag's own folder, and a one-line checksum file naming that installer.
+  assert.match(text, /Resolve-HydraRelease -Uri \$releaseUri -Repo \$repo -InstallerName \$installerName -SumsName \$sumsName/);
+  assert.match(text, /Read-InstallerSha256 -SumsPath \$sumsFile -InstallerName \$installerName/);
 });

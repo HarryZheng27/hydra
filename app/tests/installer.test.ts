@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 // @ts-expect-error: a plain .mjs module without types, the one app/scripts/package.mjs packages with.
-import { APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, installerDefinitions, releaseChannel, releaseVersion, versionStrings } from '../scripts/packageConfig.mjs';
+import { APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, installerDefinitions, previewNumber, releaseChannel, releaseVersion, versionStrings } from '../scripts/packageConfig.mjs';
 
 const appDir = path.join(__dirname, '..');
 const read = (...parts: string[]): string => fs.readFileSync(path.join(...parts), 'utf8').replace(/\r\n/g, '\n');
@@ -115,6 +115,30 @@ test('a packaged app is a preview, which never updates itself, unless it is buil
   assert.match(read(appDir, 'src', 'main', 'startup.ts'), /'package\.json'\), 'utf8'\)\)\.hydraChannel/);
 });
 
+test('the app\'s version follows Hydra\'s: app/package.json and its lock carry the root package.json\'s version', () => {
+  const root = JSON.parse(read(appDir, '..', 'package.json')) as { version: string };
+  const app = JSON.parse(read(appDir, 'package.json')) as { version: string };
+  const lock = JSON.parse(read(appDir, 'package-lock.json')) as { version: string; packages: Record<string, { version?: string }> };
+  assert.equal(app.version, root.version, 'bump app/package.json with the root version (docs/Releases.md)');
+  assert.equal(lock.version, root.version);
+  assert.equal(lock.packages['']?.version, root.version);
+  assert.equal(releaseVersion(app.version), app.version, 'a stable x.y.z, which the installer needs');
+});
+
 test('a stable package must carry Hydra\'s own version, or it would be offered every release', () => {
   assert.match(read(appDir, 'scripts', 'package.mjs'), /if \(channel === 'stable' && version !== hydraVersion\) throw new Error/);
+});
+
+test('an app preview installs as x.y.z.n, so the next preview installs over it; the IDE stays x.y.z only', () => {
+  assert.deepEqual(installerDefinitions({ version: '0.27.1', preview: '2', sourceDir: 's', outputDir: 'o', setupIcon: 'i' }), { Version: '0.27.1.2', RawVersion: '0.27.1.2', SourceDir: 's', OutputDir: 'o', SetupIcon: 'i' });
+  for (const bad of ['0', '01', '10000', '1.5', 'x', '']) assert.throws(() => previewNumber(bad), /whole number/, bad);
+  assert.equal(previewNumber(undefined), undefined);
+  // Only the app's installer allows the fourth part, through a definition the IDE's never sets.
+  assert.match(iss, /#define HydraPreviewVersions\n#include "\.\.\\\.\.\\desktop\\hydra-update-mode\.iss"/);
+  const updateMode = read(appDir, '..', 'desktop', 'hydra-update-mode.iss');
+  assert.match(updateMode, /#ifdef HydraPreviewVersions\n {2}#define HydraMaxVersionDots "3"\n#else\n {2}#define HydraMaxVersionDots "2"\n#endif/);
+  assert.match(updateMode, /Result := \(\(Dots = 2\) or \(Dots = \{#HydraMaxVersionDots\}\)\)/);
+  assert.ok(!read(appDir, '..', 'scripts', 'desktop.mjs').includes('HydraPreviewVersions'), 'the IDE never allows four parts');
+  // A stable package is never a preview.
+  assert.match(read(appDir, 'scripts', 'package.mjs'), /if \(preview !== undefined && channel === 'stable'\) throw new Error/);
 });

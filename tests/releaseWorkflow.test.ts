@@ -22,7 +22,7 @@ const step = (jobLines: string[], name: string) => {
 
 test('the release job runs only on a manual run with a tag, after every desktop check', () => {
   const release = job('release');
-  assert.ok(release.includes('    needs: desktop'));
+  assert.ok(release.includes('    needs: [desktop, app]'));
   assert.ok(release.includes("    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''"));
   const workflowPermissions = lines.slice(lines.indexOf('permissions:'), lines.indexOf('jobs:')).join('\n');
   assert.doesNotMatch(workflowPermissions, /write/, 'the workflow-wide permissions stay read-only');
@@ -30,14 +30,60 @@ test('the release job runs only on a manual run with a tag, after every desktop 
   for (const permission of ['contents: write', 'id-token: write', 'attestations: write']) assert.ok(release.includes(`      ${permission}`));
 });
 
-test('a release carries SHA256SUMS and a provenance attestation for the tested installer', () => {
+test('a release carries both tested installers, each with its own one-line checksum file and a provenance attestation', () => {
   const release = job('release');
   assert.ok(step(release, 'Download the tested installer').includes('          name: Hydra-win32-x64-user-installer'));
-  assert.match(step(release, 'Write SHA256SUMS').join('\n'), /Get-FileHash -LiteralPath release\/HydraSetup\.exe -Algorithm SHA256/);
-  const attest = step(release, "Attest the installer's build provenance");
+  assert.ok(step(release, 'Download the tested app installer').includes('          name: Hydra-app-win32-x64-installer'));
+  // SHA256SUMS keeps exactly HydraSetup.exe's line: installed IDEs and install.ps1 refuse a second one.
+  const sums = step(release, 'Write SHA256SUMS').join('\n');
+  assert.match(sums, /Get-FileHash -LiteralPath release\/HydraSetup\.exe -Algorithm SHA256/);
+  assert.match(sums, /WriteAllText\(\(Join-Path \$PWD 'release\/SHA256SUMS'\), "\$hash {2}HydraSetup\.exe`n"\)/);
+  assert.doesNotMatch(sums, /HydraAppSetup/);
+  const appSums = step(release, 'Write SHA256SUMS-app').join('\n');
+  assert.match(appSums, /Get-FileHash -LiteralPath release\/HydraAppSetup\.exe -Algorithm SHA256/);
+  assert.match(appSums, /WriteAllText\(\(Join-Path \$PWD 'release\/SHA256SUMS-app'\), "\$hash {2}HydraAppSetup\.exe`n"\)/);
+  const attest = step(release, "Attest the installers' build provenance");
   assert.ok(attest.includes('        uses: actions/attest-build-provenance@v2'));
-  assert.ok(attest.includes('          subject-path: release/HydraSetup.exe'));
-  assert.match(step(release, 'Publish the release').join('\n'), /gh release create \$env:RELEASE_TAG release\/HydraSetup\.exe release\/SHA256SUMS /);
+  assert.deepEqual(attest.slice(attest.indexOf('          subject-path: |') + 1).map(line => line.trim()).filter(Boolean), ['release/HydraSetup.exe', 'release/HydraAppSetup.exe']);
+  assert.match(step(release, 'Publish the release').join('\n'), /gh release create \$env:RELEASE_TAG release\/HydraSetup\.exe release\/SHA256SUMS release\/HydraAppSetup\.exe release\/SHA256SUMS-app /);
+  // The app is built at Hydra's own version.
+  assert.match(step(release, "Check the tag names this build's version and isn't taken").join('\n'), /app\/package\.json's version \$appVersion isn't the root's \$version/);
+});
+
+test('a release builds the app through the App workflow, only on a manual run: a stable package for a full release, a preview for a prerelease', () => {
+  const app = job('app');
+  assert.ok(app.includes("    if: github.event_name == 'workflow_dispatch'"));
+  assert.ok(app.includes('    uses: ./.github/workflows/app.yml'));
+  assert.ok(app.includes("      channel: ${{ inputs.prerelease && 'preview' || 'stable' }}"));
+  assert.doesNotMatch(app.join('\n'), /permissions|: write\b/);
+  const appWorkflow = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'app.yml'), 'utf8').replace(/\r\n/g, '\n');
+  // The App workflow builds, tests and uploads only; it never writes, so another workflow may call it.
+  assert.doesNotMatch(appWorkflow, /: write\b/);
+  assert.match(appWorkflow, /workflow_call:\n {4}inputs:\n {6}channel:/);
+  assert.ok(appWorkflow.includes("--channel=${{ inputs.channel == 'stable' && 'stable' || 'preview' }} ${{ inputs.preview && format('--preview={0}', inputs.preview) || '' }}"));
+  assert.ok(appWorkflow.includes('          name: Hydra-app-win32-x64-installer'));
+  assert.ok(appWorkflow.includes('./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe'));
+});
+
+test('an app preview is a prerelease with a suffixed tag, published only from a manual run with a preview number', () => {
+  const preview = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'app-preview.yml'), 'utf8').replace(/\r\n/g, '\n');
+  const trigger = preview.slice(preview.indexOf('\non:'), preview.indexOf('\npermissions:'));
+  assert.deepEqual([...trigger.matchAll(/^ {2}([a-z_]+):/gm)].map(match => match[1]), ['workflow_dispatch'], 'a manual run only');
+  assert.match(preview, /^permissions:\n {2}contents: read\n/m);
+  assert.match(preview, / {2}app:\n {4}uses: \.\/\.github\/workflows\/app\.yml\n {4}with:\n {6}channel: preview\n/);
+  const job = preview.slice(preview.indexOf('\n  preview:'));
+  assert.match(job, /\n {4}needs: app\n {4}if: inputs\.preview != ''\n/);
+  assert.match(job, /-notmatch '\^\[1-9\]\[0-9\]\{0,3\}\$'/);
+  // From main only, and only once x.y.z is released: a preview installs as x.y.z.n, between it and the next release.
+  assert.match(job, /if \(\$env:GITHUB_REF -ne 'refs\/heads\/main'\) \{ throw/);
+  assert.match(job, /gh release view "v\$version" [^\n]*\n[^\n]*isn't released yet/);
+  assert.match(preview, / {6}preview: \$\{\{ inputs\.preview \}\}\n/);
+  assert.match(job, /\$tag = "v\$version-app\.\$env:PREVIEW"/);
+  assert.match(job, /gh release view \$tag[^\n]*\n[^\n]*already exists/);
+  assert.match(job, /WriteAllText\(\(Join-Path \$PWD 'release\/SHA256SUMS-app'\), "\$hash {2}HydraAppSetup\.exe`n"\)/);
+  assert.match(job, /subject-path: release\/HydraAppSetup\.exe/);
+  assert.match(job, /gh release create \$env:PREVIEW_TAG release\/HydraAppSetup\.exe release\/SHA256SUMS-app [^\n]*--prerelease/);
+  assert.doesNotMatch(job, /release\/SHA256SUMS[^-]|HydraSetup\.exe/, 'a preview never publishes the IDE or its SHA256SUMS');
 });
 
 test('the update-signing secrets reach only the signing step, which runs only for a code-signed installer', () => {
