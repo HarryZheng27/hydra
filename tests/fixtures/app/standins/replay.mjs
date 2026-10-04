@@ -46,8 +46,11 @@ const claim = () => { const taken = counter(); fs.writeFileSync(counterFile, Str
 // its first thread must not use up a place, or the next one would replay the wrong part. Until then it answers the
 // opening (initialize), which every Codex part shares, from the part it would take.
 const appServer = args[0] === 'app-server';
+// Every start is logged (starts.log), claimed or not, so an extra launch is never hidden.
+fs.appendFileSync(path.join(state, 'starts.log'), `${JSON.stringify({ args })}\n`);
 let index = appServer ? counter() : claim();
 let claimed = !appServer;
+const seen = []; // the kinds of the host's lines matched so far, for a jump to a later part to check
 
 const records = fs.readFileSync(fixture, 'utf8').split(/\r?\n/).filter(Boolean).slice(1).map(line => JSON.parse(line));
 // Parts, one per process the live check started: Claude's fixtures mark each with an "args:" note; Codex's begin each
@@ -180,6 +183,11 @@ for (let at = 0; at < part.length; at++) {
         if (!part) { process.stderr.write(`replay: ${path.basename(fixture)} has no process ${index + 1}\n`); process.exit(2); }
         at = part.findIndex(candidate => candidate.dir === 'send' && /^thread\//.test(parse(candidate.line)?.method ?? ''));
         if (at < 0) fail(`process ${index + 1} of ${path.basename(fixture)} starts no thread`);
+        // Its opening was answered from the part it would have taken: the host must have sent what this part's
+        // opening expects (requests the app may leave out aside), or a difference would pass unseen.
+        const opening = part.slice(0, at).filter(candidate => candidate.dir === 'send').map(candidate => parse(candidate.line)).filter(message => !(message?.method && optional.has(message.method))).map(kind);
+        const sent = seen.filter(sentKind => !optional.has(sentKind.replace(/^method:/, '')));
+        if (JSON.stringify(opening) !== JSON.stringify(sent)) fail(`process ${index + 1} opens with ${opening.join(', ')}, but the host sent ${sent.join(', ')}`);
         record = part[at];
         expected = parse(record.line);
       }
@@ -193,6 +201,7 @@ for (let at = 0; at < part.length; at++) {
     if (detail(actual) !== detail(withSessionValue(expected))) fail(`expected ${detail(expected).slice(0, 300)} from the host, got ${detail(actual).slice(0, 300)}`);
     if (/^thread\//.test(actual?.method ?? '')) threadAsked = true;
     fs.appendFileSync(path.join(state, 'consumed.log'), `${index}\n`);
+    seen.push(kind(actual));
     if (expected.type === 'control_request') ids.set(expected.request_id, actual.request_id);
     if (expected.method && 'id' in expected) ids.set(expected.id, actual.id);
     continue;

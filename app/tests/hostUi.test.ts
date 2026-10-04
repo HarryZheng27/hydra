@@ -122,5 +122,7 @@ test('a lane\'s changes show as a unified diff by git, named by the file; Previe
   assert.equal(await unifiedDiff('same.txt', 'x', 'x'), '');
   assert.equal(localPreviewUrl('http://localhost:5173/'), 'http://localhost:5173/');
   assert.equal(localPreviewUrl('https://127.0.0.1:8443/app'), 'https://127.0.0.1:8443/app');
-  for (const refused of ['https://example.com/', 'file:///C:/x.html', 'javascript:alert(1)', 'http://user:pw@localhost/', 'http://localhost.example.com/', 'not a url']) assert.equal(localPreviewUrl(refused), undefined, refused);
+  assert.equal(localPreviewUrl('http://[::1]:3000/'), 'http://[::1]:3000/');
+  assert.equal(localPreviewUrl('HTTP://LOCALHOST:3000/'), 'http://localhost:3000/');
+  for (const refused of ['https://example.com/', 'file:///C:/x.html', 'javascript:alert(1)', 'http://user:pw@localhost/', 'http://localhost@evil.example/', 'http://localhost.example.com/', 'http://[::ffff:127.0.0.1]/', 'http://0.0.0.0:3000/', 'not a url']) assert.equal(localPreviewUrl(refused), undefined, refused);
 });

@@ -281,7 +281,7 @@ if (role === 'resume') {
       await ui(`[...document.querySelectorAll('.ide-agents .canvas-plan-actions button')].find(b => b.textContent === 'Merge plan').click(); 1`);
       for (let i = 0; i < 300; i++) {
         const merged = require('node:child_process').spawnSync('git', ['log', '--format=%s', '-n', '5'], { cwd: arg('folder'), encoding: 'utf8', windowsHide: true }).stdout;
-        if (fs.existsSync(path.join(arg('folder'), 'smoke')) && fs.readdirSync(path.join(arg('folder'), 'smoke')).length >= 3) { report.agents.mergedLog = merged; break; }
+        if (fs.existsSync(path.join(arg('folder'), 'smoke')) && fs.readdirSync(path.join(arg('folder'), 'smoke')).length >= 3 && /Smoke plan/.test(merged)) { report.agents.mergedLog = merged; break; }
         await wait(100);
       }
       confirmAnswer = 1;

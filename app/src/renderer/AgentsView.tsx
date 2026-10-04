@@ -36,13 +36,15 @@ export function AgentsView({ project }: { project: Project }) {
   const [error, setError] = useState<string>();
   const [stop, setStop] = useState<HydraStopState>();
   // The stop state (G5 milestone 4): read on open, after each control, and every few seconds while the view shows.
-  const control = (action: HydraControl) => { void window.hydra.hydraControl(project.id, action).then(setStop, failure => setError(failure instanceof Error ? failure.message : String(failure))); };
+  const control = (action: HydraControl) => { const id = project.id; void window.hydra.hydraControl(id, action).then(state => { if (id === project.id) setStop(state); }, failure => setError(failure instanceof Error ? failure.message : String(failure))); };
   useEffect(() => {
     setStop(undefined);
-    const read = () => { void window.hydra.hydraControl(project.id, 'stopState').then(setStop, () => undefined); };
+    let current = true; // a read that lands after a switch to another project is dropped
+    // Only while the window is in front: a hidden window reads nothing.
+    const read = () => { if (document.visibilityState === 'visible') void window.hydra.hydraControl(project.id, 'stopState').then(state => { if (current) setStop(state); }, () => undefined); };
     read();
     const timer = setInterval(read, 4000);
-    return () => clearInterval(timer);
+    return () => { current = false; clearInterval(timer); };
   }, [project.id]);
   const changeView = (next: AgentsViewName, focus?: string) => { setView(next); send({ type: 'view', view: next, ...(focus ? { focus } : {}) }); };
 
