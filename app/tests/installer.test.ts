@@ -114,3 +114,13 @@ test('a packaged app is a preview, which never updates itself, unless it is buil
   assert.match(read(appDir, 'scripts', 'package.mjs'), /main: pkg\.main, hydraChannel: channel \}/);
   assert.match(read(appDir, 'src', 'main', 'startup.ts'), /'package\.json'\), 'utf8'\)\)\.hydraChannel/);
 });
+
+test('the app\'s version follows Hydra\'s: app/package.json and its lock carry the root package.json\'s version', () => {
+  const root = JSON.parse(read(appDir, '..', 'package.json')) as { version: string };
+  const app = JSON.parse(read(appDir, 'package.json')) as { version: string };
+  const lock = JSON.parse(read(appDir, 'package-lock.json')) as { version: string; packages: Record<string, { version?: string }> };
+  assert.equal(app.version, root.version, 'bump app/package.json with the root version (docs/Releases.md)');
+  assert.equal(lock.version, root.version);
+  assert.equal(lock.packages['']?.version, root.version);
+  assert.equal(releaseVersion(app.version), app.version, 'a stable x.y.z, which the installer needs');
+});

@@ -30,6 +30,13 @@ on:
       - 'scripts/app-installer-test.ps1'
       - 'scripts/desktop-icons.ps1'
       - 'hydra-logo.png'
+  # The Windows desktop workflow's stable release builds the app here too, as a stable package that updates itself.
+  workflow_call:
+    inputs:
+      channel:
+        description: 'The packaged app''s release channel: stable or preview.'
+        type: string
+        default: preview
 
 permissions:
   contents: read
@@ -59,8 +66,9 @@ jobs:
       - run: npm run smoke
         working-directory: app
       # G6: the packaged app (fuses, integrity-checked archive) and its per-user installer, with an older copy of the
-      # same package for the update case; the lifecycle test runs only here, on a disposable runner.
-      - run: node scripts/package.mjs --installer --prior=0.0.1
+      # same package for the update case; the lifecycle test runs only here, on a disposable runner. Only the desktop
+      # workflow's stable release asks for the stable channel; everything else is a preview, which never updates itself.
+      - run: node scripts/package.mjs --installer --prior=0.0.1 --channel=${{ inputs.channel == 'stable' && 'stable' || 'preview' }}
         working-directory: app
       - run: ./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe -PriorInstallerPath app/out/installer-prior/HydraAppSetup.exe
         shell: pwsh
@@ -75,4 +83,5 @@ jobs:
         with:
           name: Hydra-app-win32-x64-installer
           path: app/out/installer/HydraAppSetup.exe
+          if-no-files-found: error
           retention-days: 7
