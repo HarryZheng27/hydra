@@ -81,6 +81,6 @@ Five PRs, one per milestone: [#308](https://github.com/ndunl075/hydra/pull/308) 
 - **The budget:** G5 said `--usd 5`, but Hydra refuses a budget that 6 jobs at up to $5 each could exceed, so the smallest it accepts is $30. Nothing ran under $5.
 - **Two app bugs it found (follow-ups):**
   - A project trusted before its first chat didn't start Hydra when that chat was reopened in the same app session. It started after the app was restarted.
-  - Hydra in the app finds `claude` and `codex` only on the PATH the app inherited, through the controller's `findProvider`, while the app's own chats found them fine. Started from a shell whose PATH lacks `%USERPROFILE%\.localin`, a head failed: "Claude Code CLI not found". It should use the same lookup as chats, or the app's Settings → Command-line tools.
+  - Hydra in the app finds `claude` and `codex` only on the PATH the app inherited, through the controller's `findProvider`, while the app's own chats found them fine. Started from a shell whose PATH lacks `%USERPROFILE%\.local\bin`, a head failed: "Claude Code CLI not found". It should use the same lookup as chats, or the app's Settings → Command-line tools.
 
 **Differs from the IDE, in short** (details in the parity table): Stop all is per project in the app and isn't shared with an IDE window's; the provider usage-limits view isn't in the app yet (the quota service runs); editor-only settings refuse with a reason; notices are the app's own toasts.
