@@ -85,6 +85,7 @@ export class ElectronHost implements Host {
   readonly development: boolean;
   readonly version: string;
   readonly remote = false;
+  readonly hasExtensions = false;
   private readonly kept: Disposable[] = [];
   private readonly commands = new Map<string, (...args: unknown[]) => unknown>();
   private readonly textSources = new Map<string, (path: string, query: string) => Promise<string>>();

@@ -15,8 +15,8 @@ import type { HeadSandbox } from '../core/headSandbox';
 import { createLeadVerifier, createUserVerifier } from '../core/leadVerification';
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from '../core/claudeMem';
 import { installWithFallback } from '../core/openVsx';
-import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
-import { claudeSupportsLimitHook, limitHookGroup, limitHookState, type LimitHookGroup } from '../core/claudeLimitHook';
+import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, shouldRepairConnection, isStandardHelpersDir, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
+import { claudeSupportsLimitHook, limitHookGroup, limitHookState, limitHookReachesThisHydra, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
 import { headShellSentence } from '../core/confine';
@@ -1268,7 +1268,8 @@ export class HydraController {
   async installProviderExtension(provider: ConnectableProvider): Promise<void> {
     if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown provider.');
     const id = provider === 'claude' ? 'anthropic.claude-code' : 'openai.chatgpt';
-    if (this.host.extension(id)) return;
+    // The Hydra app has no editor extensions: Connect registers the CLIs only (G2's Result).
+    if (this.host.hasExtensions === false || this.host.extension(id)) return;
     const via = await installWithFallback(id,
       extension => this.host.installExtension({ id: extension }),
       file => this.host.installExtension({ file }),
@@ -1314,9 +1315,16 @@ export class HydraController {
     // point the user's real Claude and Codex at itself; only an installed Hydra refreshes.
     if (this.host.development) { this.host.log('[heads] development window: leaving the Claude and Codex connections as they are'); return; }
     for (const connection of await this.helperConnections()) {
-      if (connection.connected && !connection.current && !connection.error) {
+      if (shouldRepairConnection(connection)) {
         await this.connectHelpers(connection.provider).catch(error => this.host.log(`[heads] could not refresh ${connection.provider}: ${describe(error)}`));
-      } else if (connection.provider === 'claude' && connection.connected && !connection.error) {
+        continue;
+      }
+      if (connection.connected && !connection.current && !connection.error) {
+        // Another Hydra's entry (the IDE's or the app's), still installed: it reaches this one too (G5).
+        this.host.log(`[heads] ${connection.provider}'s Hydra connection points at another Hydra that is still installed; leaving it as it is`);
+      }
+      // The hook too, but a window on its own profile adds or rewrites it only beside its own entry.
+      if (connection.provider === 'claude' && connection.connected && !connection.error && (connection.current || isStandardHelpersDir(this.helperServerSpec('claude').env.HYDRA_HELPERS_DIR))) {
         await this.refreshLimitHook().catch(error => this.host.log(`[limits] could not refresh the Claude hook: ${describe(error)}`));
       }
     }
@@ -1327,8 +1335,11 @@ export class HydraController {
    */
   private async refreshLimitHook(): Promise<void> {
     const paths = providerPaths(), group = this.limitHook();
-    const state = limitHookState(await read(paths.claudeSettings), group);
+    const text = await read(paths.claudeSettings);
+    const state = limitHookState(text, group);
     if (state === 'current') return;
+    // Another Hydra's hook, still installed and writing where this one reads, tells every Hydra window too: leave it (G5).
+    if (state === 'stale' && limitHookReachesThisHydra(text, group, undefined, isStandardHelpersDir(this.helperServerSpec('claude').env.HYDRA_HELPERS_DIR))) return;
     if (state === 'missing') { const claude = await this.claudeForRegistration(); if (!claude || !await this.limitHookFor(claude)) return; }
     await setClaudeLimitHook(paths, group);
     this.host.log(`[limits] ${state === 'stale' ? 'updated' : 'added'} the Claude usage-limit hook`);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatAnswer, ChatDefaults, ChatEvent, ChatImage, ChatRecord, ClaudePermissionMode, CodexApprovals } from '../shared/ipc';
 import { foldEvents, type ChatItem } from './chatModel';
+import { hydraCard, type HydraView } from './HydraCards';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
 import { Markdown } from './markdown';
@@ -19,6 +20,8 @@ interface Props {
   onOpenSettings?(): void;
   /** The chat is open in a terminal the user started: sends wait until they close it. */
   inTerminal?: boolean;
+  /** The project's heads and plans (G5): a Hydra tool call shows as a live card. */
+  hydra?: HydraView;
   onTerminalClosed?(): void;
   onAnswer(requestId: string, answer: ChatAnswer): void | Promise<unknown>;
   onStop(): void;
@@ -141,7 +144,7 @@ function Working({ provider, starting }: { provider: ChatRecord['provider']; sta
   return <div className="working" role="status">{starting ? `Starting ${name}…` : `${name} is working…`}{seconds >= 5 ? ` ${seconds}s` : ''}</div>;
 }
 
-export function ChatPane({ record, defaults, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
   const [reviewing, setReviewing] = useState(false);
   // Each request is answered once: a second click on the same card sends nothing.
@@ -163,6 +166,7 @@ export function ChatPane({ record, defaults, events, settledBefore = 0, onSend, 
         <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
         <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
       </header>
+      {hydra?.error && <div className="banner hydra-banner" role="status">{hydra.error}</div>}
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
       {reviewing && <ReviewPane chatId={record.id} />}
       <div className="transcript" role="log" aria-live="polite" hidden={reviewing}>
@@ -171,7 +175,7 @@ export function ChatPane({ record, defaults, events, settledBefore = 0, onSend, 
             case 'user': return <div key={item.key} className="msg user"><div className="bubble">{item.text}{item.images ? <span className="chip">{item.images} image{item.images > 1 ? 's' : ''}</span> : null}</div></div>;
             case 'text': return <div key={item.key} className="msg assistant"><Markdown text={item.text} /></div>;
             case 'thinking': return <details key={item.key} className="thinking"><summary>Thinking</summary><div className="thinking-text">{item.text}</div></details>;
-            case 'tool': return <ToolBlock key={item.key} item={item} />;
+            case 'tool': return hydraCard(item, hydra) ?? <ToolBlock key={item.key} item={item} />;
             case 'request': {
               const active = view.pending.includes(item.event.id);
               if (item.event.type === 'approval') return <ApprovalCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;

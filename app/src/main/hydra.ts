@@ -12,7 +12,11 @@ import type { Disposable, HostPaths, NoticeLevel } from '../../../src/host/host'
 import { LanesController } from '../../../src/host/lanes';
 import { createPackService } from '../../../src/host/packs';
 import { QuotaService } from '../../../src/host/quota';
-import type { Project } from '../shared/ipc';
+import type { CliProvider, HeadCardView, HydraConnection, HydraTreeMessage, PlanCardView, Project } from '../shared/ipc';
+import type { HelperJobView } from '../../../src/core/model';
+import type { Plan } from '../../../src/core/plans';
+import type { PlanJobView } from '../../../src/core/planRunner';
+import type { TreeUpdate } from '../../../src/host/controller';
 import { ElectronHost, folderKey, type ValueStore } from './host';
 
 /**
@@ -78,9 +82,30 @@ export interface HydraProjectsOptions {
   notice?: (project: Project, level: NoticeLevel, message: string) => void;
   openConsole?: (title: string, executable: string, args: string[], cwd: string) => Promise<{ started: boolean; error?: string }>;
   post?: (project: Project, message: unknown) => void;
+  /** A project's heads and plans changed: the app's window shows them as cards in the chats that started them. */
+  tree?: (message: HydraTreeMessage) => void;
 }
 
-interface Running { project: Project; host: ElectronHost; controller: HydraController; lanes: LanesController; quota: QuotaService; state: JsonValues }
+/** What a chat card needs of a head: no paths, logs or worktrees reach the page. */
+export function headCard(head: HelperJobView): HeadCardView {
+  return {
+    id: head.id, title: head.title, state: head.state, provider: head.provider, changedFiles: head.changedFiles,
+    ...(head.progress ? { progress: head.progress } : {}), ...(head.question ? { question: head.question } : {}),
+    ...(head.summary ? { summary: head.summary.slice(0, 2000) } : {}), ...(head.branch ? { branch: head.branch } : {}),
+    ...(head.merged ? { merged: true } : {}), ...(head.lead?.sessionId ? { leadSessionId: head.lead.sessionId } : {}),
+    checks: head.checks.map(check => ({ id: check.id, passed: check.passed, state: check.state, required: check.required })),
+  };
+}
+export function planCard(plan: Plan, jobs: readonly PlanJobView[] = []): PlanCardView {
+  const status = new Map(jobs.map(job => [job.key, job]));
+  return {
+    id: plan.id, title: plan.title, state: plan.state, ...(plan.error ? { error: plan.error } : {}),
+    ...(plan.leadOrigin?.leadSessionId ? { leadSessionId: plan.leadOrigin.leadSessionId } : {}),
+    jobs: plan.jobs.map(job => ({ key: job.key, title: job.title, status: status.get(job.key)?.status ?? 'waiting', ...(status.get(job.key)?.reason ? { reason: status.get(job.key)!.reason } : {}) })),
+  };
+}
+
+interface Running { project: Project; host: ElectronHost; controller: HydraController; lanes: LanesController; quota: QuotaService; state: JsonValues; tree: HydraTreeMessage }
 
 export interface ProjectHydraStatus { id: string; running: boolean; owned: boolean; error?: string }
 
@@ -96,9 +121,49 @@ export class HydraProjects {
   private globalState?: JsonValues;
   private audit?: AuditLog;
   private closing = false;
+  /** A controller that is never started, for Connect and Disconnect while no project runs Hydra. */
+  private registration?: Promise<Running>;
   /** The trusted projects as they are now (sync), so a controller checks trust and removal against the latest. */
   private latest = new Map<string, Project>();
   constructor(private readonly options: HydraProjectsOptions) {}
+
+  /** Every running project's heads and plans. */
+  tree(): HydraTreeMessage[] { return [...this.running.values()].map(running => running.tree); }
+
+  // ---- Connectors (G5 milestone 2): Hydra's own entry in Claude Code's and Codex's user settings ----
+  private async registrar(): Promise<HydraController> {
+    const running = [...this.running.values()].find(candidate => !candidate.controller.disabled);
+    if (running) return running.controller;
+    // Built once, even when two clicks ask for it at once.
+    if (this.closing) throw new Error('Hydra is closing.');
+    if (!this.registration) {
+      const building: Promise<Running> = (async () => {
+        const folder = path.join(this.options.userData, 'hydra', 'registration');
+        await mkdir(folder, { recursive: true });
+        return this.build({ id: 'registration', path: folder, name: 'Hydra registration', trustedAt: new Date(0).toISOString() });
+      })();
+      this.registration = building;
+      building.catch(() => { if (this.registration === building) this.registration = undefined; });
+    }
+    return (await this.registration).controller;
+  }
+  async connections(): Promise<HydraConnection[]> {
+    const rows = await (await this.registrar()).helperConnections();
+    return rows.filter(row => row.provider === 'claude' || row.provider === 'codex').map(row => ({
+      provider: row.provider as CliProvider, name: row.name, connected: row.connected, current: row.current,
+      ...(row.targetExists !== undefined ? { targetExists: row.targetExists } : {}), ...(row.error ? { error: row.error } : {}),
+    }));
+  }
+  /** Connect: points the CLI's `hydra` entry at this app (the user asked; the repair rule never does this on its own). */
+  async connect(provider: CliProvider): Promise<HydraConnection[]> {
+    const note = await (await this.registrar()).connectHelpers(provider);
+    if (note) this.options.log(`[hydra] ${note}`);
+    return this.connections();
+  }
+  async disconnect(provider: CliProvider): Promise<HydraConnection[]> {
+    await (await this.registrar()).disconnectHelpers(provider);
+    return this.connections();
+  }
 
   private async shared(): Promise<{ settings: JsonValues; globalState: JsonValues; audit: AuditLog }> {
     this.settings ??= await new JsonValues(path.join(this.options.userData, 'hydra', 'settings.json')).load();
@@ -155,7 +220,8 @@ export class HydraProjects {
     return pending;
   }
 
-  private async boot(project: Project): Promise<void> {
+  /** A project's controller and everything it runs on, as src/extension.ts's Manager builds one; not started. */
+  private async build(project: Project): Promise<Running> {
     const { storage, dist, appRoot, extension } = this.options;
     await mkdir(storage, { recursive: true });
     const { settings, globalState, audit } = await this.shared();
@@ -213,7 +279,8 @@ export class HydraProjects {
       agentsOpen: () => false,
       showingAgents: () => false,
       openAgents: async () => undefined,
-      tree: () => undefined,
+      // The controller's heads and plans: kept and sent on, as cards in the chats that started them.
+      tree: update => publish(update),
       inHandoff: () => false,
       refreshSettingsPages: async () => undefined,
       showSettings: () => undefined,
@@ -223,18 +290,40 @@ export class HydraProjects {
       openOfficial: async () => undefined,
       report: error => { const message = error instanceof Error ? error.message : String(error); log(`[error] ${message}`); this.options.notice?.(project, 'error', message); },
     };
+    const tree: HydraTreeMessage = { projectId: project.id, heads: [], plans: [], owned: false };
+    let latest: { heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>> } = {};
+    function publish(update: TreeUpdate): void {
+      latest = { ...latest, ...(update.heads ? { heads: update.heads } : {}), ...(update.plans ? { plans: update.plans } : {}), ...(update.planJobs ? { planJobs: update.planJobs } : {}) };
+      if (!update.heads && !update.plans && !update.planJobs) return;
+      tree.heads = (latest.heads ?? []).map(headCard);
+      tree.plans = (latest.plans ?? []).map(plan => planCard(plan, latest.planJobs?.[plan.id]));
+      notifyTree(tree);
+    }
+    // Only a running project's cards reach the window: none while it starts, is refused or is stopped.
+    const notifyTree = (message: HydraTreeMessage) => { if (this.running.get(project.id)?.tree === message) this.options.tree?.(message); };
     controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id) });
+    return { project, host, controller, lanes, quota, state, tree };
+  }
+
+  private async boot(project: Project): Promise<void> {
+    const running = await this.build(project);
+    const { controller } = running;
     this.alive.set(controller, project.id);
     // Removed or untrusted while it was being built: it never takes the lock or resumes a plan.
-    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose({ project, host, controller, lanes, quota, state }); return; }
+    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose(running); return; }
     await controller.start();
     if (controller.disabled) {
       // Another Hydra (the IDE, say) owns this repository: nothing runs here for it.
       this.errors.set(project.id, `Hydra in another window already manages ${project.name}.`);
     } else this.errors.delete(project.id);
+    // The window says whether Hydra runs here (and why not), as well as the heads and plans.
+    running.tree.owned = !controller.disabled;
+    if (controller.disabled) running.tree.error = `Hydra IDE manages ${project.name}, so its heads and plans run there. Close it there to run them here.`;
+    else delete running.tree.error;
     // Quit began, or the project was removed or untrusted while this started: nothing of it stays.
-    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose({ project, host, controller, lanes, quota, state }); return; }
-    this.running.set(project.id, { project, host, controller, lanes, quota, state });
+    if (this.closing || !this.latest.get(project.id)?.trustedAt) { await this.dispose(running); return; }
+    this.running.set(project.id, running);
+    this.options.tree?.(running.tree);
   }
 
   /** Stops a project's controller. It is no longer running from this call on, so an open right after waits for it. */
@@ -261,6 +350,8 @@ export class HydraProjects {
     running.host.dispose();
     await running.state.flush();
     this.alive.delete(running.controller);
+    // Its cards go from the window, unless it runs again already.
+    if (running.project.id !== 'registration' && !this.running.has(running.project.id)) this.options.tree?.({ projectId: running.project.id, heads: [], plans: [], owned: false });
   }
 
   /** Every project's controller stops: heads, lanes and plans end, discovery records go, ownership is released. */
@@ -269,6 +360,7 @@ export class HydraProjects {
     await Promise.all([...this.starting.values()]);
     await Promise.all([...this.running.keys()].map(id => this.stop(id)));
     await Promise.all([...this.stopping.values()]);
+    if (this.registration) { const registration = this.registration; this.registration = undefined; await registration.then(running => this.dispose(running), () => undefined); }
     await Promise.all([this.settings?.flush(), this.globalState?.flush(), this.audit?.flush()]);
   }
 }

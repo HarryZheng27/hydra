@@ -6,7 +6,7 @@ import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
-import { CHAT_EVENTS, type Project } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_TREE, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
@@ -106,17 +106,19 @@ export function start(): void {
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
     push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
   });
-  // Hydra (G5): one controller per trusted project, over the IDE's own storage. Milestone 1 never rewrites the user's
-  // Claude and Codex connections (development), whatever build this is; milestone 2 adds the registration rule.
+  // Hydra (G5): one controller per trusted project, over the IDE's own storage. A development or test run never
+  // repairs the user's Claude and Codex connections on its own; an installed app repairs one only when what it runs
+  // is gone (helperRegistration.ts shouldRepairConnection), so it and the IDE never take turns rewriting it.
   const hydra = new HydraProjects({
     // Under the appData folder this app uses (a test that moves appData moves this too), unless set outright.
     storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir, appRoot: app.getAppPath(),
     // The built-in packs: the repository's packs/ beside app/ (a packaged app ships its own, G6).
     extension: path.resolve(app.getAppPath(), '..'),
-    userData, version: HYDRA_APP_VERSION, development: true,
+    userData, version: HYDRA_APP_VERSION, development: !app.isPackaged,
     cliPath: async provider => (await settings.load()).cliPaths[provider],
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
+    tree: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_TREE, message); },
   });
   const syncHydra = (projects: Project[]) => { void hydra.sync(projects).catch(() => undefined); };
   // Before quitting: end every chat's process, then wait for the store to write what it still holds.
@@ -142,6 +144,7 @@ export function start(): void {
     signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
+    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree() },
     projectOpened: cwd => { void state.load().then(loaded => { const project = loaded.projects.find(candidate => samePath(candidate.path, cwd)); if (project) return hydra.open(project); return undefined; }).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },

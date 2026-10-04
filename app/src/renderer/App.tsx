@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -48,6 +48,8 @@ export function App() {
   /** Chats open in a terminal the user started. */
   const [inTerminal, setInTerminal] = useState<Record<string, boolean>>({});
   const [defaults, setDefaults] = useState<Record<string, ChatDefaults>>({});
+  /** Each running project's heads and plans (G5), by project id. */
+  const [trees, setTrees] = useState<Record<string, HydraTreeMessage>>({});
   /** Pushes that arrive while a chat's log is being read, merged once it is in. */
   const opening = useRef(new Map<string, ChatEventsMessage[]>());
   const reopen = useRef<(id: string) => void>(() => undefined);
@@ -63,8 +65,11 @@ export function App() {
     void checkSetup(false);
     void window.hydra.problems().then(list => setProblems(list), fail);
     void window.hydra.listChats().then(setChats, fail);
+    // Each project's heads and plans (G5): the latest now, then every change.
+    void window.hydra.hydraTree().then(list => setTrees(current => ({ ...Object.fromEntries(list.map(tree => [tree.projectId, tree])), ...current })), fail);
+    const stopTrees = window.hydra.onHydraTree(tree => setTrees(current => ({ ...current, [tree.projectId]: tree })));
     // Live events for every chat this window has open; the list refreshes when a turn ends or a title appears.
-    return window.hydra.onChatEvents(message => {
+    const stopChats = window.hydra.onChatEvents(message => {
       const { chatId, events, start } = message;
       if (start < 0) { const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message); return; }
       const buffered = opening.current.get(chatId);
@@ -77,6 +82,7 @@ export function App() {
       });
       if (events.some(event => event.type === 'done' || event.type === 'user')) void window.hydra.listChats().then(setChats, fail);
     });
+    return () => { stopChats(); stopTrees(); };
   }, []);
 
   /** Runs a call to main and shows its error, if any, instead of throwing. */
@@ -183,7 +189,7 @@ export function App() {
           {view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
-              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]}
+              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]} hydra={project ? trees[project.id] : undefined}
                   onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
                   onOpenSettings={() => setView({ kind: 'settings' })}
                   onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}

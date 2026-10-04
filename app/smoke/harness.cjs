@@ -171,6 +171,28 @@ if (role === 'resume') {
         }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr })) : resolve(stdout))));
         report.hydraStatus = { appPid: process.pid, status: JSON.parse(output) };
       } catch (error) { report.hydraStatus = { appPid: process.pid, error: String(error.stderr || error.message).slice(0, 500) }; }
+      // A chat's lead tools (G5 milestone 2): Hydra's MCP bridge, started by the app's main process as a chat's CLI
+      // would be, finds the project's endpoint and is accepted as its lead (Windows names its process chain).
+      report.leadCall = await new Promise(resolve => {
+        const bridge = require('node:child_process').spawn(process.execPath, [path.join(__dirname, '..', 'dist', 'hydra-mcp.cjs')], {
+          cwd: arg('folder'), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: path.join(storage, 'helpers'), HYDRA_LEAD_PROVIDER: 'claude' }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        let out = '', settled = false;
+        const finish = value => { if (settled) return; settled = true; clearTimeout(timer); bridge.kill(); resolve(value); };
+        const timer = setTimeout(() => finish({ error: `timed out: ${out.slice(-300)}` }), 45000);
+        const send = message => bridge.stdin.write(JSON.stringify(message) + '\n');
+        bridge.stdout.on('data', chunk => {
+          out += chunk;
+          for (const line of out.split('\n').slice(0, -1)) {
+            let message; try { message = JSON.parse(line); } catch { continue; }
+            if (message.id === 1) { send({ jsonrpc: '2.0', method: 'notifications/initialized' }); send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'hydra_list_heads', arguments: {} } }); }
+            if (message.id === 2) finish({ isError: !!message.result?.isError, text: (message.result?.content ?? []).map(part => part.text).join('').slice(0, 500), error: message.error?.message });
+          }
+          out = out.slice(out.lastIndexOf('\n') + 1);
+        });
+        bridge.on('error', error => finish({ error: error.message }));
+        send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } } });
+      });
     }
     report.resume.title = await ui(`[...document.querySelectorAll('.chat-link.selected')].map(e => e.textContent)[0]`);
     await until(`!!document.querySelector('.composer textarea')`, 'the chat to open');

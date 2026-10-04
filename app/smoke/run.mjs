@@ -115,7 +115,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'onHydraTree', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -250,6 +250,13 @@ try {
     assert.equal(path.resolve(status.status.repository).toLowerCase(), path.resolve(project).toLowerCase());
     assert.ok(fs.existsSync(path.join(ideStorage, 'ownership')), 'the ownership lock is in the shared storage');
     assert.equal(fs.readdirSync(path.join(ideStorage, 'helpers', 'windows')).filter(name => name.endsWith('.json') && !name.endsWith('.summary.json')).length, 0, 'the app removed its discovery record when it quit');
+  });
+  check('a chat\'s lead tools: Hydra\'s bridge, started by the app as a chat\'s CLI is, is accepted as the project\'s lead', () => {
+    const call = r.leadCall;
+    assert.ok(call, 'no lead call');
+    assert.equal(call.error, undefined, call.error);
+    assert.equal(call.isError, false, call.text);
+    assert.match(call.text, /"heads"/);
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);

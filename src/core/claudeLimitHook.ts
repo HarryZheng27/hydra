@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { parseCliVersion } from './cliVersions';
 
@@ -243,6 +244,35 @@ export function readClaudeLimitHooks(text: string | undefined): unknown[] {
     const stop = (JSON.parse(text.replace(/^\uFEFF/, '')) as { hooks?: { StopFailure?: unknown } }).hooks?.StopFailure;
     return Array.isArray(stop) ? stop.filter(isHydraLimitGroup) : [];
   } catch { return []; }
+}
+/**
+ * Whether Claude's Hydra usage-limit hook is another Hydra's that reaches this one (G5): one hook, its program and
+ * script still there, writing into this Hydra's events folder. This Hydra's own hook in an older shape, and anything
+ * else, are not, and are repaired, as the bridge's entry is (helperRegistration.ts reachesThisHydra).
+ */
+export function limitHookReachesThisHydra(text: string | undefined, mine: LimitHookGroup, exists: (file: string) => boolean = existsSync, standard = true): boolean {
+  const found = readClaudeLimitHooks(text);
+  if (found.length !== 1) return false;
+  const theirs = limitHookPaths(found[0]), ours = limitHookPaths(mine);
+  if (!theirs.executable || !theirs.script || !exists(theirs.executable) || !exists(theirs.script)) return false;
+  const same = (a?: string, b?: string) => !!a && !!b && (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+  if (same(theirs.executable, ours.executable) && same(theirs.script, ours.script)) return false;
+  // A window on its own profile never takes over another installed Hydra's hook (helperRegistration.ts reachesThisHydra).
+  return same(limitHookEventsDir(found[0]), limitHookEventsDir(mine)) || !standard;
+}
+/** The events folder a Hydra usage-limit hook writes into. */
+function limitHookEventsDir(group: unknown): string | undefined {
+  if (!isHydraLimitGroup(group)) return undefined;
+  const hook = (group as LimitHookGroup).hooks[0]!;
+  const args = Array.isArray(hook.args) ? hook.args : [];
+  if (hook.command === '/bin/sh') return typeof args[4] === 'string' ? args[4] : undefined;
+  const run = args[args.length - 1];
+  if (typeof run !== 'string') return undefined;
+  const call = run.indexOf('; & ');
+  const executable = call < 0 ? undefined : readPowershellLiteral(run, call + 4);
+  const script = executable && run[executable.end] === ' ' ? readPowershellLiteral(run, executable.end + 1) : undefined;
+  const events = script && run[script.end] === ' ' ? readPowershellLiteral(run, script.end + 1) : undefined;
+  return events?.value;
 }
 export function limitHookState(text: string | undefined, group: LimitHookGroup): 'missing' | 'current' | 'stale' {
   const found = readClaudeLimitHooks(text);

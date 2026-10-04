@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -5,6 +6,7 @@ import path from 'node:path';
 import { replaceAtomic } from './atomicFile';
 import { leadGuidanceMarkdown } from './helperTools';
 import { processLaunch } from './process';
+import { helpersRootCandidates } from './hydraCli';
 import { addClaudeLimitHook, readClaudeLimitHooks, removeClaudeLimitHook, type LimitHookGroup } from './claudeLimitHook';
 
 /**
@@ -23,7 +25,52 @@ import { addClaudeLimitHook, readClaudeLimitHooks, removeClaudeLimitHook, type L
  */
 export type ConnectableProvider = 'claude' | 'codex';
 export interface HelperServerSpec { command: string; args: string[]; env: Record<string, string> }
-export interface ConnectionStatus { provider: ConnectableProvider; connected: boolean; current: boolean; error?: string }
+export interface ConnectionStatus {
+  provider: ConnectableProvider; connected: boolean; current: boolean; error?: string;
+  /**
+   * For an entry that isn't exactly this Hydra's current one: whether it is another Hydra's that reaches this one (its
+   * program and script are still there, it runs as Node, and it looks in the same helpers folder). False for this
+   * Hydra's own entry made by an older version, and for anything else, which are repaired.
+   */
+  targetExists?: boolean;
+}
+
+/** What a registered bridge runs, read back from the entry. */
+export interface RegisteredBridge { command?: string; script?: string; helpersDir?: string; runAsNode?: string }
+
+const samePath = (a: string | undefined, b: string | undefined): boolean => !!a && !!b && (process.platform === 'win32' ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+
+/** Whether a registered bridge's program and script (its first argument) both exist. */
+export function bridgeTargetExists(command: string | undefined, args: readonly string[] | undefined, exists: (file: string) => boolean = existsSync): boolean {
+  const script = args?.[0];
+  return !!command && !!script && exists(command) && exists(script);
+}
+
+/**
+ * Whether a registered bridge is another Hydra's that reaches this one (G5): the IDE and the Hydra app run the same
+ * bridge over the same storage, so an entry for the other one, still installed, works for both and is left alone.
+ * This Hydra's own entry (same program and script, older shape) isn't: it is upgraded. Neither is one that looks in
+ * another helpers folder (a development or test window's), or that isn't run as Node.
+ */
+export function reachesThisHydra(entry: RegisteredBridge, spec: HelperServerSpec, exists: (file: string) => boolean = existsSync, standard = isStandardHelpersDir(spec.env.HYDRA_HELPERS_DIR)): boolean {
+  if (samePath(entry.command, spec.command) && samePath(entry.script, spec.args[0])) return false;
+  if (!bridgeTargetExists(entry.command, entry.script ? [entry.script] : [], exists) || entry.runAsNode !== '1') return false;
+  // A window on its own profile (a probe's --user-data-dir, a portable copy) never takes over another installed
+  // Hydra's entry: only a Hydra on the standard storage repairs one that looks in another helpers folder.
+  return samePath(entry.helpersDir, spec.env.HYDRA_HELPERS_DIR) || !standard;
+}
+
+/** Whether a helpers folder is the standard one an installed Hydra uses (the IDE's and the app's shared storage), not a separate profile's. */
+export function isStandardHelpersDir(dir: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!dir) return false;
+  return helpersRootCandidates({ ...env, HYDRA_HELPERS_DIR: undefined }, process.platform, homedir()).some(root => samePath(root, dir));
+}
+
+/**
+ * Whether an entry should be repaired to point at this Hydra (G5): it is Hydra's, not exactly this Hydra's current
+ * one, and not another Hydra's that reaches this one (reachesThisHydra), so the IDE and the app never take turns.
+ */
+export const shouldRepairConnection = (status: ConnectionStatus): boolean => status.connected && !status.current && !status.error && status.targetExists !== true;
 
 export const serverName = 'hydra';
 export const claudeAllowRule = 'mcp__hydra';
@@ -134,8 +181,22 @@ export async function codexStatus(file: string, spec: HelperServerSpec): Promise
     const text = await read(file) ?? '', agents = await read(codexAgentsFile(file)) ?? '';
     const had = removeCodexBlock(text).had;
     const guided = agents.includes(guidanceBlock(eolOf(agents)).trim());
-    return { provider: 'codex', connected: had, current: had && guided && text.includes(codexBlock(spec, eolOf(text)).trim()) };
+    const current = had && guided && text.includes(codexBlock(spec, eolOf(text)).trim());
+    return { provider: 'codex', connected: had, current, ...(had && !current ? { targetExists: reachesThisHydra(codexRegisteredBridge(text), spec) } : {}) };
   } catch (error) { return { provider: 'codex', connected: false, current: false, error: error instanceof Error ? error.message : String(error) }; }
+}
+/** What Hydra's block in Codex's config runs, read back from it (literal or basic strings, spaces allowed). */
+export function codexRegisteredBridge(text: string): RegisteredBridge {
+  const start = text.indexOf(blockStart), end = text.indexOf(blockEnd, start);
+  if (start < 0 || end < 0) return {};
+  const block = text.slice(start, end);
+  const value = (pattern: RegExp) => { const match = pattern.exec(block); return match ? (match[1] === '"' ? match[2]!.replace(/\\\\/g, '\\') : match[2]) : undefined; };
+  return {
+    command: value(/^\s*command\s*=\s*(['"])([^'"\r\n]*)\1/m),
+    script: value(/^\s*args\s*=\s*\[\s*(['"])([^'"\r\n]*)\1/m),
+    helpersDir: value(/^\s*HYDRA_HELPERS_DIR\s*=\s*(['"])([^'"\r\n]*)\1/m),
+    runAsNode: value(/^\s*ELECTRON_RUN_AS_NODE\s*=\s*(['"])([^'"\r\n]*)\1/m),
+  };
 }
 export async function connectCodex(file: string, spec: HelperServerSpec): Promise<void> {
   const config = addCodexBlock(await read(file) ?? '', spec);
@@ -195,7 +256,7 @@ export async function claudeStatus(paths: ProviderPaths, spec: HelperServerSpec)
     const config = JSON.parse(await read(paths.claudeJson) ?? '{}') as { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> };
     const entry = config.mcpServers?.[serverName];
     const current = !!entry && entry.command === spec.command && JSON.stringify(entry.args) === JSON.stringify(spec.args) && JSON.stringify(entry.env) === JSON.stringify(spec.env);
-    return { provider: 'claude', connected: !!entry, current };
+    return { provider: 'claude', connected: !!entry, current, ...(entry && !current ? { targetExists: reachesThisHydra({ command: entry.command, script: entry.args?.[0], helpersDir: entry.env?.HYDRA_HELPERS_DIR, runAsNode: entry.env?.ELECTRON_RUN_AS_NODE }, spec) } : {}) };
   } catch (error) { return { provider: 'claude', connected: false, current: false, error: error instanceof Error ? error.message : String(error) }; }
 }
 

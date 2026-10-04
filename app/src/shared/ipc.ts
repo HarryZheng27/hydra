@@ -12,6 +12,36 @@ export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRec
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
 export const CHAT_EVENTS = 'hydra:chat-events';
+/** Push: one project's heads and plans changed (G5). */
+export const HYDRA_TREE = 'hydra:tree';
+
+/** A head as a chat card shows it: no paths, no logs, nothing a page could act on beyond its id. */
+export interface HeadCardView {
+  id: string; title: string; state: string; provider: string; progress?: string; question?: string; summary?: string;
+  branch?: string; changedFiles: number; merged?: boolean; checks: { id: string; passed: boolean; state: string; required: boolean }[];
+  /** The chat session that started it (Claude's session id or Codex's thread id). */
+  leadSessionId?: string;
+}
+export interface PlanCardView {
+  id: string; title: string; state: string; error?: string; leadSessionId?: string;
+  jobs: { key: string; title: string; status: string; reason?: string }[];
+}
+/** One project's heads and plans, as its controller last published them. */
+export interface HydraTreeMessage {
+  projectId: string; heads: HeadCardView[]; plans: PlanCardView[];
+  /** Whether Hydra runs here: this app owns the project, or another Hydra (the IDE) does and it runs there. */
+  owned: boolean;
+  error?: string;
+}
+/** One CLI's `hydra` entry: Hydra's own here, another Hydra's (still installed), or none. */
+export interface HydraConnection {
+  provider: CliProvider; name: string; connected: boolean;
+  /** Points at this app. */
+  current: boolean;
+  /** For another Hydra's entry: whether what it runs is still installed (then it works here too). */
+  targetExists?: boolean;
+  error?: string;
+}
 /** `start` is the first event's position in the chat's log (-1 for a notice that isn't in the log). */
 export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start: number }
 /** The user's own CLI defaults (model, effort, mode), which the composer shows when a chat doesn't choose its own. */
@@ -75,6 +105,12 @@ export interface Channels {
   'review.diff': { payload: { id: string }; result: ReviewResult };
   /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
   'review.open': { payload: { id: string; path: string }; result: { opened: 'editor' | 'folder' } };
+  /** Hydra's connection to Claude Code and Codex (Settings, Connectors), and Connect / Disconnect (G5). */
+  'hydra.connections': { payload: null; result: HydraConnection[] };
+  'hydra.connect': { payload: { provider: CliProvider }; result: HydraConnection[] };
+  'hydra.disconnect': { payload: { provider: CliProvider }; result: HydraConnection[] };
+  /** Every running project's heads and plans, for a page that just opened. */
+  'hydra.tree': { payload: null; result: HydraTreeMessage[] };
   /** The user closed the terminal they opened the chat in: it can run in the app again. */
   'chats.terminalClosed': { payload: { id: string }; result: null };
   'chats.answer': { payload: { id: string; requestId: string; answer: ChatAnswer }; result: null };
@@ -158,6 +194,10 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'review.diff': exactly<{ id: string }>({ id: isId }),
   // A path relative to the chat's folder, checked again in main against the files the diff lists.
   'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
+  'hydra.connections': isNull,
+  'hydra.connect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
+  'hydra.disconnect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
+  'hydra.tree': isNull,
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
   'chats.answer': exactly<{ id: string; requestId: string; answer: ChatAnswer }>({ id: isId, requestId: isRequestId, answer: isAnswer }),
   'chats.stop': exactly<{ id: string }>({ id: isId }),
@@ -213,6 +253,12 @@ export interface HydraApi {
   stopChat(id: string): Promise<null>;
   configureChat(id: string, change: ChatSettingsChange): Promise<ChatRecord>;
   removeChat(id: string): Promise<null>;
+  hydraConnections(): Promise<HydraConnection[]>;
+  connectHydra(provider: CliProvider): Promise<HydraConnection[]>;
+  disconnectHydra(provider: CliProvider): Promise<HydraConnection[]>;
+  hydraTree(): Promise<HydraTreeMessage[]>;
+  /** Calls `listener` whenever a project's heads or plans change; returns a function that stops it. */
+  onHydraTree(listener: (message: HydraTreeMessage) => void): () => void;
   /** Calls `listener` with each chat's new events; returns a function that stops it. */
   onChatEvents(listener: (message: ChatEventsMessage) => void): () => void;
 }
