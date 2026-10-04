@@ -1,12 +1,13 @@
 import type { ProviderInfo, ProviderDiagnostic } from './model';
 import { runProbe } from './process';
 
-export async function checkProvider(info: ProviderInfo, cwd: string, signal?: AbortSignal): Promise<ProviderDiagnostic> {
+/** Runs the CLI's version and help checks; each may take `timeoutMs` (runProbe's default when left out). */
+export async function checkProvider(info: ProviderInfo, cwd: string, signal?: AbortSignal, timeoutMs?: number): Promise<ProviderDiagnostic> {
   const result: ProviderDiagnostic = { provider: info.provider, executable: info.executable, status: 'unavailable', checkedAt: new Date().toISOString(), advertised: [], probes: [] };
   if (!info.executable) { result.error = 'CLI not found. Install the official provider or set its executable path.'; return result; }
   for (const args of [['--version'], ['--help'], ...(info.provider === 'codex' ? [['app-server', '--help']] : [])]) {
     if (signal?.aborted) { result.status = 'error'; result.error = 'Provider check cancelled.'; return result; }
-    const output = await runProbe(info.executable, args, cwd, { signal });
+    const output = await runProbe(info.executable, args, cwd, { signal, timeoutMs });
     result.probes.push(output);
     if (output.error || output.exitCode !== 0) {
       result.status = 'error'; result.error = output.error || `Provider ${args.join(' ')} failed (exit ${output.exitCode}). See diagnostics.`;
