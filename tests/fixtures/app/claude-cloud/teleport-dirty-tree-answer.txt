@@ -1,0 +1,35 @@
+# claude --teleport of the dirty-tree session: the cloud saw the uncommitted change ("yes")
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Accessing workspace:
+<project>
+Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not,
+take a moment to review what's in this folder first.
+Claude Code'll be able to read, edit, and execute files here.
+Security guide
+❯ No, exit
+Yes, I trust this folder
+Enter to confirm · Esc to cancel
+  No, exit
+❯ Yes, I trust this folder
+◒ Teleporting session…
+session_01StandIn00000000000003
+◒ Validating session
+◯ Fetching session logs
+◯ Getting branch info
+◯ Checking out branch
+◐✔ Validating session
+◐ Fetching session logs
+◑✔ Fetching session logs
+✔ Getting branch info
+◑ Checking out branch
+ ▐▛███▛█   Claude Code v2.1.282
+▝▜██████▀  Opus 5.5 with medium effort · Claude Max
+ ▝▝   ▝▝   <project>
+❯ Read README.md and reply only with yes if it contains the text dirty-probe, otherwise no. Change nothing.
+  Searched for 1 pattern
+● yes
+● Session resumed
+                                                                                                                                            ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+1 agent

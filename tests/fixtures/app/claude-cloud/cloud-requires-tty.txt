@@ -1,0 +1,3 @@
+# claude --cloud, stdout piped: exit 1
+Error: --cloud requires an interactive terminal.
+Non-interactive invocations (piped stdout, --init-only, --sdk-url) run locally and would silently ignore --cloud. Drop --cloud, or run from a TTY.

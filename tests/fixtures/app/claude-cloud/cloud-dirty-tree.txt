@@ -1,0 +1,4 @@
+# claude --cloud with an uncommitted change to a tracked file: no warning (exited 0)
+Created cloud session: README dirty-probe check
+View: https://claude.ai/code/session_01StandIn00000000000003?from=cli&m=0
+Resume with: claude --teleport session_01StandIn00000000000003
