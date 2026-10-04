@@ -31,7 +31,8 @@ export async function providerStatus(provider: CliProvider, configured: string |
   if (!found.available || !found.executable) {
     return { ...base, found: false, supported: false, error: configured ? `Hydra can't find ${configured}.` : `${providerNames[provider]} isn't on your PATH.` };
   }
-  const diagnostic = await checkProvider({ provider, executable: found.executable, available: true }, cwd);
+  // The same 15 seconds as the sign-in status check: a CLI's first start on a busy machine can take longer than 8.
+  const diagnostic = await checkProvider({ provider, executable: found.executable, available: true }, cwd, undefined, 15_000);
   if (diagnostic.status !== 'checked' || !diagnostic.version) {
     return { ...base, found: true, executable: found.executable, supported: false, error: diagnostic.error ?? 'The check failed.' };
   }
