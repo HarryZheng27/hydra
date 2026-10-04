@@ -33,6 +33,10 @@ const sha256 = data => createHash('sha256').update(data).digest('hex');
 async function packageApp(channel) {
   const pkg = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
   const version = releaseVersion(pkg.version);
+  // A stable app updates itself by comparing its version with the release tag's, so it must carry Hydra's own version:
+  // otherwise it would be offered every release, and its installer refused as a downgrade, forever.
+  const hydraVersion = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
+  if (channel === 'stable' && version !== hydraVersion) throw new Error(`A stable app must have Hydra's version: app/package.json has ${version}, package.json has ${hydraVersion}.`);
   const dist = path.join(appDir, 'dist');
   for (const file of ['main.cjs', 'preload.cjs', 'hydra-mcp.cjs', 'hydra-uninstall.cjs', 'renderer/index.html']) {
     if (!fs.existsSync(path.join(dist, file))) throw new Error(`dist/${file} is missing: run npm run build first.`);

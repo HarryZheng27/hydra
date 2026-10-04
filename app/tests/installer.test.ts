@@ -114,3 +114,7 @@ test('a packaged app is a preview, which never updates itself, unless it is buil
   assert.match(read(appDir, 'scripts', 'package.mjs'), /main: pkg\.main, hydraChannel: channel \}/);
   assert.match(read(appDir, 'src', 'main', 'startup.ts'), /'package\.json'\), 'utf8'\)\)\.hydraChannel/);
 });
+
+test('a stable package must carry Hydra\'s own version, or it would be offered every release', () => {
+  assert.match(read(appDir, 'scripts', 'package.mjs'), /if \(channel === 'stable' && version !== hydraVersion\) throw new Error/);
+});

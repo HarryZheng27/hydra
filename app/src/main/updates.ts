@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  checkIntervalMs, downloadVerified, helperEnvironment, latestRelease, nextAutoCheckDelay, updateEligibility, updateHelperFileContents,
+  checkIntervalMs, downloadVerified, helperEnvironment, latestRelease, nextAutoCheckDelay, runningNotice, updateEligibility, updateHelperFileContents,
   updateLauncherArguments, updateOffer, type FetchLike, type LatestRelease,
 } from '../../../src/core/updateCheck';
 import { JsonStore } from './settings';
@@ -55,6 +55,8 @@ export interface AppUpdatesDeps {
   /** Download progress for the window (0..1), or undefined when done. */
   progress: (fraction: number | undefined) => void;
   quit: () => void;
+  /** Heads and lanes running in every project, and whether Stop all is on, for the confirm text (as the IDE's). */
+  running?: () => Promise<{ heads: number; lanes: number; stopped: boolean }>;
   /** Starts the update helper; resolves once it runs. Tests replace it. */
   startHelper?: (helper: string) => Promise<void>;
   log: (line: string) => void;
@@ -80,6 +82,8 @@ export class AppUpdates {
   private busy = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
+  /** The download in progress, which quitting abandons. */
+  private download: AbortController | undefined;
 
   constructor(private readonly deps: AppUpdatesDeps) {}
 
@@ -136,22 +140,26 @@ export class AppUpdates {
   private async update(release: LatestRelease, installDir: string): Promise<void> {
     const dir = path.join(this.deps.tempDir, 'hydra-app-update');
     let file: string;
+    const controller = new AbortController();
+    this.download = controller;
     try {
       const result = await downloadVerified(release, dir, {
-        product: 'app', ...(this.deps.fetch ? { fetch: this.deps.fetch } : {}),
+        product: 'app', signal: controller.signal, ...(this.deps.fetch ? { fetch: this.deps.fetch } : {}),
         onProgress: (received, total) => { if (total) this.deps.progress(received / total); },
       });
       file = result.file;
       this.deps.log(`[updates] ${result.reused ? 'reused' : 'downloaded'} ${result.file} (sha256 ${result.sha256}, matches SHA256SUMS-app)`);
     } catch (error) {
       this.deps.log(`[updates] ${describe(error)}`);
-      await this.deps.tell(describe(error), true);
+      if (!controller.signal.aborted) await this.deps.tell(describe(error), true);
       return;
-    } finally { this.deps.progress(undefined); }
+    } finally { this.download = undefined; this.deps.progress(undefined); }
+
+    const counts = await this.deps.running?.().catch(() => undefined);
 
     const confirm = await this.deps.ask({
       message: `Install Hydra ${release.version}?`,
-      detail: 'Hydra will close, install the update, and reopen. Your chats are saved; running heads and lanes are stopped.',
+      detail: ['Hydra will close, install the update, and reopen. Your chats are saved.', counts ? runningNotice(counts.heads, counts.lanes, counts.stopped) : ''].filter(Boolean).join('\n\n'),
       buttons: ['Install and restart', 'Not now'], cancelId: 1,
     });
     if (confirm !== 0) { this.deps.log('[updates] install not confirmed; the verified installer stays for next time'); return; }
@@ -179,6 +187,7 @@ export class AppUpdates {
     if (this.stopped) return;
     clearTimeout(this.timer);
     const state = await this.deps.store.load().catch(() => defaultUpdateState());
+    if (this.stopped) return;
     const now = (this.deps.now ?? Date.now)();
     this.timer = setTimeout(() => {
       void this.deps.store.load().then(current => {
@@ -190,5 +199,6 @@ export class AppUpdates {
     this.timer.unref?.();
   }
 
-  stop(): void { this.stopped = true; clearTimeout(this.timer); }
+  /** On quit: no more checks, and a download in progress is abandoned (its partial file is removed). */
+  stop(): void { this.stopped = true; clearTimeout(this.timer); this.download?.abort(new Error('Hydra is quitting')); }
 }

@@ -142,3 +142,24 @@ test('the app\'s update state file is checked like its other stores', () => {
     assert.equal(parseUpdateState(bad), undefined, JSON.stringify(bad));
   }
 });
+
+test('the app\'s install confirm counts the heads and lanes the restart stops, and quitting abandons a download', async t => {
+  const { updates, asked } = await harness(t, { fetch: github().fetch, answers: [0, 1], running: async () => ({ heads: 2, lanes: 1, stopped: true }) });
+  await updates.check(false);
+  assert.match(asked[1]!.detail ?? '', /2 heads and 1 lane are running and will be stopped\./);
+  assert.match(asked[1]!.detail ?? '', /Stop All Agents is on/);
+  // A download that never finishes: quitting aborts it, with no error shown and nothing left behind.
+  const stalled: FetchLike = async (url, init) => {
+    if (url === releasesLatestUrl) return new Response(JSON.stringify(release()), { status: 200 });
+    if (url.endsWith('SHA256SUMS-app')) return new Response(`${sha}  HydraAppSetup.exe\n`, { status: 200 });
+    return new Response(new ReadableStream({ start(stream) { stream.enqueue(new Uint8Array(10)); init.signal?.addEventListener('abort', () => stream.error(new Error('aborted'))); } }), { status: 200 });
+  };
+  const quitting = await harness(t, { fetch: stalled, answers: [0] });
+  const checking = quitting.updates.check(false);
+  for (let wait = 0; wait < 100 && !(await readdir(path.join(quitting.dir, 'hydra-app-update')).then(names => names.length > 0, () => false)); wait++) await new Promise(resolve => setTimeout(resolve, 20));
+  quitting.updates.stop();
+  await checking;
+  assert.deepEqual(quitting.told, []);
+  assert.deepEqual(await readdir(path.join(quitting.dir, 'hydra-app-update')), [], 'the partial download is removed');
+  assert.equal(quitting.helpers.length + quitting.quits(), 0);
+});

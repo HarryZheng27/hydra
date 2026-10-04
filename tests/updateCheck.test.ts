@@ -356,11 +356,11 @@ const appPayload = (patch: Record<string, unknown> = {}) => payload({
   ],
   ...patch,
 });
-const reasonOf = (result: { reason?: string }): string => result.reason ?? '';
+const reasonOf = (result: object): string => 'reason' in result && typeof result.reason === 'string' ? result.reason : '';
 
 test('the IDE\'s update check is unchanged beside the app\'s installer: it still takes HydraSetup.exe and a one-line SHA256SUMS', () => {
   assert.deepEqual(releaseFromPayload(appPayload()), { release });
-  assert.deepEqual(productFiles.ide, { installer: 'HydraSetup.exe', sums: 'SHA256SUMS', name: 'Hydra' });
+  assert.deepEqual(productFiles.ide, { installer: 'HydraSetup.exe', sums: 'SHA256SUMS' });
   const hash = 'a'.repeat(64);
   assert.equal(parseSums(`${hash}  HydraSetup.exe\n`), hash);
   // A release's SHA256SUMS never lists the app: installed IDEs refuse a second line.

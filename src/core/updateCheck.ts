@@ -28,13 +28,11 @@ const idleTimeoutMs = 60_000;
  * scripts/install.ps1 refuse anything else; the app's installer has its own one-line file.
  */
 export type UpdateProduct = 'ide' | 'app';
-export interface ProductFiles { installer: string; sums: string; name: string }
+export interface ProductFiles { installer: string; sums: string }
 export const productFiles: Readonly<Record<UpdateProduct, ProductFiles>> = {
-  ide: { installer: 'HydraSetup.exe', sums: 'SHA256SUMS', name: 'Hydra' },
-  app: { installer: 'HydraAppSetup.exe', sums: 'SHA256SUMS-app', name: 'Hydra' },
+  ide: { installer: 'HydraSetup.exe', sums: 'SHA256SUMS' },
+  app: { installer: 'HydraAppSetup.exe', sums: 'SHA256SUMS-app' },
 };
-const installerName = productFiles.ide.installer;
-const sumsName = productFiles.ide.sums;
 
 /** The slice of fetch this module uses; the global fetch fits, and tests inject their own. */
 export type FetchLike = (url: string, init: { headers?: Record<string, string>; redirect: 'manual'; signal?: AbortSignal }) => Promise<Response>;

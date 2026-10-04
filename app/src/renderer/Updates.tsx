@@ -9,11 +9,14 @@ import type { UpdateStatusView } from '../shared/ipc';
 export function Updates() {
   const [status, setStatus] = useState<UpdateStatusView | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(false);
   useEffect(() => { void window.hydra.updateStatus().then(setStatus, (e: unknown) => setError(e instanceof Error ? e.message : String(e))); }, []);
-  const run = (call: Promise<UpdateStatusView>) => {
+  // Each control waits for its own call, disabled meanwhile, so answers can't land out of order.
+  const run = (call: () => Promise<UpdateStatusView>, pending: (on: boolean) => void) => {
     setError(undefined);
-    setStatus(current => current && { ...current, busy: true });
-    void call.then(setStatus, (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); void window.hydra.updateStatus().then(setStatus, () => undefined); });
+    pending(true);
+    void call().then(setStatus, (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); void window.hydra.updateStatus().then(setStatus, () => undefined); }).finally(() => pending(false));
   };
   if (!status) return null;
   return (
@@ -24,13 +27,13 @@ export function Updates() {
           <div className="setting">
             <div className="setting-label" id="updates-daily-label">Check for updates every day</div>
             <div className="setting-value">
-              <input type="checkbox" aria-labelledby="updates-daily-label" checked={status.automatic} onChange={event => run(window.hydra.setAutomaticUpdates(event.target.checked))} />
+              <input type="checkbox" aria-labelledby="updates-daily-label" checked={status.automatic} disabled={saving} onChange={event => { const on = event.target.checked; run(() => window.hydra.setAutomaticUpdates(on), setSaving); }} />
             </div>
           </div>
           <div className="setting">
             <div className="setting-label">Hydra {status.version}</div>
             <div className="setting-value">
-              <button disabled={status.busy} onClick={() => run(window.hydra.checkForUpdates())}>{status.busy ? 'Checking…' : 'Check for updates'}</button>
+              <button disabled={checking || status.busy} onClick={() => run(() => window.hydra.checkForUpdates(), setChecking)}>{checking || status.busy ? 'Checking…' : 'Check for updates'}</button>
             </div>
           </div>
         </>
