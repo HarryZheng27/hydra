@@ -1,3 +1,4 @@
+import { finalJobStates } from '../../../src/core/jobs';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -442,6 +443,17 @@ export class HydraProjects {
   }
 
   /** Every project's controller stops: heads, lanes and plans end, discovery records go, ownership is released. */
+  /** Heads and lanes running in every project, and whether Stop all is on in any, for the update's confirm (as the IDE's). */
+  async runningCounts(): Promise<{ heads: number; lanes: number; stopped: boolean }> {
+    let heads = 0, lanes = 0, stopped = false;
+    for (const running of this.running.values()) {
+      heads += running.controller.helpers?.service.list().filter(job => !finalJobStates.has(job.state)).length ?? 0;
+      lanes += running.lanes.state().lanes.filter(lane => lane.running).length;
+      stopped ||= await running.host.command<{ stopped: boolean }>('hydra.getStopState').then(state => state.stopped, () => false);
+    }
+    return { heads, lanes, stopped };
+  }
+
   async shutdown(): Promise<void> {
     this.closing = true;
     await Promise.all([...this.starting.values()]);

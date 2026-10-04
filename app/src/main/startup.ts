@@ -166,6 +166,7 @@ export function start(): void {
     tell: async (message, error) => { await updateDialog({ message, buttons: ['OK'], cancelId: 0, type: error ? 'error' : 'info' }); },
     openExternal: url => shell.openExternal(url),
     progress: fraction => { const win = getMainWindow(); if (win && !win.isDestroyed()) win.setProgressBar(fraction ?? -1); },
+    running: () => hydra.runningCounts(),
     quit: () => app.quit(),
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
   });
