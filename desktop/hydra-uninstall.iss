@@ -87,9 +87,15 @@ begin
     // Before any file is removed: the cleanup runs from the installed files.
     HydraRemoveData := HydraRemoveDataWanted();
     HydraRunCleanup();
-  end else if (CurUninstallStep = usPostUninstall) and HydraRemoveData then begin
-    // Exactly these two folders, never anything beside them (VS Code's, Cursor's).
-    HydraRemoveDataFolder(ExpandConstant('{userappdata}'), 'Hydra');
-    HydraRemoveDataFolder(GetEnv('USERPROFILE'), '.hydra');
+  end else if CurUninstallStep = usPostUninstall then begin
+    // Each install writes a fresh uninstall log (UninstallLogMode=overwrite), which records only folders that
+    // install created, so after an update the install folder itself isn't in it. RemoveDir removes only an
+    // empty folder: anything left in it stays.
+    if RemoveDir(ExpandConstant('{app}')) then Log('Hydra: removed the empty install folder');
+    if HydraRemoveData then begin
+      // Exactly these two folders, never anything beside them (VS Code's, Cursor's).
+      HydraRemoveDataFolder(ExpandConstant('{userappdata}'), 'Hydra');
+      HydraRemoveDataFolder(GetEnv('USERPROFILE'), '.hydra');
+    end;
   end;
 end;
