@@ -17,12 +17,16 @@
 #
 # When piped to iex, use $env:HYDRA_INSTALL_VERSION instead of -Version to pick a
 # specific release; the default installs the latest full release.
+#
+# -App (or $env:HYDRA_INSTALL_APP = '1' when piped to iex) installs the Hydra app,
+# HydraAppSetup.exe checked against the release's SHA256SUMS-app, instead of Hydra IDE.
 [CmdletBinding()]
 param(
   [string]$Version = $env:HYDRA_INSTALL_VERSION,
   [switch]$DryRun,
   [string]$InstallerPath,
-  [string]$SumsPath
+  [string]$SumsPath,
+  [switch]$App = ($env:HYDRA_INSTALL_APP -eq '1')
 )
 
 function Install-Hydra {
@@ -31,15 +35,28 @@ function Install-Hydra {
     [string]$Version,
     [switch]$DryRun,
     [string]$InstallerPath,
-    [string]$SumsPath
+    [string]$SumsPath,
+    [switch]$App
   )
   Set-StrictMode -Version Latest
   $ErrorActionPreference = 'Stop'
 
   $repo = 'ndunl075/hydra'
-  $installerName = 'HydraSetup.exe'
-  $sumsName = 'SHA256SUMS'
-  $installFolder = Join-Path $env:LOCALAPPDATA 'Programs\Hydra'
+  # Hydra IDE (HydraSetup.exe, whose SHA256SUMS keeps exactly its one line) or the Hydra app
+  # (HydraAppSetup.exe, with its own one-line SHA256SUMS-app). Both install per user.
+  if ($App) {
+    $productName = 'Hydra'
+    $installerName = 'HydraAppSetup.exe'
+    $sumsName = 'SHA256SUMS-app'
+    $installFolder = Join-Path $env:LOCALAPPDATA 'Programs\Hydra App'
+    $installerArguments = @('/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART')
+  } else {
+    $productName = 'Hydra IDE'
+    $installerName = 'HydraSetup.exe'
+    $sumsName = 'SHA256SUMS'
+    $installFolder = Join-Path $env:LOCALAPPDATA 'Programs\Hydra'
+    $installerArguments = @('/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NORESTARTAPPLICATIONS', '/MERGETASKS=!runcode')
+  }
 
   # ---- Platform checks ----
 
@@ -129,23 +146,22 @@ function Install-Hydra {
   $installRoot = ([System.IO.Path]::GetFullPath($installFolder)).TrimEnd('\') + '\'
   $running = @(Get-Process -Name 'Hydra' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase) })
   if ($running.Count -gt 0) {
-    throw "Hydra is running. Close it, then run this installer again."
+    throw "$productName is running. Close it, then run this installer again."
   }
 
   # ---- Install ----
 
-  Write-Host 'Installing Hydra (no admin needed)...'
-  $installerArguments = @('/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NORESTARTAPPLICATIONS', '/MERGETASKS=!runcode')
+  Write-Host "Installing $productName (no admin needed)..."
   $process = Start-Process -FilePath $installerFile -ArgumentList $installerArguments -Wait -PassThru
   Write-Host "Installer exit code: $($process.ExitCode)"
   if ($process.ExitCode -ne 0) {
-    throw "The Hydra installer failed with exit code $($process.ExitCode)."
+    throw "The $productName installer failed with exit code $($process.ExitCode)."
   }
 
   if ($downloadDir) { Remove-Item -LiteralPath $downloadDir -Recurse -Force -ErrorAction SilentlyContinue }
 
   Write-Host ''
-  Write-Host "Hydra is installed at $installFolder"
+  Write-Host "$productName is installed at $installFolder"
   Write-Host 'Start it from the Start Menu, or run:'
   Write-Host "  $installFolder\Hydra.exe"
 }
@@ -232,7 +248,7 @@ function Get-HydraDownload {
 }
 
 try {
-  Install-Hydra -Version $Version -DryRun:$DryRun -InstallerPath $InstallerPath -SumsPath $SumsPath
+  Install-Hydra -Version $Version -DryRun:$DryRun -InstallerPath $InstallerPath -SumsPath $SumsPath -App:$App
   if ($PSCommandPath) { exit 0 }
 } catch {
   Write-Host "Hydra install failed: $($_.Exception.Message)" -ForegroundColor Red
