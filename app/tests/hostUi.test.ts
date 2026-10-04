@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { HostUi, VIEW_IMAGE_LIMIT, VIEW_TEXT_LIMIT, markdownWithImages, readViewFile } from '../src/main/hostUi';
+import { HostUi, VIEW_IMAGE_LIMIT, VIEW_TEXT_LIMIT, markdownWithImages, readViewFile, safeRelativeImagePath } from '../src/main/hostUi';
 import type { HydraHostMessage } from '../src/shared/ipc';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-host-ui-'));
@@ -88,5 +88,28 @@ test('a document shows as text, a large file as its last part, and only images i
     assert.match(view.images[0]!.src, /^data:image\/png;base64,iVBOR/);
     assert.match(view.content, /\*Screenshot 1: home page\*/);
     for (const kept of ['![escape](../outside.png)', '![text](notes.txt)', '![huge](huge.png)', '![absolute](C:/Windows/win.ini)', 'Evidence: [log](log.txt)']) assert.ok(view.content.includes(kept), kept);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('an image path is checked by its text before the disk is asked: no share, drive, escape or fenced line is ever resolved', async () => {
+  assert.equal(safeRelativeImagePath('shots/home page.png'), path.join('shots', 'home page.png'));
+  for (const unsafe of ['//attacker.example/share/a.png', '\\\\attacker.example\\share\\a.png', 'C:/Windows/a.png', '/etc/a.png', '../a.png', 'shots/../../a.png', './a.png', 'a\\b.png', 'host@80/x:a.png', '']) {
+    assert.equal(safeRelativeImagePath(unsafe), undefined, unsafe);
+  }
+  const dir = scratch();
+  try {
+    const evidence = path.join(dir, 'evidence'), outside = path.join(dir, 'outside');
+    fs.mkdirSync(evidence); fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'a.png'), png);
+    fs.writeFileSync(path.join(evidence, 'inside.png'), png);
+    // A junction (a link a head could plant) to a folder outside: followed, then refused.
+    fs.symlinkSync(outside, path.join(evidence, 'link'), 'junction');
+    const markdown = [
+      '![unc](//attacker.example/share/a.png)', '![escaped](%5C%5Cattacker.example%5Cshare%5Ca.png)', '![via link](link/a.png)',
+      '```', '![in a gate\'s output](inside.png)', '```', '![inside](inside.png)',
+    ].join('\n');
+    const view = await markdownWithImages(markdown, evidence);
+    assert.deepEqual(view.images.map(image => image.alt), ['inside']);
+    assert.ok(view.content.includes('![in a gate\'s output](inside.png)'), 'a fenced image line stays text');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

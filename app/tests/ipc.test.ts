@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { dispatch, registerIpc, trustedSender, type Handlers } from '../src/main/ipc';
-import { channels, IPC_TRANSPORT, parseCall } from '../src/shared/ipc';
+import { channels, IPC_TRANSPORT, parseCall, validators } from '../src/shared/ipc';
 
 // Only app.info runs in these tests; the rest are never reached.
 const handlers = { 'app.info': () => ({ name: 'Hydra', version: '1', electron: '44', platform: 'win32' }) } as unknown as Handlers;
@@ -83,4 +83,16 @@ test('no channel takes a path or a command from the renderer', () => {
     ['onboarding.check', { refresh: true, cwd: 'C:/repo' }], ['onboarding.check', null],
   ];
   for (const [channel, payload] of bad) assert.equal(parseCall({ channel, payload }).ok, false, `${channel} ${JSON.stringify(payload)}`);
+});
+
+test('the Agents view\'s messages and Hydra\'s answers are checked in main (G5)', () => {
+  const agents = validators['hydra.agents'], reply = validators['hydra.reply'];
+  const id = '0123456789abcdef';
+  assert.equal(agents({ projectId: id, message: { type: 'ready' } }), true);
+  for (const message of [null, 'ready', [], { type: 'x', blob: 'x'.repeat(200_001) }]) assert.equal(agents({ projectId: id, message }), false, JSON.stringify(message).slice(0, 40));
+  assert.equal(agents({ projectId: '../x', message: { type: 'ready' } }), false);
+  assert.equal(agents({ projectId: id, message: { type: 'ready' }, extra: 1 }), false);
+  for (const value of [null, 0, 3, [0, 2], 'an answer']) assert.equal(reply({ requestId: crypto.randomUUID(), value }), true, String(value));
+  for (const value of [-1, 1.5, [0, -1], { a: 1 }, 'x'.repeat(20_001), undefined]) assert.equal(reply({ requestId: crypto.randomUUID(), value }), false, String(value));
+  assert.equal(reply({ requestId: 'not an id', value: 0 }), false);
 });

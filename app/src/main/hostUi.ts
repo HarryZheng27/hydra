@@ -14,6 +14,8 @@ import type { HydraHostMessage, HydraViewImage } from '../shared/ipc';
 export const VIEW_TEXT_LIMIT = 2_000_000;
 export const VIEW_IMAGE_LIMIT = 5_000_000;
 export const VIEW_IMAGES_MAX = 20;
+/** All of one document's images together, so one view stays a modest message. */
+export const VIEW_IMAGES_TOTAL = 25_000_000;
 const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
 
 interface Pending { resolve: (value: unknown) => void; projectId: string; check?: (value: unknown) => string | undefined; message: HydraHostMessage }
@@ -58,6 +60,8 @@ export class HostUi {
     this.pending.delete(requestId);
     pending.resolve(value);
   }
+  /** The window (re)loaded: every open question is shown again, so none waits on a page that lost it. */
+  resendAll(): void { for (const pending of this.pending.values()) this.send(pending.message); }
   /** A project stopped: its open questions are dismissed, and the window drops them. */
   cancelAll(projectId: string): void {
     for (const [id, pending] of this.pending) {
@@ -97,25 +101,45 @@ export async function readViewFile(file: string): Promise<{ content: string; tru
 const inside = (root: string, file: string): boolean => { const relative = path.relative(root, file); return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative); };
 
 /**
- * Evidence Markdown's images (gate screenshots), read by main as data: URLs, and the Markdown without them. Only
- * images inside the document's own folder, of an image type, under the size limit, are read; any other image line
- * stays as text. Links stay text too.
+ * A relative image path as evidence.ts writes one, checked by its text alone before anything touches the disk: plain
+ * segments (letters, digits, space, `.`, `_`, `-`, parentheses), no `.` or `..` segment, nothing absolute, no drive,
+ * no share, no backslash, no colon. Anything else (a `//host/share` path, `%5C` escapes, `C:/…`) is never resolved,
+ * so the disk, or a network share, is never asked about it.
+ */
+export function safeRelativeImagePath(target: string): string | undefined {
+  const segments = target.split('/');
+  if (!segments.length || segments.some(segment => !segment || segment === '.' || segment === '..' || !/^[\p{L}\p{N} ._()-]{1,200}$/u.test(segment))) return undefined;
+  return segments.join(path.sep);
+}
+
+/**
+ * Evidence Markdown's images (gate screenshots), read by main as data: URLs, and the Markdown without them. Only an
+ * image line outside a code fence whose path passes safeRelativeImagePath, inside the document's own folder once
+ * resolved (links followed), of an image type and under the size limits, is read; any other stays as text. A gate's
+ * output is quoted inside a fence, so a head can't name an image there. Links stay text too.
  */
 export async function markdownWithImages(markdown: string, base: string): Promise<{ content: string; images: HydraViewImage[] }> {
   const images: HydraViewImage[] = [];
   const root = await realpath(base).catch(() => path.resolve(base));
   const lines: string[] = [];
+  let fence: string | undefined, total = 0;
   for (const line of markdown.split('\n')) {
-    const match = /^\s*!\[([^\]\n]{0,300})\]\(<?([^)>\n]{1,1000})>?\)\s*$/.exec(line);
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) { fence = fence ? undefined : marker; lines.push(line); continue; }
+    const match = fence ? undefined : /^\s*!\[([^\]\n]{0,300})\]\(<?([^)>\n]{1,1000})>?\)\s*$/.exec(line);
     if (!match || images.length >= VIEW_IMAGES_MAX) { lines.push(line); continue; }
     // evidence.ts writes each segment with encodeURIComponent.
-    let target: string;
-    try { target = match[2]!.split('/').map(decodeURIComponent).join('/'); } catch { lines.push(line); continue; }
-    const type = IMAGE_TYPES[path.extname(target).toLowerCase()];
-    const file = await realpath(path.resolve(root, target)).catch(() => undefined);
-    if (!type || !file || !inside(root, file)) { lines.push(line); continue; }
+    let target: string | undefined;
+    try { target = safeRelativeImagePath(match[2]!.split('/').map(decodeURIComponent).join('/')); } catch { target = undefined; }
+    const type = target ? IMAGE_TYPES[path.extname(target).toLowerCase()] : undefined;
+    const resolved = target ? path.resolve(root, target) : undefined;
+    if (!target || !type || !resolved || !inside(root, resolved)) { lines.push(line); continue; }
+    // Only now the disk: the real file (a link or junction followed) must still be inside.
+    const file = await realpath(resolved).catch(() => undefined);
+    if (!file || !inside(root, file)) { lines.push(line); continue; }
     const size = await stat(file).then(info => (info.isFile() ? info.size : Infinity), () => Infinity);
-    if (size > VIEW_IMAGE_LIMIT) { lines.push(line); continue; }
+    if (size > VIEW_IMAGE_LIMIT || total + size > VIEW_IMAGES_TOTAL) { lines.push(line); continue; }
+    total += size;
     images.push({ alt: match[1] || path.basename(file), src: `data:${type};base64,${(await readFile(file)).toString('base64')}` });
     lines.push(`*Screenshot ${images.length}: ${match[1] || path.basename(file)}*`);
   }

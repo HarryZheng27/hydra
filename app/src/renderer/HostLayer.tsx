@@ -22,9 +22,14 @@ export function HostLayer() {
     if (message.kind === 'pick' || message.kind === 'input') setAsks(current => [...current.filter(ask => ask.requestId !== message.requestId), message]);
     else if (message.kind === 'notice') {
       const key = ++seed.current;
-      setNotices(current => [...current.filter(notice => !message.requestId || notice.requestId !== message.requestId), { ...message, key }].slice(-5));
-      // A notice that asks nothing goes after a while; one with actions waits for an answer.
-      if (!message.actions.length && message.level !== 'error') setTimeout(() => setNotices(current => current.filter(notice => notice.key !== key)), 8000);
+      setNotices(current => {
+        const next = [...current.filter(notice => !message.requestId || notice.requestId !== message.requestId), { ...message, key }];
+        // At most five: the oldest that asks nothing goes first; one waiting for an answer stays until answered.
+        while (next.length > 5) { const drop = next.findIndex(notice => !notice.requestId); if (drop < 0) break; next.splice(drop, 1); }
+        return next;
+      });
+      // A notice that asks nothing goes after a while (an error after longer); one with actions waits for an answer.
+      if (!message.requestId) setTimeout(() => setNotices(current => current.filter(notice => notice.key !== key)), message.level === 'error' ? 20000 : 8000);
     } else if (message.kind === 'view') setView(message);
     else if (message.kind === 'dismiss') {
       setAsks(current => current.filter(ask => ask.requestId !== message.requestId));
@@ -40,8 +45,9 @@ export function HostLayer() {
   const ask = asks[0];
 
   return <>
-    {view && <ViewSheet view={view} onClose={() => setView(undefined)} />}
-    {ask && <div className="host-ask-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) answer(ask.requestId, null); }}>
+    {view && <ViewSheet view={view} active={!ask} onClose={() => setView(undefined)} />}
+    {/* A click outside dismisses a list, never a text box: an answer being typed isn't lost to a stray click. */}
+    {ask && <div className="host-ask-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && ask.kind === 'pick') answer(ask.requestId, null); }}>
       {ask.kind === 'pick' ? <PickDialog key={ask.requestId + (ask.error ?? '')} ask={ask} onAnswer={value => answer(ask.requestId, value)} /> : <InputDialog key={ask.requestId + (ask.error ?? '')} ask={ask} onAnswer={value => answer(ask.requestId, value)} />}
     </div>}
     {!!notices.length && <div className="host-notices" role="status" aria-live="polite">
@@ -56,12 +62,13 @@ export function HostLayer() {
   </>;
 }
 
-function useEscape(onEscape: () => void) {
+function useEscape(onEscape: () => void, active = true) {
   useEffect(() => {
+    if (!active) return undefined;
     const listener = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); onEscape(); } };
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
-  }, [onEscape]);
+  }, [onEscape, active]);
 }
 
 function PickDialog({ ask, onAnswer }: { ask: Extract<Ask, { kind: 'pick' }>; onAnswer: (value: number | number[] | null) => void }) {
@@ -109,8 +116,9 @@ function InputDialog({ ask, onAnswer }: { ask: Extract<Ask, { kind: 'input' }>; 
   </form>;
 }
 
-function ViewSheet({ view, onClose }: { view: View; onClose: () => void }) {
-  useEscape(onClose);
+function ViewSheet({ view, active, onClose }: { view: View; active: boolean; onClose: () => void }) {
+  // While a question is open over it, Escape answers the question, not the viewer.
+  useEscape(onClose, active);
   return <div className="host-view-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="host-view" role="dialog" aria-modal="true" aria-label={view.title}>
       <header>

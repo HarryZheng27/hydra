@@ -26,7 +26,7 @@ export function AgentsView({ project }: { project: Project }) {
   const [newPlanSignal, setNewPlanSignal] = useState(0);
   const [view, setView] = useState<AgentsViewName>('canvas');
   const [lanes, setLanes] = useState<LaneView[]>([]);
-  const [terminals, setTerminals] = useState(false);
+  const [terminals, setTerminals] = useState(true);
   const [laneError, setLaneError] = useState<string>();
   const [laneFocus, setLaneFocus] = useState<string>();
   const [laneLimits, setLaneLimits] = useState<Record<string, LaneLimitOfferView>>({});
@@ -65,8 +65,11 @@ export function AgentsView({ project }: { project: Project }) {
         if (lane.focus) { if (lane.view === 'lanes') setLaneFocus(lane.focus); else setHeadFocus({ id: lane.focus, at: Date.now() }); }
       }
     });
+    // This view's own id, so main can tell its closing from a newer view's opening.
+    const viewId = crypto.randomUUID();
+    void window.hydra.agentsMessage(project.id, { type: 'shown', view: viewId }).catch(() => undefined);
     send({ type: 'ready' });
-    return () => { stop(); void window.hydra.agentsMessage(project.id, { type: 'hidden' }).catch(() => undefined); };
+    return () => { stop(); void window.hydra.agentsMessage(project.id, { type: 'hidden', view: viewId }).catch(() => undefined); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
 

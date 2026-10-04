@@ -131,21 +131,29 @@ export class HydraProjects {
   private registration?: Promise<Running>;
   /** The trusted projects as they are now (sync), so a controller checks trust and removal against the latest. */
   private latest = new Map<string, Project>();
-  /** Projects whose Agents view the window shows now. */
-  private readonly agentsShown = new Set<string>();
+  /** Projects whose Agents view the window shows now, by the view's own id (one per time it opened). */
+  private readonly agentsShown = new Map<string, string>();
   constructor(private readonly options: HydraProjectsOptions) {}
 
   /** A message from a project's Agents view (the IDE webview's ClientMessage): the controller parses and checks it. */
   async agents(project: Project, message: unknown): Promise<void> {
-    // The view's own comings and goings: `ready` when it opens (the controller hears it too), `hidden` when it closes.
-    const type = (message as { type?: unknown }).type;
-    if (type === 'hidden') { this.agentsShown.delete(project.id); return; }
-    if (type === 'ready') this.agentsShown.add(project.id);
+    // The view's own comings and goings, by its id: `shown` when it opens and `hidden` when it closes. A `hidden` from
+    // a view that has since been replaced (a quick switch away and back) leaves the new one shown.
+    const { type, view } = message as { type?: unknown; view?: unknown };
+    if (type === 'shown' || type === 'hidden') {
+      if (typeof view !== 'string' || !/^[0-9a-f-]{8,64}$/.test(view)) throw new Error('An Agents view has an id.');
+      if (type === 'shown') this.agentsShown.set(project.id, view);
+      else if (this.agentsShown.get(project.id) === view) this.agentsShown.delete(project.id);
+      return;
+    }
     await this.open(project);
     const running = this.running.get(project.id);
     if (!running) throw new Error(this.errors.get(project.id) ?? 'Hydra isn\'t running for this project yet.');
     await running.controller.handle(message);
   }
+
+  /** The window loaded a page: no Agents view shows until one opens and says so. */
+  windowLoaded(): void { this.agentsShown.clear(); }
 
   /** Every running project's heads and plans. */
   tree(): HydraTreeMessage[] { return [...this.running.values()].map(running => running.tree); }

@@ -165,7 +165,9 @@ export function start(): void {
     registerIpc(ipcMain, handlers);
     nativeTheme.themeSource = (await settings.load()).theme;
     nativeTheme.on('updated', repaintTitleBar);
-    createMainWindow(distDir);
+    const win = createMainWindow(distDir);
+    // A page that (re)loads gets Hydra's open questions again, and every Agents view starts closed until it says so.
+    win.webContents.on('did-finish-load', () => { hydra.windowLoaded(); hostUi.resendAll(); });
     // Controllers start when a project is opened (a chat in it), not here: launching the app takes no repository.
     void hydra.sync((await state.load()).projects);
   });
