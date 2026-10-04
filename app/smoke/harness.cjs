@@ -212,6 +212,85 @@ if (role === 'resume') {
     await send('What was the code word? Reply with one word.');
     await until(`document.querySelectorAll('.turn-end').length > ${report.resume.codex.restoredTurnEnds}`, 'the resumed Codex turn to end');
     report.resume.codex.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
+
+    // G5 milestone 3: a chat calls a lead tool. Its Claude (the stand-in) calls hydra_start_head through Hydra's
+    // bridge for real; a stand-in head writes a file in its worktree, the project's gate runs, and the result shows
+    // as a card in the chat and as a node on the Agents canvas.
+    {
+      const storage = process.env.HYDRA_APP_IDE_STORAGE;
+      report.agents = {};
+      await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
+      await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('New chat'))`, 'the project view');
+      await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('New chat')).click(); 1`);
+      await until(`!!document.querySelector('.composer textarea')`, 'the new chat');
+      await send('Start a Hydra head that writes one file under smoke/.');
+      await until(`!!document.querySelector('.hydra-card.head')`, 'the head card in the chat', 60000);
+      await until(`/done|merged/i.test(document.querySelector('.hydra-card.head .hydra-state')?.textContent ?? '')`, 'the head to finish', 90000);
+      report.agents.chatCard = await ui(`(() => { const card = document.querySelector('.hydra-card.head'); return { title: card.querySelector('.hydra-card-title')?.textContent, state: card.querySelector('.hydra-state')?.textContent, text: card.textContent }; })()`);
+      // The canvas: the same head, as a node.
+      await ui(`[...document.querySelectorAll('.mode-switch button')].find(b => b.textContent === 'Agents').click(); 1`);
+      await until(`!!document.querySelector('.ide-agents .canvas-node')`, 'the head on the canvas', 30000);
+      report.agents.canvasHead = await ui(`(() => { const node = document.querySelector('.ide-agents .canvas-node'); return { title: node.querySelector('strong')?.textContent ?? node.textContent.slice(0, 80), className: node.className }; })()`);
+      // Its diff and its evidence open in the window's viewer (hostUi.ts), not in an editor or Explorer.
+      const shownBefore = report.shown.length;
+      await ui(`document.querySelector('.ide-agents .canvas-node').click(); 1`);
+      await until(`!!document.querySelector('.host-view .host-view-body.diff')`, 'the head\'s diff in the viewer', 20000);
+      report.agents.diffView = await ui(`({ title: document.querySelector('.host-view h2').textContent, added: [...document.querySelectorAll('.host-view .add')].map(e => e.textContent.trim()) })`);
+      await ui(`document.querySelector('.host-view [aria-label=Close]').click(); 1`);
+      await ui(`(() => { const node = document.querySelector('.ide-agents .canvas-node'); const box = node.getBoundingClientRect(); node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: box.left + 10, clientY: box.top + 10 })); return 1; })()`);
+      await until(`[...document.querySelectorAll('[role=menuitem]')].some(b => b.textContent === 'View evidence')`, 'the head\'s menu');
+      await ui(`[...document.querySelectorAll('[role=menuitem]')].find(b => b.textContent === 'View evidence').click(); 1`);
+      await until(`!!document.querySelector('.host-view .host-view-body.markdown')`, 'the head\'s evidence in the viewer', 20000);
+      report.agents.evidenceView = await ui(`({ title: document.querySelector('.host-view h2').textContent, text: document.querySelector('.host-view-body').textContent.slice(0, 2000) })`);
+      await ui(`document.querySelector('.host-view [aria-label=Close]').click(); 1`);
+      report.agents.shownInExplorer = report.shown.slice(shownBefore);
+
+      // A plan, from a lead (Hydra's bridge started by the app's main process, as a chat's CLI starts it): two jobs,
+      // the second after the first. Each lands on the plan's integration branch, its gate runs on the combined work,
+      // and Merge plan on the canvas merges it into the project's branch.
+      const lead = await new Promise(resolve => {
+        const bridge = require('node:child_process').spawn(process.execPath, [path.join(__dirname, '..', 'dist', 'hydra-mcp.cjs')], {
+          cwd: arg('folder'), env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: path.join(storage, 'helpers'), HYDRA_LEAD_PROVIDER: 'claude' }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
+        });
+        let out = '', next = 2; const pending = new Map();
+        const send = message => bridge.stdin.write(JSON.stringify(message) + '\n');
+        bridge.stdout.on('data', chunk => {
+          out += chunk;
+          for (const line of out.split('\n').slice(0, -1)) {
+            let message; try { message = JSON.parse(line); } catch { continue; }
+            if (message.id === 1) { send({ jsonrpc: '2.0', method: 'notifications/initialized' }); resolve({ call: (name, args) => new Promise(done => { const id = next++; pending.set(id, done); send({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }); }), close: () => bridge.kill() }); }
+            const done = pending.get(message.id);
+            if (done) { pending.delete(message.id); done({ isError: !!message.result?.isError || !!message.error, text: (message.result?.content ?? []).map(part => part.text).join('') || message.error?.message || '' }); }
+          }
+          out = out.slice(out.lastIndexOf('\n') + 1);
+        });
+        send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } } });
+      });
+      try {
+        // Three jobs at once, so each runs as its own head (planShape.ts); "quick" adds no review by a provider.
+        const created = await lead.call('hydra_plan_create', { title: 'Smoke plan', idempotency_key: 'smoke-plan-1', jobs: ['one', 'two', 'three'].map(name => (
+          { key: name, title: `Smoke job ${name}`, brief: `Write smoke/${name}.txt.`, write_scope: [`smoke/${name}.txt`], rigor: 'quick' })) });
+        report.agents.planCreated = created;
+        const planId = /"plan_id"\s*:\s*"([a-f0-9]{12})"/.exec(created.text)?.[1];
+        report.agents.planWait = planId ? await lead.call('hydra_plan_wait', { plan_id: planId, max_wait_s: 120 }) : { isError: true, text: 'no plan id' };
+      } finally { lead.close(); }
+      await until(`[...document.querySelectorAll('.ide-agents .canvas-plan-actions button')].some(b => b.textContent === 'Merge plan')`, 'Merge plan on the canvas', 60000);
+      report.agents.planStatus = await ui(`document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? ''`);
+      confirmAnswer = 0;
+      const confirmsBefore = report.confirms.length;
+      await ui(`[...document.querySelectorAll('.ide-agents .canvas-plan-actions button')].find(b => b.textContent === 'Merge plan').click(); 1`);
+      for (let i = 0; i < 300; i++) {
+        const merged = require('node:child_process').spawnSync('git', ['log', '--format=%s', '-n', '5'], { cwd: arg('folder'), encoding: 'utf8', windowsHide: true }).stdout;
+        if (fs.existsSync(path.join(arg('folder'), 'smoke')) && fs.readdirSync(path.join(arg('folder'), 'smoke')).length >= 3) { report.agents.mergedLog = merged; break; }
+        await wait(100);
+      }
+      confirmAnswer = 1;
+      report.agents.mergeConfirms = report.confirms.slice(confirmsBefore);
+      report.agents.mergedFiles = (() => { try { return fs.readdirSync(path.join(arg('folder'), 'smoke')).sort(); } catch { return []; } })();
+      await until(`/merged/i.test(document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? '')`, 'the canvas to show the plan merged', 15000).catch(() => undefined);
+      report.agents.planStatusAfter = await ui(`document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? ''`);
+      await ui(`[...document.querySelectorAll('.mode-switch button')].find(b => b.textContent === 'Chat').click(); 1`);
+    }
     event('done');
     app.quit();
   });

@@ -278,3 +278,44 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .hydra-state.warning { color: var(--warning); }
 .hydra-jobs { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
 .hydra-jobs li { display: flex; gap: 8px; align-items: baseline; }
+/* The Agents view (G5): the IDE's canvas, its variables taken from the app's theme, inside the view only. */
+.ide-agents {
+  --primary: var(--bg); --text: var(--fg); --surface: var(--input-bg); --rail: var(--sidebar-bg);
+  --secondary: var(--button-bg); --secondary-hover: var(--button-hover); --green: var(--ok);
+  --selected: var(--selected-bg); --selected-border: var(--border); --error-text: var(--error);
+  --error-background: transparent; --error-border: var(--error); --body-text: var(--fg);
+  height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: var(--fg); background: var(--bg);
+}
+.ide-agents button { font: inherit; color: inherit; }
+.ide-agents .primary { background: var(--button-bg); color: var(--button-fg); }
+
+/* Hydra's questions, notices and documents (HostLayer.tsx, G5). */
+.host-ask-backdrop, .host-view-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: start center; padding-top: 12vh; background: #0000004d; }
+.host-view-backdrop { place-items: center; padding: 32px; }
+.host-ask { width: min(560px, calc(100vw - 32px)); max-height: 70vh; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--border); box-shadow: 0 12px 32px #0006; }
+.host-ask h2 { font-size: 13px; font-weight: 600; }
+.host-ask-prompt { color: var(--muted); }
+.host-ask input, .host-ask textarea { width: 100%; padding: 6px 8px; border-radius: var(--radius); background: var(--bg); color: var(--input-fg); border: 1px solid var(--input-border); font: inherit; resize: vertical; }
+.host-ask-error { color: var(--error); }
+.host-pick-list { list-style: none; overflow: auto; margin: 0; padding: 0; }
+.host-pick-list button { width: 100%; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; text-align: left; padding: 6px 8px; border-radius: var(--radius); }
+.host-pick-list button:hover, .host-pick-list button.picked { background: var(--hover); }
+.host-check { grid-row: span 3; width: 14px; color: var(--ok); }
+.host-pick-label { grid-column: 2; }
+.host-pick-description, .host-pick-detail { grid-column: 2; color: var(--muted); font-size: 12px; }
+.host-pick-empty { padding: 6px 8px; color: var(--faint); }
+.host-ask-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.host-notices { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(380px, calc(100vw - 32px)); }
+.host-notice { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--input-bg); border: 1px solid var(--border); box-shadow: 0 8px 24px #0005; }
+.host-notice p { flex: 1; overflow-wrap: anywhere; }
+.host-notice.warning { border-color: var(--warning); }
+.host-notice.error { border-color: var(--error); }
+.host-notice-actions { display: flex; align-items: center; gap: 6px; }
+.host-view { width: min(980px, 100%); height: min(85vh, 100%); display: flex; flex-direction: column; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); box-shadow: 0 12px 32px #0006; }
+.host-view header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.host-view header h2 { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-view-body { flex: 1; overflow: auto; padding: 12px 16px; }
+.host-view-body pre { margin: 0; font: 12px/1.5 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.host-view-body .add { color: var(--ok); } .host-view-body .del { color: var(--error); } .host-view-body .hunk { color: var(--link); } .host-view-body .meta, .host-view-body .note { color: var(--muted); }
+.host-view-body figure { margin: 12px 0; } .host-view-body img { max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
+.host-view-body figcaption { color: var(--muted); font-size: 12px; }

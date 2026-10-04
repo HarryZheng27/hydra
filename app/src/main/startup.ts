@@ -6,7 +6,7 @@ import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
-import { CHAT_EVENTS, HYDRA_TREE, type Project } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
@@ -14,6 +14,8 @@ import { createHandlers } from './handlers';
 import { onboardingReport, signIn, stopSignIns } from './onboarding';
 import { cloneRepo } from './clone';
 import { ideStorageRoot } from './host';
+import { startStandinHead } from './standinHeads';
+import { HostUi } from './hostUi';
 import { HydraProjects } from './hydra';
 import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
@@ -109,7 +111,10 @@ export function start(): void {
   // Hydra (G5): one controller per trusted project, over the IDE's own storage. A development or test run never
   // repairs the user's Claude and Codex connections on its own; an installed app repairs one only when what it runs
   // is gone (helperRegistration.ts shouldRepairConnection), so it and the IDE never take turns rewriting it.
+  // Hydra's questions, notices and documents go to the window; its answers come back through hydra.reply.
+  const hostUi = new HostUi(message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_HOST, message); });
   const hydra = new HydraProjects({
+    ui: hostUi,
     // Under the appData folder this app uses (a test that moves appData moves this too), unless set outright.
     storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir, appRoot: app.getAppPath(),
     // The built-in packs: the repository's packs/ beside app/ (a packaged app ships its own, G6).
@@ -119,6 +124,9 @@ export function start(): void {
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     tree: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_TREE, message); },
+    // The smoke's stand-in heads: an unpackaged app only, and only when the smoke asks.
+    ...(!app.isPackaged && process.env.HYDRA_APP_STANDIN_HEADS === '1' ? { startRun: startStandinHead } : {}),
+    post: (project, message) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_UI, { projectId: project.id, message }); },
   });
   const syncHydra = (projects: Project[]) => { void hydra.sync(projects).catch(() => undefined); };
   // Before quitting: end every chat's process, then wait for the store to write what it still holds.
@@ -144,7 +152,7 @@ export function start(): void {
     signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
-    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree() },
+    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree(), agents: (project, message) => hydra.agents(project, message), reply: (requestId, value) => hostUi.reply(requestId, value) },
     projectOpened: cwd => { void state.load().then(loaded => { const project = loaded.projects.find(candidate => samePath(candidate.path, cwd)); if (project) return hydra.open(project); return undefined; }).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
@@ -157,7 +165,9 @@ export function start(): void {
     registerIpc(ipcMain, handlers);
     nativeTheme.themeSource = (await settings.load()).theme;
     nativeTheme.on('updated', repaintTitleBar);
-    createMainWindow(distDir);
+    const win = createMainWindow(distDir);
+    // A page that (re)loads gets Hydra's open questions again, and every Agents view starts closed until it says so.
+    win.webContents.on('did-finish-load', () => { hydra.windowLoaded(); hostUi.resendAll(); });
     // Controllers start when a project is opened (a chat in it), not here: launching the app takes no repository.
     void hydra.sync((await state.load()).projects);
   });

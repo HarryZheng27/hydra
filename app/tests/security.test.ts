@@ -56,6 +56,8 @@ test('every app:// response, including errors, carries the CSP', async () => {
   assert.match(CONTENT_SECURITY_POLICY, /^default-src 'none'; script-src 'self';/);
   assert.doesNotMatch(CONTENT_SECURITY_POLICY, /unsafe-eval|https?:|\*/);
   assert.match(CONTENT_SECURITY_POLICY, /require-trusted-types-for 'script'/);
+  // Images only as data: URLs main made (gate screenshots, G5): no image is fetched from anywhere.
+  assert.match(CONTENT_SECURITY_POLICY, /; img-src data:;/);
 });
 
 test('navigation by any frame, redirects and webviews are blocked; window.open is denied and only http(s) goes to the confirm', () => {

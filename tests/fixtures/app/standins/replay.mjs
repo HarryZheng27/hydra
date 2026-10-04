@@ -24,6 +24,16 @@ const args = process.argv.slice(2);
 const provider = /[\\/]codex[\\/]/.test(fixture) ? 'codex' : 'claude';
 if (args[0] === '--version') { process.stdout.write(provider === 'claude' ? '2.1.282 (Claude Code)\n' : 'codex-cli 0.157.1\n'); process.exit(0); }
 if (args.includes('--help')) { process.stdout.write('--output-format stream-json --input-format stream-json --resume --permission-prompt-tool app-server generate-json-schema\n'); process.exit(0); }
+// Hydra's start-up check of a head's CLI (src/core/cliSelfCheck.ts: `-p … --strict-mcp-config`, one initialize, no
+// session): answered as Claude Code would, outside the recording, so it doesn't take a chat's place in the fixture.
+if (args[0] === '-p' && args.includes('--strict-mcp-config') && !args.includes('--session-id') && !args.includes('--resume')) {
+  const { createInterface } = await import('node:readline');
+  for await (const line of createInterface({ input: process.stdin })) {
+    let request; try { request = JSON.parse(line); } catch { continue; }
+    if (request?.type === 'control_request' && request.request?.subtype === 'initialize') { process.stdout.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id, response: {} } })}\n`); process.exit(0); }
+  }
+  process.exit(2);
+}
 if (!fixture || !state) { process.stderr.write('replay: set HYDRA_STANDIN_FIXTURE and HYDRA_STANDIN_STATE\n'); process.exit(2); }
 fs.mkdirSync(state, { recursive: true });
 
@@ -40,7 +50,7 @@ const marked = records.some(record => record.dir === 'note' && record.text.start
 for (const record of records) {
   const line = record.dir === 'send' ? (() => { try { return JSON.parse(record.line); } catch { return {}; } })() : undefined;
   if (marked ? record.dir === 'note' && record.text.startsWith('args:') : line?.method === 'initialize') parts.push([]);
-  if (parts.length && (record.dir === 'send' || record.dir === 'recv')) parts.at(-1).push(record);
+  if (parts.length && (record.dir === 'send' || record.dir === 'recv' || record.dir === 'call')) parts.at(-1).push(record);
 }
 // Requests G1's harness sent for its own checks that a chat client doesn't (isolation, sandbox readiness, a read-back):
 // when the host doesn't send one, it is skipped with its response.
@@ -93,6 +103,38 @@ function detail(message) {
   return '';
 }
 
+/**
+ * A "call" record (the app's G5 smoke): the stand-in calls one of Hydra's lead tools for real, as Claude Code would
+ * through its `hydra` server: it starts Hydra's bridge (HYDRA_STANDIN_BRIDGE, run by this same Node) in the chat's
+ * folder, so the call comes from the chat's own process chain. The tool's result text fills the recv lines'
+ * __HYDRA_RESULT__ placeholders. A failed call fails the stand-in, so it can't pass unseen.
+ */
+async function hydraCall(tool, args) {
+  const script = process.env.HYDRA_STANDIN_BRIDGE;
+  if (!script) fail('a live call needs HYDRA_STANDIN_BRIDGE');
+  const { spawn } = await import('node:child_process');
+  const bridge = spawn(process.execPath, [script], { cwd: process.cwd(), env: { ...process.env, HYDRA_HELPERS_DIR: process.env.HYDRA_STANDIN_HELPERS_DIR ?? '', HYDRA_LEAD_PROVIDER: 'claude' }, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  return new Promise(resolve => {
+    let out = '';
+    const timer = setTimeout(() => fail(`the live ${tool} call timed out: ${out.slice(-300)}`), 60000);
+    const send = message => bridge.stdin.write(`${JSON.stringify(message)}\n`);
+    bridge.stdout.on('data', chunk => {
+      out += chunk;
+      for (const line of out.split('\n').slice(0, -1)) {
+        let message; try { message = JSON.parse(line); } catch { continue; }
+        if (message.id === 1) { send({ jsonrpc: '2.0', method: 'notifications/initialized' }); send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: tool, arguments: args } }); }
+        if (message.id === 2) {
+          clearTimeout(timer); bridge.kill();
+          if (message.error || message.result?.isError) fail(`the live ${tool} call failed: ${JSON.stringify(message).slice(0, 300)}`);
+          resolve((message.result?.content ?? []).map(block => block.text ?? '').join(''));
+        }
+      }
+      out = out.slice(out.lastIndexOf('\n') + 1);
+    });
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'replay', version: '1' } } });
+  });
+}
+
 const ids = new Map(); // recorded host request id -> the host's own id
 const lines = [];
 let waiting;
@@ -105,7 +147,9 @@ const write = line => new Promise(resolve => { if (!process.stdout.write(`${line
 
 let held; // a host line read while skipping optional requests, still to be matched
 let threadAsked = false; // an unrecorded model/list is answered only at the start, before the thread
+let live = ''; // the result text of the latest live call, JSON-escaped for __HYDRA_RESULT__
 for (const record of part) {
+  if (record.dir === 'call') { live = JSON.stringify(await hydraCall(record.tool, record.arguments ?? {})).slice(1, -1); continue; }
   if (record.dir === 'send') {
     let line = held ?? await next();
     held = undefined;
@@ -132,7 +176,7 @@ for (const record of part) {
     if (expected.method && 'id' in expected) ids.set(expected.id, actual.id);
     continue;
   }
-  const message = parse(withSession(record.line));
+  const message = parse(withSession(record.line.split('__HYDRA_RESULT__').join(live)));
   if (message && !message.method && 'id' in message && skipped.has(message.id)) continue; // the skipped request's response
   if (message?.type === 'control_response' && ids.has(message.response?.request_id)) message.response.request_id = ids.get(message.response.request_id);
   if (message && !message.method && 'id' in message && ids.has(message.id)) message.id = ids.get(message.id);

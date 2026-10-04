@@ -15,6 +15,8 @@ import { QuotaService } from '../../../src/host/quota';
 import type { CliProvider, HeadCardView, HydraConnection, HydraTreeMessage, PlanCardView, Project } from '../shared/ipc';
 import type { HelperJobView } from '../../../src/core/model';
 import type { Plan } from '../../../src/core/plans';
+import type { StartHelperRun } from '../../../src/core/helperRunner';
+import type { HostUi } from './hostUi';
 import type { PlanJobView } from '../../../src/core/planRunner';
 import type { TreeUpdate } from '../../../src/host/controller';
 import { ElectronHost, folderKey, type ValueStore } from './host';
@@ -84,6 +86,10 @@ export interface HydraProjectsOptions {
   post?: (project: Project, message: unknown) => void;
   /** A project's heads and plans changed: the app's window shows them as cards in the chats that started them. */
   tree?: (message: HydraTreeMessage) => void;
+  /** Hydra's questions, notices and documents in the app's window (hostUi.ts). */
+  ui?: HostUi;
+  /** The smoke's stand-in heads (standinHeads.ts), in place of a provider's CLI. Never set in a packaged app. */
+  startRun?: StartHelperRun;
 }
 
 /** What a chat card needs of a head: no paths, logs or worktrees reach the page. */
@@ -125,7 +131,29 @@ export class HydraProjects {
   private registration?: Promise<Running>;
   /** The trusted projects as they are now (sync), so a controller checks trust and removal against the latest. */
   private latest = new Map<string, Project>();
+  /** Projects whose Agents view the window shows now, by the view's own id (one per time it opened). */
+  private readonly agentsShown = new Map<string, string>();
   constructor(private readonly options: HydraProjectsOptions) {}
+
+  /** A message from a project's Agents view (the IDE webview's ClientMessage): the controller parses and checks it. */
+  async agents(project: Project, message: unknown): Promise<void> {
+    // The view's own comings and goings, by its id: `shown` when it opens and `hidden` when it closes. A `hidden` from
+    // a view that has since been replaced (a quick switch away and back) leaves the new one shown.
+    const { type, view } = message as { type?: unknown; view?: unknown };
+    if (type === 'shown' || type === 'hidden') {
+      if (typeof view !== 'string' || !/^[0-9a-f-]{8,64}$/.test(view)) throw new Error('An Agents view has an id.');
+      if (type === 'shown') this.agentsShown.set(project.id, view);
+      else if (this.agentsShown.get(project.id) === view) this.agentsShown.delete(project.id);
+      return;
+    }
+    await this.open(project);
+    const running = this.running.get(project.id);
+    if (!running) throw new Error(this.errors.get(project.id) ?? 'Hydra isn\'t running for this project yet.');
+    await running.controller.handle(message);
+  }
+
+  /** The window loaded a page: no Agents view shows until one opens and says so. */
+  windowLoaded(): void { this.agentsShown.clear(); }
 
   /** Every running project's heads and plans. */
   tree(): HydraTreeMessage[] { return [...this.running.values()].map(running => running.tree); }
@@ -239,6 +267,7 @@ export class HydraProjects {
       // `hydra close` in this project: its controller stops, as the IDE's window closes.
       closeWindow: () => { void this.stop(project.id); },
       post: message => this.options.post?.(project, message),
+      ...(this.options.ui && project.id !== 'registration' ? { ui: { ui: this.options.ui, projectId: project.id } } : {}),
       notice: (level, message) => this.options.notice?.(project, level, message),
       ...(this.options.openConsole ? { openConsole: this.options.openConsole } : {}),
     });
@@ -276,8 +305,10 @@ export class HydraProjects {
       view: () => ({ mode: 'agents', busy: false }),
       handle: async () => undefined,
       uiReady: () => undefined,
-      agentsOpen: () => false,
-      showingAgents: () => false,
+      // Whether the window shows this project's Agents view: a plan that ends then offers its report in a notice,
+      // as the IDE's Agent Manager does, instead of opening it over the canvas.
+      agentsOpen: () => this.agentsShown.has(project.id),
+      showingAgents: () => this.agentsShown.has(project.id),
       openAgents: async () => undefined,
       // The controller's heads and plans: kept and sent on, as cards in the chats that started them.
       tree: update => publish(update),
@@ -301,7 +332,7 @@ export class HydraProjects {
     }
     // Only a running project's cards reach the window: none while it starts, is refused or is stopped.
     const notifyTree = (message: HydraTreeMessage) => { if (this.running.get(project.id)?.tree === message) this.options.tree?.(message); };
-    controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id) });
+    controller = new HydraController({ host, ide, lanes, stop, audit, packs, headSandbox, storageDirectory, leadKey: key, quota, limitOfferTracker: tracker, otherHeads: () => this.headsOutside(project.id), ...(this.options.startRun ? { helperService: { startRun: this.options.startRun } } : {}) });
     return { project, host, controller, lanes, quota, state, tree };
   }
 
@@ -343,6 +374,8 @@ export class HydraProjects {
   }
 
   private async dispose(running: Running): Promise<void> {
+    // Its open questions are dismissed first, so nothing waits on an answer while it shuts down.
+    this.options.ui?.cancelAll(running.project.id);
     await running.controller.shutdown().catch(error => this.options.log(`[hydra] ${running.project.name}: shutdown: ${error instanceof Error ? error.message : String(error)}`));
     await running.quota.shutdown().catch(() => undefined);
     running.quota.dispose();
