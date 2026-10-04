@@ -433,3 +433,127 @@ test('the composer shows the user\'s own model, effort and mode, read from their
     { model: 'gpt-6.1-sol', effort: 'medium', approvals: 'auto_review' });
   assert.deepEqual(codexDefaults(undefined), {});
 });
+
+test('a Claude chat set to Cloud starts a claude.ai session with its first message, runs no CLI here, and then lives there', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const started: Array<{ executable: string; cwd: string; message: string }> = [];
+    const consoles: Array<{ args: string[]; cwd: string }> = [];
+    const session = { sessionId: 'session_01ApFs1X7hjubWFrUBiN4Bht', title: 'README note', url: 'https://claude.ai/code/session_01ApFs1X7hjubWFrUBiN4Bht' };
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({
+      store, launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined,
+      openConsole: async (_title, _executable, args, cwd) => { consoles.push({ args, cwd }); return { started: true }; },
+      cloud: { start: async ({ signal: _signal, ...input }) => { started.push(input); return session; }, worktree: async (_cwd, chatId) => path.join(dir, 'wt', chatId) },
+    });
+    await assert.rejects(manager.create({ cwd: dir, provider: 'codex', where: 'cloud' }), /Only Claude Code/);
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await assert.rejects(manager.continueCloud(chat.id), /no cloud session/);
+    assert.equal((await manager.setWhere(chat.id, 'cloud')).where, 'cloud');
+    await manager.send(chat.id, 'Add a line to README.md');
+    assert.deepEqual(started, [{ executable: 'claude.exe', cwd: dir, message: 'Add a line to README.md' }]);
+    assert.equal(starts.length, 0, 'no local CLI ran');
+    const opened = await manager.open(chat.id);
+    assert.deepEqual(opened.record.cloud && { ...opened.record.cloud, startedAt: undefined }, { ...session, startedAt: undefined });
+    assert.deepEqual(opened.log.map(entry => entry.event.type), ['user', 'cloud', 'done']);
+    await assert.rejects(manager.send(chat.id, 'more'), /runs on claude\.ai/);
+    await assert.rejects(manager.setWhere(chat.id, 'local'), /before its first message/);
+    assert.deepEqual(await manager.continueCloud(chat.id), { started: true, worktree: path.join(dir, 'wt', chat.id) });
+    assert.deepEqual(consoles, [{ args: ['--teleport', session.sessionId], cwd: path.join(dir, 'wt', chat.id) }]);
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a cloud chat that fails to start says why in the chat; the stored session must be a real claude.ai one', async () => {
+  const dir = scratch();
+  try {
+    const { launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({
+      store, launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined,
+      cloud: { start: async () => { throw new Error('Claude Code didn\'t start a cloud session: Error: not signed in'); }, worktree: async () => dir },
+    });
+    const chat = await manager.create({ cwd: dir, provider: 'claude', where: 'cloud' });
+    await assert.rejects(manager.send(chat.id, 'see', [{ mediaType: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64') }]), /can't carry images/);
+    await manager.send(chat.id, 'hi');
+    const log = (await manager.open(chat.id)).log.map(entry => entry.event);
+    assert.deepEqual(log.slice(1), [{ type: 'error', message: 'Claude Code didn\'t start a cloud session: Error: not signed in', fatal: false }, { type: 'done', status: 'error' }]);
+    // A tampered record's session never reaches a command line or a link.
+    const index = path.join(dir, 'chats', 'index.json');
+    const stored = JSON.parse(fs.readFileSync(index, 'utf8'));
+    const mine = stored.chats.find((entry: { id: string }) => entry.id === chat.id);
+    assert.ok(mine);
+    for (const cloud of [{ sessionId: '--dangerously-skip-permissions', url: 'https://claude.ai/code/--dangerously-skip-permissions', title: 't', startedAt: '' }, { sessionId: 'session_01ApFs1X7hjubWFrUBiN4Bht', url: 'https://evil.example/', title: 't', startedAt: '' }]) {
+      fs.writeFileSync(index, JSON.stringify({ ...stored, chats: stored.chats.map((entry: { id: string }) => entry.id === chat.id ? { ...mine, cloud } : entry) }));
+      assert.equal(await new ChatStore(path.join(dir, 'chats'), noAcl).get(chat.id), undefined, cloud.sessionId);
+    }
+    fs.writeFileSync(index, JSON.stringify({ ...stored, chats: stored.chats.map((entry: { id: string }) => entry.id === chat.id ? { ...mine, provider: 'codex' } : entry) }));
+    assert.equal(await new ChatStore(path.join(dir, 'chats'), noAcl).get(chat.id), undefined, 'a Codex chat in the cloud');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a cloud chat\'s card links to claude.ai, and the composer gives way to it', () => {
+  const record = { id: '0f8fad5b-d9cb-469f-a165-70867728950e', provider: 'claude' as const, cwd: 'C:\\x', title: 't', createdAt: '', updatedAt: '', where: 'cloud' as const };
+  const events: ChatEvent[] = [{ type: 'user', text: 'hi' }, { type: 'cloud', sessionId: 'session_01ApFs1X7hjubWFrUBiN4Bht', title: 'README note', url: 'https://claude.ai/code/session_01ApFs1X7hjubWFrUBiN4Bht' }, { type: 'done', status: 'success' }];
+  const page = renderToStaticMarkup(createElement(ChatPane, { record, events, onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined, onOpenTerminal: () => undefined, onContinueCloud: () => undefined }));
+  assert.ok(page.includes('Running on claude.ai: README note'));
+  assert.ok(page.includes('href="https://claude.ai/code/session_01ApFs1X7hjubWFrUBiN4Bht"'));
+  assert.ok(!page.includes('class="composer"'));
+  const before = renderToStaticMarkup(createElement(ChatPane, { record, events: [], onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined, onOpenTerminal: () => undefined, onWhere: () => undefined }));
+  assert.ok(before.includes('cloud-hint') && before.includes('Where'));
+  // `--cloud` takes only the message: no model, effort, mode or images to pick.
+  for (const local of ['Model', 'Effort', 'Permission mode', 'Attach images']) assert.ok(!before.includes(local), local);
+});
+
+test('one cloud session per chat: a second send is refused while the first starts, Stop and remove kill it, and a local send pins the chat\'s place', async () => {
+  const dir = scratch();
+  try {
+    const { launch } = fakeLaunch();
+    const starts: AbortSignal[] = [];
+    const session = { sessionId: 'session_01ApFs1X7hjubWFrUBiN4Bht', title: 'README note', url: 'https://claude.ai/code/session_01ApFs1X7hjubWFrUBiN4Bht' };
+    let finish: () => void = () => undefined;
+    const manager = new ChatManager({
+      store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined,
+      cloud: {
+        start: input => new Promise((resolve, reject) => {
+          starts.push(input.signal);
+          finish = () => resolve(session);
+          input.signal.addEventListener('abort', () => reject(new Error('Stopped before the cloud session started.')));
+        }),
+        worktree: async () => dir,
+      },
+    });
+    const chat = await manager.create({ cwd: dir, provider: 'claude', where: 'cloud' });
+    const [first, second] = [manager.send(chat.id, 'one'), manager.send(chat.id, 'two')];
+    await assert.rejects(second, /cloud session is starting/);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(starts.length, 1, 'one upload');
+    assert.equal(manager.isRunning(chat.id), true);
+    manager.stop(chat.id);
+    await first;
+    assert.equal(starts[0]!.aborted, true);
+    assert.deepEqual((await manager.open(chat.id)).log.map(entry => entry.event.type), ['user', 'error', 'done']);
+
+    const other = await manager.create({ cwd: dir, provider: 'claude', where: 'cloud' });
+    const pending = manager.send(other.id, 'go');
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await manager.remove(other.id);
+    await pending;
+    assert.equal(starts[1]!.aborted, true, 'removing the chat stops its upload');
+    finish();
+
+    // A local send that is still starting its CLI pins the chat's place.
+    const local = await manager.create({ cwd: dir, provider: 'claude' });
+    const sending = manager.send(local.id, 'hi');
+    await assert.rejects(manager.setWhere(local.id, 'cloud'), /before its first message/);
+    await sending;
+    // And a place being changed holds a message back, so it can't run in the old place.
+    const fresh = await manager.create({ cwd: dir, provider: 'claude' });
+    const placing = manager.setWhere(fresh.id, 'cloud');
+    await assert.rejects(manager.send(fresh.id, 'hi'), /place is changing/);
+    assert.equal((await placing).where, 'cloud');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

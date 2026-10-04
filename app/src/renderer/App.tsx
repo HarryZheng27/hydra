@@ -212,7 +212,9 @@ export function App() {
                   onTerminalClosed={() => void run(window.hydra.terminalClosed(chat.id), () => setInTerminal(current => ({ ...current, [chat.id]: false })))}
                   onAnswer={(requestId: string, answer: ChatAnswer) => window.hydra.answer(chat.id, requestId, answer).catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); throw e; })}
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
-                  onConfigure={change => configure(chat.id, change)} />
+                  onConfigure={change => configure(chat.id, change)}
+                  onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
+                  onContinueCloud={() => void run(window.hydra.continueCloud(chat.id), result => { if (!result.started) setError(result.error ?? "The terminal didn't open."); })} />
               : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} />}
         </main>
       </div>

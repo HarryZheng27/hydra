@@ -8,6 +8,7 @@ import { claudeSessionIdPattern } from '../../../src/core/chat/claude';
 import { cmdUnsafe, isWindowsShim } from '../../../src/core/process';
 import { ChatSession, type Launch, type SessionTimings } from '../../../src/core/chat/session';
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry } from '../../../src/core/chat/store';
+import { claudeCloudSessionIdPattern, type ClaudeCloudSession } from '../../../src/core/chat/cloud';
 
 /**
  * The app's chats (G4): one ChatSession per open chat, its events written to the ChatStore and pushed to the window.
@@ -36,6 +37,14 @@ export interface ChatManagerDeps {
   cliConfig?(provider: ChatProvider): Promise<string | undefined>;
   /** Start a Claude chat's CLI when the chat is opened, ahead of its next message (the app sets this; tests don't). */
   warm?: boolean;
+  /**
+   * Claude cloud chats (G7, src/core/chat/cloud.ts): `start` runs `claude --cloud` for a chat's first message;
+   * `worktree` makes (or finds) a fresh worktree of the project on a new branch, for Continue here.
+   */
+  cloud?: {
+    start(input: { executable: string; cwd: string; message: string; signal: AbortSignal }): Promise<ClaudeCloudSession>;
+    worktree(cwd: string, chatId: string): Promise<string>;
+  };
 }
 
 /**
@@ -117,7 +126,7 @@ export function trustedProjects(toml: string): Set<string> {
   return out;
 }
 
-export interface NewChat { cwd: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
+export interface NewChat { cwd: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals; where?: 'cloud' }
 
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
@@ -134,6 +143,13 @@ export class ChatManager {
   private warmed: string | undefined;
   /** Chats removed while their session may still be starting. */
   private readonly removed = new Set<string>();
+  /** Cloud chats whose first message is starting their cloud session. */
+  /** A cloud chat whose `--cloud` is running, with what stops it (remove, quit). */
+  private readonly cloudStarting = new Map<string, AbortController>();
+  /** Chats with a message on its way (how many): their place can't change now. Claimed before send's first await. */
+  private readonly sending = new Map<string, number>();
+  /** Chats whose place (Local or Cloud) is being changed: a message waits for it. */
+  private readonly placing = new Set<string>();
 
   constructor(private readonly deps: ChatManagerDeps) {}
 
@@ -146,9 +162,10 @@ export class ChatManager {
   async create(input: NewChat): Promise<ChatRecord> {
     if (!path.isAbsolute(input.cwd)) throw new Error('A chat needs a project folder.');
     if (!(await this.deps.trusted(input.cwd))) throw new Error('Trust this folder before starting a chat in it.');
+    if (input.where === 'cloud' && input.provider !== 'claude') throw new Error('Only Claude Code chats can run in the cloud for now.');
     this.adapter(input.provider);
     return this.deps.store.create({
-      provider: input.provider, cwd: input.cwd,
+      provider: input.provider, cwd: input.cwd, ...(input.where === 'cloud' ? { where: 'cloud' as const } : {}),
       ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'settings' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
       ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
     });
@@ -159,7 +176,7 @@ export class ChatManager {
     const record = await this.record(id);
     const config = await this.deps.cliConfig?.(record.provider).catch(() => undefined);
     const defaults = record.provider === 'claude' ? claudeDefaults(config) : codexDefaults(config);
-    const opened = { record, log: await this.deps.store.read(id), running: this.sessions.get(id)?.busy ?? false, inTerminal: this.inTerminal.has(id), defaults };
+    const opened = { record, log: await this.deps.store.read(id), running: this.isRunning(id), inTerminal: this.inTerminal.has(id), defaults };
     if (warm) this.warm(id, record);
     return opened;
   }
@@ -170,6 +187,8 @@ export class ChatManager {
    * one chat at a time: the one warmed before is ended if no message used it.
    */
   private warm(id: string, record: ChatRecord): void {
+    // A cloud chat never runs the CLI here.
+    if (record.where === 'cloud') return;
     if (!this.deps.warm || this.closing || this.inTerminal.has(id) || this.starting.has(id)) return;
     if (this.warmed && this.warmed !== id) this.sessions.get(this.warmed)?.cool();
     this.warmed = id;
@@ -263,6 +282,15 @@ export class ChatManager {
     if (!text.trim() && !images?.length) throw new Error('Type a message first.');
     const checked = images?.map(checkImage);
     if (this.closing) throw new Error('Hydra is quitting.');
+    if (this.placing.has(id)) throw new Error("This chat's place is changing. Send it again in a moment.");
+    this.sending.set(id, (this.sending.get(id) ?? 0) + 1);
+    try { await this.sendClaimed(id, text, checked); } finally {
+      const left = (this.sending.get(id) ?? 1) - 1;
+      if (left) this.sending.set(id, left); else this.sending.delete(id);
+    }
+  }
+
+  private async sendClaimed(id: string, text: string, checked?: ChatImage[]): Promise<void> {
     const record = await this.record(id);
     if (!(await this.deps.trusted(record.cwd))) {
       this.sessions.get(id)?.close();
@@ -270,7 +298,79 @@ export class ChatManager {
       throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');
     }
     if (this.inTerminal.has(id)) throw new Error('This chat is open in a terminal. Close that window, then choose "I closed the terminal".');
+    if (record.where === 'cloud') { await this.sendCloud(id, record, text, checked); return; }
     (await this.session(id)).send(text, checked);
+  }
+
+  /**
+   * Local or Cloud, chosen in the composer before a Claude chat's first message (G7). A local chat's CLI that was
+   * started ahead of the message is stopped: a cloud chat never runs one here.
+   */
+  async setWhere(id: string, where: 'local' | 'cloud'): Promise<ChatRecord> {
+    // Claimed before the first await, as send claims its message: neither can slip in during the other's awaits.
+    if (this.sending.has(id) || this.placing.has(id)) throw new Error("A chat's place is chosen before its first message.");
+    this.placing.add(id);
+    try { return await this.placeClaimed(id, where); } finally { this.placing.delete(id); }
+  }
+
+  private async placeClaimed(id: string, where: 'local' | 'cloud'): Promise<ChatRecord> {
+    const record = await this.record(id);
+    if (where === (record.where ?? 'local')) return record;
+    if (record.provider !== 'claude') throw new Error('Only Claude Code chats can run in the cloud for now.');
+    if (this.cloudStarting.has(id) || this.sessions.get(id)?.busy || (await this.deps.store.read(id)).some(entry => entry.event.type === 'user')) throw new Error("A chat's place is chosen before its first message.");
+    if (where === 'cloud') {
+      if (this.warmed === id) this.warmed = undefined;
+      this.sessions.get(id)?.close();
+      this.sessions.delete(id);
+    }
+    const updated = await this.deps.store.update(id, { where: where === 'cloud' ? 'cloud' : undefined });
+    if (where === 'local' && this.deps.warm) this.warm(id, updated);
+    return updated;
+  }
+
+  /** A cloud chat's first message starts its session on claude.ai; after that the chat lives there (src/core/chat/cloud.ts). */
+  private async sendCloud(id: string, record: ChatRecord, text: string, images?: ChatImage[]): Promise<void> {
+    if (record.cloud) throw new Error('This chat runs on claude.ai. Open it there, or choose Continue here.');
+    if (this.cloudStarting.has(id)) throw new Error("This chat's cloud session is starting.");
+    if (images?.length) throw new Error("A cloud chat's first message can't carry images.");
+    const cloud = this.deps.cloud;
+    if (!cloud) throw new Error("Cloud chats aren't available here.");
+    // Claimed before the first await, so a second send can't start a second session.
+    const abort = new AbortController();
+    this.cloudStarting.set(id, abort);
+    try {
+      const executable = await this.deps.executable('claude');
+      if (!executable) throw new Error("Claude Code isn't installed. Check Your agents in Settings.");
+      await this.persist(id, [{ type: 'user', text }]);
+      try {
+        const session = await cloud.start({ executable, cwd: record.cwd, message: text, signal: abort.signal });
+        if (this.removed.has(id)) return;
+        await this.deps.store.update(id, { cloud: { ...session, startedAt: new Date().toISOString() } });
+        await this.persist(id, [{ type: 'cloud', ...session }, { type: 'done', status: 'success' }]);
+      } catch (error) {
+        if (this.removed.has(id)) return;
+        await this.persist(id, [{ type: 'error', message: error instanceof Error ? error.message : String(error), fatal: false }, { type: 'done', status: 'error' }]);
+      }
+    } finally { this.cloudStarting.delete(id); }
+  }
+
+  /**
+   * Continue here (G7): the cloud session's conversation in a console, `claude --teleport <id>` in a fresh worktree of
+   * the project on a new branch. The session's file changes stay in the cloud: its copy has no git remote (spike S3).
+   */
+  async continueCloud(id: string): Promise<{ started: boolean; worktree?: string; error?: string }> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error("This folder isn't trusted in Hydra, so the chat can't run here.");
+    const sessionId = record.cloud?.sessionId;
+    // The id goes on a command line: it must be the CLI's own id shape, which can't read as an option.
+    if (!sessionId || !claudeCloudSessionIdPattern.test(sessionId)) throw new Error('This chat has no cloud session to continue.');
+    if (!this.deps.cloud || !this.deps.openConsole) throw new Error("Hydra can't open a terminal here.");
+    const executable = await this.deps.executable('claude');
+    if (!executable) throw new Error("Claude Code isn't installed. Check Your agents in Settings.");
+    const worktree = await this.deps.cloud.worktree(record.cwd, id);
+    if (isWindowsShim(executable) && [executable, worktree].some(part => cmdUnsafe.test(part))) throw new Error("This folder's path has a character the CLI's launcher can't take safely.");
+    const result = await this.deps.openConsole('Claude Code cloud session', executable, ['--teleport', sessionId], worktree);
+    return { ...result, worktree };
   }
 
   /** Says so if a Codex turn added this folder (or a folder above it) to Codex's own trusted projects. Hydra never edits that file. */
@@ -348,7 +448,11 @@ export class ChatManager {
     session.answer(requestId, answer);
   }
 
-  stop(id: string): void { this.sessions.get(id)?.stop(); }
+  /** Stops a turn, or a cloud chat's `--cloud` before it has started the session. */
+  stop(id: string): void { this.cloudStarting.get(id)?.abort(); this.sessions.get(id)?.stop(); }
+
+  /** True while a chat's turn runs, or a cloud chat's session is starting. */
+  isRunning(id: string): boolean { return this.cloudStarting.has(id) || !!this.sessions.get(id)?.busy; }
 
   /** Changes model, effort or permission mode for the chat's next turn. */
   async configure(id: string, requested: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }): Promise<ChatRecord> {
@@ -367,6 +471,7 @@ export class ChatManager {
 
   async remove(id: string): Promise<void> {
     this.removed.add(id);
+    this.cloudStarting.get(id)?.abort();
     if (this.warmed === id) this.warmed = undefined;
     this.sessions.get(id)?.close();
     this.sessions.delete(id);
@@ -376,6 +481,7 @@ export class ChatManager {
   /** Ends every chat's process, for quit. */
   closeAll(): void {
     this.closing = true;
+    for (const abort of this.cloudStarting.values()) abort.abort();
     for (const session of this.sessions.values()) { try { session.close(); } catch { /* keep closing the rest */ } }
     this.sessions.clear();
   }

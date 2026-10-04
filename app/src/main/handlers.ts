@@ -40,7 +40,7 @@ export interface HandlerDeps {
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ signedIn: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
   updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
@@ -149,6 +149,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
+    'chats.setWhere': ({ id, where }) => deps.chats.setWhere(id, where),
+    'chats.continueCloud': ({ id }) => deps.chats.continueCloud(id),
     'review.diff': async ({ id }) => {
       if (!deps.review) throw new Error('Review isn\'t available here.');
       return deps.review.diff(await deps.chats.reviewFolder(id));

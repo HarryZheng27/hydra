@@ -33,7 +33,9 @@ export type ChatEvent =
   | { type: 'usage'; inputTokens?: number; outputTokens?: number; cachedTokens?: number; costUsd?: number; contextWindow?: number }
   | { type: 'error'; message: string; fatal: boolean; code?: 'malformed' | 'unknown-request' | 'exited' | 'limit' | 'missing-cli' | 'spawn' }
   /** A turn ended. */
-  | { type: 'done'; status: 'success' | 'interrupted' | 'error'; detail?: string };
+  | { type: 'done'; status: 'success' | 'interrupted' | 'error'; detail?: string }
+  /** A cloud chat's session started (G7): the work runs on claude.ai, not here. */
+  | { type: 'cloud'; sessionId: string; title: string; url: string };
 
 export type ApprovalChoice = 'allow' | 'allow-session' | 'deny' | 'edit';
 

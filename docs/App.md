@@ -36,6 +36,15 @@ Once a project has a chat, Hydra runs for it, as it does in an IDE window:
 
 The [user guide](Heads.md) covers heads, plans, gates, packs and lanes in detail; they behave the same here.
 
+## Cloud chats
+
+A Claude Code chat can run on claude.ai instead of your computer. Before its first message, set **Where** in the composer to **Cloud**; the first message then starts a Claude Code cloud session for the project, and the chat shows its title with **Open on claude.ai** and **Continue here**.
+
+- **What goes up:** the folder's tracked files as they are on disk, uncommitted edits included. Untracked and ignored files stay on your computer. The project doesn't need a GitHub remote.
+- **While it runs**, Claude Code doesn't report progress back to Hydra: follow it on claude.ai.
+- **Continue here** opens the session's conversation in a terminal (`claude --teleport`), in a fresh worktree of the project on a new `hydra/cloud-…` branch. The cloud session's file changes stay in the cloud: its copy has no git remote to push to. Removing the chat leaves that worktree and branch for you to delete.
+- It uses your Claude Code sign-in and plan, as `claude --cloud` does in a terminal. Codex chats run locally only for now.
+
 ## Updates
 
 An installed **stable** app checks for a new release 30 seconds after it starts and then once a day, and offers **Update**, **Release notes**, **Skip this version** or **Later**. Update downloads `HydraAppSetup.exe`, checks it against the release's `SHA256SUMS-app`, and asks once more; Hydra then closes, installs the update into the same folder and reopens. Nothing is downloaded or installed without those clicks. **Settings → Updates** has **Check for updates** and turns the daily check off.

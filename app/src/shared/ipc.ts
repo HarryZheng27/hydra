@@ -66,7 +66,7 @@ export interface ChatEventsMessage { chatId: string; events: ChatEvent[]; start:
 /** The user's own CLI defaults (model, effort, mode), which the composer shows when a chat doesn't choose its own. */
 export interface ChatDefaults { model?: string; effort?: string; mode?: string; approvals?: string }
 export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolean; inTerminal: boolean; defaults: ChatDefaults }
-export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
+export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals; where?: 'cloud' }
 export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
 export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
@@ -126,6 +126,9 @@ export interface Channels {
   'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
   /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
   'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
+  /** G7: Local or Cloud, before a Claude chat's first message; and Continue here for a cloud chat. */
+  'chats.setWhere': { payload: { id: string; where: 'local' | 'cloud' }; result: ChatRecord };
+  'chats.continueCloud': { payload: { id: string }; result: { started: boolean; worktree?: string; error?: string } };
   /** The chat folder's working tree against HEAD, read-only. */
   'review.diff': { payload: { id: string }; result: ReviewResult };
   /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
@@ -221,10 +224,12 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'onboarding.signIn': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'projects.trust': exactly<{ id: string }>({ id: isId }),
   'chats.list': isNull,
-  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }),
+  'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals, where: oneOf('cloud') }),
   'chats.open': shaped<{ id: string; background?: boolean }>({ id: isId }, { background: value => value === true }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
+  'chats.setWhere': exactly<{ id: string; where: 'local' | 'cloud' }>({ id: isId, where: oneOf('local', 'cloud') }),
+  'chats.continueCloud': exactly<{ id: string }>({ id: isId }),
   'review.diff': exactly<{ id: string }>({ id: isId }),
   // A path relative to the chat's folder, checked again in main against the files the diff lists.
   'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
@@ -286,6 +291,8 @@ export interface HydraApi {
   openChat(id: string, background?: boolean): Promise<OpenChat>;
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
   openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
+  setChatWhere(id: string, where: 'local' | 'cloud'): Promise<ChatRecord>;
+  continueCloud(id: string): Promise<{ started: boolean; worktree?: string; error?: string }>;
   reviewDiff(id: string): Promise<ReviewResult>;
   openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;
   terminalClosed(id: string): Promise<null>;
