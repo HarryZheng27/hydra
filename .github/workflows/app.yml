@@ -9,6 +9,13 @@ on:
       - 'src/core/**'
       - 'src/host/**'
       - 'webview/**'
+      - 'src/uninstall.ts'
+      - 'packs/**'
+      - 'desktop/hydra-update-mode.iss'
+      - 'desktop/hydra-wizard.iss'
+      - 'scripts/app-installer-test.ps1'
+      - 'scripts/desktop-icons.ps1'
+      - 'hydra-logo.png'
   pull_request:
     paths:
       - '.github/workflows/app.yml'
@@ -16,6 +23,13 @@ on:
       - 'src/core/**'
       - 'src/host/**'
       - 'webview/**'
+      - 'src/uninstall.ts'
+      - 'packs/**'
+      - 'desktop/hydra-update-mode.iss'
+      - 'desktop/hydra-wizard.iss'
+      - 'scripts/app-installer-test.ps1'
+      - 'scripts/desktop-icons.ps1'
+      - 'hydra-logo.png'
 
 permissions:
   contents: read
@@ -44,3 +58,21 @@ jobs:
         working-directory: app
       - run: npm run smoke
         working-directory: app
+      # G6: the packaged app (fuses, integrity-checked archive) and its per-user installer, with an older copy of the
+      # same package for the update case; the lifecycle test runs only here, on a disposable runner.
+      - run: node scripts/package.mjs --installer --prior=0.0.1
+        working-directory: app
+      - run: ./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe -PriorInstallerPath app/out/installer-prior/HydraAppSetup.exe
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Hydra-app-installer-test-logs
+          path: app/out/installer-test-logs/
+          retention-days: 7
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hydra-app-win32-x64-installer
+          path: app/out/installer/HydraAppSetup.exe
+          retention-days: 7

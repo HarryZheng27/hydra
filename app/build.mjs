@@ -27,8 +27,9 @@ await Promise.all([
   // loads it: styles.css hides the codicons, which only Monaco's diff host would show.
   build({ entryPoints: [path.join(here, 'src/renderer/index.tsx')], bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outfile: path.join(dist, 'renderer', 'renderer.js'), minify: true, alias, define: { ...define, 'process.env.NODE_ENV': '"production"' }, loader: { '.ttf': 'file' }, assetNames: '[name]', logLevel: 'warning' }),
   // Hydra's own programs, as the IDE builds them (scripts/build.mjs), run by the app's executable with
-  // ELECTRON_RUN_AS_NODE=1: a chat's MCP bridge, the `hydra` command, and Claude's usage-limit hook.
-  ...[['hydraMcp.ts', 'hydra-mcp.cjs'], ['hydraCli.ts', 'hydra-cli.cjs'], ['hydraLimitHook.ts', 'hydra-limit-hook.cjs']].map(([entry, out]) =>
+  // ELECTRON_RUN_AS_NODE=1: a chat's MCP bridge, the `hydra` command, Claude's usage-limit hook, and the uninstaller's
+  // cleanup of this install's Claude Code and Codex entries (app/installer/hydra-app-uninstall.iss).
+  ...[['hydraMcp.ts', 'hydra-mcp.cjs'], ['hydraCli.ts', 'hydra-cli.cjs'], ['hydraLimitHook.ts', 'hydra-limit-hook.cjs'], ['uninstall.ts', 'hydra-uninstall.cjs']].map(([entry, out]) =>
     build({ entryPoints: [path.join(here, '..', 'src', entry)], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: path.join(dist, out), define: hydraDefine, logLevel: 'warning' })),
   build({ entryPoints: { 'editor.worker': path.join(here, 'src/renderer/editor.worker.ts') }, bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outdir: path.join(dist, 'renderer'), minify: true, logLevel: 'warning' }),
 ]);

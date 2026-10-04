@@ -11,7 +11,8 @@
     "check": "tsc --noEmit -p .",
     "test": "node scripts/test.mjs",
     "dev": "node build.mjs && node scripts/dev.mjs",
-    "smoke": "node build.mjs && node smoke/run.mjs"
+    "smoke": "node build.mjs && node smoke/run.mjs",
+    "package": "node build.mjs && node scripts/package.mjs --installer"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -19,6 +20,7 @@
     "@types/react-dom": "^19.0.0",
     "electron": "44.5.1",
     "esbuild": "^0.25.0",
+    "innosetup": "6.4.1",
     "monaco-editor": "0.57.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
