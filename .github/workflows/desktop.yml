@@ -221,11 +221,41 @@ jobs:
       # A prerelease of the IDE carries an app that doesn't update itself either.
       channel: ${{ inputs.prerelease && 'preview' || 'stable' }}
 
+  # Both of this build's installers side by side (G6): install both, uninstall each in turn, in both orders, and the
+  # other keeps its program, registration, shortcuts and data. Manual runs only, like the app job it needs.
+  coexistence:
+    needs: [desktop, app]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the tested IDE installer
+        uses: actions/download-artifact@v4
+        with:
+          name: Hydra-win32-x64-user-installer
+          path: installers/ide
+      - name: Download the tested app installer
+        uses: actions/download-artifact@v4
+        with:
+          name: Hydra-app-win32-x64-installer
+          path: installers/app
+      - name: Coexistence test
+        shell: pwsh
+        run: ./scripts/coexistence-test.ps1 -IdeInstallerPath installers/ide/HydraSetup.exe -AppInstallerPath installers/app/HydraAppSetup.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Hydra-coexistence-test-logs
+          path: coexistence-test-logs/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Release trust (Step 4): only a manual run with a release tag publishes,
-  # and only after the desktop job's build, smoke, installer, upgrade and MSIX checks, and the app's checks, have all passed.
+  # and only after the desktop job's build, smoke, installer, upgrade and MSIX checks, the app's checks and the coexistence test have all passed.
   # This job alone may write: the release, and the installers' build-provenance attestation.
   release:
-    needs: [desktop, app]
+    needs: [desktop, app, coexistence]
     if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
     runs-on: windows-2022
     timeout-minutes: 30

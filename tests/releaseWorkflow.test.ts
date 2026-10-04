@@ -22,7 +22,7 @@ const step = (jobLines: string[], name: string) => {
 
 test('the release job runs only on a manual run with a tag, after every desktop check', () => {
   const release = job('release');
-  assert.ok(release.includes('    needs: [desktop, app]'));
+  assert.ok(release.includes('    needs: [desktop, app, coexistence]'));
   assert.ok(release.includes("    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''"));
   const workflowPermissions = lines.slice(lines.indexOf('permissions:'), lines.indexOf('jobs:')).join('\n');
   assert.doesNotMatch(workflowPermissions, /write/, 'the workflow-wide permissions stay read-only');
@@ -99,4 +99,20 @@ test('the update-signing secrets reach only the signing step, which runs only fo
   assert.match(decide, /Get-AuthenticodeSignature -LiteralPath release\/HydraSetup\.exe/);
   assert.match(decide, /-ne 'Valid'\) \{[^}]*"sign=false"/);
   assert.doesNotMatch(step(release, "Install the signing script's build tool (no secrets here)").join('\n'), /secrets\./);
+});
+
+test('both installers are tested side by side before a release, and the app beside an installed IDE on every app change', () => {
+  const coexistence = job('coexistence');
+  assert.ok(coexistence.includes('    needs: [desktop, app]'));
+  assert.ok(coexistence.includes("    if: github.event_name == 'workflow_dispatch'"));
+  assert.doesNotMatch(coexistence.join('\n'), /permissions|: write\b/);
+  assert.match(step(coexistence, 'Coexistence test').join('\n'), /coexistence-test\.ps1 -IdeInstallerPath installers\/ide\/HydraSetup\.exe -AppInstallerPath installers\/app\/HydraAppSetup\.exe/);
+  const appWorkflow = fs.readFileSync(path.join(process.cwd(), '.github', 'workflows', 'app.yml'), 'utf8').replace(/\r\n/g, '\n');
+  // The App workflow uses the pinned IDE release, checked by its SHA-256 before it runs.
+  assert.match(appWorkflow, /gh release download \$baseline\.tag [^\n]*--pattern HydraSetup\.exe/);
+  assert.match(appWorkflow, /-ne \$baseline\.installerSha256\) \{ throw/);
+  assert.match(appWorkflow, /coexistence-test\.ps1 -IdeInstallerPath ide-release\/HydraSetup\.exe -AppInstallerPath app\/out\/installer\/HydraAppSetup\.exe/);
+  const script = fs.readFileSync(path.join(process.cwd(), 'scripts', 'coexistence-test.ps1'), 'utf8');
+  assert.match(script, /throw 'The coexistence test runs only on disposable GitHub-hosted Windows runners\.'/);
+  assert.match(script, /foreach \(\$first in @\('ide', 'app'\)\)/, 'both uninstall orders');
 });

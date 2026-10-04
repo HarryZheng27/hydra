@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ndunl075/hydra/releases/latest/download/HydraSetup.exe"><b>Download for Windows</b></a>
+  <a href="https://github.com/ndunl075/hydra/releases/latest/download/HydraSetup.exe"><b>Download Hydra IDE for Windows</b></a>
   · <a href="https://www.usefrontierdigital.com/hydra">Website</a>
   · <a href="docs/Heads.md">User guide</a>
   · <a href="CHANGELOG.md">Changelog</a>
@@ -34,6 +34,15 @@ Bigger jobs become **plans**: jobs with dependencies that land one at a time on 
 
 **Who it's for:** developers who already use Claude Code or Codex and want several agents working on one repository at once, isolated from each other, with checks they didn't write themselves.
 
+### Hydra IDE or the Hydra app
+
+Hydra comes two ways. Both run the same heads, plans, gates and lanes, and can be installed side by side.
+
+- **Hydra IDE** is the full code editor described above, built on VS Code. Choose it if you want to edit code yourself in the same window. Its installer is `HydraSetup.exe`.
+- **Hydra** (the app) is a lighter desktop app built around the chat: you chat with Claude Code or Codex directly, and Hydra's heads, plans, the Agents view and lanes are around it, without an editor. It's newer: it ships first as previews, then in releases as `HydraAppSetup.exe`. See the [app guide](docs/App.md).
+
+A repository is driven by one of them at a time: whichever opens it first owns it, and the other says so and leaves it alone.
+
 ## Install
 
 Windows 10 or 11, x64. Either:
@@ -49,7 +58,9 @@ Windows 10 or 11, x64. Either:
 
 The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **More info → Run anyway**. To check a download yourself, see [Checking an installer](docs/Releases.md#checking-an-installer).
 
-It installs as **Hydra IDE**, the name on its Start Menu entry and desktop shortcut. Installed copies offer each new release in-app. Updating and uninstalling are covered in [Releases](docs/Releases.md#updating).
+It installs as **Hydra IDE**, the name on its Start Menu entry and desktop shortcut. Installed copies offer each new release in-app.
+
+**The Hydra app:** download `HydraAppSetup.exe` from a release that includes it (app previews are tagged `v<version>-app.<n>` on the [releases page](https://github.com/ndunl075/hydra/releases)), or run the same one-liner after `$env:HYDRA_INSTALL_APP = '1'`. It installs as **Hydra**, also per user with no admin prompt, into its own folder. See the [app guide](docs/App.md). Updating and uninstalling are covered in [Releases](docs/Releases.md#updating).
 
 ### Requirements
 
@@ -85,6 +96,7 @@ Heads run confined: they can't write outside their worktree, they get a trimmed 
 ## Docs
 
 - [User guide](docs/Heads.md): heads, lanes, plans, gates, packs, the `hydra` command and troubleshooting.
+- [The Hydra app](docs/App.md): installing, chats, Hydra in the app, updates, your data, and using it beside Hydra IDE.
 - [Editor features](docs/Features.md): modes, Hydra Settings, appearance, settings import and provider checks.
 - [Releases](docs/Releases.md): installing, updating, uninstalling, and how a release is built and checked.
 - [Threat model](docs/THREAT_MODEL.md) and [security policy](SECURITY.md).

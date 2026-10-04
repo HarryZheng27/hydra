@@ -14,6 +14,8 @@ on:
       - 'desktop/hydra-update-mode.iss'
       - 'desktop/hydra-wizard.iss'
       - 'scripts/app-installer-test.ps1'
+      - 'scripts/coexistence-test.ps1'
+      - 'desktop/upgrade-baseline.json'
       - 'scripts/desktop-icons.ps1'
       - 'hydra-logo.png'
   pull_request:
@@ -28,6 +30,8 @@ on:
       - 'desktop/hydra-update-mode.iss'
       - 'desktop/hydra-wizard.iss'
       - 'scripts/app-installer-test.ps1'
+      - 'scripts/coexistence-test.ps1'
+      - 'desktop/upgrade-baseline.json'
       - 'scripts/desktop-icons.ps1'
       - 'hydra-logo.png'
   # The Windows desktop workflow's stable release builds the app here too, as a stable package that updates itself.
@@ -76,6 +80,26 @@ jobs:
         working-directory: app
       - run: ./scripts/app-installer-test.ps1 -InstallerPath app/out/installer/HydraAppSetup.exe -PriorInstallerPath app/out/installer-prior/HydraAppSetup.exe
         shell: pwsh
+      # Side by side with an installed Hydra IDE: the pinned release the IDE's upgrade test uses, checked by its SHA-256.
+      - name: Coexistence with Hydra IDE
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $baseline = Get-Content -LiteralPath desktop/upgrade-baseline.json -Raw | ConvertFrom-Json
+          if ($baseline.source -ne 'release') { throw 'The pinned IDE baseline is not a release.' }
+          gh release download $baseline.tag --repo $env:GITHUB_REPOSITORY --pattern HydraSetup.exe --dir ide-release
+          if ($LASTEXITCODE -ne 0) { throw "Downloading $($baseline.tag)'s HydraSetup.exe failed." }
+          if ((Get-FileHash -LiteralPath ide-release/HydraSetup.exe -Algorithm SHA256).Hash -ne $baseline.installerSha256) { throw 'The IDE installer does not match the pinned SHA-256.' }
+          ./scripts/coexistence-test.ps1 -IdeInstallerPath ide-release/HydraSetup.exe -AppInstallerPath app/out/installer/HydraAppSetup.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Hydra-app-coexistence-test-logs
+          path: coexistence-test-logs/
+          retention-days: 7
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         if: always()
         with:

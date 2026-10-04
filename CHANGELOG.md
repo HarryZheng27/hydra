@@ -5,6 +5,9 @@ What changed in each Hydra release. Installers and checksums are on the [release
 ## Unreleased
 
 - **The editor is now "Hydra IDE".** Its Start Menu entry, desktop shortcut and title bar say Hydra IDE; the name "Hydra" goes to the upcoming Hydra app. Updating renames the old Hydra shortcuts and keeps your taskbar pins, settings, extensions and data. Uninstalling the IDE later never removes the app's Hydra shortcut.
+- **The Hydra app gets an installer** (`HydraAppSetup.exe`): per user with no admin prompt, beside Hydra IDE and never in its way. Uninstalling it removes only its own Claude Code and Codex entries, and its data only when you ask. See the [app guide](docs/App.md).
+- **The app updates itself** from stable releases, checked against the release's own `SHA256SUMS-app`; previews never do. Hydra IDE's update prompt is unchanged.
+- **Releases carry both installers.** `SHA256SUMS` still lists only `HydraSetup.exe`, so every installed Hydra IDE keeps updating; the app's installer has `SHA256SUMS-app`. App previews are prereleases tagged `v<version>-app.<n>`. `install.ps1` installs the app with `-App` or `$env:HYDRA_INSTALL_APP = '1'`.
 
 ## 0.27.1 (2026-10-01)
 
