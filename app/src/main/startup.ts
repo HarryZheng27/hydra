@@ -8,6 +8,7 @@ import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
 import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, type HydraHostMessage, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
+import { cloudChats } from './cloud';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
@@ -104,6 +105,8 @@ export function start(): void {
     store: chatStore,
     launch: nodeLaunch(),
     warm: true,
+    // G7: Claude cloud chats; Continue here's worktrees live under the app's own data.
+    cloud: cloudChats({ appRoot: path.dirname(distDir), worktrees: path.join(userData, 'cloud-worktrees') }),
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),

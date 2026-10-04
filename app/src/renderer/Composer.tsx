@@ -60,10 +60,18 @@ interface Props {
   defaults?: ChatDefaults;
   /** The model the CLI said it is using. */
   sessionModel?: string;
+  /** G7: Local or Cloud, offered for a Claude chat until its first message. */
+  onWhere?(where: 'local' | 'cloud'): void;
 }
 
-export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel }: Props) {
+const whereOptions = [
+  { value: 'local', label: 'Local', description: 'Claude Code runs here, on your computer.' },
+  { value: 'cloud', label: 'Cloud', description: 'Claude Code runs on claude.ai; the first message starts it.' },
+];
+
+export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere }: Props) {
   const codex = record.provider === 'codex';
+  const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
   const model = record.model ?? (codex ? sessionModel ?? defaults?.model ?? models.find(m => m.isDefault)?.id : defaults?.model ?? claudeAlias(sessionModel) ?? 'opus');
   const codexModel = models.find(m => m.id === model) ?? models.find(m => m.isDefault);
@@ -105,6 +113,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const stopping = running && !text.trim() && !images.length;
   return (
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
+      {record.where === 'cloud' && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
       <div className="prompt-box">
         {(images.length > 0 || problem) && (
           <div className="attachments">
@@ -119,14 +128,16 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
         <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'arrowUp'} /></button>
       </div>
       <div className="composer-bar">
-        <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>
+        {/* A cloud chat's `--cloud` takes only the message: no images, mode, model or effort. */}
+        {!cloud && <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>}
         <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-        {codex
+        {cloud ? null : codex
           ? <Picker label="Approvals" value={record.approvals ?? 'ask'} options={approvalModes(defaults)} onChange={value => onConfigure({ approvals: value as CodexApprovals })} title="Who answers Codex's approvals. Hydra starts Codex read-only." />
           : <Picker label="Permission mode" value={mode} options={modes} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
+        {onWhere && <Picker label="Where" value={record.where ?? 'local'} options={whereOptions} onChange={value => onWhere(value === 'cloud' ? 'cloud' : 'local')} title="Run this chat here or on claude.ai. Chosen before the first message." />}
         <span className="composer-spacer" />
-        <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />
-        <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />
+        {!cloud && <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />}
+        {!cloud && <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />}
       </div>
     </div>
   );

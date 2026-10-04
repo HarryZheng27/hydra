@@ -4,6 +4,7 @@ import path from 'node:path';
 import { replaceAtomic } from '../atomicFile';
 import { ownerOnlyProblem, restrictToOwner } from '../userHandshake';
 import type { ChatEvent, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from './events';
+import { claudeCloudSessionIdPattern } from './cloud';
 
 /**
  * Hydra's own record of each chat (docs/internal/hydra-app/G4-local-chat.md): an append-only JSONL log of ChatEvents
@@ -24,6 +25,10 @@ export interface ChatRecord {
   permissionMode?: ClaudePermissionMode;
   sandbox?: CodexSandbox;
   approvals?: CodexApprovals;
+  /** A cloud chat (G7): Claude only, chosen before its first message, which starts the session. */
+  where?: 'cloud';
+  /** The cloud session its first message started (src/core/chat/cloud.ts). */
+  cloud?: { sessionId: string; url: string; title: string; startedAt: string };
 }
 export interface LogEntry { t: string; event: ChatEvent }
 
@@ -50,7 +55,17 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
   if (typeof createdAt !== 'string' || typeof updatedAt !== 'string') return undefined;
   for (const key of ['providerSessionId', 'model', 'effort', 'permissionMode', 'sandbox', 'approvals'] as const) if (!optionalString(raw[key], 200)) return undefined;
   const pick = (key: string) => (typeof raw[key] === 'string' ? { [key]: raw[key] } : {});
-  return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals') } as ChatRecord;
+  // A cloud chat is Claude's, and its session, once there, is one the CLI printed (claude.ai/code's own link).
+  if (raw.where !== undefined && (raw.where !== 'cloud' || provider !== 'claude')) return undefined;
+  let cloud: ChatRecord['cloud'];
+  if (raw.cloud !== undefined) {
+    const value = raw.cloud;
+    if (raw.where !== 'cloud' || !isRecord(value) || typeof value.sessionId !== 'string' || !claudeCloudSessionIdPattern.test(value.sessionId)
+      || value.url !== `https://claude.ai/code/${value.sessionId}` || typeof value.title !== 'string' || value.title.length > 200 || typeof value.startedAt !== 'string') return undefined;
+    cloud = { sessionId: value.sessionId, url: value.url, title: value.title, startedAt: value.startedAt };
+  }
+  return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals'),
+    ...(raw.where === 'cloud' ? { where: 'cloud' as const } : {}), ...(cloud ? { cloud } : {}) } as ChatRecord;
 }
 
 /** True when a file is non-empty and its last byte isn't a newline. */

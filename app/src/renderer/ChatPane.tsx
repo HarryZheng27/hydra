@@ -26,6 +26,10 @@ interface Props {
   onAnswer(requestId: string, answer: ChatAnswer): void | Promise<unknown>;
   onStop(): void;
   onConfigure(change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }): void;
+  /** G7: Local or Cloud, before a Claude chat's first message. */
+  onWhere?(where: 'local' | 'cloud'): void;
+  /** G7: a cloud chat's session, continued in a terminal in a fresh worktree. */
+  onContinueCloud?(): void;
 }
 
 /** The CLI's latest model list in this chat (Codex sends one when a thread starts). */
@@ -144,8 +148,10 @@ function Working({ provider, starting }: { provider: ChatRecord['provider']; sta
   return <div className="working" role="status">{starting ? `Starting ${name}…` : `${name} is working…`}{seconds >= 5 ? ` ${seconds}s` : ''}</div>;
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud }: Props) {
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
+  // A cloud chat's session exists once its log says so (G7): after that, the chat lives on claude.ai.
+  const cloudStarted = events.some(event => event.type === 'cloud');
   const [reviewing, setReviewing] = useState(false);
   // Each request is answered once: a second click on the same card sends nothing.
   const answered = useRef(new Set<string>());
@@ -190,12 +196,22 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
               return <div key={item.key} className="msg chat-error" role="alert">{item.message}</div>;
             }
             case 'turn-end': { const line = usageLine(item); return line ? <div key={item.key} className={`turn-end ${item.status}`}>{line}</div> : null; }
+            case 'cloud': return (
+              <div key={item.key} className="card cloud-card" role="status">
+                <div className="card-title">Running on claude.ai: {item.title}</div>
+                <p className="hint">Claude Code doesn't report progress while it works; follow it on claude.ai. Continue here opens its conversation in a terminal, in a fresh worktree on a new branch. Its file changes stay in the cloud.</p>
+                <div className="card-actions"><a href={item.url} target="_blank" rel="noreferrer">Open on claude.ai</a> <button onClick={onContinueCloud} disabled={!onContinueCloud}>Continue here</button></div>
+              </div>
+            );
           }
         })}
         {view.running && !view.pending.length && <Working provider={record.provider} starting={events[events.length - 1]?.type === 'user'} />}
         <div ref={end} />
       </div>
-      <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} />
+      {cloudStarted
+        ? <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)}
+            {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );
 }

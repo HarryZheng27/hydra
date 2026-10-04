@@ -8,7 +8,9 @@ export type ChatItem =
   | { kind: 'tool'; key: string; id: string; name: string; input: unknown; output?: string; isError?: boolean }
   | { kind: 'request'; key: string; turn?: number; event: Extract<ChatEvent, { type: 'approval' | 'question' | 'plan' }>; resolved?: Extract<ChatEvent, { type: 'resolved' }> }
   | { kind: 'error'; key: string; message: string; code?: Extract<ChatEvent, { type: 'error' }>['code'] }
-  | { kind: 'turn-end'; key: string; status: 'success' | 'interrupted' | 'error'; detail?: string; usage?: Extract<ChatEvent, { type: 'usage' }> };
+  | { kind: 'turn-end'; key: string; status: 'success' | 'interrupted' | 'error'; detail?: string; usage?: Extract<ChatEvent, { type: 'usage' }> }
+  /** A cloud chat's session (G7): it runs on claude.ai. */
+  | { kind: 'cloud'; key: string; title: string; url: string; sessionId: string };
 
 export interface ChatView { items: ChatItem[]; running: boolean; pending: string[] }
 
@@ -51,6 +53,7 @@ export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): Cha
       case 'approval': case 'question': case 'plan': { const item = { kind: 'request' as const, key: `r${n++}`, event, turn: turns }; requests.set(event.id, item); items.push(item); break; }
       case 'resolved': { const request = requests.get(event.id); if (request) request.resolved = event; break; }
       case 'usage': usage = event; break;
+      case 'cloud': items.push({ kind: 'cloud', key: `c${n++}`, title: event.title, url: event.url, sessionId: event.sessionId }); break;
       case 'error': items.push({ kind: 'error', key: `e${n++}`, message: event.message, ...(event.code ? { code: event.code } : {}) }); break;
       case 'done': items.push({ kind: 'turn-end', key: `d${n++}`, status: event.status, ...(event.detail ? { detail: event.detail } : {}), ...(usage ? { usage } : {}) }); running = false; usage = undefined; break;
       default: break;
