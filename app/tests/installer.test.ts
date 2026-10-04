@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 // @ts-expect-error: a plain .mjs module without types, the one app/scripts/package.mjs packages with.
-import { APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, installerDefinitions, releaseVersion, versionStrings } from '../scripts/packageConfig.mjs';
+import { APP_FUSES, NODE_PTY_PARTS, UNPACK, excluded, installerDefinitions, releaseChannel, releaseVersion, versionStrings } from '../scripts/packageConfig.mjs';
 
 const appDir = path.join(__dirname, '..');
 const read = (...parts: string[]): string => fs.readFileSync(path.join(...parts), 'utf8').replace(/\r\n/g, '\n');
@@ -98,4 +98,13 @@ test('the app\'s uninstall removes only its own connector entries, and data only
   // Every folder on the way is checked: a junction or link anywhere is refused, never followed.
   assert.match(uninstallIss, /for I := 0 to GetArrayLength\(Parts\) - 1 do begin[\s\S]*?if not HydraAppRealDirectory\(Path\) then begin/);
   assert.match(uninstallIss, /\(FindRec\.Attributes and \$400\) = 0/);
+});
+
+test('a packaged app is a preview, which never updates itself, unless it is built as a stable release', () => {
+  assert.equal(releaseChannel(undefined), 'preview');
+  assert.equal(releaseChannel('preview'), 'preview');
+  assert.equal(releaseChannel('stable'), 'stable');
+  for (const bad of ['', 'Stable', 'beta', 'stable ']) assert.throws(() => releaseChannel(bad), /Unknown channel/, bad);
+  assert.match(read(appDir, 'scripts', 'package.mjs'), /main: pkg\.main, hydraChannel: channel \}/);
+  assert.match(read(appDir, 'src', 'main', 'startup.ts'), /'package\.json'\), 'utf8'\)\)\.hydraChannel/);
 });

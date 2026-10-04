@@ -1,4 +1,4 @@
-import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project, HydraControl, HydraStopState } from '../shared/ipc';
+import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project, HydraControl, HydraStopState, UpdateStatusView } from '../shared/ipc';
 import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
@@ -42,7 +42,11 @@ export interface HandlerDeps {
   confirmTrust(project: Project): Promise<boolean>;
   chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
+  /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
+  updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
 }
+
+const noUpdates = (version: string): UpdateStatusView => ({ available: false, reason: "Updates aren't set up in this copy of Hydra.", automatic: false, busy: false, version });
 
 /** What main does for each channel. Paths only ever come from main's own pickers, never from the renderer. */
 export function createHandlers(deps: HandlerDeps): Handlers {
@@ -92,6 +96,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'settings.clearCliPath': ({ provider }) => deps.settings.update(current => setCliPath(current, provider, undefined)),
     'state.get': () => deps.state.load(),
     'state.setSidebarOpen': ({ open }) => deps.state.update(current => ({ ...current, sidebarOpen: open })),
+    'updates.status': () => deps.updates ? deps.updates.status() : Promise.resolve(noUpdates(deps.info.version)),
+    'updates.check': async () => { if (!deps.updates) return noUpdates(deps.info.version); await deps.updates.check(true); return deps.updates.status(); },
+    'updates.setAutomatic': ({ on }) => deps.updates ? deps.updates.setAutomatic(on) : Promise.resolve(noUpdates(deps.info.version)),
     'projects.pick': async () => {
       const folder = await deps.pickFolder();
       if (!folder) return { state: await deps.state.load() };

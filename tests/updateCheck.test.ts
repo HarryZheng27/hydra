@@ -10,7 +10,7 @@ import path from 'node:path';
 import { preferenceOnlySettings } from '../src/core/settingsRefresh';
 import {
   allowedDownloadUrl, compareVersions, downloadVerified, installerArguments, isNewer, latestRelease, parseSums, psQuote, releaseFromPayload,
-  helperBridgeScripts, releasesLatestUrl, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, updateLauncherArguments, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
+  helperBridgeScripts, releasesLatestUrl, productFiles, appInstallerArguments, runningNotice, updateEligibility, updateHelperFileContents, updateHelperScript, updateLauncherArguments, nextAutoCheckDelay, updateOffer, helperEnvironment, type FetchLike, type LatestRelease,
 } from '../src/core/updateCheck';
 
 const tag = 'v0.25.0';
@@ -343,4 +343,83 @@ test('the launcher starts the helper through WMI, hidden, with every path quoted
   assert.match(script, /if \(\$result\.ReturnValue -ne 0\) \{ exit 1 \}/);
   // The helper's command line is one single-quoted PowerShell literal, its apostrophe doubled.
   assert.ok(script.includes(`CommandLine = '"${shell}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "${helper.replaceAll("'", "''")}"'`));
+});
+
+// ---- The Hydra app (G6): the same check, its own installer and checksum file ----
+
+const appPayload = (patch: Record<string, unknown> = {}) => payload({
+  assets: [
+    { name: 'HydraSetup.exe', browser_download_url: `${base}HydraSetup.exe` },
+    { name: 'SHA256SUMS', browser_download_url: `${base}SHA256SUMS` },
+    { name: 'HydraAppSetup.exe', browser_download_url: `${base}HydraAppSetup.exe` },
+    { name: 'SHA256SUMS-app', browser_download_url: `${base}SHA256SUMS-app` },
+  ],
+  ...patch,
+});
+const reasonOf = (result: { reason?: string }): string => result.reason ?? '';
+
+test('the IDE\'s update check is unchanged beside the app\'s installer: it still takes HydraSetup.exe and a one-line SHA256SUMS', () => {
+  assert.deepEqual(releaseFromPayload(appPayload()), { release });
+  assert.deepEqual(productFiles.ide, { installer: 'HydraSetup.exe', sums: 'SHA256SUMS', name: 'Hydra' });
+  const hash = 'a'.repeat(64);
+  assert.equal(parseSums(`${hash}  HydraSetup.exe\n`), hash);
+  // A release's SHA256SUMS never lists the app: installed IDEs refuse a second line.
+  assert.throws(() => parseSums(`${hash}  HydraSetup.exe\n${'b'.repeat(64)}  HydraAppSetup.exe\n`), /exactly one line/);
+  assert.throws(() => parseSums(`${hash}  HydraAppSetup.exe\n`), /no HydraSetup\.exe line/);
+  const script = updateHelperScript({ installer: 'C:\\t\\HydraSetup-0.25.0.exe', installDir: 'C:\\Hydra', exe: 'C:\\Hydra\\Hydra.exe', log: 'C:\\t\\log' });
+  assert.ok(script.includes(installerArguments.map(argument => psQuote(argument)).join(',')));
+  assert.ok(script.includes("'\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-mcp.cjs'"));
+  assert.match(reasonOf(updateEligibility({ platform: 'win32', production: true, execPath: 'C:\\x\\Hydra.exe', exists: () => false })), /HydraSetup\.exe/);
+});
+
+test('the app updates from HydraAppSetup.exe and its own one-line SHA256SUMS-app, from a full release only', () => {
+  assert.deepEqual(releaseFromPayload(appPayload(), 'app'), { release: { ...release, installerUrl: `${base}HydraAppSetup.exe`, sumsUrl: `${base}SHA256SUMS-app` } });
+  // A release without the app's files (every release before the app) offers the app nothing.
+  assert.match(reasonOf(releaseFromPayload(payload(), 'app')), /no HydraAppSetup\.exe/);
+  assert.match(reasonOf(releaseFromPayload(appPayload({ assets: appPayload().assets.slice(0, 3) }), 'app')), /no SHA256SUMS-app/);
+  // Previews (prereleases, suffixed tags) are never offered.
+  assert.match(reasonOf(releaseFromPayload(appPayload({ prerelease: true }), 'app')), /prerelease/);
+  assert.match(reasonOf(releaseFromPayload(appPayload({ tag_name: 'v0.25.0-app.1' }), 'app')), /v<x\.y\.z>/);
+  const hash = 'c'.repeat(64);
+  assert.equal(parseSums(`${hash} *HydraAppSetup.exe\r\n`, 'app'), hash);
+  assert.throws(() => parseSums(`${hash}  HydraSetup.exe\n`, 'app'), /SHA256SUMS-app has no HydraAppSetup\.exe line/);
+  assert.throws(() => parseSums(`${hash}  HydraAppSetup.exe\n${hash}  HydraSetup.exe\n`, 'app'), /exactly one line/);
+});
+
+test('downloadVerified fetches the app\'s installer as HydraAppSetup-<version>.exe and checks it against SHA256SUMS-app', async t => {
+  const server = await fixture({
+    [`${releasePath}SHA256SUMS-app`]: { body: `${digest(installerBytes)}  HydraAppSetup.exe\n` },
+    [`${releasePath}HydraAppSetup.exe`]: { body: installerBytes },
+  });
+  t.after(() => server.close());
+  const dir = await scratch(t);
+  const appRelease = { ...release, installerUrl: `${base}HydraAppSetup.exe`, sumsUrl: `${base}SHA256SUMS-app` };
+  const result = await downloadVerified(appRelease, dir, { fetch: server.fetch, product: 'app' });
+  assert.equal(result.file, path.join(dir, 'HydraAppSetup-0.25.0.exe'));
+  assert.equal(result.sha256, digest(installerBytes));
+  // The IDE's SHA256SUMS line never verifies the app's installer.
+  const wrong = await fixture({
+    [`${releasePath}SHA256SUMS-app`]: { body: `${digest(installerBytes)}  HydraSetup.exe\n` },
+    [`${releasePath}HydraAppSetup.exe`]: { body: installerBytes },
+  });
+  t.after(() => wrong.close());
+  await assert.rejects(downloadVerified(appRelease, await scratch(t), { fetch: wrong.fetch, product: 'app' }), /SHA256SUMS-app has no HydraAppSetup\.exe line/);
+});
+
+test('the app updates itself only as an installed stable release: never a preview, a development copy or an uninstalled one', () => {
+  const folder = 'C:\\Users\\n\\AppData\\Local\\Programs\\Hydra App';
+  const input = { platform: 'win32', production: true, execPath: `${folder}\\Hydra.exe`, exists: (file: string) => file === `${folder}\\unins000.exe`, product: 'app' as const };
+  assert.deepEqual(updateEligibility({ ...input, channel: 'stable' }), { eligible: true, installDir: folder });
+  for (const channel of ['preview', undefined, 'Stable']) assert.match(reasonOf(updateEligibility({ ...input, channel })), /preview/);
+  assert.match(reasonOf(updateEligibility({ ...input, channel: 'stable', production: false })), /development copy/);
+  assert.match(reasonOf(updateEligibility({ ...input, channel: 'stable', exists: () => false })), /HydraAppSetup\.exe/);
+});
+
+test('the app\'s update helper stops its archive\'s bridges and runs HydraAppSetup.exe in update mode', () => {
+  assert.deepEqual([...appInstallerArguments], ['/HYDRAUPDATE=1', '/SILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART']);
+  const script = updateHelperScript({ installer: 'C:\\t\\HydraAppSetup-0.25.0.exe', installDir: 'C:\\Hydra App', exe: 'C:\\Hydra App\\Hydra.exe', log: 'C:\\t\\log', product: 'app' });
+  assert.ok(script.includes("-ArgumentList '/HYDRAUPDATE=1','/SILENT','/SP-','/SUPPRESSMSGBOXES','/NORESTART' -Wait"));
+  for (const name of helperBridgeScripts) assert.ok(script.includes(`'\\resources\\app.asar\\dist\\${name}'`), name);
+  assert.ok(!script.includes('hydra-agent-manager'));
+  assert.ok(!script.includes('/MERGETASKS'), 'update mode refuses task changes');
 });

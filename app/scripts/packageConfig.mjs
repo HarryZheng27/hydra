@@ -26,6 +26,12 @@ export function releaseVersion(version) {
   if (!match || match.slice(1).some(part => Number(part) > 65535)) throw new Error(`The app's version ${JSON.stringify(version)} isn't a stable x.y.z release version.`);
   return version;
 }
+/** The package's release channel: "stable" only when asked for; a preview otherwise, which never updates itself. */
+export function releaseChannel(value) {
+  if (value === undefined || value === 'preview') return 'preview';
+  if (value === 'stable') return 'stable';
+  throw new Error(`Unknown channel ${JSON.stringify(value)}: use stable or preview.`);
+}
 /** Windows version resources for Hydra.exe. */
 export function versionStrings(version) {
   return { ProductName: 'Hydra', FileDescription: 'Hydra', CompanyName: 'Nico Dunlap', ProductVersion: version, FileVersion: version, OriginalFilename: EXE, InternalName: 'Hydra', LegalCopyright: 'MIT License' };
