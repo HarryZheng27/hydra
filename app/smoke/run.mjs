@@ -305,6 +305,19 @@ try {
     assert.equal(agents.stopConfirm.length, 1, 'Stop all asked first');
     assert.equal(agents.resumed, true);
   });
+  check('Hydra Settings: the IDE\'s own pages in their own window, themed, over G2\'s bridge; a change is saved in the app; Show All Projects lists this one', () => {
+    const settings = r.settingsWindow;
+    assert.equal(settings?.found, true, 'no settings window');
+    assert.match(settings.title, /^Hydra Settings · Project One$/);
+    assert.equal(settings.url, 'data:text/html;charset=utf-8;b');
+    for (const page of ['General', 'Connectors', 'Heads', 'Gates', 'Packs']) assert.ok(settings.pages.some(item => item.includes(page)), `${page} in ${settings.pages.join(', ')}`);
+    assert.match(settings.themed, /^#[0-9a-fA-F]{6,8}$/);
+    assert.equal(settings.bridge, 'function/undefined/undefined', 'the page has the bridge, and no Node or VS Code API');
+    assert.equal(settings.saved, 5);
+    assert.equal(settings.packs.empty, false, 'the built-in packs are found');
+    assert.match(settings.packs.list, /Coding/);
+    assert.ok(r.allProjects?.some(item => /Project One/.test(item) && /This window/.test(item)), JSON.stringify(r.allProjects));
+  });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);
     assert.equal(a.trustPrompts.length, 1);

@@ -89,6 +89,8 @@ export function AgentsView({ project }: { project: Project }) {
     <section className="agents ide-agents" aria-label={`${project.name}: agents`} data-project={project.id}>
       <div className="agents-toolbar">
         <span className="agents-toolbar-title">{project.name}</span>
+        <button className="link" onClick={() => control('allProjects')} title="Every Hydra project, here and in Hydra IDE (read-only)">All projects</button>
+        <button className="link" onClick={() => control('settings')} title="Hydra's settings for this project: heads, gates, packs, MCP servers and more">Hydra settings</button>
         <button className="link" onClick={() => control('auditLog')} title="Every head, lane and plan Hydra started or stopped, and every refusal">Audit log</button>
         <button className="danger-link" disabled={!stop?.running || stop.stopped} onClick={() => control('stopAll')} title="Stop every head and lane in this project">Stop all</button>
       </div>

@@ -6,7 +6,7 @@ import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
-import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, type Project } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, type HydraHostMessage, type Project } from '../shared/ipc';
 import { ChatManager } from './chats';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { changedPaths, openInEditor, workingTreeDiff } from './review';
@@ -16,6 +16,7 @@ import { cloneRepo } from './clone';
 import { ideStorageRoot } from './host';
 import { startStandinHead } from './standinHeads';
 import { HostUi } from './hostUi';
+import { HydraSettingsWindow } from './settingsWindow';
 import { HydraProjects } from './hydra';
 import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
@@ -113,8 +114,16 @@ export function start(): void {
   // is gone (helperRegistration.ts shouldRepairConnection), so it and the IDE never take turns rewriting it.
   // Hydra's questions, notices and documents go to the window; its answers come back through hydra.reply.
   const hostUi = new HostUi(message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_HOST, message); });
+  const settingsWindow = new HydraSettingsWindow(distDir);
+  const navigate = (message: Extract<HydraHostMessage, { kind: 'navigate' }>) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) { win.webContents.send(HYDRA_HOST, message); win.show(); win.focus(); } };
   const hydra = new HydraProjects({
     ui: hostUi,
+    settingsWindow,
+    showAppSettings: () => navigate({ kind: 'navigate', to: 'settings' }),
+    openProject: folder => { void state.load().then(loaded => {
+      const project = loaded.projects.find(candidate => samePath(candidate.path, folder));
+      if (project) navigate({ kind: 'navigate', to: 'project', projectId: project.id });
+    }).catch(() => undefined); },
     // Under the appData folder this app uses (a test that moves appData moves this too), unless set outright.
     storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir,
     // node-pty's root: the app folder its bundle is in (app.getAppPath() is wherever Electron was pointed, a test harness's folder say).

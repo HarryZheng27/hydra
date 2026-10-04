@@ -62,6 +62,8 @@ export interface ElectronHostOptions {
   notice?: (level: NoticeLevel, message: string) => void;
   /** Hydra's lists, text boxes, notices with actions and documents in the app's window (hostUi.ts), for this project. */
   ui?: { ui: HostUi; projectId: string };
+  /** A folder Hydra asks to open (Show All Projects): the app shows that project, if it has it. */
+  openFolder?: (folder: string) => void;
   /** `hydra close` here: the project's controller stops. */
   closeWindow?: () => void;
   /** Opens a console window the user owns (Open in terminal's): for a CLI's own interactive flow. */
@@ -160,7 +162,10 @@ export class ElectronHost implements Host {
   }
 
   // ---- Opening things: the app has no editor; it shows files in their folder and pages in the browser. ----
-  async openFolder(folder: string): Promise<void> { this.log(`[host] open folder ${folder}: open it as a project in the app`); }
+  async openFolder(folder: string): Promise<void> {
+    if (this.options.openFolder) { this.options.openFolder(folder); return; }
+    this.log(`[host] open folder ${folder}: open it as a project in the app`);
+  }
   /** Preview app (a lane's): the user asked for it, so a page on this machine opens in their browser. */
   async openPreview(url: string): Promise<boolean> {
     const local = localPreviewUrl(url);

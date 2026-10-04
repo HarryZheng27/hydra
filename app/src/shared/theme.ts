@@ -67,3 +67,18 @@ export function titleBarColors(name: ThemeName): { color: string; symbolColor: s
   const vars = themeVariables(name);
   return { color: vars['--titlebar-bg']!, symbolColor: vars['--titlebar-fg']! };
 }
+
+/**
+ * A theme's colors as VS Code's webview CSS variables (`--vscode-editor-background` for `editor.background`), plus
+ * the font: for the IDE's own Hydra Settings pages, which the app shows in their own window (G5 milestone 5).
+ */
+export function vscodeThemeVariables(name: ThemeName): Record<string, string> {
+  const out: Record<string, string> = {
+    '--vscode-font-family': '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
+    '--vscode-font-size': '13px',
+  };
+  for (const [key, value] of Object.entries(files[name].colors)) {
+    if (/^[a-zA-Z0-9.]+$/.test(key) && /^#[0-9a-fA-F]{3,8}$/.test(value)) out[`--vscode-${key.replace(/\./g, '-')}`] = value;
+  }
+  return out;
+}

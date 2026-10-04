@@ -32,3 +32,34 @@ Root `npm run check` and `npm test`; `npm --prefix app run check`, `test`, `buil
 - [ ] Live on Nico's machine: the benchmark's `hydra` step runs `shop` / `discounts` (`--usd 5`) with the app owning the folder, opened by hand. Evidence in the Result.
 - [ ] THREAT_MODEL covers the app's endpoint, discovery, lead verification and registration repair.
 - [ ] The parity table is complete.
+
+## Parity table (milestone 5)
+
+Every Hydra IDE feature (docs/Features.md, docs/Heads.md), as the Hydra app has it after G5. **Works**: the same core code, shown in the app. **Differs**: it works, but not as in the IDE (why given). **Missing**: not in the app (why given, and when).
+
+| IDE feature | App | Notes |
+| --- | --- | --- |
+| Connecting Claude Code and Codex (Settings → Connectors) | Works | The app's own Settings → Connectors (Connect, Use this app, Repair, Disconnect) and Hydra Settings → Connectors, the IDE's page. Repair follows G5's rule: another install's entry is kept while it reaches this Hydra. |
+| What the agents can do (lead tools, heads, plans from a chat) | Works | A chat's CLI gets Hydra's bridge; lead verification by the process chain, as in the IDE; head and plan cards inline in the chat. |
+| Head lifecycle: nobody answers, a silent head, waiting on the provider | Works | The controller's own; Answer is the window's text box. |
+| Limits and permissions (worktrees, budgets, head sandbox) | Works | The same `HelperService` and head sandbox. |
+| When a provider hits its limit (offer to continue in the other) | Works | Offers are in-window notices with their buttons; the handoff opens in the viewer. |
+| Gates, screenshots, review, evidence | Works | Evidence opens in the window's viewer with its screenshots inlined (HSEC-93). |
+| The Agents view: canvas, plans, Merge plan, Open PR, Run integration gate | Works | The IDE's own canvas (`webview/AgentsBody.tsx`) in the title bar's Agents mode. |
+| Lanes: terminals, Send to lane, Preview app, Review changes, a lane's gates | Works | node-pty is the app's own dependency. Preview opens the user's browser, as the IDE does without Simple Browser. Review changes is a unified diff in the viewer, not VS Code's multi-diff editor. |
+| All projects | Works | The Agents toolbar's All projects; choosing another of the app's projects opens it in the app. |
+| Hydra's notifications | Differs | In-window toasts in the app's style, not the IDE's notification cards; same messages and actions. |
+| Folders you haven't trusted | Differs | The app's own folder trust (G4), confirmed in main's dialog; Hydra runs nothing in an untrusted project. |
+| Packs: review, turn on, gates | Works | Hydra Settings → Packs, the IDE's page, in its own window. |
+| The `hydra` command, plan files, the user role and handshake | Works | `hydra` finds whichever window owns the folder, the app's or the IDE's (G5 milestone 1). |
+| Stop all agents and Resume | Works | The Agents toolbar and a "stopped" banner; Hydra Settings → Heads too. The app's stop switch is its own per project, not the IDE's `workspaceState`: a Stop all in the IDE isn't seen by the app. |
+| The audit log | Works | The Agents toolbar's Audit log, read-only in the viewer; it's Hydra's one shared log. |
+| Hydra Settings: Connectors, MCP servers, Heads, Gates, Packs, Docs | Works | The IDE's own pages over G2's bridge (HSEC-95). Hydra's settings are the app's own store, not the IDE's VS Code settings. |
+| Hydra Settings → General: editor settings, keyboard shortcuts, Chat location, Window layout, importing preferences | Differs | Editor-only. Each says so when used; importing shows as unavailable. Accounts and onboarding open the app's own Settings. |
+| Hydra Settings → Appearance | Differs | Dark or Light follows the app's own theme setting (its Settings); the IDE's page can't change the app's theme, and icon themes are the editor's. |
+| Agent Manager / Editor switch, activity bar, chat panels | Differs | The app has no editor: its Chat and Agents modes take their place. |
+| Provider usage limits view | Missing | The quota service runs (limit offers use it), but its own view isn't in the app yet: the UI pass (UI-direction.md) adds it. |
+| Handoff workspaces (`.code-workspace` for a worktree) | Missing | A VS Code workspace has no meaning in the app; a handoff's Markdown opens in the viewer instead. |
+| Importing preferences from another editor | Missing | Editor preferences don't apply to the app. |
+| One-time offers that need actions (packs review, starter gates) | Works | Since milestone 3 they're in-window notices with their actions. |
+| Provider checks and usage of `hydra.claudePath` / `codexPath` | Differs | The app's own CLI paths (Settings → Your agents), machine-only as in the IDE. |
