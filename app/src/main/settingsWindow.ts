@@ -37,31 +37,36 @@ export function settingsDocument(html: string, theme: 'dark' | 'light'): string 
  * CSP (scripts and styles only by its nonce); its preload gives it `window.hydraBridge` (G2's bridge), and only its
  * own main frame's messages are taken. Each one goes to the project's SettingsShell, which checks it as in the IDE.
  */
+/** Whether a settings message came from that window's own page (its main frame), and is of a size main reads. */
+export function settingsMessageFrom(event: { sender: unknown; senderFrame: unknown }, win: { isDestroyed(): boolean; webContents: { mainFrame: unknown } } | undefined, message: unknown): boolean {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return false;
+  try { return JSON.stringify(message ?? null).length <= 200_000; } catch { return false; }
+}
+
 export class HydraSettingsWindow {
   private win?: BrowserWindow;
   private shell?: SettingsShell;
   private projectId?: string;
   private pageId?: string;
+  /** This window's own way back to its page: a project's late answer never reaches another project's window. */
+  private post?: (message: unknown) => Promise<boolean>;
   private readonly onPost = (event: IpcMainEvent, message: unknown) => {
-    const win = this.win, shell = this.shell;
-    if (!win || win.isDestroyed() || !shell || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) return;
-    if (JSON.stringify(message ?? null).length > 200_000) return;
-    void shell.receive(message, this.post, this.pageId);
-  };
-  private readonly post = async (message: unknown): Promise<boolean> => {
-    const win = this.win;
-    if (!win || win.isDestroyed()) return false;
-    win.webContents.send(SETTINGS_MESSAGE, message);
-    return true;
+    const shell = this.shell, post = this.post;
+    if (!shell || !post || !settingsMessageFrom(event, this.win, message)) return;
+    void shell.receive(message, post, this.pageId);
   };
 
-  constructor(private readonly distDir: string) { ipcMain.on(SETTINGS_POST, this.onPost); }
+  constructor(private readonly distDir: string) {
+    ipcMain.on(SETTINGS_POST, this.onPost);
+    // The app's theme changes: an open settings page is drawn again in it.
+    nativeTheme.on('updated', () => { void this.retheme(); });
+  }
 
   /** Opens (or brings forward) Hydra Settings for a project, on a page. Another project's settings are replaced. */
   async open(projectId: string, projectName: string, parts: { host: Host; packs: PackService }, pageId?: string): Promise<void> {
     if (this.win && !this.win.isDestroyed() && this.projectId === projectId) {
       this.pageId = pageId;
-      if (pageId) await this.post({ type: 'showPage', id: pageId });
+      if (pageId) await this.post?.({ type: 'showPage', id: pageId });
       this.win.show(); this.win.focus();
       return;
     }
@@ -73,20 +78,40 @@ export class HydraSettingsWindow {
       backgroundColor: theme === 'dark' ? '#141414' : '#FAFBF9', icon: path.join(this.distDir, 'icon.png'),
       webPreferences: hardenedWebPreferences(path.join(this.distDir, 'settings-preload.cjs')),
     });
-    this.win = win; this.shell = shell; this.projectId = projectId; this.pageId = pageId;
-    shell.attach(this.post);
-    win.on('closed', () => { if (this.win === win) { shell.detach(this.post); this.win = undefined; this.shell = undefined; this.projectId = undefined; } });
+    const post = async (message: unknown): Promise<boolean> => {
+      if (win.isDestroyed()) return false;
+      win.webContents.send(SETTINGS_MESSAGE, message);
+      return true;
+    };
+    this.win = win; this.shell = shell; this.projectId = projectId; this.pageId = pageId; this.post = post;
+    shell.attach(post);
+    win.on('closed', () => { shell.detach(post); if (this.win === win) this.forget(); });
     // The window keeps its name, with the project's, over the page's own <title>.
     win.on('page-title-updated', event => event.preventDefault());
     win.once('ready-to-show', () => win.show());
-    const document = settingsDocument(shell.html(), theme);
+    await this.load(win, shell);
+  }
+  private async load(win: BrowserWindow, shell: SettingsShell): Promise<void> {
+    const document = settingsDocument(shell.html(), nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
     await win.loadURL(`data:text/html;charset=utf-8;base64,${Buffer.from(document, 'utf8').toString('base64')}`);
   }
+  private async retheme(): Promise<void> {
+    const win = this.win, shell = this.shell;
+    if (win && !win.isDestroyed() && shell) await this.load(win, shell).catch(() => undefined);
+  }
+  private forget(): void { this.win = undefined; this.shell = undefined; this.projectId = undefined; this.post = undefined; }
   /** The project whose settings are open, if any. */
   get openFor(): string | undefined { return this.win && !this.win.isDestroyed() ? this.projectId : undefined; }
   /** Pages to post again when something outside them changed (the controller's refreshSettingsPages). */
   async refresh(projectId: string, pages: string[]): Promise<void> { if (this.openFor === projectId) await this.shell?.refreshPages(pages); }
-  close(): void { if (this.win && !this.win.isDestroyed()) this.win.destroy(); this.win = undefined; this.shell = undefined; this.projectId = undefined; }
+  close(): void {
+    const win = this.win, shell = this.shell, post = this.post;
+    this.forget();
+    if (shell && post) shell.detach(post);
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+  /** The window in front, when it's this one: Hydra's dialogs for its pages open over it, not behind it. */
+  focused(): BrowserWindow | undefined { const win = this.win; return win && !win.isDestroyed() && win.isFocused() ? win : undefined; }
   /** The project stopped or was removed: its settings close. */
   closeFor(projectId: string): void { if (this.projectId === projectId) this.close(); }
 }

@@ -123,6 +123,7 @@ export function start(): void {
     openProject: folder => { void state.load().then(loaded => {
       const project = loaded.projects.find(candidate => samePath(candidate.path, folder));
       if (project) navigate({ kind: 'navigate', to: 'project', projectId: project.id });
+      else void hostUi.notice('app', 'info', `${folder} isn't one of the app's projects. Hydra IDE has it open; to work on it here, close it there and choose Open a project.`, []);
     }).catch(() => undefined); },
     // Under the appData folder this app uses (a test that moves appData moves this too), unless set outright.
     storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir,
@@ -177,6 +178,8 @@ export function start(): void {
     nativeTheme.themeSource = (await settings.load()).theme;
     nativeTheme.on('updated', repaintTitleBar);
     const win = createMainWindow(distDir);
+    // Hydra Settings goes with the window: closing it quits the app as before.
+    win.on('closed', () => settingsWindow.close());
     // A page that (re)loads gets Hydra's open questions again, and every Agents view starts closed until it says so.
     win.webContents.on('did-finish-load', () => { hydra.windowLoaded(); hostUi.resendAll(); });
     // Controllers start when a project is opened (a chat in it), not here: launching the app takes no repository.

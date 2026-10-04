@@ -305,6 +305,7 @@ export class HydraProjects {
       // `hydra close` in this project: its controller stops, as the IDE's window closes.
       closeWindow: () => { void this.stop(project.id); },
       openFolder: folder => this.options.openProject?.(folder),
+      dialogParent: () => this.options.settingsWindow?.focused(),
       post: message => this.options.post?.(project, message),
       ...(this.options.ui && project.id !== 'registration' ? { ui: { ui: this.options.ui, projectId: project.id } } : {}),
       notice: (level, message) => this.options.notice?.(project, level, message),

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { noSettingsImports, settingsDocument } from '../src/main/settingsWindow';
+import { noSettingsImports, settingsDocument, settingsMessageFrom } from '../src/main/settingsWindow';
 import { vscodeThemeVariables } from '../src/shared/theme';
 
 const page = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-abc'; script-src 'nonce-abc';"><style nonce="abc">body{margin:0}</style></head><body><script nonce="abc">1</script></body></html>`;
@@ -25,4 +25,17 @@ test('the IDE\'s settings import isn\'t in the app: General shows it as unavaila
   await assert.rejects(noSettingsImports.choose('vscode'), /IDE's/);
   await assert.rejects(noSettingsImports.apply('token', []), /IDE's/);
   await assert.rejects(noSettingsImports.undo(), /IDE's/);
+});
+
+test('main takes a settings message only from that window\'s own page, and only of a size it reads', () => {
+  const mainFrame = {}, webContents = { mainFrame };
+  const win = { isDestroyed: () => false, webContents };
+  assert.equal(settingsMessageFrom({ sender: webContents, senderFrame: mainFrame }, win, { type: 'ready' }), true);
+  assert.equal(settingsMessageFrom({ sender: { mainFrame }, senderFrame: mainFrame }, win, { type: 'ready' }), false, 'another window\'s page');
+  assert.equal(settingsMessageFrom({ sender: webContents, senderFrame: {} }, win, { type: 'ready' }), false, 'a frame inside the page');
+  assert.equal(settingsMessageFrom({ sender: webContents, senderFrame: mainFrame }, undefined, { type: 'ready' }), false, 'no settings window open');
+  assert.equal(settingsMessageFrom({ sender: webContents, senderFrame: mainFrame }, { ...win, isDestroyed: () => true }, { type: 'ready' }), false, 'a closed one');
+  assert.equal(settingsMessageFrom({ sender: webContents, senderFrame: mainFrame }, win, { type: 'x', blob: 'x'.repeat(200_001) }), false, 'too large');
+  const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
+  assert.equal(settingsMessageFrom({ sender: webContents, senderFrame: mainFrame }, win, cyclic), false, 'not JSON');
 });

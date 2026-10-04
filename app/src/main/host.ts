@@ -62,6 +62,8 @@ export interface ElectronHostOptions {
   notice?: (level: NoticeLevel, message: string) => void;
   /** Hydra's lists, text boxes, notices with actions and documents in the app's window (hostUi.ts), for this project. */
   ui?: { ui: HostUi; projectId: string };
+  /** The window a dialog opens over, when it isn't the app's main one (Hydra Settings', in front). */
+  dialogParent?: () => BrowserWindow | undefined;
   /** A folder Hydra asks to open (Show All Projects): the app shows that project, if it has it. */
   openFolder?: (folder: string) => void;
   /** `hydra close` here: the project's controller stops. */
@@ -132,7 +134,8 @@ export class ElectronHost implements Host {
 
   // ---- Modal questions: main's own native dialog, so the page can never answer one (G2: "in-window equivalents"). ----
   private async box(options: MessageBoxOptions): Promise<number> {
-    const win = getMainWindow();
+    // Over the window in front (Hydra Settings', when its page asked), else the app's own.
+    const win = this.options.dialogParent?.() ?? getMainWindow();
     return (win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)).response;
   }
   async confirm(message: string, action: string, detail?: string): Promise<boolean> {
@@ -224,7 +227,7 @@ export class ElectronHost implements Host {
   }
   async revealInOS(file: string): Promise<void> { shell.showItemInFolder(file); }
   async pickFolder(title: string): Promise<string | undefined> {
-    const win = getMainWindow();
+    const win = this.options.dialogParent?.() ?? getMainWindow();
     const options = { title, properties: ['openDirectory' as const, 'dontAddToRecent' as const] };
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
     return result.canceled ? undefined : result.filePaths[0];

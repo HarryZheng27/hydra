@@ -47,7 +47,7 @@ Every Hydra IDE feature (docs/Features.md, docs/Heads.md), as the Hydra app has 
 | Gates, screenshots, review, evidence | Works | Evidence opens in the window's viewer with its screenshots inlined (HSEC-93). |
 | The Agents view: canvas, plans, Merge plan, Open PR, Run integration gate | Works | The IDE's own canvas (`webview/AgentsBody.tsx`) in the title bar's Agents mode. |
 | Lanes: terminals, Send to lane, Preview app, Review changes, a lane's gates | Works | node-pty is the app's own dependency. Preview opens the user's browser, as the IDE does without Simple Browser. Review changes is a unified diff in the viewer, not VS Code's multi-diff editor. |
-| All projects | Works | The Agents toolbar's All projects; choosing another of the app's projects opens it in the app. |
+| All projects | Works | The Agents toolbar's All projects; choosing another of the app's projects opens it in the app, and one Hydra IDE has open says so. |
 | Hydra's notifications | Differs | In-window toasts in the app's style, not the IDE's notification cards; same messages and actions. |
 | Folders you haven't trusted | Differs | The app's own folder trust (G4), confirmed in main's dialog; Hydra runs nothing in an untrusted project. |
 | Packs: review, turn on, gates | Works | Hydra Settings → Packs, the IDE's page, in its own window. |
@@ -55,8 +55,8 @@ Every Hydra IDE feature (docs/Features.md, docs/Heads.md), as the Hydra app has 
 | Stop all agents and Resume | Works | The Agents toolbar and a "stopped" banner; Hydra Settings → Heads too. The app's stop switch is its own per project, not the IDE's `workspaceState`: a Stop all in the IDE isn't seen by the app. |
 | The audit log | Works | The Agents toolbar's Audit log, read-only in the viewer; it's Hydra's one shared log. |
 | Hydra Settings: Connectors, MCP servers, Heads, Gates, Packs, Docs | Works | The IDE's own pages over G2's bridge (HSEC-95). Hydra's settings are the app's own store, not the IDE's VS Code settings. |
-| Hydra Settings → General: editor settings, keyboard shortcuts, Chat location, Window layout, importing preferences | Differs | Editor-only. Each says so when used; importing shows as unavailable. Accounts and onboarding open the app's own Settings. |
-| Hydra Settings → Appearance | Differs | Dark or Light follows the app's own theme setting (its Settings); the IDE's page can't change the app's theme, and icon themes are the editor's. |
+| Hydra Settings → General: editor settings, keyboard shortcuts, Chat location, Window layout, importing preferences | Differs | Editor-only. Editor settings, keyboard shortcuts and Chat location refuse with a reason; Window layout saves its choice, which the app doesn't use (it opens in Chat; choosing Editor also says the editor's layout isn't the app's); importing shows as unavailable. Accounts and onboarding open the app's own Settings. |
+| Hydra Settings → Appearance | Differs | The page's Dark or Light saves to Hydra's store and says it applied, but the app's theme is its own (the app's Settings → Theme), which the settings window follows; icon themes are the editor's. The UI pass replaces this page in the app. |
 | Agent Manager / Editor switch, activity bar, chat panels | Differs | The app has no editor: its Chat and Agents modes take their place. |
 | Provider usage limits view | Missing | The quota service runs (limit offers use it), but its own view isn't in the app yet: the UI pass (UI-direction.md) adds it. |
 | Handoff workspaces (`.code-workspace` for a worktree) | Missing | A VS Code workspace has no meaning in the app; a handoff's Markdown opens in the viewer instead. |
