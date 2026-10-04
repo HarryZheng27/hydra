@@ -232,7 +232,7 @@ test('the uninstall include ships with the installer and keeps to its two data f
   assert.deepEqual(removed, ["ExpandConstant('{userappdata}'), 'Hydra'", "GetEnv('USERPROFILE'), '.hydra'"]);
   assert.equal((iss.match(/DelTree\(/g) ?? []).length, 1);
   // After an update the fresh uninstall log doesn't list the install folder; only an empty one is removed.
-  assert.match(iss, /end else if CurUninstallStep = usPostUninstall then begin\r?\n(?:\s*\/\/[^\n]*\n)*\s*if RemoveDir\(ExpandConstant\('\{app\}'\)\) then/);
+  assert.match(iss, /end else if CurUninstallStep = usPostUninstall then begin\r?\n(?:\s*\/\/[^\n]*\n)*\s*if HydraRealDirectory\(ExpandConstant\('\{app\}'\)\) and RemoveDir\(ExpandConstant\('\{app\}'\)\) then/);
 });
 test('installer versions follow Hydra while preserving the editor API version and refusing source drift', () => {
   const original = "Version: pkg.version,\nRawVersion: pkg.version.replace(/-\\w+$/, ''),\nEditorVersion: pkg.version";

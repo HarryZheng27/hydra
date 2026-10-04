@@ -67,8 +67,11 @@ Six PRs: one per milestone, [#303](https://github.com/ndunl075/hydra/pull/303) (
 - **The packaged app's window** has been exercised only through the unpackaged smoke and the installed exe's Node mode; opening the installed app once by hand is worth doing before the first preview.
 
 **Steps for Nico, in order:**
-1. **Release Hydra IDE with the rename first.** Open a `release/0.28.0` PR that sets `0.28.0` in `package.json`, `app/package.json` and `app/package-lock.json` (both version fields), with the CHANGELOG's Unreleased heading renamed, and merge it.
-2. **Re-pin the upgrade baseline** to v0.27.1 in `desktop/upgrade-baseline.json` (its tag, tagged commit and `HydraSetup.exe`'s SHA-256), so the upgrade test starts from the release installed copies have.
-3. **Run Actions → Windows desktop → Run workflow** on `main` with `release_tag: v0.28.0` and `prerelease` off. It publishes `HydraSetup.exe`, `SHA256SUMS`, `HydraAppSetup.exe` and `SHA256SUMS-app`. Installed IDEs offer it and update to Hydra IDE, which removes their old `Hydra.lnk` shortcuts; the release carries the stable app beside it. (A prerelease run wouldn't reach installed IDEs: their update prompt skips prereleases.)
-4. **App previews come after that:** **Actions → App preview → Run workflow** on `main` with `preview: 1`. It refuses unless `v<version>` is released, so run it after step 3, while `main` is still at 0.28.0. It publishes the prerelease `v0.28.0-app.1` with `HydraAppSetup.exe` (version 0.28.0.1) and `SHA256SUMS-app`.
-5. **Open the installed app once** by hand, from the Start Menu's Hydra, to check the packaged window, before telling anyone about it.
+1. **Release Hydra IDE with the rename first.** Open one `release/0.28.0` PR that:
+   - sets `0.28.0` in `package.json` and `package-lock.json`, and in `app/package.json` and `app/package-lock.json` (each lock's two version fields);
+   - renames the CHANGELOG's Unreleased heading;
+   - re-pins `desktop/upgrade-baseline.json` to v0.27.1 (its tag, tagged commit and `HydraSetup.exe`'s SHA-256), so the upgrade test starts from the release installed copies have.
+   Push it without `[skip ci]`: its Windows desktop run is the first real 0.27.1 → 0.28.0 upgrade test. Merge it once that passes.
+2. **Run Actions → Windows desktop → Run workflow** on `main` with `release_tag: v0.28.0` and `prerelease` off. It publishes `HydraSetup.exe`, `SHA256SUMS`, `HydraAppSetup.exe` and `SHA256SUMS-app`. Installed IDEs offer it and update to Hydra IDE, which removes their old `Hydra.lnk` shortcuts; the release carries the stable app beside it. (A prerelease run wouldn't reach installed IDEs: their update prompt skips prereleases.)
+3. **App previews come after that:** **Actions → App preview → Run workflow** on `main` with `preview: 1`. It refuses unless `v<version>` is released, so run it after step 2, while `main` is still at 0.28.0. It publishes the prerelease `v0.28.0-app.1` with `HydraAppSetup.exe` (version 0.28.0.1) and `SHA256SUMS-app`.
+4. **Open the installed app once** by hand, from the Start Menu's Hydra, to check the packaged window, before telling anyone about it.
