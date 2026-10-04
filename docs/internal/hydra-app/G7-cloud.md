@@ -58,5 +58,11 @@ Run on Nico's machine with Claude Code 2.1.282 (Claude Max), against the private
 - **"Continue here"** (the plan's Bring back): a fresh worktree on a new branch, with `claude --teleport <session_id>` in a console there. The window says plainly that the cloud's file changes stay in the cloud: what comes back is the conversation.
 - **Bringing the changes themselves back** needs the CLI to push or export a session's commits. The Result explains how to add it then, as it does for Claude cloud heads.
 
+### Milestone 2, Claude half (merged in #321; live check 2026-10-04, 6 of the 10 Claude cloud sessions used)
+- **Started from the app:** a Claude chat set to Cloud sent "add a line to the readme that says cloud test" from the dev app. The chat showed "Running on claude.ai: Readme cloud test line", and its record holds the session id and `https://claude.ai/code/<id>`.
+- **Continue here works, but is silent at first:** `claude --teleport` in the chat's worktree (`hydra/cloud-<id8>`), run exactly as the window's script runs it, drew "Teleporting session…", then resumed the conversation after about 12 to 18 seconds. The cloud had added the line and not committed it. The worktree was unchanged. Nico's window looked blank and was closed before then, so the window now says it is fetching and how long that takes.
+- **Open on claude.ai said the session couldn't be found** in Nico's browser. The link is the CLI's own, without `?from=cli&m=0`. Not yet known: whether the browser was signed into a different account or organization than the CLI (Claude Max), or claude.ai needs the query. Open until Nico checks.
+- **Found during the check:** launching the dev app from Git Bash with a `cygpath -p` PATH drops part of the user PATH, so the app couldn't find `claude`. That was a launch problem, not an app problem; relaunched from PowerShell.
+
 ### Codex (waiting)
 Nico's ChatGPT workspace has no Codex cloud environment yet: `codex cloud exec --env hydra-cloud-sandbox …` answers "no cloud environments are available for this workspace", and `codex cloud list --json` is empty. The Codex half of S3 runs once an environment exists for `ndunl075/hydra-cloud-sandbox` (chatgpt.com/codex → Settings → Environments → Create environment).

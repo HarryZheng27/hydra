@@ -182,19 +182,22 @@ export function App() {
       <HostLayer />
       <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} mode={mode} onMode={setMode} />
       <div className="body">
-        {sidebarOpen && state && (
-          <Sidebar
-            projects={state.projects}
-            chats={chats}
-            view={view}
-            // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
-            onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
-            onOpenChat={openChat}
-            onOpenProject={id => setView({ kind: 'project', id })}
-            onAddProject={pickProject}
-            onRemoveProject={id => void run(window.hydra.removeProject(id), next => { setState(next); if (view.kind === 'project' && view.id === id) setView({ kind: 'home' }); })}
-            onOpenSettings={() => setView({ kind: 'settings' })}
-          />
+        {/* Kept mounted so the toggle can slide it; closed, it is inert (no focus, clicks or screen reader). */}
+        {state && (
+          <div className="sidebar-slot" inert={!sidebarOpen}>
+            <Sidebar
+              projects={state.projects}
+              chats={chats}
+              view={view}
+              // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
+              onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
+              onOpenChat={openChat}
+              onOpenProject={id => setView({ kind: 'project', id })}
+              onAddProject={pickProject}
+              onRemoveProject={id => void run(window.hydra.removeProject(id), next => { setState(next); if (view.kind === 'project' && view.id === id) setView({ kind: 'home' }); })}
+              onOpenSettings={() => setView({ kind: 'settings' })}
+            />
+          </div>
         )}
         <main className="main">
           {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}

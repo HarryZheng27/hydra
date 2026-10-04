@@ -13,6 +13,7 @@ import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
+import { consoleScript } from '../src/main/console';
 import { Markdown, safeHref } from '../src/renderer/markdown';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
@@ -556,4 +557,10 @@ test('one cloud session per chat: a second send is refused while the first start
     assert.equal((await placing).where, 'cloud');
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Continue here\'s window says it is fetching the cloud session before teleport draws anything; other windows say nothing extra', () => {
+  const cloud = consoleScript('Claude Code cloud session', 'claude.exe', ['--teleport', 'session_01ApFs1X7hjubWFrUBiN4Bht'], 'C:\wt');
+  assert.ok(cloud.indexOf("Write-Host 'Fetching the cloud session") < cloud.indexOf("& 'claude.exe'"));
+  assert.ok(!consoleScript('Claude Code chat', 'claude.exe', ['--resume', 'x'], 'C:\wt').includes('Fetching'));
 });
