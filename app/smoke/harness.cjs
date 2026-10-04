@@ -318,6 +318,36 @@ if (role === 'resume') {
       await until(`/audit\.jsonl/.test(document.querySelector('.host-view h2')?.textContent ?? '')`, 'the audit log in the viewer', 15000);
       report.agents.audit = await ui(`document.querySelector('.host-view-body').textContent.slice(0, 20000)`);
       await ui(`document.querySelector('.host-view [aria-label=Close]').click(); 1`);
+
+      // G5 milestone 5: Hydra Settings, the IDE's own pages, in their own (here hidden) window, for this project.
+      await ui(`[...document.querySelectorAll('.agents-toolbar button')].find(b => b.textContent === 'Hydra settings').click(); 1`);
+      let settingsWin;
+      for (let i = 0; i < 150 && !settingsWin; i++) { settingsWin = BrowserWindow.getAllWindows().find(w => /^Hydra Settings/.test(w.getTitle())); if (!settingsWin) await wait(100); }
+      report.settingsWindow = { found: !!settingsWin };
+      if (settingsWin) {
+        const sw = expression => settingsWin.webContents.executeJavaScript(expression);
+        for (let i = 0; i < 150; i++) { if (await sw(`document.getElementById('hd-max')?.value === '3' && document.querySelectorAll('.nav-item').length > 4`).catch(() => false)) break; await wait(100); }
+        report.settingsWindow.title = settingsWin.getTitle();
+        report.settingsWindow.url = settingsWin.webContents.getURL().slice(0, 30);
+        report.settingsWindow.pages = await sw(`[...document.querySelectorAll('.nav-item')].map(b => b.textContent)`);
+        report.settingsWindow.themed = await sw(`getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-background').trim()`);
+        report.settingsWindow.bridge = await sw(`typeof window.hydraBridge?.postMessage + '/' + typeof require + '/' + typeof acquireVsCodeApi`);
+        // A setting changed here is Hydra's, saved in the app's own store.
+        await sw(`(() => { const input = document.getElementById('hd-max'); input.value = '5'; input.dispatchEvent(new Event('change')); return 1; })()`);
+        const settingsFile = path.join(app.getPath('userData'), 'hydra', 'settings.json');
+        for (let i = 0; i < 100; i++) { try { if (/"maxConcurrentHelpers":\s*5/.test(fs.readFileSync(settingsFile, 'utf8'))) break; } catch { /* not yet */ } await wait(100); }
+        try { report.settingsWindow.saved = JSON.parse(fs.readFileSync(settingsFile, 'utf8')).maxConcurrentHelpers; } catch (error) { report.settingsWindow.saved = String(error.message); }
+        await sw(`(() => { const input = document.getElementById('hd-max'); input.value = '3'; input.dispatchEvent(new Event('change')); return 1; })()`);
+        // Packs: the built-in ones are listed for this project.
+        for (let i = 0; i < 100; i++) { if (await sw(`document.querySelectorAll('#pk-list > *').length > 0 || !document.getElementById('pk-empty').hidden`)) break; await wait(100); }
+        report.settingsWindow.packs = await sw(`({ list: document.getElementById('pk-list').textContent.slice(0, 4000), empty: !document.getElementById('pk-empty').hidden })`);
+        settingsWin.close();
+      }
+      // Show All Projects: a list in the window (read-only), this project among them.
+      await ui(`[...document.querySelectorAll('.agents-toolbar button')].find(b => b.textContent === 'All projects').click(); 1`);
+      await until(`!!document.querySelector('.host-ask .host-pick-list')`, 'the projects list', 15000);
+      report.allProjects = await ui(`[...document.querySelectorAll('.host-ask .host-pick-list button')].map(b => b.textContent)`);
+      await ui(`document.querySelector('.host-ask .host-pick-list button').click(); 1`);
       await ui(`[...document.querySelectorAll('.mode-switch button')].find(b => b.textContent === 'Chat').click(); 1`);
     }
     event('done');

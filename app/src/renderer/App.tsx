@@ -41,6 +41,12 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>();
   const [state, setState] = useState<AppState>();
   const [view, setView] = useState<View>({ kind: 'home' });
+  // Main asks to show a project (Hydra's Show All Projects) or the app's own Settings (Hydra Settings' Accounts).
+  useEffect(() => window.hydra.onHydraHost(message => {
+    if (message.kind !== 'navigate') return;
+    if (message.to === 'settings') { setMode('chat'); setView({ kind: 'settings' }); }
+    else if (message.projectId) setView({ kind: 'project', id: message.projectId });
+  }), []);
   /** Chat or Agents (G5): the title bar's switch. Agents shows the open project's heads, plans and lanes. */
   const [mode, setMode] = useState<'chat' | 'agents'>('chat');
   const [error, setError] = useState<string>();

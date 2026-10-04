@@ -22,7 +22,7 @@ export const HYDRA_HOST = 'hydra:host';
 export interface HydraPickItemView { label: string; description: string; detail: string; picked: boolean }
 export interface HydraViewImage { alt: string; src: string }
 /** The Agents view's own controls (G5 milestone 4). */
-export type HydraControl = 'stopState' | 'stopAll' | 'resume' | 'auditLog';
+export type HydraControl = 'stopState' | 'stopAll' | 'resume' | 'auditLog' | 'settings' | 'allProjects';
 /** Whether Hydra runs in a project and, if so, whether Stop all has stopped it. */
 export interface HydraStopState { running: boolean; stopped: boolean; since?: string; reason?: string }
 export type HydraHostMessage =
@@ -30,7 +30,9 @@ export type HydraHostMessage =
   | { kind: 'input'; requestId: string; projectId: string; title: string; prompt: string; placeHolder: string; value: string; error?: string }
   | { kind: 'notice'; requestId?: string; projectId: string; level: 'info' | 'warning' | 'error'; message: string; actions: string[]; error?: string }
   | { kind: 'view'; projectId: string; title: string; format: 'text' | 'markdown' | 'diff'; content: string; images: HydraViewImage[] }
-  | { kind: 'dismiss'; requestId: string };
+  | { kind: 'dismiss'; requestId: string }
+  /** Main asks the window to show a project (Show All Projects), or the app's own Settings. */
+  | { kind: 'navigate'; projectId?: string; to: 'project' | 'settings' };
 
 /** A head as a chat card shows it: no paths, no logs, nothing a page could act on beyond its id. */
 export interface HeadCardView {
@@ -221,7 +223,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'hydra.connect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.disconnect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.tree': isNull,
-  'hydra.control': exactly<{ projectId: string; action: HydraControl }>({ projectId: isId, action: oneOf('stopState', 'stopAll', 'resume', 'auditLog') }),
+  'hydra.control': exactly<{ projectId: string; action: HydraControl }>({ projectId: isId, action: oneOf('stopState', 'stopAll', 'resume', 'auditLog', 'settings', 'allProjects') }),
   'hydra.reply': exactly<{ requestId: string; value: number | number[] | string | null }>({ requestId: isId, value: value => value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 10_000) || (Array.isArray(value) && value.length <= 10_000 && value.every(index => typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < 10_000)) || (typeof value === 'string' && value.length <= 20_000) }),
   'hydra.agents': exactly<{ projectId: string; message: unknown }>({ projectId: isId, message: value => !!value && typeof value === 'object' && !Array.isArray(value) && JSON.stringify(value).length <= 200_000 }),
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),

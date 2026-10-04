@@ -17,6 +17,8 @@ import type { HelperJobView } from '../../../src/core/model';
 import type { Plan } from '../../../src/core/plans';
 import type { StartHelperRun } from '../../../src/core/helperRunner';
 import { readViewFile, type HostUi } from './hostUi';
+import type { HydraSettingsWindow } from './settingsWindow';
+import type { PackService } from '../../../src/core/packs/service';
 import type { PlanJobView } from '../../../src/core/planRunner';
 import type { TreeUpdate } from '../../../src/host/controller';
 import { ElectronHost, folderKey, type ValueStore } from './host';
@@ -88,6 +90,12 @@ export interface HydraProjectsOptions {
   tree?: (message: HydraTreeMessage) => void;
   /** Hydra's questions, notices and documents in the app's window (hostUi.ts). */
   ui?: HostUi;
+  /** Hydra Settings' window (settingsWindow.ts). */
+  settingsWindow?: HydraSettingsWindow;
+  /** Shows the app's own Settings (accounts and setup). */
+  showAppSettings?: () => void;
+  /** A folder Hydra asks to open (Show All Projects): the app shows that project if it has it. */
+  openProject?: (folder: string) => void;
   /** The smoke's stand-in heads (standinHeads.ts), in place of a provider's CLI. Never set in a packaged app. */
   startRun?: StartHelperRun;
 }
@@ -111,7 +119,7 @@ export function planCard(plan: Plan, jobs: readonly PlanJobView[] = []): PlanCar
   };
 }
 
-interface Running { project: Project; host: ElectronHost; controller: HydraController; lanes: LanesController; quota: QuotaService; state: JsonValues; tree: HydraTreeMessage }
+interface Running { project: Project; host: ElectronHost; controller: HydraController; lanes: LanesController; quota: QuotaService; state: JsonValues; tree: HydraTreeMessage; packs: PackService }
 
 export interface ProjectHydraStatus { id: string; running: boolean; owned: boolean; error?: string }
 
@@ -167,10 +175,19 @@ export class HydraProjects {
     }
     const running = this.running.get(project.id);
     if (!running) return { running: false, stopped: false };
+    if (action === 'settings') await this.openSettings(project);
+    if (action === 'allProjects') await running.controller.showAllProjects();
     if (action === 'stopAll') await running.host.command('hydra.stopAllAgents');
     if (action === 'resume') await running.host.command('hydra.resumeAgents');
     const state = await running.host.command<{ stopped: boolean; since?: string; reason?: string }>('hydra.getStopState');
     return { running: true, stopped: state.stopped, ...(state.since ? { since: state.since } : {}), ...(state.reason ? { reason: state.reason.slice(0, 500) } : {}) };
+  }
+
+  /** Hydra Settings (the IDE's pages) for a running project, in their own window. */
+  async openSettings(project: Project, pageId?: string): Promise<void> {
+    const running = this.running.get(project.id);
+    if (!running || !this.options.settingsWindow) throw new Error(this.errors.get(project.id) ?? 'Hydra isn\'t running for this project yet: open a chat in it first.');
+    await this.options.settingsWindow.open(project.id, project.name, { host: running.host, packs: running.packs }, pageId);
   }
 
   /** The window loaded a page: no Agents view shows until one opens and says so. */
@@ -287,6 +304,8 @@ export class HydraProjects {
       trusted: () => !!this.latest.get(project.id)?.trustedAt, log, version: this.options.version, development: this.options.development,
       // `hydra close` in this project: its controller stops, as the IDE's window closes.
       closeWindow: () => { void this.stop(project.id); },
+      openFolder: folder => this.options.openProject?.(folder),
+      dialogParent: () => this.options.settingsWindow?.focused(),
       post: message => this.options.post?.(project, message),
       ...(this.options.ui && project.id !== 'registration' ? { ui: { ui: this.options.ui, projectId: project.id } } : {}),
       notice: (level, message) => this.options.notice?.(project, level, message),
@@ -334,7 +353,7 @@ export class HydraProjects {
       // The controller's heads and plans: kept and sent on, as cards in the chats that started them.
       tree: update => publish(update),
       inHandoff: () => false,
-      refreshSettingsPages: async () => undefined,
+      refreshSettingsPages: async pages => { await this.options.settingsWindow?.refresh(project.id, pages); },
       showSettings: () => undefined,
       accounts: () => ({ claude: { status: 'unchecked' }, codex: { status: 'unchecked' } }),
       connectionsChanged: () => undefined,
@@ -357,8 +376,17 @@ export class HydraProjects {
     // The controller's and lanes' commands, as the IDE's extension registers them: main calls them (Stop all,
     // Resume, the stop state, a limit offer's Settings); nothing in the page can name one.
     controller.registerCommands((name, run) => { host.register(name, run); });
+    // What the IDE's extension adds around them, as the app has it (G5 milestone 5): Hydra Settings opens its own
+    // window; Accounts and onboarding are the app's own Settings; the editor's layout and settings aren't the app's.
+    host.register('hydra.openSettings', (pageId?: unknown) => this.openSettings(project, typeof pageId === 'string' ? pageId : undefined));
+    host.register('hydra.openAccounts', () => { this.options.showAppSettings?.(); });
+    host.register('hydra.openOnboarding', () => { this.options.showAppSettings?.(); });
+    host.register('hydra.getLayoutMode', () => ({ mode: 'agents' }));
+    for (const id of ['hydra.toggleMode', 'hydra.setChatLocation', 'workbench.action.openSettings', 'workbench.action.openGlobalKeybindings']) {
+      host.register(id, () => { throw new Error('That\'s the IDE\'s editor layout and settings; the Hydra app has its own (Settings, in the sidebar).'); });
+    }
     lanes.registerCommands((name, run) => { host.register(name, run); });
-    return { project, host, controller, lanes, quota, state, tree };
+    return { project, host, controller, lanes, quota, state, tree, packs };
   }
 
   private async boot(project: Project): Promise<void> {
@@ -401,6 +429,7 @@ export class HydraProjects {
   private async dispose(running: Running): Promise<void> {
     // Its open questions are dismissed first, so nothing waits on an answer while it shuts down.
     this.options.ui?.cancelAll(running.project.id);
+    this.options.settingsWindow?.closeFor(running.project.id);
     await running.controller.shutdown().catch(error => this.options.log(`[hydra] ${running.project.name}: shutdown: ${error instanceof Error ? error.message : String(error)}`));
     await running.quota.shutdown().catch(() => undefined);
     running.quota.dispose();
