@@ -35,10 +35,24 @@ function Get-ShortcutTarget([string]$path) { return $shell.CreateShortcut($path)
 $appData = Join-Path $env:APPDATA 'Hydra App'
 $sharedData = Join-Path $env:APPDATA 'Hydra\User\globalStorage\nico-dunlap.hydra-agent-manager'
 $ideSettings = Join-Path $env:APPDATA 'Hydra\User\settings.json'
+# Everything that could refuse to run is checked before anything is moved.
+if (-not $SafeLocal) {
+  if (Test-Path -LiteralPath $ideSettings) { throw 'IDE settings exist on this runner; the test plants its own.' }
+  if (Get-Command claude -ErrorAction SilentlyContinue) { throw 'A Claude CLI is on the runner; this test exercises the direct ~/.claude.json edit.' }
+}
 $setAside = @{}
+function Restore-SetAside {
+  foreach ($folder in @($setAside.Keys)) {
+    # The test's own data (sentinels, a junction) goes; what was there before comes back.
+    if (Test-Path -LiteralPath $folder) { cmd /d /c rmdir /s /q "$folder" | Out-Null }
+    Move-Item -LiteralPath $setAside[$folder] -Destination $folder
+    $setAside.Remove($folder)
+  }
+}
 $sentinels = @()
 $script:appDataRemoved = $false
 $script:sharedDataRemoved = $false
+try {
 if (-not $SafeLocal) {
   # The data cases remove these folders, so they must be the test's own: set aside anything earlier steps left.
   foreach ($folder in @($appData, $sharedData)) {
@@ -48,7 +62,6 @@ if (-not $SafeLocal) {
       $setAside[$folder] = $aside
     }
   }
-  if (Test-Path -LiteralPath $ideSettings) { throw 'IDE settings exist on this runner; the test plants its own.' }
   $sentinels = @((Join-Path $appData 'hydra-app-sentinel.txt'), (Join-Path $sharedData 'hydra-shared-sentinel.txt'), $ideSettings,
     (Join-Path $testRoot 'project\keep.txt'), (Join-Path $testRoot 'linked-target\keep.txt'))
   foreach ($file in $sentinels) {
@@ -62,6 +75,7 @@ if (-not $SafeLocal) {
   New-Item -ItemType Directory -Path (Split-Path -Parent $sentinels[0]) -Force | Out-Null
   [IO.File]::WriteAllText($sentinels[0], 'Keep this project file')
 }
+} catch { Restore-SetAside; throw }
 # On a developer's machine the real folders are only checked to still be there (their files may be in use and changing).
 $existingFolders = @($appData, $sharedData, (Split-Path -Parent $ideSettings)) | Where-Object { Test-Path -LiteralPath $_ }
 $hashes = @{}
@@ -90,7 +104,6 @@ function Get-ConnectorTexts([string]$owner) {
 $connectorBackup = Join-Path $testRoot 'connector-backup'
 $backedUp = @{}
 if (-not $SafeLocal) {
-  if (Get-Command claude -ErrorAction SilentlyContinue) { throw 'A Claude CLI is on the runner; this test exercises the direct ~/.claude.json edit.' }
   New-Item -ItemType Directory -Path $connectorBackup | Out-Null
   foreach ($name in $connectorFiles.Keys) { if (Test-Path -LiteralPath $connectorFiles[$name]) { Copy-Item -LiteralPath $connectorFiles[$name] -Destination (Join-Path $connectorBackup $name); $backedUp[$name] = $true } }
 }
@@ -162,6 +175,12 @@ function Stop-Bridge($bridge) {
 }
 
 $ideStandIn = $null
+$script:foreignShortcutHash = $null
+# Each refusal names its reason in the setup log; a running app's is the in-use one.
+function Assert-RefusedInUse([string]$label) {
+  $log = Join-Path $testRoot ($label + '.log')
+  if (-not (Test-Path -LiteralPath $log) -or -not (Select-String -LiteralPath $log -SimpleMatch 'stayed in use for ten seconds' -Quiet)) { throw "$label was refused, but not because Hydra.exe was in use." }
+}
 try {
   # 1. A fresh install: Start Menu only, as the user, with no admin; the same version again is refused.
   Invoke-Setup $installer 'fresh' @()
@@ -174,6 +193,7 @@ try {
   try {
     Start-Sleep -Seconds 2
     Invoke-Uninstall 'running-refused' -Refused
+    Assert-RefusedInUse 'running-refused-uninstall'
     Assert-Installed $version $false
   } finally { Stop-Bridge $bridge }
   Invoke-Uninstall 'fresh'
@@ -186,14 +206,17 @@ try {
   Assert-Installed $priorVersion $true
   Invoke-Setup $installer 'update-task-override' @('/HYDRAUPDATE=1', '/TASKS=""') -Refused
   Invoke-Setup $installer 'update-bad-switch' @('/HYDRAUPDATE=2') -Refused
-  Invoke-Setup $installer 'update' @('/HYDRAUPDATE=1')
-  Assert-Installed $version $true
-  Invoke-Setup $prior 'downgrade-refused' @() -Refused
+  # A newer release, so only the running app can stop it: the refusal must be the in-use one.
   $bridge = Start-Bridge
   try {
     Start-Sleep -Seconds 2
-    Invoke-Setup $prior 'running-update-refused' @('/HYDRAUPDATE=1') -Refused
+    Invoke-Setup $installer 'running-update-refused' @('/HYDRAUPDATE=1') -Refused
+    Assert-RefusedInUse 'running-update-refused'
+    Assert-Installed $priorVersion $true
   } finally { Stop-Bridge $bridge }
+  Invoke-Setup $installer 'update' @('/HYDRAUPDATE=1')
+  Assert-Installed $version $true
+  Invoke-Setup $prior 'downgrade-refused' @() -Refused
   Assert-Installed $version $true
   Invoke-Uninstall 'updated'
   Assert-Removed
@@ -201,6 +224,7 @@ try {
   # 4. A Hydra.lnk on the desktop that opens something else (an IDE from before the rename) is never replaced or removed.
   $foreign = $shell.CreateShortcut($desktopShortcut); $foreign.TargetPath = Join-Path $env:SystemRoot 'System32\notepad.exe'; $foreign.Save()
   $foreignHash = (Get-FileHash -LiteralPath $desktopShortcut).Hash
+  $script:foreignShortcutHash = $foreignHash
   Invoke-Setup $installer 'foreign-desktop' @('/TASKS="desktopicon"')
   if ((Get-FileHash -LiteralPath $desktopShortcut).Hash -ne $foreignHash) { throw 'The installer replaced a Hydra.lnk that opens something else.' }
   if (-not $SafeLocal) {
@@ -211,6 +235,7 @@ try {
   Invoke-Uninstall 'foreign-desktop'
   if ((Get-FileHash -LiteralPath $desktopShortcut).Hash -ne $foreignHash) { throw 'Uninstall removed a Hydra.lnk that opens something else.' }
   Remove-Item -LiteralPath $desktopShortcut -Force
+  $script:foreignShortcutHash = $null
   Assert-Removed
   if (-not $SafeLocal) {
     Assert-Connections $own.kept 'Uninstall did not remove exactly its own Claude Code and Codex entries'
@@ -239,11 +264,10 @@ try {
 } finally {
   try { Invoke-Uninstall 'cleanup' } catch { Write-Warning $_ }
   if ($ideStandIn) { Remove-Item -LiteralPath $ideKey -Recurse -Force -ErrorAction SilentlyContinue }
-  Restore-ConnectorFiles
-  foreach ($folder in $setAside.Keys) {
-    if (Test-Path -LiteralPath $folder) { cmd /d /c rmdir /s /q "$folder" | Out-Null }
-    Move-Item -LiteralPath $setAside[$folder] -Destination $folder
-  }
+  # The stand-in foreign shortcut, if a failure left it, and only if it is still the test's own.
+  if ($script:foreignShortcutHash -and (Test-Path -LiteralPath $desktopShortcut) -and (Get-FileHash -LiteralPath $desktopShortcut).Hash -eq $script:foreignShortcutHash) { Remove-Item -LiteralPath $desktopShortcut -Force }
+  try { Restore-ConnectorFiles } catch { Write-Warning $_ }
+  Restore-SetAside
   $logs = if ($env:GITHUB_WORKSPACE) { Join-Path $env:GITHUB_WORKSPACE 'app\out\installer-test-logs' } else { Join-Path $testRoot 'logs' }
   New-Item -ItemType Directory -Path $logs -Force | Out-Null
   Get-ChildItem -LiteralPath $testRoot -Filter '*.log' | Copy-Item -Destination $logs

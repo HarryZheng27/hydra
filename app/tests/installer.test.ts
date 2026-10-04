@@ -64,6 +64,9 @@ test('the app\'s installer is per user with no admin prompt, under its own AppId
   assert.match(iss, /^CloseApplications=no$/m);
   assert.match(iss, /function PrepareToInstall[\s\S]*?Result := HydraCheckInstall\(\);\n {2}if Result <> '' then Exit;\n {2}if HydraAppInUse\(\) then/);
   assert.match(iss, /function InitializeUninstall[\s\S]*?if HydraAppInUse\(\) then/);
+  // In use means Hydra.exe or any of node-pty's unpacked programs a lane runs, never just the app's window.
+  for (const file of ['{#ExeBasename}.exe', "'pty.node'", "'conpty.node'", "'winpty.dll'", "'winpty-agent.exe'", "'conpty\\conpty.dll'", "'conpty\\OpenConsole.exe'"]) assert.ok(iss.includes(file), file);
+  assert.match(iss, /Result := Error = 32;/);
   // The IDE's update switch and install checks, shared, not copied.
   assert.match(iss, /#include "\.\.\\\.\.\\desktop\\hydra-update-mode\.iss"/);
   assert.match(iss, /Result := not \(\(HydraUpdateSwitchState\(\) < 0\) or HydraHasSwitch\('\/UPDATE'\) or not HydraUpdateArgumentsValid\(\)\);/);
@@ -88,6 +91,9 @@ test('the app\'s uninstall removes only its own connector entries, and data only
   // The IDE's own helper, run from inside the archive as Node, with this install's folder.
   assert.ok(uninstallIss.includes(`'" "' + Archive + '\\dist\\hydra-uninstall.cjs" --app "' + App + '"'`));
   assert.match(uninstallIss, /set "ELECTRON_RUN_AS_NODE=1"/);
+  // The cleanup ran Hydra.exe: uninstall waits for Windows to let go of it before removing files.
+  assert.match(uninstallIss, /ewWaitUntilTerminated, ResultCode\) then[\s\S]*?if HydraAppInUse\(\) then Log\(/);
+  assert.ok(iss.indexOf('function HydraAppInUse') < iss.indexOf('#include "hydra-app-uninstall.iss"'), 'the uninstall include uses it');
   assert.match(read(appDir, 'build.mjs'), /\['uninstall\.ts', 'hydra-uninstall\.cjs'\]/);
   assert.match(uninstallIss, /HydraHasExactSwitch\('\/HYDRAREMOVEDATA'\)/);
   assert.match(uninstallIss, /MB_YESNO or MB_DEFBUTTON2\) = IDYES/);

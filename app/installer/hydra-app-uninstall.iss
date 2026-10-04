@@ -1,4 +1,4 @@
-// Included by hydra-app.iss, after hydra-update-mode.iss. Adapts the IDE's
+// Included by hydra-app.iss, after hydra-update-mode.iss and HydraAppInUse. Adapts the IDE's
 // desktop/hydra-uninstall.iss to the app: uninstalling removes what this
 // install wrote into Claude Code's and Codex's user settings, and, only when
 // asked, the app's data.
@@ -86,6 +86,9 @@ begin
     Log('Hydra: uninstall cleanup finished (' + IntToStr(ResultCode) + ')')
   else
     Log('Hydra: uninstall cleanup could not start: ' + SysErrorMessage(ResultCode));
+  // The cleanup ran Hydra.exe; its files are removed next, so wait until
+  // Windows lets go of it (HydraAppInUse waits up to ten seconds).
+  if HydraAppInUse() then Log('Hydra: Hydra.exe is still in use after the cleanup; some files may stay until the next restart.');
 end;
 
 procedure HydraAppUninstallCleanup(CurUninstallStep: TUninstallStep);
