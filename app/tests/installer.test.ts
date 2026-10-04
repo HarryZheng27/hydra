@@ -123,6 +123,8 @@ test('the app\'s version follows Hydra\'s: app/package.json and its lock carry t
   assert.equal(lock.version, root.version);
   assert.equal(lock.packages['']?.version, root.version);
   assert.equal(releaseVersion(app.version), app.version, 'a stable x.y.z, which the installer needs');
+});
+
 test('a stable package must carry Hydra\'s own version, or it would be offered every release', () => {
   assert.match(read(appDir, 'scripts', 'package.mjs'), /if \(channel === 'stable' && version !== hydraVersion\) throw new Error/);
 });
