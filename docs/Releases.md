@@ -30,18 +30,25 @@ Uninstall Hydra from **Windows Settings → Apps → Installed apps**, or run `u
 
 ## Publishing a release
 
-1. Set `package.json`'s `version` to the new version and merge that to `main`.
+1. Set the new version in `package.json` **and** `app/package.json` (and the version fields of `app/package-lock.json`), and merge that to `main`. The two products share Hydra's version; a test fails if they differ.
 2. Run the **Windows desktop** workflow by hand (**Actions → Windows desktop → Run workflow**) on `main`, with:
    - **release_tag:** `v<that version>`, for example `v0.25.0`;
    - **prerelease:** off for a release installed copies should be offered (see [The update prompt](#the-update-prompt)); on for one they shouldn't.
 3. The `desktop` job builds and tests everything, as on a pull request: the build, smoke, the installer's install, reinstall and uninstall, the upgrade from the pinned previous release, and the MSIX checks. The uninstall test checks that uninstalling removes only this install's Claude Code and Codex entries, keeps Hydra's data by default, and removes it with `/HYDRAREMOVEDATA` (see [Uninstalling](#uninstalling)).
+   The `app` job runs the **App** workflow's own job on the same commit: the app's checks, its smoke, the package (`--channel=stable`, so it updates itself) and its installer lifecycle test.
 4. Only if all of that passes, the `release` job:
-   - checks that the tag matches `package.json` and isn't already a release;
-   - writes `SHA256SUMS` for the tested installer;
-   - attests the installer's build provenance with GitHub's attestation service (`actions/attest-build-provenance`);
-   - publishes the release with `HydraSetup.exe` and `SHA256SUMS`, and verification steps in its notes.
+   - checks that the tag matches `package.json`, that `app/package.json` has the same version, and that the tag isn't already a release;
+   - writes `SHA256SUMS` for the tested `HydraSetup.exe` (exactly that one line: every installed Hydra IDE and `install.ps1` refuse a second) and `SHA256SUMS-app` for the tested `HydraAppSetup.exe`;
+   - attests both installers' build provenance with GitHub's attestation service (`actions/attest-build-provenance`);
+   - publishes the release with `HydraSetup.exe`, `SHA256SUMS`, `HydraAppSetup.exe` and `SHA256SUMS-app`, and verification steps in its notes.
 
    This job is the only one allowed to write releases and attestations.
+
+**A dry run:** the same manual run with no release tag builds and tests both products and uploads both installers as workflow artifacts (`Hydra-win32-x64-user-installer`, `Hydra-app-win32-x64-installer`), and publishes nothing.
+
+### An app preview
+
+Before a stable release includes it, the Hydra app ships as previews. Run **Actions → App preview → Run workflow** on `main` with **preview** set to a number, `1` for the first preview of this version. The `app` job builds and tests the app's installer as a preview, which never updates itself. Only then the `preview` job checks the tag `v<version>-app.<n>` is new and `app/package.json` matches the root version, writes `SHA256SUMS-app`, attests `HydraAppSetup.exe`, and publishes a **prerelease** with those two files. Because it's a prerelease with a suffixed tag, `releases/latest`, the IDE's update prompt, `install.ps1` and the app's own updater never pick it. Left empty, the run is a dry run that only uploads the installer.
 
 The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published release, which must be strictly older than `package.json`'s version (`scripts/desktop-upgrade-test.ps1` refuses anything else). After a release, pin the release before it, the one installed copies upgrade from; the new release becomes the baseline once `main`'s version moves past it.
 
@@ -50,6 +57,7 @@ The upgrade test's baseline, `desktop/upgrade-baseline.json`, pins a published r
 `irm https://www.usefrontierdigital.com/hydra/install.ps1 | iex` in PowerShell runs [`scripts/install.ps1`](../scripts/install.ps1). The website redirects that address to the file on `main`, so there's one copy.
 
 - **What it checks:** it finds the latest full release (or the one in `$env:HYDRA_INSTALL_VERSION`) through the same GitHub API and checks as the update prompt. It downloads `HydraSetup.exe` and `SHA256SUMS` and compares the installer's SHA-256 before running anything.
+- **The Hydra app:** `-App`, or `$env:HYDRA_INSTALL_APP = '1'` before the one-liner, installs `HydraAppSetup.exe` checked against `SHA256SUMS-app` instead, into `%LOCALAPPDATA%\Programs\Hydra App`. Previews aren't full releases, so it installs the app only from a stable release.
 - **What it refuses:** a hash mismatch, a running Hydra, and machines that aren't 64-bit x64 Windows.
 - **What it never does:** ask for admin, or change your execution policy.
 - **Run as a file:** it also takes `-Version <x.y.z>`, `-DryRun` (download and verify only), and `-InstallerPath` with `-SumsPath` (check and install local files).
