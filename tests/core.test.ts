@@ -217,11 +217,13 @@ test('probe runner bounds output and runtime, retains errors, and passes argumen
   const { root } = await fixture();
   try {
     const literal = 'quotes " Unicode ü and $(do not execute)';
-    const echo = await runProbe(process.execPath, ['-e', 'console.log(process.argv[1])', literal], root);
+    // Generous limits where the timeout isn't what's tested: a busy machine can take seconds to start Node.
+    const slow = { timeoutMs: 60_000 };
+    const echo = await runProbe(process.execPath, ['-e', 'console.log(process.argv[1])', literal], root, slow);
     assert.equal(echo.stdout.trim(), literal); assert.equal(echo.exitCode, 0);
-    const failed = await runProbe(process.execPath, ['-e', 'console.error("raw diagnostic");process.exit(7)'], root);
+    const failed = await runProbe(process.execPath, ['-e', 'console.error("raw diagnostic");process.exit(7)'], root, slow);
     assert.equal(failed.exitCode, 7); assert.match(failed.stderr, /raw diagnostic/);
-    const oversized = await runProbe(process.execPath, ['-e', 'process.stdout.write("x".repeat(10000));setInterval(()=>{},1000)'], root, { maxBytes: 1024 });
+    const oversized = await runProbe(process.execPath, ['-e', 'process.stdout.write("x".repeat(10000));setInterval(()=>{},1000)'], root, { ...slow, maxBytes: 1024 });
     assert.equal(Buffer.byteLength(oversized.stdout), 1024); assert.match(oversized.error!, /output limit/);
     const timedOut = await runProbe(process.execPath, ['-e', 'setInterval(()=>{},1000)'], root, { timeoutMs: 150 });
     assert.match(timedOut.error!, /timed out/);
