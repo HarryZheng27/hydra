@@ -289,6 +289,35 @@ if (role === 'resume') {
       report.agents.mergedFiles = (() => { try { return fs.readdirSync(path.join(arg('folder'), 'smoke')).sort(); } catch { return []; } })();
       await until(`/merged/i.test(document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? '')`, 'the canvas to show the plan merged', 15000).catch(() => undefined);
       report.agents.planStatusAfter = await ui(`document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? ''`);
+
+      // G5 milestone 4: a lane, a real terminal (node-pty and xterm) over the CLI in its own worktree. The stand-in
+      // CLI answers nothing interactive and exits, so the lane starts, runs it, and shows it ended.
+      await ui(`[...document.querySelectorAll('.ide-agents [role=tab]')].find(b => b.textContent.startsWith('Lanes')).click(); 1`);
+      await until(`!!document.querySelector('.ide-agents .lanes-view')`, 'the lanes view');
+      report.agents.lanes = { unavailable: await ui(`document.querySelector('.ide-agents .lanes-empty')?.textContent ?? ''`) };
+      await ui(`[...document.querySelectorAll('.ide-agents .lanes-controls button')].find(b => b.textContent === 'New lane').click(); 1`);
+      await until(`[...document.querySelectorAll('.ide-agents .lanes-grid button')].some(b => b.textContent === 'Start lane')`, 'the new lane form');
+      await ui(`[...document.querySelectorAll('.ide-agents .lanes-grid button')].find(b => b.textContent === 'Start lane').click(); 1`);
+      await until(`!!document.querySelector('.ide-agents .lanes-grid .xterm, .ide-agents .lane-row')`, 'the lane\'s terminal', 30000);
+      report.agents.lanes.terminal = await ui(`!!document.querySelector('.ide-agents .lanes-grid .xterm')`);
+      await until(`!!document.querySelector('.ide-agents .lane-row')`, 'the lane to end', 30000).catch(() => undefined);
+      report.agents.lanes.rows = await ui(`[...document.querySelectorAll('.ide-agents .lane-row, .ide-agents .lane-dot')].map(e => e.className)`);
+      report.agents.lanes.worktrees = (() => { try { return fs.readdirSync(path.join(path.dirname(arg('folder')), 'Project One.worktrees')); } catch { return []; } })();
+
+      // The Agents view's own controls: Stop all (which asks) and Resume, then the audit log, which shows the stop.
+      confirmAnswer = 0;
+      const stopConfirms = report.confirms.length;
+      await ui(`[...document.querySelectorAll('.agents-toolbar button')].find(b => b.textContent === 'Stop all').click(); 1`);
+      await until(`/Hydra is stopped here/.test(document.querySelector('.ide-agents')?.textContent ?? '')`, 'the stopped banner', 15000);
+      confirmAnswer = 1;
+      report.agents.stopConfirm = report.confirms.slice(stopConfirms);
+      await ui(`[...document.querySelectorAll('.ide-agents .banner button')].find(b => b.textContent === 'Resume').click(); 1`);
+      await until(`!/Hydra is stopped here/.test(document.querySelector('.ide-agents')?.textContent ?? '')`, 'Resume', 15000);
+      report.agents.resumed = true;
+      await ui(`[...document.querySelectorAll('.agents-toolbar button')].find(b => b.textContent === 'Audit log').click(); 1`);
+      await until(`/audit\.jsonl/.test(document.querySelector('.host-view h2')?.textContent ?? '')`, 'the audit log in the viewer', 15000);
+      report.agents.audit = await ui(`document.querySelector('.host-view-body').textContent.slice(0, 20000)`);
+      await ui(`document.querySelector('.host-view [aria-label=Close]').click(); 1`);
       await ui(`[...document.querySelectorAll('.mode-switch button')].find(b => b.textContent === 'Chat').click(); 1`);
     }
     event('done');

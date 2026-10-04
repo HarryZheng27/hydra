@@ -37,6 +37,7 @@ const api: HydraApi = {
   disconnectHydra: provider => call('hydra.disconnect', { provider }),
   hydraTree: () => call('hydra.tree', null),
   agentsMessage: (projectId, message) => call('hydra.agents', { projectId, message }),
+  hydraControl: (projectId, action) => call('hydra.control', { projectId, action }),
   hydraReply: (requestId, value) => call('hydra.reply', { requestId, value }),
   onHydraHost: listener => {
     const handler = (_event: unknown, message: HydraHostMessage) => listener(message);

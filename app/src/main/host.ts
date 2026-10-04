@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync, watch as watchFolder, type FSWatcher } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BrowserWindow, clipboard, dialog, nativeTheme, shell, type MessageBoxOptions } from 'electron';
 import type { ChangeSide, Disposable, Host, HostFolder, HostPaths, HostSection, HostSettings, HostState, HostTerminal, InputOptions, NoticeLevel, PickItem } from '../../../src/host/host';
-import { markdownWithImages, readViewFile, type HostUi } from './hostUi';
+import { localPreviewUrl, markdownWithImages, readViewFile, unifiedDiff, type HostUi } from './hostUi';
 import { ideHydraStorage } from './identity';
 import { getMainWindow } from './window';
 
@@ -149,7 +150,11 @@ export class ElectronHost implements Host {
 
   // ---- Opening things: the app has no editor; it shows files in their folder and pages in the browser. ----
   async openFolder(folder: string): Promise<void> { this.log(`[host] open folder ${folder}: open it as a project in the app`); }
-  async openPreview(): Promise<boolean> { return false; }
+  /** Preview app (a lane's): the user asked for it, so a page on this machine opens in their browser. */
+  async openPreview(url: string): Promise<boolean> {
+    const local = localPreviewUrl(url);
+    return local ? this.openUrl(local) : false;
+  }
   /** Markdown Hydra wrote (evidence, a handoff, a report): in the window's viewer, with its screenshots. */
   async openMarkdown(file: string): Promise<void> {
     if (!this.options.ui) { shell.showItemInFolder(file); return; }
@@ -161,7 +166,23 @@ export class ElectronHost implements Host {
     this.textSources.set(scheme, provide);
     return { dispose: () => { if (this.textSources.get(scheme) === provide) this.textSources.delete(scheme); } };
   }
-  async openChanges(title: string): Promise<void> { this.log(`[host] ${title}: use Review changes in the chat`); }
+  /** A multi-file diff (a lane's Review changes): each file's two sides as one unified diff, in the window's viewer. */
+  async openChanges(title: string, resources: [ChangeSide, ChangeSide, ChangeSide][]): Promise<void> {
+    if (!this.options.ui) { this.log(`[host] ${title}: no window to show the changes in`); return; }
+    const side = async (change: ChangeSide): Promise<string> => {
+      if ('file' in change) return readFile(change.file, 'utf8').catch(() => '');
+      const provide = this.textSources.get(change.scheme);
+      return provide ? provide(change.path, change.query).catch(() => '') : '';
+    };
+    const label = (change: ChangeSide, fallback: string) => ('file' in change ? fallback : change.path.replace(/^\/+/, '')) || fallback;
+    const parts: string[] = [`# ${title}`];
+    for (const [shown, left, right] of resources.slice(0, 300)) {
+      const name = label(left, label(right, path.basename('file' in shown ? shown.file : shown.path)));
+      parts.push(await unifiedDiff(name, await side(left), await side(right)));
+    }
+    if (resources.length > 300) parts.push(`# …and ${resources.length - 300} more files`);
+    this.options.ui.ui.view(this.options.ui.projectId, { title, format: 'diff', content: parts.join('\n') });
+  }
   /** A file Hydra keeps (a report, a head's log): read-only in the window's viewer; Markdown as Markdown. */
   async openFile(file: string): Promise<void> {
     if (!this.options.ui) { shell.showItemInFolder(file); return; }

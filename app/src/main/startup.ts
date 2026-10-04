@@ -116,9 +116,11 @@ export function start(): void {
   const hydra = new HydraProjects({
     ui: hostUi,
     // Under the appData folder this app uses (a test that moves appData moves this too), unless set outright.
-    storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir, appRoot: app.getAppPath(),
+    storage: ideStorageRoot({ ...process.env, APPDATA: app.getPath('appData') }), dist: distDir,
+    // node-pty's root: the app folder its bundle is in (app.getAppPath() is wherever Electron was pointed, a test harness's folder say).
+    appRoot: path.dirname(distDir),
     // The built-in packs: the repository's packs/ beside app/ (a packaged app ships its own, G6).
-    extension: path.resolve(app.getAppPath(), '..'),
+    extension: path.resolve(distDir, '..', '..'),
     userData, version: HYDRA_APP_VERSION, development: !app.isPackaged,
     cliPath: async provider => (await settings.load()).cliPaths[provider],
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
@@ -152,7 +154,7 @@ export function start(): void {
     signIn: (provider, configured) => signIn(provider, configured, userData, { openUrl: url => shell.openExternal(url).then(() => true, () => false) }),
     confirmTrust,
     projectsChanged: next => syncHydra(next.projects),
-    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree(), agents: (project, message) => hydra.agents(project, message), reply: (requestId, value) => hostUi.reply(requestId, value) },
+    hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree(), agents: (project, message) => hydra.agents(project, message), reply: (requestId, value) => hostUi.reply(requestId, value), control: (project, action) => hydra.control(project, action) },
     projectOpened: cwd => { void state.load().then(loaded => { const project = loaded.projects.find(candidate => samePath(candidate.path, cwd)); if (project) return hydra.open(project); return undefined; }).catch(() => undefined); },
     chats,
     review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },

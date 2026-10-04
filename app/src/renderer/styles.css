@@ -319,3 +319,9 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .host-view-body .add { color: var(--ok); } .host-view-body .del { color: var(--error); } .host-view-body .hunk { color: var(--link); } .host-view-body .meta, .host-view-body .note { color: var(--muted); }
 .host-view-body figure { margin: 12px 0; } .host-view-body img { max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
 .host-view-body figcaption { color: var(--muted); font-size: 12px; }
+
+/* The Agents view's own controls (AgentsView.tsx, G5 milestone 4). */
+.agents-toolbar { display: flex; align-items: center; gap: 12px; padding: 6px 16px; border-bottom: 1px solid var(--border); }
+.agents-toolbar-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.danger-link { color: var(--error); }
+.danger-link:disabled { color: var(--faint); cursor: default; }

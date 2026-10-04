@@ -120,7 +120,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'agentsMessage', 'hydraReply', 'onHydraHost', 'onHydraUi', 'onHydraTree', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'openChat', 'sendMessage', 'openTerminal', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'agentsMessage', 'hydraControl', 'hydraReply', 'onHydraHost', 'onHydraUi', 'onHydraTree', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -246,7 +246,10 @@ try {
     // asks for a review, so no other Claude or Codex run starts.
     const checks = ['claude --help', 'claude --version', 'codex --help', 'codex --version', 'codex app-server --help', 'claude auth status --json', 'codex login status',
       'claude -p --input-format stream-json --output-format stream-json --verbose --strict-mcp-config', 'codex exec --help'];
-    assert.deepEqual(calls.filter(call => !checks.includes(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
+    // A lane's own CLI (G5 milestone 4): interactive, with its lane's settings file.
+    const lane = call => /^claude --settings .*[\\/]lanes[\\/][0-9a-f]{12}\.settings\.json$/.test(call);
+    assert.equal(calls.filter(lane).length, 1, 'the lane started its CLI once');
+    assert.deepEqual(calls.filter(call => !checks.includes(call) && !lane(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
     const count = call => calls.filter(c => c === call).length;
     // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
     assert.ok(count('claude --version') >= 3 && count('codex --version') >= 3, calls.join(', '));
@@ -291,6 +294,16 @@ try {
     assert.match(agents.planStatus, /passed/i, 'Merge plan shows once the integration gate passed');
     assert.match(agents.planStatusAfter, /merged/i);
     assert.match(agents.mergedLog ?? '', /plan|Smoke plan/i);
+  });
+  check('a lane runs its CLI in a real terminal in its own worktree; the audit log, Stop all and Resume work from the Agents view', () => {
+    const agents = r.agents;
+    assert.equal(agents?.lanes?.unavailable, '', 'terminals are available (node-pty loads in the app)');
+    assert.equal(agents.lanes.terminal, true, 'the lane showed an xterm terminal');
+    assert.ok(agents.lanes.worktrees.length >= 1, 'the lane has its own worktree');
+    assert.ok(standinCalls(bin).some(call => /^claude( |$)/.test(call) && !/^claude (-p|--version|--help|auth) ?/.test(call)), 'the lane started the CLI itself');
+    assert.match(agents.audit, /"kind"\s*:\s*"stop"/, 'the audit log shows the stop');
+    assert.equal(agents.stopConfirm.length, 1, 'Stop all asked first');
+    assert.equal(agents.resumed, true);
   });
   check('a chat with Claude Code: trust first, then stream, approve, deny and stop', () => {
     assert.match(a.chat.trustedBefore, /asks you to trust this folder first/);

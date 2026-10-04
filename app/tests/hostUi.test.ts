@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { HostUi, VIEW_IMAGE_LIMIT, VIEW_TEXT_LIMIT, markdownWithImages, readViewFile, safeRelativeImagePath } from '../src/main/hostUi';
+import { HostUi, VIEW_IMAGE_LIMIT, VIEW_TEXT_LIMIT, localPreviewUrl, markdownWithImages, readViewFile, safeRelativeImagePath, unifiedDiff } from '../src/main/hostUi';
 import type { HydraHostMessage } from '../src/shared/ipc';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-host-ui-'));
@@ -112,4 +112,15 @@ test('an image path is checked by its text before the disk is asked: no share, d
     assert.deepEqual(view.images.map(image => image.alt), ['inside']);
     assert.ok(view.content.includes('![in a gate\'s output](inside.png)'), 'a fenced image line stays text');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a lane\'s changes show as a unified diff by git, named by the file; Preview opens only a page on this machine', async () => {
+  const diff = await unifiedDiff('src/a.ts', 'one\ntwo\n', 'one\nthree\n');
+  assert.match(diff, /^diff src\/a\.ts\n--- a\/src\/a\.ts\n\+\+\+ b\/src\/a\.ts\n@@/);
+  assert.match(diff, /\n-two\n\+three/);
+  assert.doesNotMatch(diff, /hydra-diff-/, 'the scratch files\' names never show');
+  assert.equal(await unifiedDiff('same.txt', 'x', 'x'), '');
+  assert.equal(localPreviewUrl('http://localhost:5173/'), 'http://localhost:5173/');
+  assert.equal(localPreviewUrl('https://127.0.0.1:8443/app'), 'https://127.0.0.1:8443/app');
+  for (const refused of ['https://example.com/', 'file:///C:/x.html', 'javascript:alert(1)', 'http://user:pw@localhost/', 'http://localhost.example.com/', 'not a url']) assert.equal(localPreviewUrl(refused), undefined, refused);
 });

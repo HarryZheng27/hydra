@@ -21,6 +21,10 @@ export interface HydraUiMessage { projectId: string; message: unknown }
 export const HYDRA_HOST = 'hydra:host';
 export interface HydraPickItemView { label: string; description: string; detail: string; picked: boolean }
 export interface HydraViewImage { alt: string; src: string }
+/** The Agents view's own controls (G5 milestone 4). */
+export type HydraControl = 'stopState' | 'stopAll' | 'resume' | 'auditLog';
+/** Whether Hydra runs in a project and, if so, whether Stop all has stopped it. */
+export interface HydraStopState { running: boolean; stopped: boolean; since?: string; reason?: string }
 export type HydraHostMessage =
   | { kind: 'pick'; requestId: string; projectId: string; title: string; placeHolder: string; items: HydraPickItemView[]; many: boolean; error?: string }
   | { kind: 'input'; requestId: string; projectId: string; title: string; prompt: string; placeHolder: string; value: string; error?: string }
@@ -124,6 +128,8 @@ export interface Channels {
   'hydra.disconnect': { payload: { provider: CliProvider }; result: HydraConnection[] };
   /** A message from a project's Agents view to its controller (src/core/model.ts ClientMessage; the controller checks it). */
   'hydra.agents': { payload: { projectId: string; message: unknown }; result: null };
+  /** The Agents view's controls: the stop state, Stop all (asks first), Resume, and the audit log. */
+  'hydra.control': { payload: { projectId: string; action: HydraControl }; result: HydraStopState };
   /** The window's answer to one of Hydra's questions (HYDRA_HOST): an item's index, indexes, text, an action, or null to dismiss. */
   'hydra.reply': { payload: { requestId: string; value: number | number[] | string | null }; result: null };
   /** Every running project's heads and plans, for a page that just opened. */
@@ -215,6 +221,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'hydra.connect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.disconnect': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'hydra.tree': isNull,
+  'hydra.control': exactly<{ projectId: string; action: HydraControl }>({ projectId: isId, action: oneOf('stopState', 'stopAll', 'resume', 'auditLog') }),
   'hydra.reply': exactly<{ requestId: string; value: number | number[] | string | null }>({ requestId: isId, value: value => value === null || (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 10_000) || (Array.isArray(value) && value.length <= 10_000 && value.every(index => typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < 10_000)) || (typeof value === 'string' && value.length <= 20_000) }),
   'hydra.agents': exactly<{ projectId: string; message: unknown }>({ projectId: isId, message: value => !!value && typeof value === 'object' && !Array.isArray(value) && JSON.stringify(value).length <= 200_000 }),
   'chats.terminalClosed': exactly<{ id: string }>({ id: isId }),
@@ -280,6 +287,8 @@ export interface HydraApi {
   agentsMessage(projectId: string, message: unknown): Promise<null>;
   /** Calls `listener` with each message a project's controller sends its Agents view. */
   onHydraUi(listener: (message: HydraUiMessage) => void): () => void;
+  /** One of the Agents view's controls; resolves with the project's stop state after it. */
+  hydraControl(projectId: string, action: HydraControl): Promise<HydraStopState>;
   /** Answers one of Hydra's questions. */
   hydraReply(requestId: string, value: number | number[] | string | null): Promise<null>;
   /** Calls `listener` with each of Hydra's questions, notices and documents for the window. */

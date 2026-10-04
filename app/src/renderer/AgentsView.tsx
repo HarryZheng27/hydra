@@ -8,7 +8,7 @@ import type { LaneSwitchCountdown } from '../../../webview/LanesView';
 import { emitLaneEvent } from '../../../webview/laneBus';
 import '../../../webview/agents-canvas.css';
 import '../../../webview/lanes.css';
-import type { Project } from '../shared/ipc';
+import type { HydraControl, HydraStopState, Project } from '../shared/ipc';
 
 /**
  * The Agents view (G5 milestone 3): the IDE's own canvas of heads, plans and lanes (webview/AgentsBody.tsx), for the
@@ -34,6 +34,16 @@ export function AgentsView({ project }: { project: Project }) {
   const [laneGates, setLaneGates] = useState<Record<string, { done: JobCheckResult[]; running?: string }>>({});
   const [headFocus, setHeadFocus] = useState<{ id: string; at: number }>();
   const [error, setError] = useState<string>();
+  const [stop, setStop] = useState<HydraStopState>();
+  // The stop state (G5 milestone 4): read on open, after each control, and every few seconds while the view shows.
+  const control = (action: HydraControl) => { void window.hydra.hydraControl(project.id, action).then(setStop, failure => setError(failure instanceof Error ? failure.message : String(failure))); };
+  useEffect(() => {
+    setStop(undefined);
+    const read = () => { void window.hydra.hydraControl(project.id, 'stopState').then(setStop, () => undefined); };
+    read();
+    const timer = setInterval(read, 4000);
+    return () => clearInterval(timer);
+  }, [project.id]);
   const changeView = (next: AgentsViewName, focus?: string) => { setView(next); send({ type: 'view', view: next, ...(focus ? { focus } : {}) }); };
 
   useEffect(() => {
@@ -75,6 +85,12 @@ export function AgentsView({ project }: { project: Project }) {
 
   return (
     <section className="agents ide-agents" aria-label={`${project.name}: agents`} data-project={project.id}>
+      <div className="agents-toolbar">
+        <span className="agents-toolbar-title">{project.name}</span>
+        <button className="link" onClick={() => control('auditLog')} title="Every head, lane and plan Hydra started or stopped, and every refusal">Audit log</button>
+        <button className="danger-link" disabled={!stop?.running || stop.stopped} onClick={() => control('stopAll')} title="Stop every head and lane in this project">Stop all</button>
+      </div>
+      {stop?.stopped && <div className="banner warning" role="status">Hydra is stopped here{stop.reason ? `: ${stop.reason}` : ''}. Nothing new starts until you resume. <button className="link" onClick={() => control('resume')}>Resume</button></div>}
       {(error || snapshot.error) && <div className="banner warning" role="alert">{error ?? snapshot.error} <button className="link" onClick={() => { setError(undefined); send({ type: 'refresh' }); }}>Retry</button></div>}
       <AgentsBody view={view} onViewChange={changeView} heads={heads} dismissedTray={dismissedTray} plans={plans} lanes={lanes} planJobs={planJobs} terminals={terminals} defaultProvider={snapshot.defaultProvider}
         laneError={laneError} laneFocus={laneFocus} onLaneFocused={() => setLaneFocus(undefined)} laneLimits={laneLimits} laneSwitchCountdowns={laneSwitchCountdowns} laneGates={laneGates} roles={snapshot.roles} openNewPlanAt={newPlanSignal} focusHead={headFocus}

@@ -1,4 +1,6 @@
-import { open, readFile, realpath, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, open, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { InputOptions, NoticeLevel, PickItem } from '../../../src/host/host';
@@ -96,6 +98,33 @@ export async function readViewFile(file: string): Promise<{ content: string; tru
     const text = buffer.toString('utf8');
     return { content: text.slice(text.indexOf('\n') + 1), truncated: true };
   } finally { await handle.close(); }
+}
+
+/** A lane's preview, opened in the user's browser only when it is a page on this machine (http or https). */
+export function localPreviewUrl(url: string): string | undefined {
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return undefined; }
+  if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || !['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)) return undefined;
+  return parsed.href;
+}
+
+/**
+ * One file's change as a unified diff, by git itself (`git diff --no-index` over two scratch files), labelled with the
+ * file's name. Text only: a file is cut at the view's limit first.
+ */
+export async function unifiedDiff(name: string, before: string, after: string): Promise<string> {
+  if (before === after) return '';
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hydra-diff-'));
+  try {
+    const a = path.join(dir, 'a'), b = path.join(dir, 'b');
+    await writeFile(a, before.slice(0, VIEW_TEXT_LIMIT)); await writeFile(b, after.slice(0, VIEW_TEXT_LIMIT));
+    const output = await new Promise<string>(resolve => execFile('git', ['diff', '--no-index', '--no-color', '--no-ext-diff', '--', a, b], { cwd: dir, windowsHide: true, maxBuffer: VIEW_TEXT_LIMIT * 4, encoding: 'utf8' },
+      (_error, stdout) => resolve(stdout ?? '')));
+    // git names the scratch files; the reader wants the project's file.
+    const lines = output.split('\n');
+    const body = lines.slice(lines.findIndex(line => line.startsWith('@@')));
+    return [`diff ${name}`, `--- a/${name}`, `+++ b/${name}`, ...(body[0]?.startsWith('@@') ? body : ['(binary or unreadable)'])].join('\n');
+  } finally { await rm(dir, { recursive: true, force: true }).catch(() => undefined); }
 }
 
 const inside = (root: string, file: string): boolean => { const relative = path.relative(root, file); return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative); };

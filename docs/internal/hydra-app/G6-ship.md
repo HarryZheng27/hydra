@@ -13,6 +13,7 @@
 2. **App package and installer:**
    - Package the app with G1's fuses.
    - Claude, Codex and Claude's hook run `hydra-mcp.cjs`, `hydra-cli.cjs` and `hydra-limit-hook.cjs` by path. Unpack them from the asar (`asarUnpack`), and point the registration at the unpacked copies. Prove it with a packaged-build test: the registered bridge answers.
+   - node-pty (an app dependency since G5 milestone 4) must be unpacked too, and its root found in a packaged app: `startup.ts` passes `path.dirname(distDir)` as `appRoot`, which inside an asar is `resources/app.asar`, while `ptyCandidates` looks for `node_modules.asar.unpacked` beside it. Prove a lane's terminal starts in the packaged build.
    - `app/installer/hydra-app.iss` adapts `desktop/hydra-wizard.iss`, `hydra-uninstall.iss` and `hydra-update-mode.iss`: a new AppId GUID, a per-user install with no admin, `%LOCALAPPDATA%\Programs\Hydra App`, "Hydra" shortcuts, AppUserModelId `Hydra.App`.
    - The uninstaller runs the app's own uninstall helper, like `src/uninstall.ts`, which removes only this install's Claude and Codex entries.
    - `/HYDRAREMOVEDATA` asks, then removes `%APPDATA%\Hydra App`. It removes the shared storage root only when the IDE isn't installed.
