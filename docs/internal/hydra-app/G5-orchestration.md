@@ -29,7 +29,7 @@ Root `npm run check` and `npm test`; `npm --prefix app run check`, `test`, `buil
 - [x] A plan with stand-ins lands on its integration branch, and Merge plan merges it.
 - [x] A coexistence test passes. A repository the IDE owns is refused by the app, and the reverse. `hydra` reaches the owner. The registration isn't rewritten while its target exists.
 - [x] Lead verification tests pass: a chat-started bridge is accepted, and a head-started one is refused.
-- [ ] Live on Nico's machine: the benchmark's `hydra` step runs `shop` / `discounts` (`--usd 5`) with the app owning the folder, opened by hand. Evidence in the Result.
+- [x] Live on Nico's machine: the benchmark's `hydra` step runs `shop` / `discounts` (`--usd 30`: Hydra refuses a $5 budget for this 6-job plan) with the app owning the folder, opened by hand. Evidence in the Result.
 - [x] THREAT_MODEL covers the app's endpoint, discovery, lead verification and registration repair.
 - [x] The parity table is complete.
 
@@ -64,9 +64,9 @@ Every Hydra IDE feature (docs/Features.md, docs/Heads.md), as the Hydra app has 
 | One-time offers that need actions (packs review, starter gates) | Works | Since milestone 3 they're in-window notices with their actions. |
 | Provider checks and usage of `hydra.claudePath` / `codexPath` | Differs | The app's own CLI paths (Settings → Your agents), machine-only as in the IDE. |
 
-## Result (2026-10-04, live check pending)
+## Result (2026-10-04)
 
-Five PRs, one per milestone: [#308](https://github.com/ndunl075/hydra/pull/308) (controller boot), [#309](https://github.com/ndunl075/hydra/pull/309) (registration and lead tools), [#310](https://github.com/ndunl075/hydra/pull/310) (the Agents view, plans and gates), [#311](https://github.com/ndunl075/hydra/pull/311) (lanes and limits) and [#312](https://github.com/ndunl075/hydra/pull/312) (settings and parity). Their reviews and fixes are in each PR body. Every box but the live check is done; this Result is completed once that runs.
+Five PRs, one per milestone: [#308](https://github.com/ndunl075/hydra/pull/308) (controller boot), [#309](https://github.com/ndunl075/hydra/pull/309) (registration and lead tools), [#310](https://github.com/ndunl075/hydra/pull/310) (the Agents view, plans and gates), [#311](https://github.com/ndunl075/hydra/pull/311) (lanes and limits) and [#312](https://github.com/ndunl075/hydra/pull/312) (settings and parity). Their reviews and fixes are in each PR body. Every box is checked.
 
 **Acceptance evidence:**
 - **App smoke and plans with stand-ins:** `app/smoke/run.mjs`, 26 checks, including `a chat calls a lead tool: a head starts in a worktree, its gate runs, and its card shows in the chat and on the canvas` and `a plan with stand-ins lands on its integration branch, its gate passes, and Merge plan merges it`. They pass in the App workflow on every app change, for example the `app` job of run [37218679365](https://github.com/ndunl075/hydra/actions/runs/37218679365).
@@ -75,6 +75,12 @@ Five PRs, one per milestone: [#308](https://github.com/ndunl075/hydra/pull/308) 
 - **THREAT_MODEL:** HSEC-91 (endpoint, discovery, ownership, lead verification), HSEC-92 (registration repair and lead tools), HSEC-93 to HSEC-95 (the Agents view, lanes, settings), each naming its tests, which `app/tests/threatModel.test.ts` checks exist.
 - **Parity table:** above, every IDE feature from `docs/Features.md` and `docs/Heads.md`.
 
-**Still open: the live check.** On Nico's machine, with the app owning the folder and opened by hand, the benchmark's `hydra` step on `shop` / `discounts` (`--usd 5`). It spends real provider budget, so it waits for Nico. When it passes, its evidence goes here and the status table marks G5 Done.
+**The live check (2026-10-04, Nico's machine):**
+- **Setup:** `node scripts/benchmark.mjs prepare` made `.bench/run-2026-10-04T18-17-32-359Z`. Nico opened its `hydra` folder in the app (`npm --prefix app run dev`), trusted it and opened a chat, and `hydra status` reported "Hydra window 35436 owns …" (the app's process). Then `node scripts/benchmark.mjs hydra --repo .bench/run-2026-10-04T18-17-32-359Z/hydra --usd 30` ran through the installed IDE's `hydra` command, which reached the app.
+- **Result:** plan `df26be595ef7`, state `done`. Hydra ran the 6 jobs as one head (a dependency chain of 3). Working code at 120 s (the harness's hidden check), 163 s wall clock. The integration gate passed (`test`, and a rigor review by Codex), with no fix rounds. Claude Code reported $0.36. It landed on `hydra/plan-df26be595ef7` (`0a482f3`).
+- **The budget:** G5 said `--usd 5`, but Hydra refuses a budget that 6 jobs at up to $5 each could exceed, so the smallest it accepts is $30. Nothing ran under $5.
+- **Two app bugs it found (follow-ups):**
+  - A project trusted before its first chat didn't start Hydra when that chat was reopened in the same app session. It started after the app was restarted.
+  - Hydra in the app finds `claude` and `codex` only on the PATH the app inherited, through the controller's `findProvider`, while the app's own chats found them fine. Started from a shell whose PATH lacks `%USERPROFILE%\.localin`, a head failed: "Claude Code CLI not found". It should use the same lookup as chats, or the app's Settings → Command-line tools.
 
 **Differs from the IDE, in short** (details in the parity table): Stop all is per project in the app and isn't shared with an IDE window's; the provider usage-limits view isn't in the app yet (the quota service runs); editor-only settings refuse with a reason; notices are the app's own toasts.
