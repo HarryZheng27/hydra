@@ -204,7 +204,8 @@ test('the IDE is Hydra IDE and its upgrade removes only old Hydra.lnk files that
   assert.equal(product.win32RegValueName, 'Hydra');
   assert.equal(product.win32NameVersion, 'Hydra', 'the existing registration display name that upgrades check');
   assert.equal(product.win32x64UserAppId, '{{4C372D32-54B2-43D8-8C63-ECC31D3744A8}');
-  const iss = await fs.readFile(path.join(root, 'desktop', 'hydra-shortcuts.iss'), 'utf8');
+  // A Windows checkout may have CRLF line endings.
+  const iss = (await fs.readFile(path.join(root, 'desktop', 'hydra-shortcuts.iss'), 'utf8')).replace(/\r\n/g, '\n');
   // Exactly the three old places, each through the target check.
   const removed = [...iss.matchAll(/^ +HydraRemoveOldShortcut\(([^;]*)\);/gm)].map(match => match[1]);
   assert.deepEqual(removed, [

@@ -56,7 +56,10 @@ npm --prefix app run check
 npm --prefix app test
 npm --prefix app run smoke   # starts the built app hidden, twice, against a scratch AppData folder
 npm --prefix app run dev     # opens Hydra
+npm --prefix app run package # app/out: the packaged app and installer/HydraAppSetup.exe
 ```
+
+`package` builds `Hydra.exe` from the pinned Electron with G1's fuses and an integrity-checked `app.asar` (`app/scripts/package.mjs`), then compiles `app/installer/hydra-app.iss` into a per-user `HydraAppSetup.exe`. To try the installer on your own machine, add `--prior=0.0.1` to the script for an older copy and run `scripts/app-installer-test.ps1 -SafeLocal`: it installs into a scratch folder, briefly registers the app and creates its Start Menu and desktop `Hydra.lnk` (all removed again), and never touches existing Hydra data or your Claude Code and Codex settings. It refuses to run if the app is already installed. Without `-SafeLocal` the test also removes data and edits connector files, so it runs only on a disposable CI runner.
 
 Its user data is `%APPDATA%\Hydra App`, never the IDE's `%APPDATA%\Hydra`. The **App** workflow (`.github/workflows/app.yml`) runs these on Windows when `app/`, `src/core/`, `src/host/` or `webview/` change.
 
