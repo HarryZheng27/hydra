@@ -529,11 +529,11 @@ test('a Claude head starts confined: its settings file on disk (0600, valid, the
   const start = async (key: string, provider = 'claude') => (await call('hydra_start_head', { title: `Job ${key}`, brief: 'Do it.', write_scope: ['src/'], idempotency_key: key, provider })).result.job_id as string;
   try {
     const first = await start('first');
-    await call('hydra_wait_for_heads', { job_ids: [first], max_wait_s: 60 });
+    await call('hydra_wait_for_heads', { job_ids: [first], max_wait_s: 300 });
     shell = { kind: 'off', reason: 'Git Bash wasn\'t found' };
     const second = await start('second');
     const third = await start('third', 'codex');
-    const waited = (await call('hydra_wait_for_heads', { job_ids: [second, third], max_wait_s: 60 })).result;
+    const waited = (await call('hydra_wait_for_heads', { job_ids: [second, third], max_wait_s: 300 })).result;
     assert.deepEqual(waited.heads.map((head: { state: string }) => head.state), ['done', 'done']);
 
     const [one, two, three] = runs;

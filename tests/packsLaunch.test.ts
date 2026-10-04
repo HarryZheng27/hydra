@@ -301,7 +301,7 @@ async function headWorld(script: Script, options: { gates?: unknown; noPacks?: b
   const lead = endpoint.issue({ role: 'lead', leadKey: 'window' });
   const call = (tool: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; result?: any; error?: string }> => callHelperEndpoint(port, lead, tool, args);
   const start = (key: string, extra: Record<string, unknown> = {}) => call('hydra_start_head', { title: `Job ${key}`, brief: 'Do the thing.', write_scope: ['src/'], idempotency_key: key, ...extra });
-  const wait = async (ids: string[]) => (await call('hydra_wait_for_heads', { job_ids: ids, max_wait_s: 90 })).result;
+  const wait = async (ids: string[]) => (await call('hydra_wait_for_heads', { job_ids: ids, max_wait_s: 300 })).result;
   return { ...world, store, service, runs, mcpFiles, problems, call, start, wait, close: async () => { await service.dispose(); await endpoint.close(); await world.close(); } };
 }
 

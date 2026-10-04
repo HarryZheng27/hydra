@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +9,7 @@ import { processLaunch, terminateProcessTree } from '../process';
  * Windows, otherwise Chrome or Chromium from the usual places, driven over the
  * DevTools protocol with Node's own WebSocket. Each session gets a temporary
  * profile folder, which is deleted when it closes, and closing always kills
- * the browser's whole process tree. The gate only sees ScreenshotBrowser, so
+ * the browser's whole process tree, and on Windows every process using that profile. The gate only sees ScreenshotBrowser, so
  * tests use a fake.
  */
 export interface PageCapture {
@@ -167,6 +167,19 @@ export async function connectWithRetry<T>(connect: (remainingMs: number) => Prom
   }
 }
 
+/**
+ * Stops every process whose command line names this session's profile: on Windows, Edge's launcher can hand the
+ * browser to processes of its own and exit 0 at once, so the tree under the launcher's pid is empty while the
+ * browser runs on. The profile is a fresh temporary folder, so it names this session's browser and nothing else.
+ */
+function stopProfileProcesses(profile: string): Promise<void> {
+  if (process.platform !== 'win32') return Promise.resolve();
+  const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  // The path travels in the environment, so nothing in it is read as PowerShell.
+  const script = "$p = $env:HYDRA_BROWSER_PROFILE; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($p) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+  return new Promise(resolve => execFile(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 20_000, env: { ...process.env, HYDRA_BROWSER_PROFILE: profile } }, () => resolve()));
+}
+
 /** Start a headless browser with a fresh temporary profile. On any failure it is already cleaned up. */
 export async function launchBrowser(executable: string, spawned?: (pid: number) => void): Promise<BrowserSession> {
   const profile = await mkdtemp(path.join(tmpdir(), 'hydra-browser-'));
@@ -176,21 +189,27 @@ export async function launchBrowser(executable: string, spawned?: (pid: number) 
   const launch = processLaunch(executable, args);
   const child = spawn(launch.executable, launch.args, { windowsHide: true, stdio: 'ignore', detached: process.platform !== 'win32' });
   if (child.pid) spawned?.(child.pid);
-  let exited = false;
-  const gone = new Promise<void>(resolve => { child.once('exit', () => { exited = true; resolve(); }); child.once('error', () => { exited = true; resolve(); }); });
+  // A Windows launcher that exits 0 has handed the browser on (stopProfileProcesses); anything else is a failure.
+  let exited = false, handedOn = false;
+  const gone = new Promise<void>(resolve => {
+    child.once('exit', code => { exited = true; handedOn = process.platform === 'win32' && code === 0; resolve(); });
+    child.once('error', () => { exited = true; resolve(); });
+  });
+  const failed = () => exited && !handedOn;
   let cdp: CdpConnection | undefined, closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     // Ask politely, then make sure: the tree kill is what guarantees no browser is left running.
-    if (cdp && !exited) await cdp.send('Browser.close', {}, undefined, 2000).catch(() => undefined);
+    if (cdp && !failed()) await cdp.send('Browser.close', {}, undefined, 2000).catch(() => undefined);
     cdp?.close();
     if (!exited && child.pid) await terminateProcessTree(child.pid).catch(() => { child.kill(); });
     await Promise.race([gone, new Promise(resolve => setTimeout(resolve, 5000))]);
+    await stopProfileProcesses(profile);
     // Windows can hold the profile's files for a moment after the browser exits.
     await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 }).catch(() => undefined);
   })();
   try {
-    const endpoint = await devToolsEndpoint(profile, () => exited);
-    cdp = await connectWithRetry(remaining => CdpConnection.connect(endpoint, remaining), () => exited);
+    const endpoint = await devToolsEndpoint(profile, failed);
+    cdp = await connectWithRetry(remaining => CdpConnection.connect(endpoint, remaining), failed);
   } catch (error) { await close(); throw error; }
   const connection = cdp;
   return { capture: (url, width) => capturePage(connection, url, width), close };
