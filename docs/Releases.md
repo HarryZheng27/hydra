@@ -30,7 +30,7 @@ Uninstall Hydra from **Windows Settings → Apps → Installed apps**, or run `u
 
 ## Publishing a release
 
-1. Set the new version in `package.json` **and** `app/package.json` (and the version fields of `app/package-lock.json`), and merge that to `main`. The two products share Hydra's version; a test fails if they differ.
+1. Set the new version in `package.json` and `package-lock.json` **and** `app/package.json` and `app/package-lock.json` (each lock's two version fields), and merge that to `main`. The two products share Hydra's version; a test fails if they differ.
 2. Run the **Windows desktop** workflow by hand (**Actions → Windows desktop → Run workflow**) on `main`, with:
    - **release_tag:** `v<that version>`, for example `v0.25.0`;
    - **prerelease:** off for a release installed copies should be offered (see [The update prompt](#the-update-prompt)); on for one they shouldn't.

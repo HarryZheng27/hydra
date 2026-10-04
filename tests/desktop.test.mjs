@@ -176,7 +176,7 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
   assert.match(result, /#include "hydra-update-mode\.iss"\n#include "hydra-wizard\.iss"\n#include "hydra-shortcuts\.iss"\nfunction IsBackgroundUpdate/);
   // The "Hydra IDE" handover: a new Start Menu folder, a fresh uninstall log, the
   // old shortcuts noted before the install and removed once the new ones exist.
-  assert.match(result, /DefaultGroupName=\{#NameLong\}\nUsePreviousGroup=no\nUninstallLogMode=overwrite\n/);
+  assert.match(result, /DefaultGroupName=\{#NameLong\}\nUsePreviousGroup=no\nUninstallLogMode=overwrite\nVersionInfoProductName=Hydra\n/);
   assert.match(result, /Result := HydraCheckInstall\(\);\n  if Result <> '' then Exit;\n  HydraRememberOldShortcuts\(\);/);
   assert.match(result, /if CurStep = ssPostInstall then\n  begin\n    HydraReplaceOldShortcuts\(\);\n    LogContextMenuInstallState\(\);/);
   assert.throws(() => brandedInstaller(original.replace('DefaultGroupName={#NameLong}', 'DefaultGroupName=Code')), /Pinned installer changed: DefaultGroupName/);
@@ -231,6 +231,8 @@ test('the uninstall include ships with the installer and keeps to its two data f
   const removed = [...iss.matchAll(/^ +HydraRemoveDataFolder\(([^;]*)\);/gm)].map(match => match[1]);
   assert.deepEqual(removed, ["ExpandConstant('{userappdata}'), 'Hydra'", "GetEnv('USERPROFILE'), '.hydra'"]);
   assert.equal((iss.match(/DelTree\(/g) ?? []).length, 1);
+  // After an update the fresh uninstall log doesn't list the install folder; only an empty one is removed.
+  assert.match(iss, /end else if CurUninstallStep = usPostUninstall then begin\r?\n(?:\s*\/\/[^\n]*\n)*\s*if HydraRealDirectory\(ExpandConstant\('\{app\}'\)\) and RemoveDir\(ExpandConstant\('\{app\}'\)\) then/);
 });
 test('installer versions follow Hydra while preserving the editor API version and refusing source drift', () => {
   const original = "Version: pkg.version,\nRawVersion: pkg.version.replace(/-\\w+$/, ''),\nEditorVersion: pkg.version";

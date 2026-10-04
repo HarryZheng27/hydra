@@ -119,7 +119,8 @@ function Remove-TestInstallation([string]$label) {
   # Each install writes a fresh uninstall log (UninstallLogMode=overwrite), so a
   # file only the prior release had would be left behind, and then a reinstall
   # to the same folder is refused. Nothing may be left. The uninstaller removes
-  # its own folder last, from a copy of itself, so this waits for that.
+  # its folder last (its own files from a copy of itself, then the folder in
+  # HydraUninstallCleanup), so this waits for that.
   for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $installRoot); $i++) { Start-Sleep -Milliseconds 500 }
   if (Test-Path -LiteralPath $installRoot) { throw "Upgrade uninstall left files the prior release installed: $((Get-ChildItem -LiteralPath $installRoot -Recurse -File | Select-Object -First 10 | ForEach-Object FullName) -join ', ')" }
   Assert-DataPreserved
