@@ -40,10 +40,29 @@ const appOnly = ['--user-bubble'];
 export const themeVariableNames = Object.freeze([...Object.keys(sources), ...appOnly]);
 
 const files: Record<ThemeName, { colors: Record<string, string> }> = { dark: hydraDark, light: hydraLight };
-/** The app's own adjustments on top of the IDE's themes: Hydra Light's sidebar sits closer to the canvas here. */
+/**
+ * The app's own palette (docs/internal/hydra-app/UI-direction.md), over the IDE's themes: neutral surfaces, subtle
+ * borders, and Hydra green only for primary buttons, focus, success and links. The IDE's themes are unchanged.
+ */
 const appColors: Record<ThemeName, Record<string, string>> = {
-  dark: { '--user-bubble': '#262626' },
-  light: { '--sidebar-bg': '#F6F8F4', '--user-bubble': '#EEF0EC' },
+  dark: {
+    '--bg': '#141414', '--fg': '#ECECEC', '--muted': '#999999', '--faint': '#6E6E6E',
+    '--sidebar-bg': '#181818', '--sidebar-fg': '#CFCFCF', '--sidebar-border': '#2A2A2A', '--border': '#2A2A2A',
+    '--hover': '#222222', '--selected-bg': '#292929', '--selected-fg': '#ECECEC',
+    '--input-bg': '#1B1B1B', '--input-fg': '#ECECEC', '--input-border': '#333333',
+    '--button-bg': '#42A875', '--button-fg': '#0C1510', '--button-hover': '#4DB881',
+    '--focus': '#42A87566', '--link': '#42A875', '--titlebar-bg': '#141414', '--titlebar-fg': '#999999',
+    '--error': '#F2777A', '--warning': '#E5B25D', '--ok': '#42A875', '--user-bubble': '#222222',
+  },
+  light: {
+    '--bg': '#FBFBFA', '--fg': '#20201E', '--muted': '#73736E', '--faint': '#A3A39E',
+    '--sidebar-bg': '#F5F5F3', '--sidebar-fg': '#3A3A37', '--sidebar-border': '#E3E3E0', '--border': '#E3E3E0',
+    '--hover': '#ECECEA', '--selected-bg': '#E7E7E4', '--selected-fg': '#20201E',
+    '--input-bg': '#FFFFFF', '--input-fg': '#20201E', '--input-border': '#DADAD6',
+    '--button-bg': '#1F7A4D', '--button-fg': '#FFFFFF', '--button-hover': '#19663F',
+    '--focus': '#1F7A4D55', '--link': '#1F7A4D', '--titlebar-bg': '#FBFBFA', '--titlebar-fg': '#73736E',
+    '--error': '#C4314B', '--warning': '#A86A00', '--ok': '#1F7A4D', '--user-bubble': '#EFEFEC',
+  },
 };
 
 /** The CSS variables for one theme. Throws if the theme file lacks a color the app needs. */

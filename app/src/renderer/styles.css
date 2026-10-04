@@ -1,28 +1,29 @@
-/* The app's look. Colors come from Hydra Dark and Hydra Light (themes/hydra-*.json) as CSS variables, set by App.tsx;
-   these defaults are Hydra Dark's, so the first paint matches the window's background. */
+/* The app's look. Colors are the app's own palette (app/src/shared/theme.ts, from UI-direction.md), set as CSS
+   variables by App.tsx; these defaults are the dark palette's, so the first paint matches the window's background. */
 :root {
   color-scheme: dark;
-  --bg: #141414; --fg: #F5F5F5; --muted: #F0F0F0BD; --faint: #F0F0F05C;
-  --sidebar-bg: #141414; --sidebar-fg: #F0F0F0BD; --sidebar-border: #F0F0F013; --border: #2B2B2B;
-  --hover: #F0F0F011; --selected-bg: #F0F0F011; --selected-fg: #F0F0F0;
-  --input-bg: #1B1B1B; --input-fg: #F5F5F5; --input-border: #363636;
-  --button-bg: #173C2C; --button-fg: #FFFFFF; --button-hover: #24553F;
-  --focus: #F0F0F026; --link: #9FCAB0; --titlebar-bg: #141414; --titlebar-fg: #B8B8B8;
-  --error: #FC6B83; --warning: #F1B467; --ok: #70B489;
-  --user-bubble: #262626;
+  --bg: #141414; --fg: #ECECEC; --muted: #999999; --faint: #6E6E6E;
+  --sidebar-bg: #181818; --sidebar-fg: #CFCFCF; --sidebar-border: #2A2A2A; --border: #2A2A2A;
+  --hover: #222222; --selected-bg: #292929; --selected-fg: #ECECEC;
+  --input-bg: #1B1B1B; --input-fg: #ECECEC; --input-border: #333333;
+  --button-bg: #42A875; --button-fg: #0C1510; --button-hover: #4DB881;
+  --focus: #42A87566; --link: #42A875; --titlebar-bg: #141414; --titlebar-fg: #999999;
+  --error: #F2777A; --warning: #E5B25D; --ok: #42A875;
+  --user-bubble: #222222;
   --titlebar-height: 40px; --sidebar-width: 264px; --radius: 6px;
 }
-/* Hydra Light's, for a window that starts light, so its first paint matches too. */
+/* The light palette's, for a window that starts light, so its first paint matches too. */
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
-    --bg: #FAFBF9; --fg: #18221C; --muted: #566651; --faint: #141414BD;
-    --sidebar-bg: #F6F8F4; --sidebar-fg: #334238; --sidebar-border: #D5DED2; --border: #D5DED2;
-    --hover: #E9EEE7; --selected-bg: #14141414; --selected-fg: #141414; --input-bg: #FFFFFF;
-    --input-fg: #18221C; --input-border: #C5CFC4; --button-bg: #173C2C; --button-fg: #FFFFFF;
-    --button-hover: #24553F; --focus: #14141433; --link: #276342; --titlebar-bg: #FAFBF9;
-    --user-bubble: #EEF0EC;
-    --titlebar-fg: #18221C; --error: #BE1744; --warning: #A46700; --ok: #007041;
+    --bg: #FBFBFA; --fg: #20201E; --muted: #73736E; --faint: #A3A39E;
+    --sidebar-bg: #F5F5F3; --sidebar-fg: #3A3A37; --sidebar-border: #E3E3E0; --border: #E3E3E0;
+    --hover: #ECECEA; --selected-bg: #E7E7E4; --selected-fg: #20201E;
+    --input-bg: #FFFFFF; --input-fg: #20201E; --input-border: #DADAD6;
+    --button-bg: #1F7A4D; --button-fg: #FFFFFF; --button-hover: #19663F;
+    --focus: #1F7A4D55; --link: #1F7A4D; --titlebar-bg: #FBFBFA; --titlebar-fg: #73736E;
+    --error: #C4314B; --warning: #A86A00; --ok: #1F7A4D;
+    --user-bubble: #EFEFEC;
   }
 }
 * { box-sizing: border-box; }
@@ -97,9 +98,9 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .setting-value { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .setting-value .path { max-width: 360px; color: var(--muted); }
 .setting-value button, .segmented button { padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); }
-.setting-value button:hover, .segmented button:hover { border-color: var(--link); }
+.setting-value button:hover, .segmented button:hover { background: var(--hover); }
 .segmented { display: flex; gap: 4px; }
-.segmented button.active { background: var(--button-bg); color: var(--button-fg); border-color: var(--button-bg); }
+.segmented button.active { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--faint); }
 .hint { margin: 0 0 4px; color: var(--muted); }
 .about { margin-top: 32px; font-size: 12px; color: var(--faint); }
 
@@ -150,7 +151,7 @@ details.tool summary, details.thinking summary { cursor: pointer; display: flex;
 .tool-state { margin-left: auto; }
 details.tool.failed { border-color: var(--error); }
 .thinking-text { white-space: pre-wrap; color: var(--muted); font-size: 12px; padding: 6px 0; }
-.card { border: 1px solid var(--link); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .card-title { font-weight: 600; }
 .card-detail, .option-detail { color: var(--muted); }
 .card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
