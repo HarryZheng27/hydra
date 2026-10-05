@@ -3,6 +3,7 @@ import type { ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '.
 import { approvalModes, claudeEfforts, claudeModels, modes, titleCase } from './Composer';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
+import { AgentLogo } from './AgentLogo';
 
 export interface Recent { id: string; title: string; project?: string; provider: 'claude' | 'codex'; updatedAt: string }
 /** A chat on the home's Sessions list: one waiting on the user, or finished while they were elsewhere. */
@@ -39,8 +40,8 @@ interface Props {
 }
 
 const agentOptions = [
-  { value: 'claude', label: 'Claude Code' },
-  { value: 'codex', label: 'Codex' },
+  { value: 'claude', label: 'Claude Code', art: <AgentLogo provider="claude" /> },
+  { value: 'codex', label: 'Codex', art: <AgentLogo provider="codex" /> },
 ];
 const whereOptions = [
   { value: 'local', label: 'Local', description: 'Runs here, on your computer.' },
@@ -152,7 +153,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
           <span className="composer-spacer" />
           {modelOptions.length > 0 && <Picker bare label="Model" value={shownModel} options={modelOptions} onChange={setModel} />}
           {effortOptions.length > 0 && <Picker bare label="Effort" value={shownEffort} options={effortOptions} onChange={setEffort} />}
-          <Picker bare label="Agent" value={provider} options={agentOptions} onChange={value => { setProvider(value === 'codex' ? 'codex' : 'claude'); setModel(undefined); setEffort(undefined); }} />
+          <Picker bare artOnly label="Agent" title={provider === 'claude' ? 'Claude Code' : 'Codex'} value={provider} options={agentOptions} onChange={value => { setProvider(value === 'codex' ? 'codex' : 'claude'); setModel(undefined); setEffort(undefined); }} />
         </div>
         {cloud && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
       </div>

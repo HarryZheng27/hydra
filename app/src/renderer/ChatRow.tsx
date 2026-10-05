@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatRecord } from '../shared/ipc';
 import type { ChatStatus } from './chatStatus';
+import { AgentLogo } from './AgentLogo';
 import { Icon } from './Icon';
 
 const statusLabels: Record<ChatStatus, string> = { working: 'Working', needs: 'Needs your input', unread: 'Finished' };
@@ -63,7 +64,7 @@ export function ChatRow({ chat, selected, status, tooltip, onOpen, onRename, onA
             onChange={event => setDraft(event.target.value)} onBlur={() => finishRename(true)}
             onKeyDown={event => { if (event.key === 'Enter') finishRename(true); else if (event.key === 'Escape') finishRename(false); }} />
         : <button className={`chat-link ${selected ? 'selected' : ''}`} title={tooltip ?? chat.title} onClick={onOpen}>
-            <Mark chat={chat} status={status} /><span className="chat-title-text">{chat.title}</span>{chat.provider === 'codex' ? <span className="provider-tag">Codex</span> : null}
+            <Mark chat={chat} status={status} /><span className="chat-title-text">{chat.title}</span>{chat.provider === 'codex' ? <AgentLogo provider="codex" size={13} /> : null}
           </button>}
       {!editing && (
         <button className="icon-button small row-more" aria-label={`More for ${chat.title}`} aria-haspopup="menu" aria-expanded={menu} title="More" onClick={() => setMenu(open => !open)}><Icon name="more" /></button>

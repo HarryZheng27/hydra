@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
 
 /** A menu choice: its label, an optional badge ("Default"), a line drawn above it, and a description shown on hover. */
-export interface PickerOption { value: string; label: string; description?: string; badge?: string; separator?: boolean }
+export interface PickerOption { value: string; label: string; description?: string; badge?: string; separator?: boolean; art?: ReactNode }
 
 /**
  * A quiet menu like Claude desktop's: the current choice as text, opening a compact panel above it, one line per
  * choice, with a blue check on the current one and a number key on the others (pressing it picks that choice).
  * Escape or a click outside closes it; arrow keys move, Enter picks.
  */
-export function Picker({ label, value, options, onChange, title, placeholder, icon, chip, bare }: { label: string; value: string | undefined; options: PickerOption[]; onChange(value: string): void; title?: string; placeholder?: string; icon?: IconName; chip?: boolean; bare?: boolean }) {
+export function Picker({ label, value, options, onChange, title, placeholder, icon, chip, bare, artOnly }: { label: string; value: string | undefined; options: PickerOption[]; onChange(value: string): void; title?: string; placeholder?: string; icon?: IconName; chip?: boolean; bare?: boolean; artOnly?: boolean }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -34,14 +34,14 @@ export function Picker({ label, value, options, onChange, title, placeholder, ic
     <div className="picker-root" ref={root} onKeyDown={key}>
       <button type="button" className={`picker ${chip ? 'chip' : ''}`} aria-label={label} aria-haspopup="listbox" aria-expanded={open} data-value={value ?? ''} title={title}
         onClick={() => { setActive(Math.max(0, options.findIndex(option => option.value === value))); setOpen(current => !current); }}>
-        {icon && <Icon name={icon} />}<span>{current?.label ?? placeholder ?? label}</span>{!bare && <Icon name="chevronDown" />}
+        {icon && <Icon name={icon} />}{artOnly && current?.art ? current.art : <span>{current?.label ?? placeholder ?? label}</span>}{!bare && <Icon name="chevronDown" />}
       </button>
       {open && (
         <ul className="picker-menu" role="listbox" aria-label={label}>
           {options.map((option, index) => (
             <li key={option.value} role="option" aria-selected={option.value === value} data-value={option.value} title={option.description}
               className={`${index === active ? 'active' : ''} ${option.separator ? 'separated' : ''}`} onMouseEnter={() => setActive(index)} onMouseDown={event => event.preventDefault()} onClick={() => choose(option)}>
-              <span className="picker-label">{option.label}</span>
+              {option.art}<span className="picker-label">{option.label}</span>
               {option.badge && <span className="picker-badge">{option.badge}</span>}
               <span className="picker-key">{option.value === value ? <Icon name="check" /> : index < 9 ? index + 1 : null}</span>
             </li>

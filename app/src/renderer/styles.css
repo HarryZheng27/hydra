@@ -457,3 +457,10 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .picker-key { margin-left: auto; padding-left: 14px; min-width: 14px; display: inline-flex; justify-content: flex-end; color: var(--muted); font-size: 12.5px; }
 .picker-key .icon { width: 15px; height: 15px; color: #3B6FE0; }
 .picker[aria-expanded=true] { background: var(--hover); color: var(--fg); }
+
+/* The agents' logos (AgentLogo.tsx): in the home's Agent menu, beside a Codex chat's name, and fixed in a chat's bar. */
+.agent-logo { flex: none; display: block; }
+.agent-logo.codex { color: var(--fg); }
+.picker-menu li .agent-logo { width: 16px; height: 16px; }
+.chat-link .agent-logo { opacity: .75; }
+.composer-agent { display: inline-flex; align-items: center; padding: 0 6px 0 4px; }
