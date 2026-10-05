@@ -550,7 +550,7 @@ if (role === 'first') {
       await chat.click('.card.approval .card-actions button', 'Allow');
       await chat.until(`document.querySelectorAll('.turn-end').length >= 2`, 'Codex turn two to end');
       await chat.send('Run a slow command.');
-      await chat.until(`!!document.querySelector('details.tool .tool-state')`, 'the command to start');
+      await chat.until(`!!document.querySelector('details.tool .tool-state.running')`, 'the command to start');
       await ui(`document.querySelector('.composer .stop').click(); 1`);
       await chat.until(`document.querySelectorAll('.turn-end').length >= 3`, 'the stopped Codex turn to end');
       report.codex.outcomes = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);

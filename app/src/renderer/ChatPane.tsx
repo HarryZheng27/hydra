@@ -45,7 +45,7 @@ function ToolBlock({ item }: { item: ChatItem & { kind: 'tool' } }) {
     : typeof (item.input as { file_path?: unknown })?.file_path === 'string' ? String((item.input as { file_path: string }).file_path) : '';
   return (
     <details className={`tool ${item.isError ? 'failed' : ''}`}>
-      <summary><span className="tool-name">{item.name}</span>{summary && <span className="tool-summary">{summary}</span>}{item.output === undefined ? <span className="tool-state">running…</span> : item.isError && <span className="tool-state">failed</span>}</summary>
+      <summary><span className="tool-name">{item.name}</span>{summary && <span className="tool-summary">{summary}</span>}{item.output === undefined ? <span className="tool-state running">running…</span> : item.isError && <span className="tool-state failed">failed</span>}</summary>
       <pre className="code"><code>{pretty(item.input)}</code></pre>
       {item.output !== undefined && <pre className={`code output ${item.isError ? 'error' : ''}`}><code>{item.output || '(no output)'}</code></pre>}
     </details>

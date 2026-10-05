@@ -84,7 +84,12 @@ async function until(test, ms, what) {
   throw new Error(`Timed out waiting for ${what}.`);
 }
 
-const themeColor = (name, key) => JSON.parse(fs.readFileSync(path.join(appDir, '..', 'themes', `hydra-${name}.json`), 'utf8')).colors[key];
+// The app's canvas in each mode, from the design doc's colour tables (app/src/shared/theme.ts uses them; theme.test.ts checks).
+const canvasColor = name => {
+  const doc = fs.readFileSync(path.join(appDir, '..', 'docs', 'internal', 'hydra-app', 'UI-direction.md'), 'utf8');
+  const start = doc.indexOf(`## ${name === 'dark' ? 'Dark' : 'Light'} mode`);
+  return /^\| Canvas \| (#[0-9A-Fa-f]{6}) \|$/m.exec(doc.slice(start, doc.indexOf('\n## ', start + 3)))?.[1];
+};
 const standinErrors = (state = standinState) => { try { return fs.readFileSync(path.join(state, 'errors.log'), 'utf8'); } catch { return ''; } };
 const chatStarts = (state = standinState) => { try { return fs.readFileSync(path.join(state, 'calls.log'), 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line).args); } catch { return []; } };
 const checks = [];
@@ -191,12 +196,12 @@ try {
     assert.equal(a.projectsAfterRepick, 1);
     assert.deepEqual(a.problems, []);
   });
-  check('Hydra Dark and Light come from the theme files, with a Dark, Light or System setting', () => {
+  check('the app\'s dark and light palettes, with a Dark, Light or System setting', () => {
     assert.equal(a.themes.light.theme, 'light');
-    assert.equal(a.themes.light.bg, themeColor('light', 'editor.background'));
+    assert.equal(a.themes.light.bg, canvasColor('light'));
     assert.equal(a.themes.light.native, 'light');
     assert.equal(a.themes.dark.theme, 'dark');
-    assert.equal(a.themes.dark.bg, themeColor('dark', 'editor.background'));
+    assert.equal(a.themes.dark.bg, canvasColor('dark'));
     assert.equal(a.themes.dark.native, 'dark');
     assert.equal(a.themes.system.native, 'system');
     assert.equal(a.themes.system.theme, a.themes.system.nativeDark ? 'dark' : 'light');

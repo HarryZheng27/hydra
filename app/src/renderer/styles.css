@@ -149,7 +149,8 @@ details.tool summary, details.thinking summary { cursor: pointer; display: flex;
 .tool-name { font-weight: 600; color: var(--fg); }
 .tool-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .tool-state { margin-left: auto; }
-details.tool.failed .tool-state { color: var(--error); }
+.tool-state.failed { color: var(--error); }
+
 .thinking-text { white-space: pre-wrap; color: var(--muted); font-size: 12px; padding: 6px 0; }
 .card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .card-title { font-weight: 600; }
