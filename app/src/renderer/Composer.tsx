@@ -133,6 +133,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
       {record.where === 'cloud' && !seen('cloud') && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
       <div className="prompt-box">
         {slash.menu}
+        {slash.ghost}
         {(images.length > 0 || problem) && (
           <div className="attachments">
             {images.map((image, index) => (

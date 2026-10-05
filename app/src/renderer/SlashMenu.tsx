@@ -1,9 +1,9 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 
 /** A slash command the CLI listed, and whether it's one of the user's skills. */
 export interface SlashCommand { name: string; skill: boolean; description?: string; argumentHint?: string }
 
-const shown = 8;
+const shown = 300;
 // v2: entries carry whether they're Claude Code's own (skill: false) or a skill; a v1 list didn't know.
 const rememberedKey = 'hydra.claudeCommands.v2';
 
@@ -42,6 +42,9 @@ export function useSlashMenu(text: string, commands: SlashCommand[], setText: (t
   const [dismissed, setDismissed] = useState<string>();
   const items = dismissed === text ? [] : matchCommands(text, commands);
   useEffect(() => { setActive(0); }, [text]);
+  // The highlighted row stays in view as the arrows move through a long list.
+  const list = useRef<HTMLUListElement>(null);
+  useEffect(() => { list.current?.querySelector('li.active')?.scrollIntoView({ block: 'nearest' }); }, [active, items.length]);
   const choose = (command: SlashCommand) => setText(`/${command.name} `);
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
     if (!items.length) return false;
@@ -52,17 +55,17 @@ export function useSlashMenu(text: string, commands: SlashCommand[], setText: (t
     return false;
   };
   const menu = items.length ? (
-    <ul className="picker-menu slash-menu" role="listbox" aria-label="Slash commands">
+    <ul ref={list} className="picker-menu slash-menu" role="listbox" aria-label="Slash commands">
+      {/* As Claude desktop's: names only, one line each; what a command does shows on hover. */}
       {items.map((command, index) => (
-        <li key={command.name} role="option" aria-selected={index === active} className={index === active ? 'active' : ''}
+        <li key={command.name} role="option" aria-selected={index === active} className={index === active ? 'active' : ''} title={[command.argumentHint, command.description].filter(Boolean).join(' — ') || undefined}
           onMouseEnter={() => setActive(index)} onMouseDown={event => event.preventDefault()} onClick={() => choose(command)}>
-          <span className="picker-text">
-            <span className="picker-line"><span className="picker-label">/{command.name}</span>{command.argumentHint && <span className="slash-hint">{command.argumentHint}</span>}{command.skill && <span className="picker-badge">skill</span>}</span>
-            {command.description && <span className="picker-description">{command.description}</span>}
-          </span>
+          <span className="picker-label">{command.name}</span>
         </li>
       ))}
     </ul>
   ) : null;
-  return { keyDown, menu };
+  // Claude desktop's hint after a lone "/".
+  const ghost = text === '/' && items.length ? <span className="slash-ghost" aria-hidden="true">Type to filter</span> : null;
+  return { keyDown, menu, ghost };
 }

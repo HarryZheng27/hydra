@@ -623,3 +623,11 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .slash-menu { max-width: 520px; }
 .slash-menu .picker-description { white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
 .slash-hint { color: var(--muted); font-size: 12.5px; }
+
+/* The / menu as Claude desktop's (measured at 150%): a 240px panel over the box's left, names only in 24px rows,
+   about fifteen showing and the rest scrolling; "Type to filter" after a lone "/". */
+.picker-menu.slash-menu { right: auto; width: 240px; max-width: none; max-height: 372px; padding: 4px; }
+.slash-menu li { padding: 3px 10px; min-height: 24px; font-size: 14px; }
+.slash-menu li .picker-label { overflow: hidden; text-overflow: ellipsis; }
+.slash-ghost { position: absolute; left: calc(13px + 0.55em); top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 14px; pointer-events: none; }
+.composer .prompt-box:has(textarea:not(:placeholder-shown)) .slash-ghost { display: block; }

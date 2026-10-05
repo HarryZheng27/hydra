@@ -177,6 +177,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
         </div>
         <div className="prompt-box">
           {slash.menu}
+          {slash.ghost}
           {(images.length > 0 || problem) && (
             <div className="attachments">
               {images.map((image, index) => (
