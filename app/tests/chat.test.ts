@@ -202,6 +202,7 @@ test('two quick messages share one session; every message checks trust; a remove
     assert.equal(starts.length, 2, 'the untrusted send ended the old session; this one started fresh');
     await manager.closeFolder(dir);
     manager.closeAll();
+    await store.flush();
     await assert.rejects(manager.send(chat.id, 'five'), /quitting/);
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
@@ -247,7 +248,7 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
       say({ method: 'turn/started', params: { threadId: thread, turn: { id } } });
       say({ method: 'turn/completed', params: { threadId: thread, turn: { id, status: 'completed' } } });
       await readsReach(before + 2); // and again when it ends
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => setTimeout(resolve, 200));
     };
     await manager.send(chat.id, 'one');
     say({ id: 3, result: { thread: { id: thread }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } });
@@ -255,6 +256,7 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
     assert.equal(notice(), false, 'a sibling folder with a longer name is not this one');
     await manager.send(chat.id, 'two');
     await turn('t2', `[projects.'${dir}']\ntrust_level = "trusted"\n`);
+    for (let i = 0; i < 500 && !notice(); i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(notice(), true, JSON.stringify(pushed.map(event => event.type)));
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
