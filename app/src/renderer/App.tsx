@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
 import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
@@ -55,6 +56,7 @@ export function App() {
   const [checking, setChecking] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
+  const [deleting, setDeleting] = useState<ChatRecord>();
   // Each chat's dot in the sidebar (chatStatus.ts), from the events main pushes for every chat.
   const [statuses, setStatuses] = useState<Record<string, ChatStatus>>({});
   const waiting = useRef(new Map<string, Set<string>>());
@@ -155,6 +157,10 @@ export function App() {
     const timer = setInterval(() => { void window.hydra.listChats().then(setChats, () => undefined); }, 120_000);
     return () => clearInterval(timer);
   }, []);
+  const removeChat = (chat: ChatRecord) => void run(window.hydra.removeChat(chat.id), () => {
+    setChats(list => list.filter(c => c.id !== chat.id));
+    if (view.kind === 'chat' && view.id === chat.id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
+  });
   const toggleSidebar = () => {
     if (!state) return;
     const open = !state.sidebarOpen;
@@ -239,6 +245,7 @@ export function App() {
   return (
     <div className={`app ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
       <HostLayer />
+      {deleting && <ConfirmDelete chat={deleting} onCancel={() => setDeleting(undefined)} onConfirm={() => { removeChat(deleting); setDeleting(undefined); }} />}
       <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} mode={mode} onMode={setMode} />
       <div className="body">
         {/* Kept mounted so the toggle can slide it; closed, it is inert (no focus, clicks or screen reader). */}
@@ -261,13 +268,8 @@ export function App() {
                 setChats(list => list.map(c => (c.id === record.id ? record : c)));
                 if (archived && view.kind === 'chat' && view.id === id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
               })}
-              onDeleteChat={chat => {
-                if (!window.confirm(`Delete “${chat.title}”? Its conversation is removed from Hydra, and this can't be undone.`)) return;
-                void run(window.hydra.removeChat(chat.id), () => {
-                  setChats(list => list.filter(c => c.id !== chat.id));
-                  if (view.kind === 'chat' && view.id === chat.id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
-                });
-              }}
+              // Only the first Delete asks (ConfirmDelete.tsx); after that it just deletes.
+              onDeleteChat={chat => { if (deleteConfirmed()) removeChat(chat); else setDeleting(chat); }}
             />
           </div>
         )}
