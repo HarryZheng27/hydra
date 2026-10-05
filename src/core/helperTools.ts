@@ -28,6 +28,7 @@ const planJobSchema = {
     provider: string('Which agent runs this job. Defaults to the plan\'s, else yours.', { enum: ['claude', 'codex'] }),
     role: string('A role from an active pack, as "pack/role", if one fits this job.'),
     rigor: string('How much checking this job gets, on top of the project\'s own gates (never fewer than those). "quick": nothing extra. "standard" (the default): the job runs the project\'s own gates, and the plan gets one review of all its jobs\' work together, by the other agent, before it merges. "strict": also a review of this job on its own, plus screenshots when the project has them.', { enum: ['quick', 'standard', 'strict'] }),
+    where: string('Where the job runs: "local" (the default). "cloud" is for Codex cloud heads (provider "codex"), which this version can\'t run yet, so it is refused for now.', { enum: ['local', 'cloud'] }),
   },
 };
 

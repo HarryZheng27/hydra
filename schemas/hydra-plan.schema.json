@@ -85,6 +85,14 @@
               "standard",
               "strict"
             ]
+          },
+          "where": {
+            "type": "string",
+            "description": "Where the job runs: \"local\" (the default). \"cloud\" is for Codex cloud heads (provider \"codex\"), which this version can't run yet, so it is refused for now.",
+            "enum": [
+              "local",
+              "cloud"
+            ]
           }
         }
       },

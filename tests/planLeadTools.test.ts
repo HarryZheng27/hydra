@@ -390,3 +390,21 @@ test('buildPlanReport (O9): each job\'s cost as its provider reported it, and th
   assert.ok(report.includes('Cost: 1200 input and 300 output tokens (Codex reports tokens, not dollars).'));
   assert.ok(report.includes('Cost: not reported; budgeted up to $5.'));
 });
+
+test('G7: a plan job\'s "where": old plans and "local" run here; "cloud" is refused for Claude, for lanes, and (until cloud heads exist) for Codex too, on every path', () => {
+  // Old plans, without the field, and an explicit "local" are unchanged.
+  const local = planFromLeadInput({ title: 'Local', jobs: [leadJob('a'), leadJob('b', { where: 'local', provider: 'codex' })] }, origin);
+  assert.equal(local.jobs[1]!.where, undefined, '"local" is the default, so nothing is stored');
+  assert.doesNotThrow(() => validatePlan(local));
+  // "cloud" names Codex only, then says plainly that this version can't run it.
+  assert.throws(() => planFromLeadInput({ title: 'C', jobs: [leadJob('a', { where: 'cloud' })] }, origin), /only Codex jobs can: set its provider to "codex"/);
+  assert.throws(() => planFromLeadInput({ title: 'C', jobs: [leadJob('a', { where: 'cloud', provider: 'claude' })] }, origin), /only Codex jobs can/);
+  assert.throws(() => planFromLeadInput({ title: 'C', jobs: [leadJob('a', { where: 'cloud', provider: 'codex' })] }, origin), /Codex cloud head, which this version of Hydra can't run yet/);
+  assert.throws(() => planFromLeadInput({ title: 'C', jobs: [leadJob('a', { where: 'moon' as 'cloud' })] }, origin), /unknown place to run/);
+  // Adding a cloud job by amendment is refused the same way.
+  assert.throws(() => applyPlanAmendment({ jobs: local.jobs }, { add: [leadJob('c', { where: 'cloud', provider: 'codex' })] }), /can't run yet/);
+  // A stored job that says so (a hand-edited plan) never validates, so it can't reach the runner as a local job.
+  const stored: PlanJob = { key: 'x', title: 'X', brief: 'x', dependsOn: [], provider: 'codex', where: 'cloud' };
+  assert.throws(() => validatePlan({ ...local, jobs: [stored] }), /can't run yet/);
+  assert.throws(() => validatePlan({ ...local, jobs: [{ ...stored, runAs: 'lane' }] }), /lane, which runs on this computer/);
+});

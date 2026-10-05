@@ -252,6 +252,8 @@ Apart from plans (below), the view never starts work itself; everything else on 
 
 Set it when a job is created (`hydra_plan_create`'s `rigor`) or changed later (`hydra_plan_amend`'s `edit` or `retry`).
 
+**Where.** A job runs on this computer. Its `where` is `"local"` by default; `"cloud"` is reserved for Codex cloud heads (provider `"codex"`, a head rather than a lane), which this version can't run yet, so a plan asking for one is refused when it is made or changed, with how to run the job here instead.
+
 **Both providers as one pool.**
 - **A guaranteed independent reviewer, honestly.** When a job's usage-limit handoff means both Claude Code and Codex wrote part of its diff, "the other agent" has no independent choice left. Hydra reviews with the job's current agent anyway and says so plainly in the evidence, rather than quietly picking one and calling it independent.
 - **Plan jobs fail over on their own.** With `hydra.limits.autoContinuePlans` (on by default), a plan's job that hits its usage limit continues in the other provider right away — nobody may be watching an unattended plan to answer the usual prompt. Turn it off to have a plan job's limit offered like any other head's.
@@ -447,7 +449,7 @@ The app's `bin` folder already has `hydra` (and `hydra.cmd`), the launcher that 
 
 ### Plan files
 
-A plan can live in the repository as `.hydra/plans/<name>.json`, reviewed in a pull request like any other file and run again with `hydra plan run <name>`. It has exactly the fields of `hydra_plan_create`: `title`, `brief`, `jobs` (each with `key`, `title`, `brief`, `write_scope`, and optionally `depends_on`, `provider`, `role` and `rigor`), `run` and `budget`, with `idempotency_key` optional and `$schema` allowed. Hydra publishes its JSON schema (`schemas/hydra-plan.schema.json`, generated from `hydra_plan_create`'s own), and the editor uses it for completion and checking in any `.hydra/plans/*.json`. `hydra plan run` refuses a file that isn't valid before asking any Hydra: two independent jobs changing the same path, a dependency cycle, an unknown field, or an unattended run without a budget.
+A plan can live in the repository as `.hydra/plans/<name>.json`, reviewed in a pull request like any other file and run again with `hydra plan run <name>`. It has exactly the fields of `hydra_plan_create`: `title`, `brief`, `jobs` (each with `key`, `title`, `brief`, `write_scope`, and optionally `depends_on`, `provider`, `role`, `rigor` and `where`), `run` and `budget`, with `idempotency_key` optional and `$schema` allowed. Hydra publishes its JSON schema (`schemas/hydra-plan.schema.json`, generated from `hydra_plan_create`'s own), and the editor uses it for completion and checking in any `.hydra/plans/*.json`. `hydra plan run` refuses a file that isn't valid before asking any Hydra: two independent jobs changing the same path, a dependency cycle, an unknown field, or an unattended run without a budget.
 
 ```json
 {

@@ -64,5 +64,11 @@ Run on Nico's machine with Claude Code 2.1.282 (Claude Max), against the private
 - **Open on claude.ai said the session couldn't be found** in Nico's browser. The link is the CLI's own, without `?from=cli&m=0`. Not yet known: whether the browser was signed into a different account or organization than the CLI (Claude Max), or claude.ai needs the query. Open until Nico checks.
 - **Found during the check:** launching the dev app from Git Bash with a `cygpath -p` PATH drops part of the user PATH, so the app couldn't find `claude`. That was a launch problem, not an app problem; relaunched from PowerShell.
 
+### Milestone 3 groundwork (2026-10-05)
+The plan setting is in, before the runner. A job's `where` (`"local"` by default, or `"cloud"`) is part of `hydra_plan_create`, `hydra_plan_amend`'s `add`, and the published `schemas/hydra-plan.schema.json`.
+- `validatePlanJobs` refuses `"cloud"` for Claude jobs, for lanes and, for now, for Codex jobs too, saying this version can't run them yet. Every path (create, amend, a hand-edited stored plan) goes through it, so no cloud job reaches the runner and runs locally by mistake.
+- Old plans validate unchanged.
+- Left for when the Codex half of S3 has run: the runner (start, poll with a time limit, apply the diff at the job's base, then the local gates and review), then lifting the Codex refusal, the canvas job editor's field, and the canvas's cloud state and link.
+
 ### Codex (waiting)
 Nico's ChatGPT workspace has no Codex cloud environment yet: `codex cloud exec --env hydra-cloud-sandbox …` answers "no cloud environments are available for this workspace", and `codex cloud list --json` is empty. The Codex half of S3 runs once an environment exists for `ndunl075/hydra-cloud-sandbox` (chatgpt.com/codex → Settings → Environments → Create environment).
