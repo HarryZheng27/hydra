@@ -469,3 +469,5 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .picker-root { display: inline-flex; align-items: center; }
 .picker .agent-logo { display: block; }
 .composer-agent .agent-logo { display: block; }
+/* Centred on the lowercase letters beside it, not their capitals: the logo's middle lines up with the x-height. */
+.picker .agent-logo, .composer-agent .agent-logo, .picker-menu li .agent-logo { transform: translateY(1.5px); }
