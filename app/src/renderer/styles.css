@@ -413,33 +413,33 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .home-prompt .round { right: 10px; bottom: 12px; }
 .home-prompt .composer-bar { padding: 8px 0 0; }
 
-/* The home, laid out and sized as Claude desktop's (measured at 125%): 48px margins, the heading 24px below the title
-   bar, the Sessions list of chats that need the user, and the prompt along the bottom. */
-.home-start { padding: 0 48px 22px; }
-.home-column { max-width: none; margin: 0; padding: 24px 0 0; }
-.home-column h1 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 24px; font-weight: 400; letter-spacing: -.01em; }
-.home-mark { color: var(--link); font-size: 22px; line-height: 1; }
-.home-start .sessions { margin: 76px 12px 0; }
-.home-start .sessions-head { margin-bottom: 10px; }
-.home-start .sessions-head h2 { font-size: 15px; font-weight: 500; }
-.home-start .link-quiet { font-size: 14px; }
-.home-start .sessions ul { gap: 5px; }
-.home-start .sessions button { height: 48px; gap: 10px; padding: 0 14px; border-radius: 8px; background: var(--hover); font-size: 15px; }
+/* The home, laid out and sized as Claude desktop's (measured from a 150% screenshot, so ÷1.5): 40px margins, the
+   heading 20px below the title bar, the Sessions list of chats that need the user, and the prompt along the bottom. */
+.home-start { padding: 0 40px 18px; }
+.home-column { max-width: none; margin: 0; padding: 20px 0 0; }
+.home-column h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; font-weight: 400; letter-spacing: -.01em; }
+.home-mark { color: var(--link); font-size: 18px; line-height: 1; }
+.home-start .sessions { margin: 50px 10px 0; }
+.home-start .sessions-head { margin-bottom: 8px; }
+.home-start .sessions-head h2 { font-size: 14px; font-weight: 500; }
+.home-start .link-quiet { font-size: 13px; }
+.home-start .sessions ul { gap: 4px; }
+.home-start .sessions button { height: 40px; gap: 8px; padding: 0 12px; border-radius: 8px; background: var(--hover); font-size: 14px; }
 .home-start .sessions button:hover { background: var(--selected-bg); }
-.session-state { display: inline-flex; align-items: center; gap: 7px; flex: none; }
-.session-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.session-state { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.session-state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .session-state.needs { color: #B7791F; }
 .session-state.unread { color: #4A6CDB; }
 .session-title { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 .session-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .session-when { flex: none; color: var(--muted); }
-.home-start .sessions button > .icon { width: 16px; height: 16px; color: var(--muted); }
+.home-start .sessions button > .icon { width: 14px; height: 14px; color: var(--muted); }
 .home-prompt.composer { padding: 0; }
-.home-chips { gap: 7px; margin: 0 0 10px; }
-.picker.chip { height: 29px; padding: 0 9px; gap: 7px; border-radius: 6px; font-size: 15px; }
-.picker.chip .icon:first-child { width: 16px; height: 16px; }
-.home-prompt .prompt-box { min-height: 50px; justify-content: center; border-radius: 13px; padding: 12px 48px 12px 14px; }
-.home-prompt textarea { font-size: 16px; line-height: 24px; }
-.home-prompt .round { right: 10px; bottom: 10px; }
-.home-prompt .composer-bar { padding: 9px 6px 0; }
-.home-prompt .composer-bar .picker { color: var(--fg); font-size: 15px; padding: 2px 6px; }
+.home-chips { gap: 6px; margin: 0 0 8px; }
+.picker.chip { height: 24px; padding: 0 7px; gap: 6px; border-radius: 6px; font-size: 13px; }
+.picker.chip .icon:first-child { width: 14px; height: 14px; }
+.home-prompt .prompt-box { min-height: 41px; justify-content: center; border-radius: 11px; padding: 9px 40px 9px 12px; }
+.home-prompt textarea { font-size: 14px; line-height: 22px; min-height: 22px; }
+.home-prompt .round { right: 7px; bottom: 6px; width: 28px; height: 28px; }
+.home-prompt .composer-bar { padding: 7px 4px 0; }
+.home-prompt .composer-bar .picker { color: var(--fg); font-size: 13px; padding: 2px 6px; }
