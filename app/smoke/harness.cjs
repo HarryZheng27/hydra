@@ -219,7 +219,7 @@ if (role === 'resume') {
     {
       const storage = process.env.HYDRA_APP_IDE_STORAGE;
       report.agents = {};
-      await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
+      await ui(`document.querySelector('[aria-label="New chat in Project One"]').click(); 1`);
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('New chat'))`, 'the project view');
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('New chat')).click(); 1`);
       await until(`!!document.querySelector('.composer textarea')`, 'the new chat');
@@ -413,7 +413,8 @@ if (role === 'first') {
       sidebarToggle: !!document.querySelector('.titlebar [aria-label="Hide sidebar"]'),
       chatTab: document.querySelector('.mode-switch [aria-pressed=true]')?.textContent,
       agentsDisabled: document.querySelector('.mode-switch button[disabled]')?.textContent,
-      sidebar: [...document.querySelectorAll('.sidebar .side-action span')].map(e => e.textContent),
+      sidebar: [...document.querySelectorAll('.sidebar .side-nav > .side-action > span:last-child')].map(e => e.textContent),
+      account: !!document.querySelector('.sidebar .account-button'),
       search: !!document.querySelector('.sidebar input[type=search]'),
       emptyButton: document.querySelector('.empty .primary')?.textContent,
     })`);
@@ -424,10 +425,16 @@ if (role === 'first') {
       while (Date.now() < end) { if (await ui(expression)) return; await wait(100); }
       throw new Error(`Timed out waiting for ${what}; the page shows: ${await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent).join(' | ')`)}`);
     };
+    // Settings lives in the account row's menu at the bottom of the sidebar, as in Claude desktop.
+    const openSettings = async () => {
+      await ui(`document.querySelector('.sidebar .account-button').click(); 1`);
+      await until(`!!document.querySelector('.account-menu')`, 'the account menu');
+      await ui(`[...document.querySelectorAll('.account-menu [role=menuitem]')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    };
     report.problems = await ui(`[...document.querySelectorAll('.banner')].map(b => b.textContent)`);
     report.home = await ui(`({ buttons: [...document.querySelectorAll('.start-actions button')].map(b => b.textContent), setupOnHome: !!document.querySelector('.empty .setup') })`);
     // Onboarding lives in Settings: the version and help checks, the registrations, and Sign in.
-    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await openSettings();
     await until(`!!document.querySelector('.settings h1')`, 'Settings');
     await until(`document.querySelectorAll('.setup .provider').length === 2`, 'the onboarding checks', 30000);
     const setupRows = `[...document.querySelectorAll('.setup .provider')].map(p => ({ provider: p.dataset.provider, status: p.querySelector('.provider-status').textContent, registration: p.querySelector('.provider-registration').textContent, account: p.querySelector('.provider-account')?.textContent ?? null, signIn: !!p.querySelector('.primary') && !p.querySelector('.primary').disabled }))`;
@@ -445,7 +452,7 @@ if (role === 'first') {
     // A second Sign in while one runs is refused, so a page can't stack logins.
     report.secondSignIn = await ui(`Promise.all([window.hydra.signIn('claude'), window.hydra.signIn('claude')])`);
     // Back to the home screen.
-    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('New chat')).click(); 1`);
+    await ui(`document.querySelector('.sidebar .new-action').click(); 1`);
     await until(`document.querySelector('.empty h1')?.textContent === 'What are we working on?'`, 'the home screen');
     const themeNow = () => ui(`({ theme: document.documentElement.dataset.theme, bg: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(), body: getComputedStyle(document.body).backgroundColor })`);
     report.themes = { initial: await themeNow() };
@@ -464,12 +471,12 @@ if (role === 'first') {
     await ui(`document.querySelector('.titlebar .icon-button').click(); 1`);
     await until(`!!document.querySelector('.sidebar-slot:not([inert]) .sidebar')`, 'the sidebar to show');
     // Picking the same folder again, from Settings, leads back to its project and adds nothing.
-    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await openSettings();
     await until(`!!document.querySelector('.settings h1')`, 'Settings');
-    await ui(`document.querySelector('.section-head .icon-button').click(); 1`);
+    await ui(`document.querySelector('.side-nav .side-action[title="Open a folder as a project"]').click(); 1`);
     await until(`!document.querySelector('.settings h1') && document.querySelector('.project-row.selected .project-name span')?.textContent === 'Project One'`, 'the re-picked project');
     report.projectsAfterRepick = await ui(`document.querySelectorAll('.project-name').length`);
-    await ui(`[...document.querySelectorAll('.side-action')].find(b => b.textContent.includes('Settings')).click(); 1`);
+    await openSettings();
     await until(`document.querySelector('.settings h1')?.textContent === 'Settings'`, 'Settings');
     await shot('settings');
     report.settingsView = await ui(`({ heading: document.querySelector('.settings h1')?.textContent, themes: [...document.querySelectorAll('.segmented [role=radio]')].map(b => b.textContent + ':' + b.getAttribute('aria-checked')) })`);
@@ -495,7 +502,7 @@ if (role === 'first') {
     // A chat with Claude Code (the stand-in replaying G1's recorded turns): trust, stream, approve, deny, stop.
     {
       const chat = chatDriver(wc);
-      await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
+      await ui(`document.querySelector('[aria-label="New chat in Project One"]').click(); 1`);
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('New chat'))`, 'the project view');
       report.chat = { trustedBefore: await ui(`document.querySelector('.empty .hint')?.textContent ?? ''`) };
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('New chat')).click(); 1`);
@@ -523,7 +530,7 @@ if (role === 'first') {
       await shot('chat');
 
       // A chat with Codex in the same, already trusted folder: deny, allow, then stop mid-command.
-      await ui(`[...document.querySelectorAll('.project-name')].find(b => b.textContent.includes('Project One')).click(); 1`);
+      await ui(`document.querySelector('[aria-label="New chat in Project One"]').click(); 1`);
       await until(`[...document.querySelectorAll('.empty .primary')].some(b => b.textContent.includes('Codex'))`, 'the project view');
       await ui(`[...document.querySelectorAll('.empty .primary')].find(b => b.textContent.includes('Codex')).click(); 1`);
       await chat.until(`!!document.querySelector('.composer .picker[aria-label=Approvals]')`, 'the new Codex chat');

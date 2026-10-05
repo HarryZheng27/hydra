@@ -78,7 +78,8 @@ export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?:
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 
 export type CliProvider = 'claude' | 'codex';
-export interface AppInfo { name: string; version: string; electron: string; platform: string }
+/** `user` is the Windows account's name, for the sidebar's account row; it stays in the app. */
+export interface AppInfo { name: string; version: string; electron: string; platform: string; user?: string }
 /** In-app updates: `available` is false for a preview or development copy, with the reason. */
 export interface UpdateStatusView { available: boolean; reason?: string; automatic: boolean; busy: boolean; version: string }
 /** Preferences, in settings.json. CLI paths are machine-only: set from main's file picker, never from a project. */

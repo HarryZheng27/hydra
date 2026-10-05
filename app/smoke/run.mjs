@@ -183,7 +183,8 @@ try {
     assert.equal(a.ui.sidebarToggle, true);
     assert.equal(a.ui.chatTab, 'Chat');
     assert.equal(a.ui.agentsDisabled, undefined, 'Agents is live (G5): with no project open it says to open one');
-    assert.deepEqual(a.ui.sidebar, ['New chat', 'Settings']);
+    assert.deepEqual(a.ui.sidebar, ['New', 'Projects', 'Archived', 'More']);
+    assert.equal(a.ui.account, true, 'Settings is in the account row at the bottom');
     assert.equal(a.ui.search, true);
     assert.match(a.ui.emptyButton, /Open a project/);
     assert.deepEqual(a.home.buttons, ['Open a project', 'Clone a repo']);
