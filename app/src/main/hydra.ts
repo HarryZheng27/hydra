@@ -279,8 +279,11 @@ export class HydraProjects {
     if (!pending) {
       pending = (this.stopping.get(project.id) ?? Promise.resolve()).then(() => this.boot(project)).catch(error => {
         const message = error instanceof Error ? error.message : String(error);
+        const previous = this.errors.get(project.id);
         this.errors.set(project.id, message);
         this.options.log(`[hydra] ${project.name}: not started: ${message}`);
+        // Said in the window, once per new reason: every chat opened here tries again, and shouldn't repeat it.
+        if (previous !== message) void this.options.ui?.notice(project.id, 'error', `Hydra didn't start for ${project.name}: ${message}`, []);
       }).finally(() => this.starting.delete(project.id));
       this.starting.set(project.id, pending);
     }

@@ -157,3 +157,30 @@ test('reopening a project while its controller is still stopping waits for it, r
     for (const folder of [dir, storage, userData]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
   }
 });
+
+test('a project whose Hydra can\'t start says why in the window, once per reason, however often its chats open', { timeout: 120_000 }, async () => {
+  // Its storage can't be made (a file stands where the folder goes), so every start fails the same way.
+  const blocked = scratch('blocked'), userData = scratch('userdata'), dir = repo();
+  const storage = path.join(blocked, 'storage');
+  fs.writeFileSync(storage, 'not a folder');
+  const notices: Array<{ projectId: string; level: string; message: string }> = [];
+  const ui = { notice: async (projectId: string, level: string, message: string) => { notices.push({ projectId, level, message }); return undefined; } };
+  try {
+    const app = new HydraProjects({
+      storage, dist: path.join(__dirname, '..', 'dist'), appRoot: path.join(__dirname, '..'), extension: path.join(__dirname, '..', '..'),
+      userData, version: '0.0.0-test', development: true, cliPath: async () => undefined, log: () => undefined,
+      ui: ui as unknown as NonNullable<ConstructorParameters<typeof HydraProjects>[0]['ui']>,
+    });
+    const gone = { ...project(dir), name: 'Gone' };
+    await app.open(gone);
+    await app.open(gone);
+    assert.equal(app.status().find(status => status.id === gone.id)?.running, false);
+    assert.ok(app.status().find(status => status.id === gone.id)?.error);
+    assert.equal(notices.length, 1, JSON.stringify(notices));
+    assert.equal(notices[0]!.level, 'error');
+    assert.match(notices[0]!.message, /^Hydra didn't start for Gone: /);
+    await app.shutdown();
+  } finally {
+    for (const folder of [blocked, userData, dir]) fs.rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
