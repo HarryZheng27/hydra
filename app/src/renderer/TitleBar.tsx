@@ -3,7 +3,8 @@ import { Icon } from './Icon';
 /** The window's title bar: drag area, sidebar toggle, and the Chat / Agents switch. Windows draws its own buttons on the right. */
 export function TitleBar({ sidebarOpen, onToggleSidebar, mode, onMode }: { sidebarOpen: boolean; onToggleSidebar: () => void; mode: 'chat' | 'agents'; onMode: (mode: 'chat' | 'agents') => void }) {
   return (
-    <header className="titlebar">
+    <header className={`titlebar ${sidebarOpen ? 'with-sidebar' : ''}`}>
+      <div className="titlebar-side">
       <button className="icon-button no-drag" onClick={onToggleSidebar} aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'} title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
         <Icon name="sidebar" />
       </button>
@@ -11,7 +12,9 @@ export function TitleBar({ sidebarOpen, onToggleSidebar, mode, onMode }: { sideb
         <button aria-pressed={mode === 'chat'} className={`mode ${mode === 'chat' ? 'active' : ''}`} onClick={() => onMode('chat')}>Chat</button>
         <button aria-pressed={mode === 'agents'} className={`mode ${mode === 'agents' ? 'active' : ''}`} onClick={() => onMode('agents')} title="Heads, plans and lanes for the open project">Agents</button>
       </div>
-      <div className="titlebar-title">Hydra</div>
+      </div>
+      {/* The open chat's header lands here (ChatPane), as in Claude desktop's title bar; otherwise the app's name. */}
+      <div id="titlebar-slot" className="titlebar-main"><div className="titlebar-title">Hydra</div></div>
     </header>
   );
 }

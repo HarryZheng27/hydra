@@ -281,7 +281,10 @@ export function App() {
             : view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
-              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]} hydra={project ? trees[project.id] : undefined}
+              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []}
+                  projectName={state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name}
+                  onArchive={() => void run(window.hydra.archiveChat(chat.id, true), record => { setChats(list => list.map(c => (c.id === record.id ? record : c))); setView(project ? { kind: 'project', id: project.id } : { kind: 'home' }); })}
+                  onDelete={() => { if (deleteConfirmed()) removeChat(chat); else setDeleting(chat); }} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]} hydra={project ? trees[project.id] : undefined}
                   onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
                   onOpenSettings={() => setView({ kind: 'settings' })}
                   onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}
