@@ -362,21 +362,22 @@ test('approving a plan takes the chat out of plan mode, so a later process doesn
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
-test('new chats follow the user\'s own CLI settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
+test('new Claude chats start in Auto and Codex chats on the user\'s own settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
   const dir = scratch();
   try {
     const launched = fakeLaunch();
     const store = new ChatStore(path.join(dir, 'chats'), noAcl);
     const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined, warm: true });
     const first = await manager.create({ cwd: dir, provider: 'claude' });
-    assert.equal(first.permissionMode, 'settings');
+    assert.equal(first.permissionMode, 'auto', 'Claude chats start in Auto, as Claude desktop\'s do');
     const codex = await manager.create({ cwd: dir, provider: 'codex' });
     assert.equal(codex.approvals, 'settings');
     assert.equal(codex.sandbox, 'read-only');
     await manager.open(first.id);
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(launched.starts.length, 1, 'the Claude CLI started when the chat opened');
-    assert.ok(!launched.starts[0]!.args.includes('--permission-mode'), 'your settings: no mode passed');
+    const flag = launched.starts[0]!.args.indexOf('--permission-mode');
+    assert.deepEqual(launched.starts[0]!.args.slice(flag, flag + 2), ['--permission-mode', 'auto']);
     const killed: number[] = [];
     const watch = (index: number) => { const exit = launched.starts[index]!.handlers.exit; launched.starts[index]!.handlers.exit = code => { killed.push(index); exit(code); }; };
     watch(0);
@@ -393,10 +394,10 @@ test('new chats follow the user\'s own CLI settings; opening a Claude chat start
     assert.deepEqual(killed, [0, 1]);
     await manager.send(second.id, 'hi');
     assert.equal(launched.starts.length, 3, 'the message used the started process');
-    // A plan approval moves a plan-mode chat out of plan mode; a chat on the user's settings stays on them.
-    launched.starts[2]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', permissionMode: 'auto', session_id: second.providerSessionId }));
+    // A plan approval moves a plan-mode chat out of plan mode; a chat in another mode stays in it.
+    launched.starts[2]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', permissionMode: 'acceptEdits', session_id: second.providerSessionId }));
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal((await store.get(second.id))!.permissionMode, 'settings');
+    assert.equal((await store.get(second.id))!.permissionMode, 'auto');
     manager.closeAll();
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }

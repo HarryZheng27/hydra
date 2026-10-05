@@ -67,7 +67,8 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const [provider, setProvider] = useState<'claude' | 'codex'>('claude');
   const [where, setWhere] = useState<'local' | 'cloud'>('local');
   // The user's own default mode, badged and shown; only a different choice is passed, so their settings still decide.
-  const defaultMode = (knownModels.claudeMode ?? 'default') as ClaudePermissionMode;
+  // Claude chats start in Auto, as Claude desktop's do (ChatManager.create); the menu's Default says so.
+  const defaultMode: ClaudePermissionMode = 'auto';
   const [mode, setMode] = useState<ClaudePermissionMode>(defaultMode);
   const [images, setImages] = useState<Attached[]>([]);
   const [problem, setProblem] = useState<string>();

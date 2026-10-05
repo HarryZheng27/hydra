@@ -593,3 +593,9 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .terminal-pane { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); overflow: hidden; }
 .terminal-pane .xterm { height: 100%; }
 .chat:has(.chat-terminal) .transcript { flex: 0 1 auto; max-height: 38%; }
+
+/* Wider side margins in a chat, nearer Claude desktop's: at least 56px each side, and a 720px column once there's room. */
+.transcript { padding-left: max(56px, calc((100% - 720px) / 2)); padding-right: max(56px, calc((100% - 720px) / 2)); }
+.composer { padding-left: max(56px, calc((100% - 720px) / 2)); padding-right: max(56px, calc((100% - 720px) / 2)); }
+.home-start { padding-left: 56px; padding-right: 56px; }
+.chat-terminal { padding-left: max(56px, calc((100% - 900px) / 2)); padding-right: max(56px, calc((100% - 900px) / 2)); }

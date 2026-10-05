@@ -194,7 +194,7 @@ export class ChatManager {
     this.adapter(input.provider);
     return this.deps.store.create({
       provider: input.provider, cwd: input.cwd, ...(input.where === 'cloud' ? { where: 'cloud' as const } : {}),
-      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'settings' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
+      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'auto' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
       ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
     });
   }

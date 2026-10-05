@@ -146,7 +146,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
         <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         {cloud ? null : codex
           ? <Picker label="Approvals" value={record.approvals ?? 'ask'} options={approvalModes(defaults)} onChange={value => onConfigure({ approvals: value as CodexApprovals })} title="Who answers Codex's approvals. Hydra starts Codex read-only." />
-          : <Picker label="Permission mode" value={mode} options={modeMenu(defaults?.mode)} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
+          : <Picker label="Permission mode" value={mode} options={modeMenu('auto')} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
         {onWhere && <Picker label="Where" value={record.where ?? 'local'} options={whereOptions} onChange={value => onWhere(value === 'cloud' ? 'cloud' : 'local')} title="Run this chat here or on claude.ai. Chosen before the first message." />}
         <span className="composer-spacer" />
         {!cloud && <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />}
