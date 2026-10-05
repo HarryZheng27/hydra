@@ -44,6 +44,8 @@ export interface HandlerDeps {
   confirmTrust(project: Project): Promise<boolean>;
   /** The window's terminals (G7's Continue here). */
   terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close'>;
+  /** Claude Code's slash commands for a trusted folder (claudeCommands.ts). */
+  claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string }>>;
   /** The browser panel beside a chat. */
   browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
   chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
@@ -161,6 +163,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'terminal.write': ({ id, data }) => { deps.terminals?.write(id, data); return null; },
     'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); return null; },
     'terminal.close': ({ id }) => { deps.terminals?.close(id); return null; },
+    'chats.commands': async ({ projectId }) => {
+      // Only in a folder the user trusted: starting Claude Code there runs the project's hooks.
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
+      if (!project?.trustedAt || !deps.claudeCommands) return [];
+      return deps.claudeCommands(project.path);
+    },
     'browser.open': ({ url }) => requireBrowser().open(url),
     'browser.navigate': ({ url }) => requireBrowser().navigate(url),
     'browser.bounds': bounds => { deps.browser?.setBounds(bounds); return null; },

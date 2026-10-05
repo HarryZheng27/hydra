@@ -11,6 +11,7 @@ import { readFile } from 'node:fs/promises';
 import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, TERMINAL, BROWSER, type HydraHostMessage, type Project } from '../shared/ipc';
 import { AppTerminals } from './terminals';
 import { BrowserPanel } from './browserPanel';
+import { claudeCommands } from './claudeCommands';
 import { ChatManager } from './chats';
 import { cloudChats } from './cloud';
 import { consoleLaunch, consoleScript, openConsole } from './console';
@@ -127,6 +128,7 @@ export function start(): void {
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),
     startTerminal: (executable, args, cwd) => terminals.start(executable, args, cwd),
+    log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
     cliConfig: provider => readFile(provider === 'claude' ? providerPaths().claudeSettings : providerPaths().codexConfig, 'utf8').catch(() => undefined),
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
     push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
@@ -196,6 +198,10 @@ export function start(): void {
   const handlers = createHandlers({
     terminals,
     browser,
+    claudeCommands: async cwd => {
+      const found = await findProvider('claude', (await settings.load()).cliPaths.claude).catch(() => undefined);
+      return found?.available && found.executable ? claudeCommands(found.executable, cwd) : [];
+    },
     updates,
     info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
     settings,

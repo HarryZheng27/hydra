@@ -33,6 +33,7 @@ const api: HydraApi = {
   terminalWrite: (id, data) => call('terminal.write', { id, data }),
   terminalResize: (id, cols, rows) => call('terminal.resize', { id, cols, rows }),
   terminalClose: id => call('terminal.close', { id }),
+  claudeCommands: projectId => call('chats.commands', { projectId }),
   browserOpen: url => call('browser.open', url === undefined ? {} : { url }),
   browserNavigate: url => call('browser.navigate', { url }),
   browserBounds: bounds => call('browser.bounds', { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }),

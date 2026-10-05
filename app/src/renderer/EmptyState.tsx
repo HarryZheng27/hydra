@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatImage, ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
 import { approvalModes, claudeEfforts, MAX_IMAGES, modeMenu, readImage, titleCase, type Attached } from './Composer';
 import { PlusMenu } from './PlusMenu';
-import { useSlashMenu, type SlashCommand } from './SlashMenu';
+import { rememberCommands, useSlashMenu, type SlashCommand } from './SlashMenu';
 import { ContextWheel } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
 import { claudeDefaultModel, claudeModelOptions } from './claudeModels';
@@ -91,7 +91,21 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
   const box = useRef<HTMLTextAreaElement>(null);
-  const slash = useSlashMenu(text, provider === 'claude' ? knownModels.claudeCommands ?? [] : [], value => { setText(value); box.current?.focus(); });
+  // The / menu: commands seen in a chat, else Claude Code's own list for the selected project, asked for once.
+  const [fetched, setFetched] = useState<Record<string, SlashCommand[]>>({});
+  useEffect(() => {
+    if (provider !== 'claude' || !projectId || knownModels.claudeCommands?.length || fetched[projectId]) return;
+    let live = true;
+    void window.hydra.claudeCommands(projectId).then(list => {
+      if (!live) return;
+      const commands = list.map(command => ({ ...command, skill: false }));
+      setFetched(current => ({ ...current, [projectId]: commands }));
+      if (commands.length) rememberCommands(commands);
+    }, () => undefined);
+    return () => { live = false; };
+  }, [provider, projectId, knownModels.claudeCommands, fetched]);
+  const slashCommands = provider === 'claude' ? (knownModels.claudeCommands?.length ? knownModels.claudeCommands : (projectId ? fetched[projectId] : undefined) ?? []) : [];
+  const slash = useSlashMenu(text, slashCommands, value => { setText(value); box.current?.focus(); });
   useEffect(() => { if (!projects.some(project => project.id === projectId)) setProjectId(projects[0]?.id); }, [projects, projectId]);
   useEffect(() => { box.current?.focus(); }, []);
   const project = projects.find(candidate => candidate.id === projectId);

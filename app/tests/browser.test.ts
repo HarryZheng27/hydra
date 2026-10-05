@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { browserUrl } from '../src/main/browserUrl';
+import { readCommands } from '../src/main/claudeCommands';
 import { parseCall } from '../src/shared/ipc';
 
 test('the browser panel loads http and https only, without credentials; a bare host gets https, a local one http', () => {
@@ -13,4 +14,10 @@ test('the browser panel loads http and https only, without credentials; a bare h
   }
   assert.equal(parseCall({ channel: 'browser.bounds', payload: { x: -1, y: 0, width: 10, height: 10 } }).ok, false);
   assert.equal(parseCall({ channel: 'browser.open', payload: { url: 'https://example.com', extra: 1 } }).ok, false);
+});
+
+test('the home\'s / menu reads Claude Code\'s own initialize reply: plain names with their descriptions, nothing else', () => {
+  assert.deepEqual(readCommands({ commands: [{ name: 'compact', description: 'Summarise', argumentHint: '<instructions>' }, { name: 'bad name' }, { name: 'review', description: '' }, 'odd'] }),
+    [{ name: 'compact', description: 'Summarise', argumentHint: '<instructions>' }, { name: 'review' }]);
+  assert.deepEqual(readCommands(undefined), []);
 });
