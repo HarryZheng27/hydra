@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { watchTerminals } from './terminalBus';
 import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
 import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
@@ -57,6 +58,9 @@ export function App() {
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
   const [deleting, setDeleting] = useState<ChatRecord>();
+  // A cloud chat continued in the window: its terminal, by chat (G7). Listening starts now, so no output is missed.
+  const [terminals, setTerminals] = useState<Record<string, string>>({});
+  useEffect(() => { watchTerminals(); }, []);
   // Each chat's dot in the sidebar (chatStatus.ts), from the events main pushes for every chat.
   const [statuses, setStatuses] = useState<Record<string, ChatStatus>>({});
   const waiting = useRef(new Map<string, Set<string>>());
@@ -281,7 +285,10 @@ export function App() {
             : view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
-              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]} hydra={project ? trees[project.id] : undefined}
+              ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []}
+                  projectName={state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name}
+                  onArchive={() => void run(window.hydra.archiveChat(chat.id, true), record => { setChats(list => list.map(c => (c.id === record.id ? record : c))); setView(project ? { kind: 'project', id: project.id } : { kind: 'home' }); })}
+                  onDelete={() => { if (deleteConfirmed()) removeChat(chat); else setDeleting(chat); }} settledBefore={settled[chat.id] ?? 0} defaults={defaults[chat.id]} hydra={project ? trees[project.id] : undefined}
                   onSend={(text, images) => void run(window.hydra.sendMessage(chat.id, text, images), () => undefined)}
                   onOpenSettings={() => setView({ kind: 'settings' })}
                   onOpenTerminal={() => void run(window.hydra.openTerminal(chat.id), result => { if (!result.started) setError(result.error ?? 'The terminal didn\'t open.'); else setInTerminal(current => ({ ...current, [chat.id]: true })); })}
@@ -291,7 +298,11 @@ export function App() {
                   onStop={() => void run(window.hydra.stopChat(chat.id), () => undefined)}
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
-                  onContinueCloud={() => void run(window.hydra.continueCloud(chat.id), result => { if (!result.started) setError(result.error ?? "The terminal didn't open."); })} />
+                  terminalId={terminals[chat.id]}
+                  {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {
+                    if (!result.started) setError(result.error ?? "The terminal didn't open.");
+                    else if (result.terminalId) setTerminals(current => ({ ...current, [chat.id]: result.terminalId! }));
+                  }) })} />
               : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat}
                 knownModels={knownModels}
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}

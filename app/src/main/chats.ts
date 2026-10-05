@@ -32,6 +32,8 @@ export interface ChatManagerDeps {
   codexConfig?(): Promise<string | undefined>;
   /** Opens a console window the user owns, running a CLI in a folder; Hydra never reads it. */
   openConsole?(title: string, executable: string, args: string[], cwd: string): Promise<{ started: boolean; error?: string }>;
+  /** A terminal inside the window (G7's Continue here): its id, for the window to show. */
+  startTerminal?(executable: string, args: string[], cwd: string): string;
   timings?: SessionTimings;
   /** The user's own CLI config file's text (Claude's settings.json, Codex's config.toml), for the composer's defaults. */
   cliConfig?(provider: ChatProvider): Promise<string | undefined>;
@@ -395,18 +397,20 @@ export class ChatManager {
    * Continue here (G7): the cloud session's conversation in a console, `claude --teleport <id>` in a fresh worktree of
    * the project on a new branch. The session's file changes stay in the cloud: its copy has no git remote (spike S3).
    */
-  async continueCloud(id: string): Promise<{ started: boolean; worktree?: string; error?: string }> {
+  async continueCloud(id: string): Promise<{ started: boolean; worktree?: string; error?: string; terminalId?: string }> {
     const record = await this.record(id);
     if (!(await this.deps.trusted(record.cwd))) throw new Error("This folder isn't trusted in Hydra, so the chat can't run here.");
     const sessionId = record.cloud?.sessionId;
     // The id goes on a command line: it must be the CLI's own id shape, which can't read as an option.
     if (!sessionId || !claudeCloudSessionIdPattern.test(sessionId)) throw new Error('This chat has no cloud session to continue.');
-    if (!this.deps.cloud || !this.deps.openConsole) throw new Error("Hydra can't open a terminal here.");
+    if (!this.deps.cloud || (!this.deps.startTerminal && !this.deps.openConsole)) throw new Error("Hydra can't open a terminal here.");
     const executable = await this.deps.executable('claude');
     if (!executable) throw new Error("Claude Code isn't installed. Check Your agents in Settings.");
     const worktree = await this.deps.cloud.worktree(record.cwd, id);
     if (isWindowsShim(executable) && [executable, worktree].some(part => cmdUnsafe.test(part))) throw new Error("This folder's path has a character the CLI's launcher can't take safely.");
-    const result = await this.deps.openConsole('Claude Code cloud session', executable, ['--teleport', sessionId], worktree);
+    // In the window when it can (a terminal under the chat), else a console of its own.
+    if (this.deps.startTerminal) return { started: true, worktree, terminalId: this.deps.startTerminal(executable, ['--teleport', sessionId], worktree) };
+    const result = await this.deps.openConsole!('Claude Code cloud session', executable, ['--teleport', sessionId], worktree);
     return { ...result, worktree };
   }
 

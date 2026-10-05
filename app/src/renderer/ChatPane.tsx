@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ChatAnswer, ChatDefaults, ChatEvent, ChatImage, ChatRecord, ClaudePermissionMode, CodexApprovals } from '../shared/ipc';
 import { foldEvents, type ChatItem } from './chatModel';
 import { hydraCard, type HydraView } from './HydraCards';
@@ -6,6 +7,7 @@ import { Composer } from './Composer';
 import { Icon } from './Icon';
 import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
+import { TerminalPane } from './TerminalPane';
 
 interface Props {
   record: ChatRecord;
@@ -30,6 +32,13 @@ interface Props {
   onWhere?(where: 'local' | 'cloud'): void;
   /** G7: a cloud chat's session, continued in a terminal in a fresh worktree. */
   onContinueCloud?(): void;
+  /** A cloud chat continued here: its terminal inside the chat (G7). */
+  terminalId?: string;
+  /** The project's name, for the header's pill. */
+  projectName?: string;
+  /** The header's ⋮ menu: Archive and Delete, as the sidebar's. */
+  onArchive?(): void;
+  onDelete?(): void;
 }
 
 /** The CLI's latest model list in this chat (Codex sends one when a thread starts). */
@@ -187,10 +196,22 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return undefined;
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId }: Props) {
+  // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
+  const [slot, setSlot] = useState<Element | null>(null);
+  useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
+  const [more, setMore] = useState(false);
+  const moreRoot = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!more) return undefined;
+    const away = (event: MouseEvent) => { if (!moreRoot.current?.contains(event.target as Node)) setMore(false); };
+    document.addEventListener('mousedown', away);
+    return () => document.removeEventListener('mousedown', away);
+  }, [more]);
   const view = useMemo(() => foldEvents(events, settledBefore), [events, settledBefore]);
   // A cloud chat's session exists once its log says so (G7): after that, the chat lives on claude.ai.
   const cloudStarted = events.some(event => event.type === 'cloud');
+  const cloudUrl = (events.find(event => event.type === 'cloud') as { url?: string } | undefined)?.url;
   const [reviewing, setReviewing] = useState(false);
   // Each request is answered once: a second click on the same card sends nothing.
   const answered = useRef(new Set<string>());
@@ -204,13 +225,26 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
   return (
     <section className="chat" aria-label={record.title}>
-      <header className="chat-head">
-        <span className="chat-title" title={record.cwd}>{record.title}</span>
-        <span className="chip">{record.provider === 'claude' ? 'Claude Code' : 'Codex'}</span>
-        {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
-        <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
-        <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
-      </header>
+      {slot && createPortal(
+        <div className="chat-head">
+          <Icon name={record.where === 'cloud' ? 'cloud' : 'laptop'} />
+          <span className="chat-title" title={record.cwd}>{record.title}</span>
+          {projectName && <span className="project-pill" title={record.cwd}>{projectName}</span>}
+          <span className="chat-head-spacer" />
+          {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
+          <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
+          <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
+          {(record.pr?.url ?? cloudUrl) && <a className="head-action" href={record.pr?.url ?? cloudUrl} target="_blank" rel="noreferrer" aria-label={record.pr ? 'Open the pull request' : 'Open on claude.ai'} title={record.pr ? 'Open the pull request' : 'Open on claude.ai'}><Icon name="globe" /></a>}
+          <div className="head-more" ref={moreRoot}>
+            <button className="head-action" aria-label="More" aria-haspopup="menu" aria-expanded={more} title="More" onClick={() => setMore(value => !value)}><Icon name="more" /></button>
+            {more && (
+              <ul className="row-menu head-menu" role="menu">
+                {onArchive && <li role="menuitem" tabIndex={0} onClick={() => { setMore(false); onArchive(); }}><Icon name="archive" /><span>Archive</span></li>}
+                {onDelete && <li role="menuitem" tabIndex={0} className="danger" onClick={() => { setMore(false); onDelete(); }}><Icon name="close" /><span>Delete</span></li>}
+              </ul>
+            )}
+          </div>
+        </div>, slot)}
       {hydra?.error && <div className="banner hydra-banner" role="status">{hydra.error}</div>}
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
       {reviewing && <ReviewPane chatId={record.id} />}
@@ -248,7 +282,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
         <div ref={end} />
       </div>
       {cloudStarted
-        ? <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
+        ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
         : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>

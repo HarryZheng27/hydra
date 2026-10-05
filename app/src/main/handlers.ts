@@ -1,4 +1,5 @@
 import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project, HydraControl, HydraStopState, UpdateStatusView } from '../shared/ipc';
+import type { AppTerminals } from './terminals';
 import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
@@ -40,6 +41,8 @@ export interface HandlerDeps {
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ signedIn: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
+  /** The window's terminals (G7's Continue here). */
+  terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close'>;
   chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
@@ -151,6 +154,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
     'chats.setWhere': ({ id, where }) => deps.chats.setWhere(id, where),
     'chats.continueCloud': ({ id }) => deps.chats.continueCloud(id),
+    'terminal.write': ({ id, data }) => { deps.terminals?.write(id, data); return null; },
+    'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); return null; },
+    'terminal.close': ({ id }) => { deps.terminals?.close(id); return null; },
     'review.diff': async ({ id }) => {
       if (!deps.review) throw new Error('Review isn\'t available here.');
       return deps.review.diff(await deps.chats.reviewFolder(id));

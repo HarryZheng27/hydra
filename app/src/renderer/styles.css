@@ -566,3 +566,30 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 @media (prefers-reduced-motion: reduce) { .working-dots i { animation: none; } }
 .working-text { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .working-time { color: var(--muted); flex: none; }
+
+/* Claude desktop's title bar: the sidebar's half (toggle, Chat / Agents) as wide as the sidebar, then the open chat's
+   header (a laptop or cloud icon, its title, the project's pill) and its actions by the window's buttons (terminal,
+   changes, web, more), 28px each, 2px apart. */
+.titlebar { padding: 0 140px 0 0; gap: 0; }
+.titlebar-side { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; }
+.titlebar.with-sidebar .titlebar-side { width: var(--sidebar-width); }
+.titlebar-main { flex: 1; min-width: 0; display: flex; align-items: center; height: 100%; padding: 0 8px 0 16px; }
+.titlebar-main > .titlebar-title { margin: 0 auto; }
+.titlebar-main:has(.chat-head) > .titlebar-title { display: none; }
+.chat-head { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; -webkit-app-region: drag; }
+.chat-head > .icon { width: 15px; height: 15px; color: var(--muted); }
+.chat-head .chat-title { font-size: 14px; font-weight: 580; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.project-pill { flex: none; padding: 1px 7px; border-radius: 5px; background: var(--hover); color: var(--muted); font-size: 13px; }
+.chat-head-spacer { flex: 1; }
+.chat-head .head-action { -webkit-app-region: no-drag; flex: none; width: 28px; height: 28px; display: inline-grid; place-items: center; padding: 0; margin: 0 0 0 2px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.chat-head .head-action:hover:not(:disabled), .chat-head .head-action[aria-pressed=true], .chat-head .head-action[aria-expanded=true] { background: var(--hover); color: var(--fg); }
+.chat-head .head-action .icon { width: 16px; height: 16px; }
+.chat-head .head-action:first-of-type { margin-left: auto; }
+.head-more { position: relative; -webkit-app-region: no-drag; }
+.head-menu { top: calc(100% + 4px); right: 0; min-width: 160px; }
+
+/* A cloud chat continued in the window (TerminalPane.tsx): the terminal fills the chat under the session's card. */
+.chat-terminal { flex: 1.6; min-height: 260px; display: flex; padding: 0 max(24px, calc((100% - 960px) / 2)) 14px; }
+.terminal-pane { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); overflow: hidden; }
+.terminal-pane .xterm { height: 100%; }
+.chat:has(.chat-terminal) .transcript { flex: 0 1 auto; max-height: 38%; }
