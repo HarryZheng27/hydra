@@ -564,3 +564,28 @@ test('Continue here\'s window says it is fetching the cloud session before telep
   assert.ok(cloud.indexOf("Write-Host 'Fetching the cloud session") < cloud.indexOf("& 'claude.exe'"));
   assert.ok(!consoleScript('Claude Code chat', 'claude.exe', ['--resume', 'x'], 'C:\wt').includes('Fetching'));
 });
+
+test('the sidebar menu renames, archives and unarchives a chat; a rename sticks, and a working chat isn\'t archived', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    assert.equal((await manager.rename(chat.id, '  Fix   the\nlogin  ')).title, 'Fix the login');
+    await assert.rejects(manager.rename(chat.id, '   '), /needs a name/);
+    await assert.rejects(manager.rename(chat.id, 'x'.repeat(201)), /at most 200/);
+    // The first message names only a chat still called "New chat".
+    await manager.send(chat.id, 'please refactor everything');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal((await manager.open(chat.id)).record.title, 'Fix the login');
+    await assert.rejects(manager.archive(chat.id, true), /working/);
+    starts[0]!.handlers.line(JSON.stringify({ type: 'result', subtype: 'success', usage: {} }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const archived = await manager.archive(chat.id, true);
+    assert.match(archived.archivedAt ?? '', /^\d{4}-/);
+    assert.equal((await manager.archive(chat.id, false)).archivedAt, undefined);
+    assert.equal(parseCall({ channel: 'chats.archive', payload: { id: chat.id, archived: 'yes' } }).ok, false);
+    assert.equal(parseCall({ channel: 'chats.rename', payload: { id: chat.id, title: 'x'.repeat(401) } }).ok, false);
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

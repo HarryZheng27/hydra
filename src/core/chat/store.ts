@@ -29,6 +29,8 @@ export interface ChatRecord {
   where?: 'cloud';
   /** The cloud session its first message started (src/core/chat/cloud.ts). */
   cloud?: { sessionId: string; url: string; title: string; startedAt: string };
+  /** When the user archived it: the sidebar keeps it under Archived, out of its project's list. */
+  archivedAt?: string;
 }
 export interface LogEntry { t: string; event: ChatEvent }
 
@@ -53,7 +55,7 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
   if (typeof id !== 'string' || !chatIdPattern.test(id) || (provider !== 'claude' && provider !== 'codex')) return undefined;
   if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || typeof title !== 'string' || title.length > 200) return undefined;
   if (typeof createdAt !== 'string' || typeof updatedAt !== 'string') return undefined;
-  for (const key of ['providerSessionId', 'model', 'effort', 'permissionMode', 'sandbox', 'approvals'] as const) if (!optionalString(raw[key], 200)) return undefined;
+  for (const key of ['providerSessionId', 'model', 'effort', 'permissionMode', 'sandbox', 'approvals', 'archivedAt'] as const) if (!optionalString(raw[key], 200)) return undefined;
   const pick = (key: string) => (typeof raw[key] === 'string' ? { [key]: raw[key] } : {});
   // A cloud chat is Claude's, and its session, once there, is one the CLI printed (claude.ai/code's own link).
   if (raw.where !== undefined && (raw.where !== 'cloud' || provider !== 'claude')) return undefined;
@@ -64,7 +66,7 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
       || typeof value.url !== 'string' || !isClaudeCloudUrl(value.url, value.sessionId) || typeof value.title !== 'string' || value.title.length > 200 || typeof value.startedAt !== 'string') return undefined;
     cloud = { sessionId: value.sessionId, url: value.url, title: value.title, startedAt: value.startedAt };
   }
-  return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals'),
+  return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals'), ...pick('archivedAt'),
     ...(raw.where === 'cloud' ? { where: 'cloud' as const } : {}), ...(cloud ? { cloud } : {}) } as ChatRecord;
 }
 

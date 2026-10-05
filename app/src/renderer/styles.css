@@ -336,3 +336,18 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .agents-toolbar-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .danger-link { color: var(--error); }
 .danger-link:disabled { color: var(--faint); cursor: default; }
+
+/* A chat row's menu (ChatRow.tsx): ⋮ on hover, then Rename, Archive and Delete, as in Claude desktop's sidebar. */
+.chat-row { position: relative; display: flex; align-items: center; border-radius: var(--radius); }
+.chat-row .chat-link { flex: 1; min-width: 0; }
+.chat-row .row-more { position: absolute; right: 2px; opacity: 0; color: var(--muted); }
+.chat-row:hover .row-more, .chat-row:focus-within .row-more, .chat-row.menu-open .row-more { opacity: 1; }
+.chat-row:hover .chat-link, .chat-row.menu-open .chat-link { padding-right: 28px; }
+.chat-rename { flex: 1; min-width: 0; margin: 1px 0; padding: 3px 7px; border-radius: var(--radius); border: 1px solid var(--focus); background: var(--input-bg); color: var(--input-fg); font: inherit; font-size: 13px; outline: none; }
+.row-menu { position: absolute; top: calc(100% + 2px); right: 0; z-index: 30; min-width: 180px; margin: 0; padding: 4px; list-style: none; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); box-shadow: 0 8px 28px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .06); }
+.row-menu li[role=menuitem] { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--fg); }
+.row-menu li[role=menuitem]:hover, .row-menu li[role=menuitem]:focus-visible { background: var(--hover); outline: none; }
+.row-menu li.danger { color: var(--error); }
+.row-menu .separator { height: 1px; margin: 4px 6px; background: var(--border); }
+.archived-head { width: 100%; margin-top: 6px; cursor: pointer; }
+.archived-head .icon { width: 14px; height: 14px; }

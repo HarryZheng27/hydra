@@ -151,6 +151,9 @@ export interface Channels {
   'chats.stop': { payload: { id: string }; result: null };
   'chats.configure': { payload: { id: string; change: ChatSettingsChange }; result: ChatRecord };
   'chats.remove': { payload: { id: string }; result: null };
+  /** The sidebar's chat menu: Rename and Archive (Delete is chats.remove). */
+  'chats.rename': { payload: { id: string; title: string }; result: ChatRecord };
+  'chats.archive': { payload: { id: string; archived: boolean }; result: ChatRecord };
 }
 export type Channel = keyof Channels;
 export type Payload<C extends Channel> = Channels[C]['payload'];
@@ -246,6 +249,8 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   // An empty model or effort means the CLI's default.
   'chats.configure': exactly<{ id: string; change: ChatSettingsChange }>({ id: isId, change: shaped({}, { model: v => v === '' || isModel(v), effort: v => v === '' || isEffort(v), permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }) }),
   'chats.remove': exactly<{ id: string }>({ id: isId }),
+  'chats.rename': exactly<{ id: string; title: string }>({ id: isId, title: isText(400) }),
+  'chats.archive': exactly<{ id: string; archived: boolean }>({ id: isId, archived: oneOf(true, false) }),
 };
 
 export const channels = Object.freeze(Object.keys(validators) as Channel[]);
@@ -300,6 +305,8 @@ export interface HydraApi {
   stopChat(id: string): Promise<null>;
   configureChat(id: string, change: ChatSettingsChange): Promise<ChatRecord>;
   removeChat(id: string): Promise<null>;
+  renameChat(id: string, title: string): Promise<ChatRecord>;
+  archiveChat(id: string, archived: boolean): Promise<ChatRecord>;
   hydraConnections(): Promise<HydraConnection[]>;
   connectHydra(provider: CliProvider): Promise<HydraConnection[]>;
   disconnectHydra(provider: CliProvider): Promise<HydraConnection[]>;

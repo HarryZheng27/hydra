@@ -109,7 +109,7 @@ export function App() {
   }
   const setupPanel = <Setup report={setup} checking={checking} onCheck={() => void checkSetup(true)} onSignIn={provider => window.hydra.signIn(provider)} />;
   /** The latest chats, newest first, for the home screen. */
-  const recents = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
+  const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
     project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
   }));
@@ -196,6 +196,18 @@ export function App() {
               onAddProject={pickProject}
               onRemoveProject={id => void run(window.hydra.removeProject(id), next => { setState(next); if (view.kind === 'project' && view.id === id) setView({ kind: 'home' }); })}
               onOpenSettings={() => setView({ kind: 'settings' })}
+              onRenameChat={(id, title) => void run(window.hydra.renameChat(id, title), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
+              onArchiveChat={(id, archived) => void run(window.hydra.archiveChat(id, archived), record => {
+                setChats(list => list.map(c => (c.id === record.id ? record : c)));
+                if (archived && view.kind === 'chat' && view.id === id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
+              })}
+              onDeleteChat={chat => {
+                if (!window.confirm(`Delete “${chat.title}”? Its conversation is removed from Hydra, and this can't be undone.`)) return;
+                void run(window.hydra.removeChat(chat.id), () => {
+                  setChats(list => list.filter(c => c.id !== chat.id));
+                  if (view.kind === 'chat' && view.id === chat.id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
+                });
+              }}
             />
           </div>
         )}

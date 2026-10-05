@@ -469,6 +469,29 @@ export class ChatManager {
     return record;
   }
 
+  /** The sidebar's Rename: one line, 1-200 characters. The first message no longer names the chat. */
+  async rename(id: string, title: string): Promise<ChatRecord> {
+    const clean = title.replace(/\s+/g, ' ').trim();
+    if (!clean) throw new Error('A chat needs a name.');
+    if (clean.length > 200) throw new Error('A chat\'s name can be at most 200 characters.');
+    await this.record(id);
+    this.titled.add(id);
+    return this.deps.store.update(id, { title: clean });
+  }
+
+  /** The sidebar's Archive and Unarchive. A chat that is working is left alone: stop it first. */
+  async archive(id: string, archived: boolean): Promise<ChatRecord> {
+    const record = await this.record(id);
+    if (archived && this.isRunning(id)) throw new Error('This chat is working. Stop it, then archive it.');
+    if (!!record.archivedAt === archived) return record;
+    if (archived) {
+      if (this.warmed === id) this.warmed = undefined;
+      this.sessions.get(id)?.close();
+      this.sessions.delete(id);
+    }
+    return this.deps.store.update(id, { archivedAt: archived ? new Date().toISOString() : undefined });
+  }
+
   async remove(id: string): Promise<void> {
     this.removed.add(id);
     this.cloudStarting.get(id)?.abort();

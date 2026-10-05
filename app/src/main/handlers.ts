@@ -40,7 +40,7 @@ export interface HandlerDeps {
   signIn(provider: CliProvider, configured: string | undefined): Promise<{ signedIn: boolean; error?: string }>;
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
   updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
@@ -185,6 +185,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.stop': ({ id }) => { deps.chats.stop(id); return null; },
     'chats.configure': ({ id, change }) => deps.chats.configure(id, change),
     'chats.remove': async ({ id }) => { await deps.chats.remove(id); return null; },
+    'chats.rename': ({ id, title }) => deps.chats.rename(id, title),
+    'chats.archive': ({ id, archived }) => deps.chats.archive(id, archived),
     'onboarding.check': ({ refresh }) => checkSetup(refresh),
     'onboarding.signIn': async ({ provider }) => {
       // One sign-in per provider at a time: a page can't stack browser logins.
