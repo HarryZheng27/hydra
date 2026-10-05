@@ -716,3 +716,41 @@ test('the / menu lists Claude Code\'s own commands before skills, each alphabeti
   assert.deepEqual(matchCommands('/', commands).map(command => command.name), ['clear', 'compact', 'goal', 'agents-sdk', 'cloudflare']);
   assert.deepEqual(matchCommands('/c', commands).map(command => command.name), ['clear', 'compact', 'cloudflare']);
 });
+
+test('a Claude chat gets a short name from Claude after its first message, unless the user renamed it first; Codex keeps its first line', async () => {
+  const dir = scratch();
+  try {
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const pushed: Array<{ id: string; events: ChatEvent[]; start: number }> = [];
+    const asked: string[] = [];
+    let answer: (title: string | undefined) => void = () => undefined;
+    const { launch } = fakeLaunch();
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: (id, events, start) => pushed.push({ id, events, start }),
+      titleChat: message => { asked.push(message); return new Promise(resolve => { answer = resolve; }); } });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.send(chat.id, 'when u hover over a project it shoud show a lil arrow');
+    for (let i = 0; i < 50 && !asked.length; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(asked, ['when u hover over a project it shoud show a lil arrow']);
+    assert.equal((await store.get(chat.id))?.title, 'when u hover over a project it shoud show a lil arrow');
+    answer('Fold projects on hover');
+    for (let i = 0; i < 50 && (await store.get(chat.id))?.title !== 'Fold projects on hover'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await store.get(chat.id))?.title, 'Fold projects on hover');
+    assert.ok(pushed.some(push => push.start === -1 && push.events.some(event => event.type === 'renamed' && event.title === 'Fold projects on hover')));
+
+    // Renamed by the user while Claude was thinking: the user's name stays.
+    const second = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.send(second.id, 'hello');
+    for (let i = 0; i < 50 && asked.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    await manager.rename(second.id, 'Mine');
+    answer('Greeting');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal((await store.get(second.id))?.title, 'Mine');
+
+    const codex = await manager.create({ cwd: dir, provider: 'codex' });
+    await manager.send(codex.id, 'list the files');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(asked.length, 2, "a Codex chat's message isn't sent to Claude for a name");
+    manager.closeAll();
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});

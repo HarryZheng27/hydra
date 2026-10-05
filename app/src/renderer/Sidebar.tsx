@@ -52,19 +52,35 @@ function MenuItem({ icon, label, danger, onPick }: { icon?: Parameters<typeof Ic
   );
 }
 
-/** A project's group, as Claude desktop's: a muted label that folds the group, with + and ⋯ on hover. */
+/** Which projects are folded, kept across restarts in this window's storage. */
+const FOLDED = 'hydra.foldedProjects.v1';
+function readFolded(): Set<string> {
+  try { const raw = JSON.parse(localStorage.getItem(FOLDED) ?? '[]') as unknown; return new Set(Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : []); } catch { return new Set(); }
+}
+function saveFolded(id: string, folded: boolean) {
+  const set = readFolded();
+  if (folded) set.add(id); else set.delete(id);
+  try { localStorage.setItem(FOLDED, JSON.stringify([...set].slice(-500))); } catch { /* best effort */ }
+}
+
+/**
+ * A project's group, as Claude desktop's: a muted label with a chevron on hover that folds the group to just its
+ * name, a + that is always there, and ⋯ on hover.
+ */
 function ProjectGroup({ project, selected, children, onOpen, onNewChatIn, onRemove }: { project: Project; selected: boolean; children: ReactNode; onOpen(): void; onNewChatIn(provider: 'claude' | 'codex'): void; onRemove(): void }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpenState] = useState(() => !readFolded().has(project.id));
+  const setOpen = (next: boolean) => { setOpenState(next); saveFolded(project.id, !next); };
   const [menu, setMenu, root] = usePopup();
   const pick = (action: () => void) => () => { setMenu(false); action(); };
   return (
     <li className="project">
       <div ref={root} className={`project-row ${selected ? 'selected' : ''} ${menu ? 'menu-open' : ''}`}>
-        <button className="project-name" title={project.path} onClick={() => setOpen(value => !value)} aria-expanded={open}>
+        <button className="project-name" title={open ? `${project.path}\nClick to hide its chats` : `${project.path}\nClick to show its chats`} onClick={() => setOpen(!open)} aria-expanded={open}>
           <span>{project.name}</span>
+          <span className={`project-fold ${open ? '' : 'folded'}`} aria-hidden="true"><Icon name="chevronDown" /></span>
         </button>
-        <button className="icon-button small hover-only" aria-label={`New chat in ${project.name}`} title="New chat" onClick={onOpen}><Icon name="plus" /></button>
-        <button className="icon-button small hover-only" aria-label={`More for ${project.name}`} aria-haspopup="menu" aria-expanded={menu} title="More" onClick={() => setMenu(!menu)}><Icon name="moreHorizontal" /></button>
+        <button className="icon-button small hover-only project-more" aria-label={`More for ${project.name}`} aria-haspopup="menu" aria-expanded={menu} title="More" onClick={() => setMenu(!menu)}><Icon name="moreHorizontal" /></button>
+        <button className="icon-button small project-new" aria-label={`New chat in ${project.name}`} title="New chat" onClick={onOpen}><Icon name="plus" /></button>
         {menu && (
           <ul className="row-menu" role="menu">
             <MenuItem label="New Claude Code chat" onPick={pick(() => onNewChatIn('claude'))} />

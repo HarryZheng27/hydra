@@ -147,6 +147,11 @@ export class ClaudeAdapter implements ChatAdapter {
     if (message.subtype === 'status' && typeof message.permissionMode === 'string' && typeof message.session_id === 'string') {
       return [{ type: 'session', providerSessionId: message.session_id, permissionMode: message.permissionMode }];
     }
+    // /compact (the context wheel's click): the context is now the summary, so the wheel drops at once.
+    if (message.subtype === 'compact_boundary') {
+      const after = (message.compact_metadata as { post_tokens?: unknown } | undefined)?.post_tokens;
+      return Number.isSafeInteger(after) && (after as number) > 0 ? [{ type: 'usage', contextTokens: after as number }] : [];
+    }
     if (message.subtype === 'init' && typeof message.session_id === 'string') {
       const commands = names(message.slash_commands), skills = names(message.skills);
       return [{ type: 'session', providerSessionId: message.session_id, ...(typeof message.model === 'string' ? { model: message.model } : {}), ...(typeof message.permissionMode === 'string' ? { permissionMode: message.permissionMode } : {}), ...(commands.length ? { commands } : {}), ...(skills.length ? { skills } : {}) }];

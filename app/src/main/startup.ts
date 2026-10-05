@@ -14,6 +14,7 @@ import { AppTerminals } from './terminals';
 import { BrowserPanel } from './browserPanel';
 import { claudeCommands } from './claudeCommands';
 import { pullRequests } from './pullRequests';
+import { claudeTitle } from './chatTitles';
 import { ChatManager } from './chats';
 import { cloudChats } from './cloud';
 import { consoleLaunch, consoleScript, openConsole } from './console';
@@ -127,6 +128,7 @@ export function start(): void {
       resolve(!error && (state === 'open' || state === 'merged' || state === 'closed') ? state : undefined);
     })),
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
+    titleChat: async message => { const found = await findProvider('claude', (await settings.load()).cliPaths.claude).catch(() => undefined); return found?.available && found.executable ? claudeTitle(found.executable, message) : undefined; },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),
     startTerminal: (executable, args, cwd) => terminals.start(executable, args, cwd),

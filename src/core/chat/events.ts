@@ -10,6 +10,8 @@ export type ChatEvent =
   /** The provider's own session (Claude) or thread (Codex) id, kept for resume. */
   /** Claude: the slash commands its process offers, from initialize's reply (before any turn). Shown, not logged. */
   | { type: 'commands'; commands: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> }
+  /** The app named the chat (Claude desktop's short session names). Shown, not logged. */
+  | { type: 'renamed'; title: string }
   | { type: 'session'; providerSessionId: string; model?: string; permissionMode?: string; /** Claude: the slash commands its session offers, and which are skills. */ commands?: string[]; skills?: string[] }
   /** What the user sent. */
   | { type: 'user'; text: string; images?: number }
