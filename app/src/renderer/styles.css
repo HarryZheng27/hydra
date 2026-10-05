@@ -525,3 +525,25 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .secondary-button:hover { background: var(--hover); }
 .danger-button { background: #C4314B; color: #FFFFFF; }
 .danger-button:hover { background: #A92840; }
+
+/* The prompt, measured from Claude desktop's at 150% (÷1.5): 23px chips with 13px text and a light border; a 42px box with
+   12px corners and a darker border than the rest of the UI; text 13px in; a small light-grey return arrow 16px from the
+   right; and the row below in ~12.5px type, small icons, items about 18px apart, centred 15px below the box. Home and
+   chats alike. */
+.picker.chip { height: 23px; padding: 0 8px; gap: 6px; font-size: 13px; border-color: var(--border); }
+.picker.chip .icon:first-child { width: 13px; height: 13px; }
+.home-chips { gap: 6px; margin: 0 0 8px; }
+.composer .prompt-box { min-height: 42px; border-radius: 12px; border-color: color-mix(in srgb, var(--fg) 22%, var(--bg)); box-shadow: none; padding: 10px 38px 10px 13px; }
+.composer .prompt-box:focus-within { border-color: color-mix(in srgb, var(--fg) 34%, var(--bg)); }
+.composer textarea { font-size: 14px; line-height: 21px; min-height: 21px; }
+.composer .round.send, .home-prompt .round { right: 8px; bottom: 7px; width: 26px; height: 26px; }
+.composer .round.send .icon { width: 13px; height: 13px; }
+.composer .round.send:disabled { color: var(--faint); }
+.composer .round.stop { right: 8px; bottom: 7px; width: 26px; height: 26px; }
+.composer .composer-bar, .home-prompt .composer-bar { gap: 6px; padding: 8px 2px 0 6px; }
+.composer .composer-bar .picker, .home-prompt .composer-bar .picker { font-size: 12.5px; padding: 2px 5px; color: var(--fg); }
+.composer .composer-bar .picker .icon:last-child { width: 11px; height: 11px; }
+.composer .icon-button.plus { width: 22px; height: 22px; color: var(--muted); }
+.composer .icon-button.plus .icon { width: 13px; height: 13px; }
+.composer .composer-bar .agent-logo, .home-prompt .composer-bar .agent-logo { width: 14px; height: 14px; }
+.composer .composer-bar .composer-spacer + .picker-root, .composer .composer-bar .picker-root + .picker-root { margin-left: 6px; }
