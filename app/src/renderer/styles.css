@@ -1,3 +1,7 @@
+/* Geist and Geist Mono (Vercel; SIL Open Font License 1.1, fonts/OFL.txt): Claude desktop's type is built on Geist.
+   Variable fonts, so every weight in use (400 to 600) comes from one file each. Shipped in the app, never fetched. */
+@font-face { font-family: "Geist"; src: url("fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
 /* The app's look. Colors are the app's own palette (app/src/shared/theme.ts, from UI-direction.md), set as CSS
    variables by App.tsx; these defaults are the dark palette's, so the first paint matches the window's background. */
 :root {
@@ -32,7 +36,7 @@ body { background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI Variabl
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 button:disabled { cursor: default; opacity: .45; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
-code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+code { font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .icon { display: block; flex: none; }
 
 .app { height: 100%; display: flex; flex-direction: column; }
@@ -86,7 +90,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
 .empty h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .empty p { margin: 0; color: var(--muted); max-width: 520px; }
-.path { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path { font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .primary { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; padding: 6px 12px; border-radius: var(--radius); background: var(--button-bg); color: var(--button-fg); }
 .primary:hover { background: var(--button-hover); }
 
@@ -139,7 +143,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 12px 0 6px; }
 .markdown blockquote { margin: 0 0 8px; padding-left: 12px; border-left: 3px solid var(--border); color: var(--muted); }
 .markdown a { color: var(--link); }
-.markdown code, .tool-summary { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+.markdown code, .tool-summary { font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .markdown :not(pre) > code { padding: 1px 4px; border-radius: 4px; background: var(--hover); }
 pre.code { margin: 6px 0; padding: 10px 12px; border-radius: var(--radius); background: var(--input-bg); border: 1px solid var(--border); overflow-x: auto; font-size: 12px; max-height: 360px; }
 pre.code.output.error { border-color: var(--error); }
@@ -164,7 +168,7 @@ details.tool summary, details.thinking summary { cursor: pointer; display: flex;
 .card-outcome { font-size: 12px; color: var(--muted); }
 .card-outcome.allowed { color: var(--ok); }
 .card-outcome.denied { color: var(--warning); }
-.card textarea, .edit-input { min-height: 80px; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: var(--radius); padding: 8px; resize: vertical; }
+.card textarea, .edit-input { min-height: 80px; font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; background: var(--input-bg); color: var(--input-fg); border: 1px solid var(--input-border); border-radius: var(--radius); padding: 8px; resize: vertical; }
 .card fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .card legend { font-weight: 600; margin-bottom: 4px; }
 .option { display: flex; gap: 8px; align-items: baseline; }
@@ -211,7 +215,7 @@ details.tool summary, details.thinking summary { cursor: pointer; display: flex;
 .review-files button { width: 100%; display: flex; gap: 6px; align-items: center; padding: 3px 6px; border-radius: var(--radius); text-align: left; font-size: 12px; }
 .review-files button:hover, .review-files button.selected { background: var(--hover); }
 .review-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.status { font-family: "Cascadia Code", Consolas, monospace; font-weight: 600; width: 12px; }
+.status { font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-weight: 600; width: 12px; }
 .status.added, .status.untracked { color: var(--ok); }
 .status.deleted { color: var(--error); }
 .status.modified, .status.changed { color: var(--warning); }
@@ -326,7 +330,7 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .host-view header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .host-view header h2 { flex: 1; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-view-body { flex: 1; overflow: auto; padding: 12px 16px; }
-.host-view-body pre { margin: 0; font: 12px/1.5 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.host-view-body pre { margin: 0; font: 12px/1.5 "Geist Mono", "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .host-view-body .add { color: var(--ok); } .host-view-body .del { color: var(--error); } .host-view-body .hunk { color: var(--link); } .host-view-body .meta, .host-view-body .note { color: var(--muted); }
 .host-view-body figure { margin: 12px 0; } .host-view-body img { max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
 .host-view-body figcaption { color: var(--muted); font-size: 12px; }
@@ -730,10 +734,10 @@ details.thinking summary::-webkit-details-marker { display: none; }
 .pr-icon.open { color: #2DA44E; }
 .pr-icon.merged, .pr-bar.merged .pr-number, .pr-bar.merged .pr-branch, .pr-status.merged { color: #8E6AD8; }
 .pr-icon.closed, .pr-status.closed { color: var(--muted); }
-.pr-number { color: var(--fg); font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; }
+.pr-number { color: var(--fg); font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-size: 13px; }
 .pr-repo { color: var(--muted); }
 .pr-bar.merged .pr-repo { color: color-mix(in srgb, #8E6AD8 70%, var(--muted)); }
-.pr-branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; }
+.pr-branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; font-size: 13px; }
 .pr-status { padding: 0 6px; font-size: 13px; }
 .pr-pill { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); font-size: 13px; white-space: nowrap; }
 .pr-lines .add { color: #2DA44E; }
@@ -765,3 +769,7 @@ button.pr-ci:hover { background: var(--input-bg); }
 .project-row:hover .project-fold, .project-name:focus-visible .project-fold { opacity: 1; }
 .project-row .project-more { margin-left: auto; }
 .project-row .project-more + .project-new { margin-left: 0; }
+
+/* The whole app in Geist, as Claude desktop's in its Geist-based Anthropic Sans; Segoe UI if the file can't load. */
+body, button, input, textarea, select { font-family: "Geist", system-ui, "Segoe UI", sans-serif; }
+code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; }

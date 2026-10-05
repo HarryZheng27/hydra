@@ -23,8 +23,8 @@ await Promise.all([
   build({ entryPoints: [path.join(here, 'src/preload/preload.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'chrome140', external: ['electron'], outfile: path.join(dist, 'preload.cjs'), logLevel: 'warning' }),
   // Hydra Settings' window (G5): the IDE's settings page, given G2's window.hydraBridge.
   build({ entryPoints: [path.join(here, 'src/preload/settingsPreload.ts')], bundle: true, platform: 'browser', format: 'cjs', target: 'chrome140', external: ['electron'], outfile: path.join(dist, 'settings-preload.cjs'), logLevel: 'warning' }),
-  // Monaco's CSS comes out as renderer.css beside it. Its icon font is emitted too, but the CSP (default-src 'none', no font-src) never
-  // loads it: styles.css hides the codicons, which only Monaco's diff host would show.
+  // Monaco's CSS comes out as renderer.css beside it. Its icon font is emitted too; the CSP's font-src allows the app's own
+  // files (for Geist), but styles.css hides the codicons, which only Monaco's diff host would show.
   build({ entryPoints: [path.join(here, 'src/renderer/index.tsx')], bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outfile: path.join(dist, 'renderer', 'renderer.js'), minify: true, alias, define: { ...define, 'process.env.NODE_ENV': '"production"' }, loader: { '.ttf': 'file' }, assetNames: '[name]', logLevel: 'warning' }),
   // Hydra's own programs, as the IDE builds them (scripts/build.mjs), run by the app's executable with
   // ELECTRON_RUN_AS_NODE=1: a chat's MCP bridge, the `hydra` command, Claude's usage-limit hook, and the uninstaller's
@@ -34,5 +34,8 @@ await Promise.all([
   build({ entryPoints: { 'editor.worker': path.join(here, 'src/renderer/editor.worker.ts') }, bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outdir: path.join(dist, 'renderer'), minify: true, logLevel: 'warning' }),
 ]);
 for (const file of ['index.html', 'styles.css']) await copyFile(path.join(here, 'src/renderer', file), path.join(dist, 'renderer', file));
+// Geist and Geist Mono (SIL Open Font License 1.1, its text beside them): the closest free type to Claude desktop's.
+await mkdir(path.join(dist, 'renderer', 'fonts'), { recursive: true });
+for (const file of ['Geist-Variable.woff2', 'GeistMono-Variable.woff2', 'OFL.txt']) await copyFile(path.join(here, 'src/renderer/fonts', file), path.join(dist, 'renderer', 'fonts', file));
 // The window's and taskbar's icon: the Hydra logo, not Electron's.
 await copyFile(path.join(here, '..', 'hydra-logo.png'), path.join(dist, 'icon.png'));

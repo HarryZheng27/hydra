@@ -25,6 +25,8 @@ export const CONTENT_SECURITY_POLICY = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "worker-src 'self'",
+  // The app's own fonts (Geist, shipped in the app): nothing from anywhere else.
+  "font-src 'self'",
   'img-src data:',
   "base-uri 'none'",
   "form-action 'none'",
