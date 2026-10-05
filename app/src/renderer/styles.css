@@ -478,3 +478,38 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .picker-menu li.has-submenu .picker-key .icon { width: 14px; height: 14px; color: var(--muted); }
 .picker-root .picker-menu li > .picker-submenu { top: auto; bottom: -5px; left: calc(100% + 8px); right: auto; max-height: 60vh; }
 .composer-spacer ~ .picker-root .picker-menu li > .picker-submenu { left: auto; right: calc(100% + 8px); }
+
+/* Claude desktop's type, across the app: its fallback stack (Anthropic Sans is Anthropic's own and isn't ours to ship),
+   14px body text, 13px for secondary and 12px for captions, and its weights (500 medium, 580 semibold). */
+body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; }
+.chat-link, .side-action, .search input, .recents button, .host-pick-list button { font-size: 14px; }
+.project-name { font-size: 13px; }
+.section-head, .hint, .provider-account, .connector-status, .review-count, .recent-meta, .recent-when, .turn-end, .working { font-size: 13px; }
+.chip, .provider-tag, .hydra-state, .card-outcome { font-size: 12px; }
+.chat-title, .card-title, .hydra-card-title, .provider-name, .tool-name, .settings h2, .setup-head h2 { font-weight: 580; }
+.settings h1, .empty h1 { font-weight: 580; }
+.mode { font-size: 13px; }
+.picker, .composer select.quiet { font-size: 14px; }
+.home-prompt .composer-bar .picker { font-size: 14px; }
+.picker.chip { font-size: 14px; }
+.home-prompt textarea, .composer textarea { font-size: 14px; }
+.msg.assistant, .msg.user .bubble { font-size: 15px; }
+
+/* Claude desktop's menus, continued: a heading row (Mode, Recent), a description under its label, the check before the
+   number key, and the + menu with its shortcut. */
+.picker-menu li.picker-heading { padding: 6px 9px 2px; color: var(--muted); font-size: 13px; cursor: default; }
+.picker-menu li.picker-heading:hover { background: none; }
+.picker-menu li.described { align-items: flex-start; padding-top: 6px; padding-bottom: 6px; }
+.picker-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.picker-line { display: flex; align-items: center; gap: 8px; }
+.picker-description { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.picker-menu li { font-size: 14px; }
+.picker-key { gap: 10px; align-items: center; }
+.picker-number { color: var(--muted); font-size: 13px; }
+.picker-menu li.described .picker-key { align-self: center; }
+.plus-root { position: relative; display: inline-flex; align-items: center; }
+.plus-menu { bottom: calc(100% + 6px); left: 0; min-width: 230px; }
+.plus-menu li { cursor: pointer; }
+.plus-menu li .icon { width: 16px; height: 16px; color: var(--muted); }
+.plus-menu li .picker-key { font-size: 13px; }
+.composer .icon-button.plus { width: 28px; height: 28px; }

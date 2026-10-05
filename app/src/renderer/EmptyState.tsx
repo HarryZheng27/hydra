@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
-import { approvalModes, claudeEfforts, modes, titleCase } from './Composer';
+import type { ChatImage, ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
+import { approvalModes, claudeEfforts, MAX_IMAGES, modeMenu, readImage, titleCase, type Attached } from './Composer';
+import { PlusMenu } from './PlusMenu';
 import { claudeDefaultModel, claudeModelOptions } from './claudeModels';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
@@ -21,9 +22,9 @@ function ago(iso: string, now = Date.now()): string {
 }
 
 /** What the home's prompt starts: a chat in a project, with an agent, here or (Claude) in the cloud. */
-export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; model?: string; effort?: string }
+export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; model?: string; effort?: string; images?: ChatImage[] }
 /** What the home knows of the models before a chat starts: Claude's versions ("5.5") and Codex's list, from chats so far. */
-export interface KnownModels { claudeVersions: Record<string, string>; codex: ChatModel[] }
+export interface KnownModels { claudeVersions: Record<string, string>; codex: ChatModel[]; claudeMode?: string }
 
 interface Props {
   project?: Project;
@@ -63,8 +64,20 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const [projectId, setProjectId] = useState(initial);
   const [provider, setProvider] = useState<'claude' | 'codex'>('claude');
   const [where, setWhere] = useState<'local' | 'cloud'>('local');
-  // 'settings': Claude Code follows the user's own default mode, as a new chat does; Codex asks, as Hydra starts it.
-  const [mode, setMode] = useState<ClaudePermissionMode>('settings');
+  // The user's own default mode, badged and shown; only a different choice is passed, so their settings still decide.
+  const defaultMode = (knownModels.claudeMode ?? 'default') as ClaudePermissionMode;
+  const [mode, setMode] = useState<ClaudePermissionMode>(defaultMode);
+  const [images, setImages] = useState<Attached[]>([]);
+  const [problem, setProblem] = useState<string>();
+  const attach = async (files: File[]) => {
+    setProblem(undefined);
+    for (const file of files) {
+      try {
+        const image = await readImage(file);
+        setImages(current => (current.length >= MAX_IMAGES ? (setProblem(`At most ${MAX_IMAGES} images per message.`), current) : [...current, image]));
+      } catch (error) { setProblem(error instanceof Error ? error.message : String(error)); }
+    }
+  };
   const [approvals, setApprovals] = useState<CodexApprovals>('ask');
   // Model and effort, as Claude desktop shows them: left as the CLI's own defaults unless the user picks one.
   const [model, setModel] = useState<string>();
@@ -87,16 +100,18 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const defaultEffort = provider === 'claude' ? 'medium' : knownModels.codex.find(candidate => candidate.id === shownModel)?.defaultEffort;
   const effortOptions = efforts.map(value => ({ value, label: titleCase(value), ...(value === defaultEffort ? { badge: 'Default' } : {}) }));
   const shownEffort = effort ?? defaultEffort;
+  // Claude desktop's folder menu: Recent, the projects, then Open folder… (and Clone a repo…).
   const projectOptions = [
-    ...projects.map(candidate => ({ value: candidate.id, label: candidate.name, description: candidate.path })),
-    { value: 'open', label: 'Open a folder…' },
+    { value: 'recent', label: 'Recent', heading: true },
+    ...projects.map(candidate => ({ value: candidate.id, label: candidate.name })),
+    { value: 'open', label: 'Open folder…', separator: true },
     { value: 'clone', label: 'Clone a repo…' },
   ];
   const start = async () => {
     if (!project || !text.trim() || busy) return;
     setBusy(true);
-    const settings = { ...(provider === 'claude' ? (mode === 'settings' ? {} : { permissionMode: mode }) : { approvals }), ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
-    try { if (await onStart({ project, provider, where: cloud ? 'cloud' : 'local', text: text.trim(), ...settings })) setText(''); } finally { setBusy(false); }
+    const settings = { ...(provider === 'claude' ? (mode === defaultMode ? {} : { permissionMode: mode }) : { approvals }), ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(images.length ? { images: images.map(({ mediaType, data }) => ({ mediaType, data })) } : {}) };
+    try { if (await onStart({ project, provider, where: cloud ? 'cloud' : 'local', text: text.trim(), ...settings })) { setText(''); setImages([]); } } finally { setBusy(false); }
   };
   const clone = async () => {
     if (!url.trim()) return;
@@ -138,18 +153,28 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
         )}
         <div className="home-chips">
           {provider === 'claude' && <Picker chip bare icon={cloud ? 'cloud' : 'laptop'} label="Where" value={where} options={whereOptions} onChange={value => setWhere(value === 'cloud' ? 'cloud' : 'local')} />}
-          <Picker chip bare icon="folder" label="Project" value={projectId} options={projectOptions} title={project?.path}
+          <Picker chip bare numbered={false} icon="folder" label="Project" value={projectId} options={projectOptions} title={project?.path}
             onChange={value => { if (value === 'open') onPickFolder(); else if (value === 'clone') setCloning(true); else setProjectId(value); }} />
         </div>
         <div className="prompt-box">
+          {(images.length > 0 || problem) && (
+            <div className="attachments">
+              {images.map((image, index) => (
+                <span key={index} className="chip attachment" title={image.name}>{image.name} · {Math.max(1, Math.round(image.size / 1024))} KB
+                  <button aria-label={`Remove ${image.name}`} onClick={() => setImages(current => current.filter((_, i) => i !== index))}>×</button></span>
+              ))}
+              {problem && <span className="error">{problem}</span>}
+            </div>
+          )}
           <textarea ref={box} rows={1} value={text} placeholder="Describe a task or ask a question" aria-label="Start a chat" disabled={busy}
             onChange={event => setText(event.target.value)}
             onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void start(); } }} />
           <button className="round send" onClick={() => void start()} disabled={!text.trim() || !project || busy} aria-label="Start the chat" title="Start the chat (Enter)"><Icon name="enter" /></button>
         </div>
         <div className="composer-bar">
+          {!cloud && <PlusMenu onFiles={files => void attach(files)} onFolder={onPickFolder} onSlash={() => { setText(current => (current.startsWith('/') ? current : `/${current}`)); box.current?.focus(); }} />}
           {provider === 'claude'
-            ? <Picker bare label="Permission mode" value={mode} options={[{ value: 'settings', label: 'Your settings', description: 'Claude Code follows your own default mode' }, ...modes]} onChange={value => setMode(value as ClaudePermissionMode)} />
+            ? <Picker bare label="Permission mode" value={mode} options={modeMenu(defaultMode)} onChange={value => setMode(value as ClaudePermissionMode)} />
             : <Picker bare label="Approvals" value={approvals} options={approvalModes()} onChange={value => setApprovals(value as CodexApprovals)} />}
           <span className="composer-spacer" />
           {modelOptions.length > 0 && <Picker bare label="Model" value={shownModel} options={modelOptions} onChange={setModel} />}

@@ -135,8 +135,10 @@ export function App() {
         if (event.type === 'models' && provider === 'codex' && event.models.length) codex = event.models;
       }
     }
-    return { claudeVersions, codex };
-  }, [chatEvents, chats]);
+    // The user's own Claude default mode, from any Claude chat opened so far (their settings' defaultMode).
+    const claudeMode = Object.entries(defaults).find(([id]) => chats.find(chat => chat.id === id)?.provider === 'claude')?.[1]?.mode;
+    return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}) };
+  }, [chatEvents, chats, defaults]);
   const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
     project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
@@ -211,7 +213,7 @@ export function App() {
     });
   };
   /** The home's prompt: a chat in the chosen project, with that agent (and place), and the message sent at once. */
-  const startChat = async ({ project: target, provider, where, text, permissionMode, approvals, model, effort }: StartRequest): Promise<boolean> => {
+  const startChat = async ({ project: target, provider, where, text, permissionMode, approvals, model, effort, images }: StartRequest): Promise<boolean> => {
     let current = target;
     try {
       if (!current.trustedAt) {
@@ -226,7 +228,7 @@ export function App() {
       setSettled(settled => ({ ...settled, [record.id]: 0 }));
       setView({ kind: 'chat', id: record.id });
       openChat(record.id);
-      await window.hydra.sendMessage(record.id, text);
+      await window.hydra.sendMessage(record.id, text, images);
       setError(undefined);
       return true;
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }

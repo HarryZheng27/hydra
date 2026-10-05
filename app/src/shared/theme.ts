@@ -93,8 +93,9 @@ export function titleBarColors(name: ThemeName): { color: string; symbolColor: s
  */
 export function vscodeThemeVariables(name: ThemeName): Record<string, string> {
   const out: Record<string, string> = {
-    '--vscode-font-family': '"Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
-    '--vscode-font-size': '13px',
+    // The app's type (Claude desktop's fallback stack and 14px body), in Hydra Settings' window too.
+    '--vscode-font-family': 'system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    '--vscode-font-size': '14px',
   };
   for (const [key, value] of Object.entries(files[name].colors)) {
     if (/^[a-zA-Z0-9.]+$/.test(key) && /^#[0-9a-fA-F]{3,8}$/.test(value)) out[`--vscode-${key.replace(/\./g, '-')}`] = value;

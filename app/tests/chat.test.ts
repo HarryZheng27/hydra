@@ -89,7 +89,7 @@ test('no chat starts in an untrusted folder', async () => {
     assert.equal(starts.length, 1);
     assert.equal(starts[0]!.cwd, dir);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('a chat is saved as it streams, and after a restart the next message resumes its session', async () => {
@@ -123,7 +123,7 @@ test('a chat is saved as it streams, and after a restart the next message resume
     assert.equal(resumed[resumed.indexOf('--resume') + 1], chat.providerSessionId);
     assert.ok(!resumed.includes('--session-id'));
     reopened.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('chat channels take ids, text and structured answers only', () => {
@@ -200,7 +200,7 @@ test('two quick messages share one session; every message checks trust; a remove
     await manager.closeFolder(dir);
     manager.closeAll();
     await assert.rejects(manager.send(chat.id, 'five'), /quitting/);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('Codex chats are read-only (write access waits for its live check, full access never); allow for the session is a choice', () => {
@@ -254,7 +254,7 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
     await turn('t2', `[projects.'${dir}']\ntrust_level = "trusted"\n`);
     assert.equal(notice(), true, JSON.stringify(pushed.map(event => event.type)));
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('images: a known type whose bytes match it, at most four of 5 MB; the declared type can\'t lie', () => {
@@ -295,7 +295,7 @@ test('Open in terminal runs the CLI\'s own resume of the chat in a console, afte
     assert.deepEqual(await manager.openTerminal(chat.id), { started: true });
     assert.deepEqual(consoles, [{ title: 'Claude Code chat', executable: 'claude.exe', args: ['--resume', chat.providerSessionId], cwd: dir }]);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('slash commands pass through to the CLI exactly as typed', () => {
@@ -341,7 +341,7 @@ test('after Open in terminal, the chat sends nothing until the user says the ter
     manager.closeAll();
     const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined });
     await assert.rejects(fresh.openTerminal(chat.id), /session id isn't one Hydra can pass on/);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('approving a plan takes the chat out of plan mode, so a later process doesn\'t go back to it', async () => {
@@ -357,7 +357,7 @@ test('approving a plan takes the chat out of plan mode, so a later process doesn
     for (let i = 0; i < 50 && (await store.get(chat.id))?.permissionMode !== 'default'; i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal((await store.get(chat.id))?.permissionMode, 'default');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('new chats follow the user\'s own CLI settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
@@ -397,7 +397,7 @@ test('new chats follow the user\'s own CLI settings; opening a Claude chat start
     assert.equal((await store.get(second.id))!.permissionMode, 'settings');
     manager.closeAll();
     await store.flush();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('nothing starts ahead for a chat removed, quitting, or opened in the background', async () => {
@@ -425,7 +425,7 @@ test('nothing starts ahead for a chat removed, quitting, or opened in the backgr
     await settle();
     assert.equal(launched.starts.length, 0, 'quit began while the CLI was starting');
     await store.flush();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('the composer shows the user\'s own model, effort and mode, read from their CLI settings and nothing else', () => {
@@ -466,7 +466,7 @@ test('a Claude chat set to Cloud starts a claude.ai session with its first messa
     assert.deepEqual(await manager.continueCloud(chat.id), { started: true, worktree: path.join(dir, 'wt', chat.id) });
     assert.deepEqual(consoles, [{ args: ['--teleport', session.sessionId], cwd: path.join(dir, 'wt', chat.id) }]);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('a cloud chat that fails to start says why in the chat; the stored session must be a real claude.ai one', async () => {
@@ -495,7 +495,7 @@ test('a cloud chat that fails to start says why in the chat; the stored session 
     fs.writeFileSync(index, JSON.stringify({ ...stored, chats: stored.chats.map((entry: { id: string }) => entry.id === chat.id ? { ...mine, provider: 'codex' } : entry) }));
     assert.equal(await new ChatStore(path.join(dir, 'chats'), noAcl).get(chat.id), undefined, 'a Codex chat in the cloud');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('a cloud chat\'s card links to claude.ai, and the composer gives way to it', () => {
@@ -559,7 +559,7 @@ test('one cloud session per chat: a second send is refused while the first start
     await assert.rejects(manager.send(fresh.id, 'hi'), /place is changing/);
     assert.equal((await placing).where, 'cloud');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('Continue here\'s window says it is fetching the cloud session before teleport draws anything; other windows say nothing extra', () => {
@@ -590,7 +590,7 @@ test('the sidebar menu renames, archives and unarchives a chat; a rename sticks,
     assert.equal(parseCall({ channel: 'chats.archive', payload: { id: chat.id, archived: 'yes' } }).ok, false);
     assert.equal(parseCall({ channel: 'chats.rename', payload: { id: chat.id, title: 'x'.repeat(401) } }).ok, false);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('the home is Claude desktop\'s start screen once there are projects: a prompt with where, project and agent', () => {
@@ -644,7 +644,7 @@ test('a chat that opens a pull request with gh pr create keeps its link; its sta
     assert.deepEqual(checked, ['https://github.com/ndunl075/shop/pull/12']);
     assert.equal((await manager.open(chat.id)).record.pr?.state, 'merged');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('Claude\'s model menu is Claude desktop\'s: the latest per family, then More models; aliases and dated ids map onto it', () => {

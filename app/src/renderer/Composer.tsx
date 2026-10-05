@@ -1,17 +1,18 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
+import { PlusMenu } from './PlusMenu';
 import { claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
 import { AgentLogo } from './AgentLogo';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 // Claude's API takes an image of at most 5 MB of base64, about 3.75 MB of file.
-const MAX_IMAGES = 4, MAX_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
-type Attached = ChatImage & { name: string; size: number };
+export const MAX_IMAGES = 4, MAX_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
+export type Attached = ChatImage & { name: string; size: number };
 
 /** Reads an image file as base64. Main checks its bytes again before anything reaches a CLI. */
-function readImage(file: File): Promise<Attached> {
+export function readImage(file: File): Promise<Attached> {
   return new Promise((resolve, reject) => {
     if (!imageTypes.includes(file.type as ChatImage['mediaType'])) { reject(new Error(`${file.name || 'That file'} isn't a PNG, JPEG, GIF or WebP image.`)); return; }
     if (file.size > MAX_BYTES) { reject(new Error(`${file.name || 'That image'} is over 3.7 MB.`)); return; }
@@ -44,10 +45,15 @@ export const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexAppr
  * permissions isn't offered (HSEC-82).
  */
 export const modes: Array<{ value: ClaudePermissionMode; label: string; description: string }> = [
-  { value: 'auto', label: 'Auto', description: 'Claude Code decides what needs your OK' },
-  { value: 'default', label: 'Ask before edits', description: 'Asks before editing files or running commands' },
-  { value: 'acceptEdits', label: 'Accept edits', description: 'Edits files without asking; asks before commands' },
-  { value: 'plan', label: 'Plan first', description: 'Plans, and changes nothing until you approve' },
+  { value: 'auto', label: 'Auto', description: 'Claude handles permission decisions' },
+  { value: 'default', label: 'Manual', description: 'Always ask before making changes' },
+  { value: 'acceptEdits', label: 'Accept edits', description: 'Automatically accept all file edits' },
+  { value: 'plan', label: 'Plan', description: 'Create a plan before making changes' },
+];
+/** Claude desktop's Mode menu: a heading, then the modes, the user's own default badged. Bypass permissions isn't offered (HSEC-82). */
+export const modeMenu = (defaultMode: string | undefined) => [
+  { value: 'heading', label: 'Mode', heading: true },
+  ...modes.map(option => (option.value === (defaultMode ?? 'default') ? { ...option, badge: 'Default' } : option)),
 ];
 
 interface Props {
@@ -131,11 +137,11 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
       </div>
       <div className="composer-bar">
         {/* A cloud chat's `--cloud` takes only the message: no images, mode, model or effort. */}
-        {!cloud && <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>}
+        {!cloud && <PlusMenu onFiles={files => void attach(files)} onSlash={() => { setText(current => (current.startsWith('/') ? current : `/${current}`)); box.current?.focus(); }} />}
         <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         {cloud ? null : codex
           ? <Picker label="Approvals" value={record.approvals ?? 'ask'} options={approvalModes(defaults)} onChange={value => onConfigure({ approvals: value as CodexApprovals })} title="Who answers Codex's approvals. Hydra starts Codex read-only." />
-          : <Picker label="Permission mode" value={mode} options={modes} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
+          : <Picker label="Permission mode" value={mode} options={modeMenu(defaults?.mode)} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
         {onWhere && <Picker label="Where" value={record.where ?? 'local'} options={whereOptions} onChange={value => onWhere(value === 'cloud' ? 'cloud' : 'local')} title="Run this chat here or on claude.ai. Chosen before the first message." />}
         <span className="composer-spacer" />
         {!cloud && <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />}
