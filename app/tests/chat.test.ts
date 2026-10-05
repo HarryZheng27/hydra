@@ -708,3 +708,9 @@ test('a Claude chat\'s command list reaches the window as soon as its CLI starts
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
+
+test('the / menu lists Claude Code\'s own commands before skills, each alphabetically', () => {
+  const commands = [{ name: 'agents-sdk', skill: true }, { name: 'goal', skill: false }, { name: 'compact', skill: false }, { name: 'cloudflare', skill: true }, { name: 'clear', skill: false }];
+  assert.deepEqual(matchCommands('/', commands).map(command => command.name), ['clear', 'compact', 'goal', 'agents-sdk', 'cloudflare']);
+  assert.deepEqual(matchCommands('/c', commands).map(command => command.name), ['clear', 'compact', 'cloudflare']);
+});

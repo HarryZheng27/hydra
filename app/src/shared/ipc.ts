@@ -141,7 +141,7 @@ export interface Channels {
   'terminal.close': { payload: { id: string }; result: null };
   /** The browser panel (Claude desktop's globe): http(s) pages only, in a session of its own (browserPanel.ts). */
   /** The home's / menu: Claude Code's commands for a trusted project, before any chat there (claudeCommands.ts). */
-  'chats.commands': { payload: { projectId: string }; result: Array<{ name: string; description?: string; argumentHint?: string }> };
+  'chats.commands': { payload: { projectId: string }; result: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> };
   'browser.open': { payload: { url?: string }; result: BrowserState };
   'browser.navigate': { payload: { url: string }; result: BrowserState };
   'browser.bounds': { payload: { x: number; y: number; width: number; height: number }; result: null };
@@ -335,7 +335,7 @@ export interface HydraApi {
   terminalResize(id: string, cols: number, rows: number): Promise<null>;
   terminalClose(id: string): Promise<null>;
   onTerminal(listener: (message: TerminalMessage) => void): () => void;
-  claudeCommands(projectId: string): Promise<Array<{ name: string; description?: string; argumentHint?: string }>>;
+  claudeCommands(projectId: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   browserOpen(url?: string): Promise<BrowserState>;
   browserNavigate(url: string): Promise<BrowserState>;
   browserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<null>;

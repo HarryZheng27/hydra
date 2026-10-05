@@ -98,7 +98,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
     let live = true;
     void window.hydra.claudeCommands(projectId).then(list => {
       if (!live) return;
-      const commands = list.map(command => ({ ...command, skill: false }));
+      const commands = list.map(({ builtin, ...command }) => ({ ...command, skill: !builtin }));
       setFetched(current => ({ ...current, [projectId]: commands }));
       if (commands.length) rememberCommands(commands);
     }, () => undefined);

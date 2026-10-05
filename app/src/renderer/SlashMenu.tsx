@@ -4,7 +4,8 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 export interface SlashCommand { name: string; skill: boolean; description?: string; argumentHint?: string }
 
 const shown = 8;
-const rememberedKey = 'hydra.claudeCommands';
+// v2: entries carry whether they're Claude Code's own (skill: false) or a skill; a v1 list didn't know.
+const rememberedKey = 'hydra.claudeCommands.v2';
 
 /** The latest Claude command list, kept so the home's / menu works before any chat opens (after a restart, say). */
 export function rememberCommands(commands: SlashCommand[]): void {
@@ -24,8 +25,10 @@ export function matchCommands(text: string, commands: SlashCommand[]): SlashComm
   const typed = /^\/([\w:.-]*)$/.exec(text)?.[1];
   if (typed === undefined) return [];
   const needle = typed.toLowerCase();
-  const starts = commands.filter(command => command.name.toLowerCase().startsWith(needle));
-  const contains = commands.filter(command => !command.name.toLowerCase().startsWith(needle) && command.name.toLowerCase().includes(needle));
+  // Claude Code's own commands (/compact, /goal, /model) before the user's skills, each alphabetically.
+  const ordered = [...commands].sort((a, b) => Number(a.skill) - Number(b.skill) || a.name.localeCompare(b.name));
+  const starts = ordered.filter(command => command.name.toLowerCase().startsWith(needle));
+  const contains = ordered.filter(command => !command.name.toLowerCase().startsWith(needle) && command.name.toLowerCase().includes(needle));
   return [...starts, ...contains].slice(0, shown);
 }
 

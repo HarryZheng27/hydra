@@ -293,7 +293,7 @@ export class ClaudeAdapter implements ChatAdapter {
         const name = text(command.name);
         if (!/^[a-z0-9][\w:.-]{0,63}$/i.test(name)) return [];
         const description = text(command.description).slice(0, 300), argumentHint = text(command.argumentHint).slice(0, 100);
-        return [{ name, ...(description ? { description } : {}), ...(argumentHint ? { argumentHint } : {}) }];
+        return [{ name, ...(description ? { description } : {}), ...(argumentHint ? { argumentHint } : {}), ...(command.builtin === true ? { builtin: true } : {}) }];
       }).slice(0, 400);
       if (commands.length) return [{ type: 'commands', commands }];
     }

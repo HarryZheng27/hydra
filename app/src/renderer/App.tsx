@@ -112,7 +112,7 @@ export function App() {
         // The / menu's commands (Claude Code's initialize reply): kept by chat, never logged.
         const listed = events.find(event => event.type === 'commands');
         if (listed?.type === 'commands') {
-          const list = listed.commands.map(command => ({ ...command, skill: false }));
+          const list = listed.commands.map(({ builtin, ...command }) => ({ ...command, skill: !builtin }));
           setCommands(current => ({ ...current, [chatId]: list }));
           rememberCommands(list);
         }

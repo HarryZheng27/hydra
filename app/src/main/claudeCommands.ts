@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { cloudEnvironment } from '../../../src/core/chat/cloud';
 
-export interface ListedCommand { name: string; description?: string; argumentHint?: string }
+export interface ListedCommand { name: string; description?: string; argumentHint?: string; builtin?: boolean }
 
 /**
  * Claude Code's slash commands for a folder, for the home's / menu before any chat starts there: the CLI's own
@@ -15,9 +15,9 @@ export function readCommands(response: unknown): ListedCommand[] {
   if (!Array.isArray(commands)) return [];
   return commands.flatMap(command => {
     if (!command || typeof command !== 'object') return [];
-    const { name, description, argumentHint } = command as Record<string, unknown>;
+    const { name, description, argumentHint, builtin } = command as Record<string, unknown>;
     if (typeof name !== 'string' || !/^[a-z0-9][\w:.-]{0,63}$/i.test(name)) return [];
-    return [{ name, ...(typeof description === 'string' && description ? { description: description.slice(0, 300) } : {}), ...(typeof argumentHint === 'string' && argumentHint ? { argumentHint: argumentHint.slice(0, 100) } : {}) }];
+    return [{ name, ...(typeof description === 'string' && description ? { description: description.slice(0, 300) } : {}), ...(typeof argumentHint === 'string' && argumentHint ? { argumentHint: argumentHint.slice(0, 100) } : {}), ...(builtin === true ? { builtin: true } : {}) }];
   }).slice(0, 400);
 }
 

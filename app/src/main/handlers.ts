@@ -45,7 +45,7 @@ export interface HandlerDeps {
   /** The window's terminals (G7's Continue here). */
   terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close'>;
   /** Claude Code's slash commands for a trusted folder (claudeCommands.ts). */
-  claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string }>>;
+  claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   /** The browser panel beside a chat. */
   browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
   chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
