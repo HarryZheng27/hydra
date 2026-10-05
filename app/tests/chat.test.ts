@@ -17,6 +17,7 @@ import { consoleScript } from '../src/main/console';
 import { Markdown, safeHref } from '../src/renderer/markdown';
 import { EmptyState } from '../src/renderer/EmptyState';
 import { nextStatus } from '../src/renderer/chatStatus';
+import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
 import { claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
@@ -657,4 +658,13 @@ test('Claude\'s model menu is Claude desktop\'s: the latest per family, then Mor
   assert.equal(claudeModelId('claude-haiku-4-5-20251001'), 'claude-haiku-4-5');
   assert.equal(claudeModelId('claude-opus-4-7'), 'claude-opus-4-7');
   assert.equal(claudeModelId('claude-opus-4-1'), 'claude-opus-4-1', 'one the menu lacks stays as it is');
+});
+
+test('the first Delete asks in the app\'s own dialog, once: Delete is the default, and it says it won\'t ask again', () => {
+  const chat = { id: '0f8fad5b-d9cb-469f-a165-70867728950e', provider: 'claude' as const, cwd: 'C:\\x', title: 'Fix the login', createdAt: '', updatedAt: '' };
+  const page = renderToStaticMarkup(createElement(ConfirmDelete, { chat, onConfirm: () => undefined, onCancel: () => undefined }));
+  assert.ok(page.includes('role="alertdialog"') && page.includes('Delete chat?') && page.includes('Fix the login'));
+  assert.ok(page.includes('won&#x27;t ask again') || page.includes("won't ask again"));
+  assert.ok(page.indexOf('>Cancel<') < page.indexOf('>Delete<'));
+  assert.equal(deleteConfirmed(), false, 'nothing confirmed yet (no storage in tests)');
 });

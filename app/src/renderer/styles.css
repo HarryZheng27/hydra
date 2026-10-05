@@ -513,3 +513,15 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .plus-menu li .icon { width: 16px; height: 16px; color: var(--muted); }
 .plus-menu li .picker-key { font-size: 13px; }
 .composer .icon-button.plus { width: 28px; height: 28px; }
+
+/* The app's own confirm dialog (ConfirmDelete.tsx): centred, quiet, the destructive choice in red. */
+.confirm-backdrop { place-items: center; padding: 16px; }
+.confirm-dialog { width: min(400px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; padding: 18px 18px 14px; border-radius: 12px; background: var(--input-bg); border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0, 0, 0, .18), 0 2px 6px rgba(0, 0, 0, .06); }
+.confirm-dialog h2 { margin: 0; font-size: 16px; font-weight: 580; }
+.confirm-dialog p { margin: 0; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.secondary-button, .danger-button { height: 32px; padding: 0 14px; border-radius: 8px; font-size: 14px; }
+.secondary-button { border: 1px solid var(--input-border); background: var(--input-bg); color: var(--fg); }
+.secondary-button:hover { background: var(--hover); }
+.danger-button { background: #C4314B; color: #FFFFFF; }
+.danger-button:hover { background: #A92840; }
