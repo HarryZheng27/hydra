@@ -547,3 +547,22 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .composer .icon-button.plus .icon { width: 13px; height: 13px; }
 .composer .composer-bar .agent-logo, .home-prompt .composer-bar .agent-logo { width: 14px; height: 14px; }
 .composer .composer-bar .composer-spacer + .picker-root, .composer .composer-bar .picker-root + .picker-root { margin-left: 6px; }
+
+/* The context wheel (ContextWheel.tsx), at the bar's right end as in Claude desktop: blue as it fills, amber near full. */
+.context-wheel { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: #3B6FE0; }
+.context-wheel:not(:disabled):hover { background: var(--hover); }
+.context-wheel:disabled { opacity: 1; cursor: default; }
+.context-wheel.full { color: #E7A13C; }
+
+/* Claude desktop's working row: four dots in Claude's orange, shuffling, then what it's doing and for how long. */
+.working { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.working-dots { position: relative; flex: none; width: 12px; height: 12px; }
+.working-dots i { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: #D97757; animation: working-dot 1.6s ease-in-out infinite; }
+.working-dots i:nth-child(1) { left: 0; top: 0; }
+.working-dots i:nth-child(2) { left: 8px; top: 0; animation-delay: -.4s; }
+.working-dots i:nth-child(3) { left: 8px; top: 8px; animation-delay: -.8s; }
+.working-dots i:nth-child(4) { left: 0; top: 8px; animation-delay: -1.2s; }
+@keyframes working-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .2; transform: scale(.6); } }
+@media (prefers-reduced-motion: reduce) { .working-dots i { animation: none; } }
+.working-text { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.working-time { color: var(--muted); flex: none; }

@@ -30,7 +30,7 @@ export type ChatEvent =
   /** The models the CLI offers (Codex's model/list), for the composer and for checking model and effort. */
   | { type: 'models'; models: ChatModel[] }
   /** Token use and cost for a turn, as the provider reports them. */
-  | { type: 'usage'; inputTokens?: number; outputTokens?: number; cachedTokens?: number; costUsd?: number; contextWindow?: number }
+  | { type: 'usage'; inputTokens?: number; outputTokens?: number; cachedTokens?: number; costUsd?: number; contextWindow?: number; /** How full the context is after the turn: its last request's whole prompt. */ contextTokens?: number }
   | { type: 'error'; message: string; fatal: boolean; code?: 'malformed' | 'unknown-request' | 'exited' | 'limit' | 'missing-cli' | 'spawn' }
   /** A turn ended. */
   | { type: 'done'; status: 'success' | 'interrupted' | 'error'; detail?: string }

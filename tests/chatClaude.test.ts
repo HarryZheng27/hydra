@@ -230,3 +230,13 @@ test('Claude: a chat that Claude reports in bypass permissions (from the user\'s
   const fine = new ClaudeAdapter().feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: randomUUID(), permissionMode: 'auto' }));
   assert.ok(!fine.events.some(event => event.type === 'error'), 'auto runs');
 });
+
+test('Claude: a turn\'s usage says how full the context is, from its last request, not the turn\'s sum of every request', () => {
+  const adapter = new ClaudeAdapter();
+  adapter.send('go');
+  const say = (message: unknown) => adapter.feed(JSON.stringify(message)).events;
+  say({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'one' }], usage: { input_tokens: 10, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 2_000 } } });
+  say({ type: 'assistant', message: { id: 'm2', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'two' }], usage: { input_tokens: 20, cache_read_input_tokens: 42_000, cache_creation_input_tokens: 500 } } });
+  const usage = say({ type: 'result', subtype: 'success', usage: { input_tokens: 30, cache_read_input_tokens: 82_000, cache_creation_input_tokens: 2_500, output_tokens: 90 } }).find(event => event.type === 'usage');
+  assert.equal(usage?.type === 'usage' ? usage.contextTokens : undefined, 42_520);
+});

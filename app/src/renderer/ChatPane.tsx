@@ -138,14 +138,53 @@ function usageLine(item: ChatItem & { kind: 'turn-end' }): string {
   return parts.join(' · ');
 }
 
-/** The line under a running turn: what it waits on, and for how long once that's more than a few seconds. */
-function Working({ provider, starting }: { provider: ChatRecord['provider']; starting: boolean }) {
+/** What a running turn is doing now, from its latest events: the tool it runs, or thinking, or writing. */
+function activity(events: ChatEvent[]): string | undefined {
+  const results = new Set(events.filter(event => event.type === 'tool-result').map(event => (event as { id: string }).id));
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type === 'user') return undefined;
+    if (event.type === 'tool-call' && !results.has(event.id)) {
+      const input = event.input as { command?: unknown; file_path?: unknown; description?: unknown } | undefined;
+      const detail = typeof input?.description === 'string' ? input.description : typeof input?.command === 'string' ? input.command : typeof input?.file_path === 'string' ? input.file_path : '';
+      return detail ? `${event.name}: ${detail}` : event.name;
+    }
+    if (event.type === 'thinking') return 'Thinking';
+    if (event.type === 'text') return 'Writing';
+  }
+  return undefined;
+}
+
+/**
+ * Claude desktop's working row under a running turn: four dots shuffling in Claude's orange, what it's doing, and the
+ * time so far.
+ */
+function Working({ provider, starting, doing }: { provider: ChatRecord['provider']; starting: boolean; doing?: string }) {
   const since = useRef(Date.now());
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const seconds = Math.floor((now - since.current) / 1000);
   const name = provider === 'claude' ? 'Claude Code' : 'Codex';
-  return <div className="working" role="status">{starting ? `Starting ${name}…` : `${name} is working…`}{seconds >= 5 ? ` ${seconds}s` : ''}</div>;
+  const time = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+  return (
+    <div className="working" role="status">
+      <span className="working-dots" aria-hidden="true"><i /><i /><i /><i /></span>
+      <span className="working-text">{starting ? `Starting ${name}` : doing ?? 'Working'}</span>
+      {seconds >= 1 && <span className="working-time">{time}</span>}
+    </div>
+  );
+}
+
+/** How full the chat's context is after its latest turn, and the window when the CLI said it. */
+function latestContext(events: ChatEvent[]): { used: number; window?: number } | undefined {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type !== 'usage') continue;
+    const used = event.contextTokens ?? ((event.inputTokens ?? 0) + (event.cachedTokens ?? 0));
+    if (!used) continue;
+    return { used, ...(event.contextWindow ? { window: event.contextWindow } : {}) };
+  }
+  return undefined;
 }
 
 export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud }: Props) {
@@ -205,12 +244,12 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
             );
           }
         })}
-        {view.running && !view.pending.length && <Working provider={record.provider} starting={events[events.length - 1]?.type === 'user'} />}
+        {view.running && !view.pending.length && <Working provider={record.provider} starting={events[events.length - 1]?.type === 'user'} doing={activity(events)} />}
         <div ref={end} />
       </div>
       {cloudStarted
         ? <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
-        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)}
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );

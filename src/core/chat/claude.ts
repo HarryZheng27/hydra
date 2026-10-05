@@ -75,6 +75,8 @@ export class ClaudeAdapter implements ChatAdapter {
   private messageId = 'm0';
   /** Claude's total_cost_usd counts up within one process; each turn reports its own share. */
   private costSoFar = 0;
+  /** The latest request's whole prompt (input plus cache read and written): how full the context is. A turn's result sums every request, so it can't say. */
+  private contextTokens: number | undefined;
   /** Tool calls already reported, so the same tool_use in a later assistant message isn't reported twice. */
   private readonly toolCalls = new Set<string>();
 
@@ -160,6 +162,12 @@ export class ClaudeAdapter implements ChatAdapter {
 
   private assistant(message: Record<string, unknown>): ChatEvent[] {
     if (message.parent_tool_use_id || !isRecord(message.message) || !Array.isArray(message.message.content)) return [];
+    const used = isRecord(message.message.usage) ? message.message.usage : undefined;
+    if (used) {
+      const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0);
+      const total = count(used.input_tokens) + count(used.cache_read_input_tokens) + count(used.cache_creation_input_tokens);
+      if (total > 0) this.contextTokens = total;
+    }
     const events: ChatEvent[] = [];
     // A reply Claude Code makes itself (/model, /effort) has no stream events: its text comes only here.
     if (message.message.model === '<synthetic>') {
@@ -203,6 +211,7 @@ export class ClaudeAdapter implements ChatAdapter {
     events.push({
       type: 'usage', inputTokens: number(usage.input_tokens), outputTokens: number(usage.output_tokens), ...(cached ? { cachedTokens: cached } : {}),
       ...(cost !== undefined ? { costUsd: cost } : {}),
+      ...(this.contextTokens !== undefined ? { contextTokens: this.contextTokens } : {}),
     });
     const interrupted = this.interrupted && message.subtype === 'error_during_execution';
     const failed = !interrupted && (message.is_error === true || (typeof message.subtype === 'string' && message.subtype !== 'success'));

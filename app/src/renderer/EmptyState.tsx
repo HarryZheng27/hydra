@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatImage, ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
 import { approvalModes, claudeEfforts, MAX_IMAGES, modeMenu, readImage, titleCase, type Attached } from './Composer';
 import { PlusMenu } from './PlusMenu';
+import { ContextWheel } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
 import { claudeDefaultModel, claudeModelOptions } from './claudeModels';
 import { Icon } from './Icon';
@@ -180,6 +181,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
           <span className="composer-spacer" />
           {modelOptions.length > 0 && <Picker bare label="Model" value={shownModel} options={modelOptions} onChange={setModel} />}
           {effortOptions.length > 0 && <Picker bare label="Effort" value={shownEffort} options={effortOptions} onChange={setEffort} />}
+          <ContextWheel />
           <Picker bare artOnly label="Agent" title={provider === 'claude' ? 'Claude Code' : 'Codex'} value={provider} options={agentOptions} onChange={value => { setProvider(value === 'codex' ? 'codex' : 'claude'); setModel(undefined); setEffort(undefined); }} />
         </div>
         {cloud && !seen('cloud') && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
