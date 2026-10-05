@@ -8,6 +8,7 @@ import { Icon } from './Icon';
 import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
 import { TerminalPane } from './TerminalPane';
+import type { SlashCommand } from './SlashMenu';
 
 interface Props {
   record: ChatRecord;
@@ -32,6 +33,11 @@ interface Props {
   onWhere?(where: 'local' | 'cloud'): void;
   /** G7: a cloud chat's session, continued in a terminal in a fresh worktree. */
   onContinueCloud?(): void;
+  /** The browser panel: the globe opens or closes it, with this chat's PR or cloud session to start with. */
+  onBrowser?(url?: string): void;
+  browserOpen?: boolean;
+  /** The / menu's commands, from the chat's Claude Code process (with descriptions); else its session's names. */
+  commands?: SlashCommand[];
   /** A cloud chat continued here: its terminal inside the chat (G7). */
   terminalId?: string;
   /** The project's name, for the header's pill. */
@@ -44,6 +50,8 @@ interface Props {
 /** The CLI's latest model list in this chat (Codex sends one when a thread starts). */
 const latestModels = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'models') return event.models; } return []; };
 
+/** The slash commands the chat's latest Claude session offered (its init), skills marked. */
+const latestCommands = (events: ChatEvent[]): SlashCommand[] => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.commands) { const skills = new Set(event.skills ?? []); return event.commands.map(name => ({ name, skill: skills.has(name) })); } } return []; };
 const latestSessionModel = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.model) return event.model; } return undefined; };
 
 const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
@@ -196,7 +204,7 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return undefined;
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands }: Props) {
   // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
   const [slot, setSlot] = useState<Element | null>(null);
   useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
@@ -234,7 +242,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
           {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
           <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
           <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
-          {(record.pr?.url ?? cloudUrl) && <a className="head-action" href={record.pr?.url ?? cloudUrl} target="_blank" rel="noreferrer" aria-label={record.pr ? 'Open the pull request' : 'Open on claude.ai'} title={record.pr ? 'Open the pull request' : 'Open on claude.ai'}><Icon name="globe" /></a>}
+          {onBrowser && <button className="head-action" onClick={() => onBrowser(record.pr?.url ?? cloudUrl)} aria-pressed={!!browserOpen} aria-label="Browser" title={record.pr ? 'Browser: opens the pull request' : cloudUrl ? 'Browser: opens the session on claude.ai' : 'Browser'}><Icon name="globe" /></button>}
           <div className="head-more" ref={moreRoot}>
             <button className="head-action" aria-label="More" aria-haspopup="menu" aria-expanded={more} title="More" onClick={() => setMore(value => !value)}><Icon name="more" /></button>
             {more && (
@@ -283,7 +291,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       </div>
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
-        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)}
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} commands={commands?.length ? commands : latestCommands(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );

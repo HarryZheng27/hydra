@@ -32,6 +32,8 @@ export interface ChatManagerDeps {
   codexConfig?(): Promise<string | undefined>;
   /** Opens a console window the user owns, running a CLI in a folder; Hydra never reads it. */
   openConsole?(title: string, executable: string, args: string[], cwd: string): Promise<{ started: boolean; error?: string }>;
+  /** A line for the app's log (HYDRA_APP_LOG). */
+  log?(line: string): void;
   /** A terminal inside the window (G7's Continue here): its id, for the window to show. */
   startTerminal?(executable: string, args: string[], cwd: string): string;
   timings?: SessionTimings;
@@ -194,7 +196,7 @@ export class ChatManager {
     this.adapter(input.provider);
     return this.deps.store.create({
       provider: input.provider, cwd: input.cwd, ...(input.where === 'cloud' ? { where: 'cloud' as const } : {}),
-      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'settings' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
+      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'auto' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
       ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
     });
   }
@@ -269,7 +271,12 @@ export class ChatManager {
   }
 
   /** Writes a chat's events to its log, keeps its index entry current, and pushes them to the window. */
-  private async persist(id: string, events: ChatEvent[]): Promise<void> {
+  private async persist(id: string, given: ChatEvent[]): Promise<void> {
+    // The / menu's command list comes on every start: the window gets it, the log doesn't (it would repeat each time).
+    const live = given.filter(event => event.type === 'commands');
+    if (live.length) { this.deps.log?.(`[chat] ${id}: ${live.reduce((sum, event) => sum + (event.type === 'commands' ? event.commands.length : 0), 0)} slash commands`); this.deps.push(id, live, -1); }
+    const events = given.filter(event => event.type !== 'commands');
+    if (!events.length) return;
     try {
       // Written first, then pushed with its position, so the window can merge it with a log it is reading.
       const start = await this.deps.store.append(id, events);

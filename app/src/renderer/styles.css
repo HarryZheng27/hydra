@@ -593,3 +593,41 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .terminal-pane { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); overflow: hidden; }
 .terminal-pane .xterm { height: 100%; }
 .chat:has(.chat-terminal) .transcript { flex: 0 1 auto; max-height: 38%; }
+
+/* Wider side margins in a chat, nearer Claude desktop's: at least 56px each side, and a 720px column once there's room. */
+.transcript { padding-left: max(56px, calc((100% - 720px) / 2)); padding-right: max(56px, calc((100% - 720px) / 2)); }
+.composer { padding-left: max(56px, calc((100% - 720px) / 2)); padding-right: max(56px, calc((100% - 720px) / 2)); }
+.home-start { padding-left: 56px; padding-right: 56px; }
+.chat-terminal { padding-left: max(56px, calc((100% - 900px) / 2)); padding-right: max(56px, calc((100% - 900px) / 2)); }
+
+/* Sidebar chat rows a little shorter: ~25px instead of ~29px, as Nico asked. */
+.chat-link { padding-top: 2px; padding-bottom: 2px; line-height: 1.45; }
+.chats { gap: 0; }
+
+/* The browser panel beside a chat (BrowserPanel.tsx): a toolbar, and the space main lays the page into. */
+.browser-panel { flex: 0 0 46%; min-width: 360px; max-width: 900px; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
+.browser-bar { display: flex; align-items: center; gap: 2px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.browser-button { width: 28px; height: 28px; display: inline-grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.browser-button:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.browser-button .icon { width: 15px; height: 15px; }
+.browser-address { flex: 1; min-width: 0; height: 28px; margin: 0 4px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--fg); font: inherit; font-size: 13px; outline: none; }
+.browser-address:focus { border-color: color-mix(in srgb, var(--fg) 30%, var(--bg)); }
+.browser-problem { padding: 6px 12px; color: var(--error); font-size: 13px; }
+.browser-surface { flex: 1; min-height: 0; display: grid; place-items: center; }
+.browser-surface .hint { max-width: 280px; text-align: center; }
+
+/* The / menu (SlashMenu.tsx): above the prompt box, as Claude Code's, its commands and the user's skills. */
+.prompt-box { position: relative; }
+.slash-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); max-width: 420px; max-height: 300px; overflow-y: auto; }
+.slash-menu li { cursor: pointer; }
+.slash-menu { max-width: 520px; }
+.slash-menu .picker-description { white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+.slash-hint { color: var(--muted); font-size: 12.5px; }
+
+/* The / menu as Claude desktop's (measured at 150%): a 240px panel over the box's left, names only in 24px rows,
+   about fifteen showing and the rest scrolling; "Type to filter" after a lone "/". */
+.picker-menu.slash-menu { right: auto; width: 240px; max-width: none; max-height: 372px; padding: 4px; }
+.slash-menu li { padding: 3px 10px; min-height: 24px; font-size: 14px; }
+.slash-menu li .picker-label { overflow: hidden; text-overflow: ellipsis; }
+.slash-ghost { position: absolute; left: calc(13px + 0.55em); top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 14px; pointer-events: none; }
+.composer .prompt-box:has(textarea:not(:placeholder-shown)) .slash-ghost { display: block; }

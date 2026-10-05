@@ -240,3 +240,19 @@ test('Claude: a turn\'s usage says how full the context is, from its last reques
   const usage = say({ type: 'result', subtype: 'success', usage: { input_tokens: 30, cache_read_input_tokens: 82_000, cache_creation_input_tokens: 2_500, output_tokens: 90 } }).find(event => event.type === 'usage');
   assert.equal(usage?.type === 'usage' ? usage.contextTokens : undefined, 42_520);
 });
+
+test('Claude: a session\'s init lists its slash commands and skills for the / menu; internal and odd names are left out', () => {
+  const adapter = new ClaudeAdapter();
+  const events = adapter.feed(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1', slash_commands: ['compact', 'review', '__remote-workflow', 'frontend-design', 'bad name', 7, 'compact'], skills: ['frontend-design'] })).events;
+  const session = events.find(event => event.type === 'session');
+  assert.deepEqual(session?.type === 'session' ? [session.commands, session.skills] : undefined, [['compact', 'review', 'frontend-design'], ['frontend-design']]);
+});
+
+test('Claude: initialize\'s reply lists every slash command with its description, before any turn, for the / menu', () => {
+  const adapter = new ClaudeAdapter();
+  const events = adapter.feed(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'g1-control-1', response: { commands: [
+    { name: 'compact', description: 'Clear conversation history but keep a summary', argumentHint: '<instructions>' },
+    { name: 'bad name', description: 'x' }, { name: 'review', description: '' }, 'odd',
+  ] } } })).events;
+  assert.deepEqual(events, [{ type: 'commands', commands: [{ name: 'compact', description: 'Clear conversation history but keep a summary', argumentHint: '<instructions>' }, { name: 'review' }] }]);
+});

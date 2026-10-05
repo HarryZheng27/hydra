@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { watchTerminals } from './terminalBus';
+import { rememberCommands, rememberedCommands, type SlashCommand } from './SlashMenu';
+import { BrowserPanel } from './BrowserPanel';
 import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project, BrowserState } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -58,6 +60,17 @@ export function App() {
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
   const [deleting, setDeleting] = useState<ChatRecord>();
+  // Each Claude chat's / menu, from its process's initialize reply (with descriptions).
+  const [commands, setCommands] = useState<Record<string, SlashCommand[]>>({});
+  // The browser panel beside the chat (Claude desktop's globe): main's state, and whether it's shown.
+  const [browser, setBrowser] = useState<BrowserState>({ open: false, url: '', title: '', canGoBack: false, canGoForward: false, loading: false });
+  const [browserShown, setBrowserShown] = useState(false);
+  useEffect(() => window.hydra.onBrowser(setBrowser), []);
+  const toggleBrowser = (url?: string) => {
+    if (browserShown) { setBrowserShown(false); void window.hydra.browserClose(); return; }
+    setBrowserShown(true);
+    void run(window.hydra.browserOpen(url), setBrowser);
+  };
   // A cloud chat continued in the window: its terminal, by chat (G7). Listening starts now, so no output is missed.
   const [terminals, setTerminals] = useState<Record<string, string>>({});
   useEffect(() => { watchTerminals(); }, []);
@@ -95,7 +108,17 @@ export function App() {
     // Live events for every chat this window has open; the list refreshes when a turn ends or a title appears.
     const stopChats = window.hydra.onChatEvents(message => {
       const { chatId, events, start } = message;
-      if (start < 0) { const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message); return; }
+      if (start < 0) {
+        // The / menu's commands (Claude Code's initialize reply): kept by chat, never logged.
+        const listed = events.find(event => event.type === 'commands');
+        if (listed?.type === 'commands') {
+          const list = listed.commands.map(({ builtin, ...command }) => ({ ...command, skill: !builtin }));
+          setCommands(current => ({ ...current, [chatId]: list }));
+          rememberCommands(list);
+        }
+        const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message);
+        return;
+      }
       const pending = waiting.current.get(chatId) ?? new Set<string>();
       waiting.current.set(chatId, pending);
       setStatuses(current => {
@@ -142,9 +165,18 @@ export function App() {
       }
     }
     // The user's own Claude default mode, from any Claude chat opened so far (their settings' defaultMode).
+    // The / menu's commands before a chat starts: any Claude chat's list from this run (initialize's, with
+    // descriptions), else the latest session's names.
+    let claudeCommands: KnownModels['claudeCommands'] = Object.values(commands).find(list => list.length);
+    if (!claudeCommands) { const remembered = rememberedCommands(); if (remembered.length) claudeCommands = remembered; }
+    for (const [id, events] of Object.entries(chatEvents)) {
+      if (chats.find(chat => chat.id === id)?.provider !== 'claude') continue;
+      if (claudeCommands) break;
+      for (const event of events) if (event.type === 'session' && event.commands) { const skills = new Set(event.skills ?? []); claudeCommands = event.commands.map(name => ({ name, skill: skills.has(name) })); }
+    }
     const claudeMode = Object.entries(defaults).find(([id]) => chats.find(chat => chat.id === id)?.provider === 'claude')?.[1]?.mode;
-    return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}) };
-  }, [chatEvents, chats, defaults]);
+    return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}), ...(claudeCommands ? { claudeCommands } : {}) };
+  }, [chatEvents, chats, defaults, commands]);
   const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
     project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
@@ -299,6 +331,9 @@ export function App() {
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   terminalId={terminals[chat.id]}
+                  commands={commands[chat.id]}
+                  onBrowser={toggleBrowser}
+                  browserOpen={browserShown}
                   {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {
                     if (!result.started) setError(result.error ?? "The terminal didn't open.");
                     else if (result.terminalId) setTerminals(current => ({ ...current, [chat.id]: result.terminalId! }));
@@ -307,6 +342,7 @@ export function App() {
                 knownModels={knownModels}
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
+        {browserShown && mode === 'chat' && <BrowserPanel state={browser} covered={!!deleting} onClose={() => { setBrowserShown(false); void window.hydra.browserClose(); }} />}
       </div>
     </div>
   );

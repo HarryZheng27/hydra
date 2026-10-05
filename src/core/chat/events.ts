@@ -8,7 +8,9 @@ export type ChatProvider = 'claude' | 'codex';
 /** One event in a chat. `turn` counts the user's messages, from 1. */
 export type ChatEvent =
   /** The provider's own session (Claude) or thread (Codex) id, kept for resume. */
-  | { type: 'session'; providerSessionId: string; model?: string; permissionMode?: string }
+  /** Claude: the slash commands its process offers, from initialize's reply (before any turn). Shown, not logged. */
+  | { type: 'commands'; commands: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> }
+  | { type: 'session'; providerSessionId: string; model?: string; permissionMode?: string; /** Claude: the slash commands its session offers, and which are skills. */ commands?: string[]; skills?: string[] }
   /** What the user sent. */
   | { type: 'user'; text: string; images?: number }
   /** A piece of the assistant's reply, as it streams. `block` groups deltas of one reply block. */

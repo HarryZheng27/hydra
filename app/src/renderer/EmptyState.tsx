@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ChatImage, ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
 import { approvalModes, claudeEfforts, MAX_IMAGES, modeMenu, readImage, titleCase, type Attached } from './Composer';
 import { PlusMenu } from './PlusMenu';
+import { rememberCommands, useSlashMenu, type SlashCommand } from './SlashMenu';
 import { ContextWheel } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
 import { claudeDefaultModel, claudeModelOptions } from './claudeModels';
@@ -26,7 +27,7 @@ function ago(iso: string, now = Date.now()): string {
 /** What the home's prompt starts: a chat in a project, with an agent, here or (Claude) in the cloud. */
 export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; model?: string; effort?: string; images?: ChatImage[] }
 /** What the home knows of the models before a chat starts: Claude's versions ("5.5") and Codex's list, from chats so far. */
-export interface KnownModels { claudeVersions: Record<string, string>; codex: ChatModel[]; claudeMode?: string }
+export interface KnownModels { claudeVersions: Record<string, string>; codex: ChatModel[]; claudeMode?: string; /** The / menu's commands, from any Claude chat started so far. */ claudeCommands?: SlashCommand[] }
 
 interface Props {
   project?: Project;
@@ -67,7 +68,8 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const [provider, setProvider] = useState<'claude' | 'codex'>('claude');
   const [where, setWhere] = useState<'local' | 'cloud'>('local');
   // The user's own default mode, badged and shown; only a different choice is passed, so their settings still decide.
-  const defaultMode = (knownModels.claudeMode ?? 'default') as ClaudePermissionMode;
+  // Claude chats start in Auto, as Claude desktop's do (ChatManager.create); the menu's Default says so.
+  const defaultMode: ClaudePermissionMode = 'auto';
   const [mode, setMode] = useState<ClaudePermissionMode>(defaultMode);
   const [images, setImages] = useState<Attached[]>([]);
   const [problem, setProblem] = useState<string>();
@@ -89,6 +91,21 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
   const box = useRef<HTMLTextAreaElement>(null);
+  // The / menu: commands seen in a chat, else Claude Code's own list for the selected project, asked for once.
+  const [fetched, setFetched] = useState<Record<string, SlashCommand[]>>({});
+  useEffect(() => {
+    if (provider !== 'claude' || !projectId || knownModels.claudeCommands?.length || fetched[projectId]) return;
+    let live = true;
+    void window.hydra.claudeCommands(projectId).then(list => {
+      if (!live) return;
+      const commands = list.map(({ builtin, ...command }) => ({ ...command, skill: !builtin }));
+      setFetched(current => ({ ...current, [projectId]: commands }));
+      if (commands.length) rememberCommands(commands);
+    }, () => undefined);
+    return () => { live = false; };
+  }, [provider, projectId, knownModels.claudeCommands, fetched]);
+  const slashCommands = provider === 'claude' ? (knownModels.claudeCommands?.length ? knownModels.claudeCommands : (projectId ? fetched[projectId] : undefined) ?? []) : [];
+  const slash = useSlashMenu(text, slashCommands, value => { setText(value); box.current?.focus(); });
   useEffect(() => { if (!projects.some(project => project.id === projectId)) setProjectId(projects[0]?.id); }, [projects, projectId]);
   useEffect(() => { box.current?.focus(); }, []);
   const project = projects.find(candidate => candidate.id === projectId);
@@ -159,6 +176,8 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
             onChange={value => { if (value === 'open') onPickFolder(); else if (value === 'clone') setCloning(true); else setProjectId(value); }} />
         </div>
         <div className="prompt-box">
+          {slash.menu}
+          {slash.ghost}
           {(images.length > 0 || problem) && (
             <div className="attachments">
               {images.map((image, index) => (
@@ -170,7 +189,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
           )}
           <textarea ref={box} rows={1} value={text} placeholder="Describe a task or ask a question" aria-label="Start a chat" disabled={busy}
             onChange={event => setText(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void start(); } }} />
+            onKeyDown={event => { if (slash.keyDown(event)) return; if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void start(); } }} />
           <button className="round send" onClick={() => void start()} disabled={!text.trim() || !project || busy} aria-label="Start the chat" title="Start the chat (Enter)"><Icon name="enter" /></button>
         </div>
         <div className="composer-bar">

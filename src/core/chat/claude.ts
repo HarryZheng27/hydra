@@ -66,6 +66,12 @@ function parseQuestions(input: Record<string, unknown>): ChatQuestion[] | undefi
   return questions;
 }
 
+/** A list of command or skill names from Claude Code's init: short plain names only, internal ones (__x) left out. */
+function names(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((name): name is string => typeof name === 'string' && /^[a-z0-9][\w:.-]{0,63}$/i.test(name)))].slice(0, 400);
+}
+
 export class ClaudeAdapter implements ChatAdapter {
   readonly provider = 'claude' as const;
   private readonly requests = new Map<string, Pending>();
@@ -142,7 +148,8 @@ export class ClaudeAdapter implements ChatAdapter {
       return [{ type: 'session', providerSessionId: message.session_id, permissionMode: message.permissionMode }];
     }
     if (message.subtype === 'init' && typeof message.session_id === 'string') {
-      return [{ type: 'session', providerSessionId: message.session_id, ...(typeof message.model === 'string' ? { model: message.model } : {}), ...(typeof message.permissionMode === 'string' ? { permissionMode: message.permissionMode } : {}) }];
+      const commands = names(message.slash_commands), skills = names(message.skills);
+      return [{ type: 'session', providerSessionId: message.session_id, ...(typeof message.model === 'string' ? { model: message.model } : {}), ...(typeof message.permissionMode === 'string' ? { permissionMode: message.permissionMode } : {}), ...(commands.length ? { commands } : {}), ...(skills.length ? { skills } : {}) }];
     }
     return [];
   }
@@ -280,6 +287,16 @@ export class ClaudeAdapter implements ChatAdapter {
     if (response.subtype === 'error') return [{ type: 'error', message: `Claude Code refused a request: ${text(response.error).slice(0, 300)}`, fatal: false }];
     // initialize's reply comes before any turn and names the mode Claude is in (G1).
     if (isRecord(response.response) && refusedMode(response.response.current_permission_mode)) return [bypassRefused];
+    // It also lists every slash command, with its description, for the / menu, before the user has sent anything.
+    if (isRecord(response.response) && Array.isArray(response.response.commands)) {
+      const commands = response.response.commands.filter(isRecord).flatMap(command => {
+        const name = text(command.name);
+        if (!/^[a-z0-9][\w:.-]{0,63}$/i.test(name)) return [];
+        const description = text(command.description).slice(0, 300), argumentHint = text(command.argumentHint).slice(0, 100);
+        return [{ name, ...(description ? { description } : {}), ...(argumentHint ? { argumentHint } : {}), ...(command.builtin === true ? { builtin: true } : {}) }];
+      }).slice(0, 400);
+      if (commands.length) return [{ type: 'commands', commands }];
+    }
     return [];
   }
 

@@ -20,6 +20,7 @@ import { nextStatus } from '../src/renderer/chatStatus';
 import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
 import { claudeContextWindow, claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
 import { ContextWheel } from '../src/renderer/ContextWheel';
+import { matchCommands } from '../src/renderer/SlashMenu';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -201,6 +202,7 @@ test('two quick messages share one session; every message checks trust; a remove
     assert.equal(starts.length, 2, 'the untrusted send ended the old session; this one started fresh');
     await manager.closeFolder(dir);
     manager.closeAll();
+    await store.flush();
     await assert.rejects(manager.send(chat.id, 'five'), /quitting/);
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
@@ -246,7 +248,7 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
       say({ method: 'turn/started', params: { threadId: thread, turn: { id } } });
       say({ method: 'turn/completed', params: { threadId: thread, turn: { id, status: 'completed' } } });
       await readsReach(before + 2); // and again when it ends
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await new Promise(resolve => setTimeout(resolve, 200));
     };
     await manager.send(chat.id, 'one');
     say({ id: 3, result: { thread: { id: thread }, approvalsReviewer: 'user', sandbox: { type: 'readOnly' } } });
@@ -254,6 +256,7 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
     assert.equal(notice(), false, 'a sibling folder with a longer name is not this one');
     await manager.send(chat.id, 'two');
     await turn('t2', `[projects.'${dir}']\ntrust_level = "trusted"\n`);
+    for (let i = 0; i < 500 && !notice(); i++) await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(notice(), true, JSON.stringify(pushed.map(event => event.type)));
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
@@ -362,21 +365,22 @@ test('approving a plan takes the chat out of plan mode, so a later process doesn
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
-test('new chats follow the user\'s own CLI settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
+test('new Claude chats start in Auto and Codex chats on the user\'s own settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
   const dir = scratch();
   try {
     const launched = fakeLaunch();
     const store = new ChatStore(path.join(dir, 'chats'), noAcl);
     const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined, warm: true });
     const first = await manager.create({ cwd: dir, provider: 'claude' });
-    assert.equal(first.permissionMode, 'settings');
+    assert.equal(first.permissionMode, 'auto', 'Claude chats start in Auto, as Claude desktop\'s do');
     const codex = await manager.create({ cwd: dir, provider: 'codex' });
     assert.equal(codex.approvals, 'settings');
     assert.equal(codex.sandbox, 'read-only');
     await manager.open(first.id);
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal(launched.starts.length, 1, 'the Claude CLI started when the chat opened');
-    assert.ok(!launched.starts[0]!.args.includes('--permission-mode'), 'your settings: no mode passed');
+    const flag = launched.starts[0]!.args.indexOf('--permission-mode');
+    assert.deepEqual(launched.starts[0]!.args.slice(flag, flag + 2), ['--permission-mode', 'auto']);
     const killed: number[] = [];
     const watch = (index: number) => { const exit = launched.starts[index]!.handlers.exit; launched.starts[index]!.handlers.exit = code => { killed.push(index); exit(code); }; };
     watch(0);
@@ -393,10 +397,10 @@ test('new chats follow the user\'s own CLI settings; opening a Claude chat start
     assert.deepEqual(killed, [0, 1]);
     await manager.send(second.id, 'hi');
     assert.equal(launched.starts.length, 3, 'the message used the started process');
-    // A plan approval moves a plan-mode chat out of plan mode; a chat on the user's settings stays on them.
-    launched.starts[2]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', permissionMode: 'auto', session_id: second.providerSessionId }));
+    // A plan approval moves a plan-mode chat out of plan mode; a chat in another mode stays in it.
+    launched.starts[2]!.handlers.line(JSON.stringify({ type: 'system', subtype: 'status', permissionMode: 'acceptEdits', session_id: second.providerSessionId }));
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.equal((await store.get(second.id))!.permissionMode, 'settings');
+    assert.equal((await store.get(second.id))!.permissionMode, 'auto');
     manager.closeAll();
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
@@ -678,4 +682,37 @@ test('the context wheel shows how full the context is, and offers compacting onl
   assert.ok(quiet.includes('disabled') && quiet.includes('Context: nothing used yet'));
   assert.equal(claudeContextWindow('claude-haiku-4-5-20251001'), 200_000);
   assert.equal(claudeContextWindow('opus'), 1_000_000);
+});
+
+test('the / menu offers what fits what\'s typed: names starting with it first, then names containing it; none once a space follows', () => {
+  const commands = [{ name: 'compact', skill: false }, { name: 'context', skill: false }, { name: 'frontend-design', skill: true }, { name: 'code-review', skill: true }];
+  assert.deepEqual(matchCommands('/co', commands).map(command => command.name), ['compact', 'context', 'code-review']);
+  assert.deepEqual(matchCommands('/view', commands).map(command => command.name), ['code-review']);
+  assert.equal(matchCommands('/', commands).length, 4);
+  assert.deepEqual(matchCommands('/compact now', commands), []);
+  assert.deepEqual(matchCommands('hello', commands), []);
+});
+
+test('a Claude chat\'s command list reaches the window as soon as its CLI starts, and is never written to the chat\'s log', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const pushed: Array<{ events: ChatEvent[]; start: number }> = [];
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: (_id, events, start) => pushed.push({ events, start }), warm: true });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(chat.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    starts[0]!.handlers.line(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'x', response: { commands: [{ name: 'compact', description: 'Summarise' }] } } }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(pushed.find(entry => entry.events.some(event => event.type === 'commands')), { events: [{ type: 'commands', commands: [{ name: 'compact', description: 'Summarise' }] }], start: -1 });
+    assert.ok(!(await manager.open(chat.id)).log.some(entry => entry.event.type === 'commands'), 'not in the log');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});
+
+test('the / menu lists Claude Code\'s own commands before skills, each alphabetically', () => {
+  const commands = [{ name: 'agents-sdk', skill: true }, { name: 'goal', skill: false }, { name: 'compact', skill: false }, { name: 'cloudflare', skill: true }, { name: 'clear', skill: false }];
+  assert.deepEqual(matchCommands('/', commands).map(command => command.name), ['clear', 'compact', 'goal', 'agents-sdk', 'cloudflare']);
+  assert.deepEqual(matchCommands('/c', commands).map(command => command.name), ['clear', 'compact', 'cloudflare']);
 });
