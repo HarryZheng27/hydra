@@ -8,6 +8,8 @@ import type { Handlers } from './ipc';
 import { addProject, projectFor, removeProject, setCliPath, trustProject, type JsonStore } from './settings';
 
 export interface HandlerDeps {
+  /** A chat's PR bar: gh's view of a pull request (pullRequests.ts). */
+  pullRequest?(url: string): Promise<import('../shared/ipc').PullRequestInfo>;
   info: { name: string; version: string; electron: string; platform: string; user?: string };
   settings: JsonStore<AppSettings>;
   state: JsonStore<AppState>;
@@ -169,6 +171,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       if (!project?.trustedAt || !deps.claudeCommands) return [];
       return deps.claudeCommands(project.path);
     },
+    'chats.pullRequest': ({ url }) => { if (!deps.pullRequest) throw new Error("Pull requests can't be read here."); return deps.pullRequest(url); },
     'browser.open': ({ url }) => requireBrowser().open(url),
     'browser.navigate': ({ url }) => requireBrowser().navigate(url),
     'browser.bounds': bounds => { deps.browser?.setBounds(bounds); return null; },

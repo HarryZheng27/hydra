@@ -8,6 +8,8 @@ import { Icon } from './Icon';
 import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
 import { TerminalPane } from './TerminalPane';
+import { PrBars, chatPullRequests } from './PrBars';
+import { ToolSteps, runningTasks } from './ToolSteps';
 import type { SlashCommand } from './SlashMenu';
 
 interface Props {
@@ -56,17 +58,17 @@ const latestSessionModel = (events: ChatEvent[]) => { for (let i = events.length
 
 const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
 
-/** One collapsible block for a tool call and its result. Everything in it is text. */
-function ToolBlock({ item }: { item: ChatItem & { kind: 'tool' } }) {
-  const summary = typeof (item.input as { command?: unknown })?.command === 'string' ? String((item.input as { command: string }).command)
-    : typeof (item.input as { file_path?: unknown })?.file_path === 'string' ? String((item.input as { file_path: string }).file_path) : '';
-  return (
-    <details className={`tool ${item.isError ? 'failed' : ''}`}>
-      <summary><span className="tool-name">{item.name}</span>{summary && <span className="tool-summary">{summary}</span>}{item.output === undefined ? <span className="tool-state running">running…</span> : item.isError && <span className="tool-state failed">failed</span>}</summary>
-      <pre className="code"><code>{pretty(item.input)}</code></pre>
-      {item.output !== undefined && <pre className={`code output ${item.isError ? 'error' : ''}`}><code>{item.output || '(no output)'}</code></pre>}
-    </details>
-  );
+/** Back-to-back tool steps fold into one group (Claude desktop's grey line); a Hydra call keeps its own live card. */
+type Unit = ChatItem | { kind: 'steps'; key: string; tools: Array<ChatItem & { kind: 'tool' }> };
+function groupSteps(items: readonly ChatItem[], hydra?: HydraView): Unit[] {
+  const units: Unit[] = [];
+  for (const item of items) {
+    if (item.kind === 'tool' && !hydraCard(item, hydra)) {
+      const last = units[units.length - 1];
+      if (last?.kind === 'steps') last.tools.push(item); else units.push({ kind: 'steps', key: `s${item.key}`, tools: [item] });
+    } else units.push(item);
+  }
+  return units;
 }
 
 /** An approval card. It is drawn only for an `approval` event, which only the CLI's structured request produces. */
@@ -227,6 +229,8 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
     // If the answer didn't get through, the card can be tried again.
     void Promise.resolve(onAnswer(id, answer)).catch(() => answered.current.delete(id));
   };
+  const pullRequests = useMemo(() => chatPullRequests(events, record.pr?.url), [events, record.pr?.url]);
+  const tasks = useMemo(() => runningTasks(events, settledBefore), [events, settledBefore]);
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
   return (
@@ -255,12 +259,13 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
       {reviewing && <ReviewPane chatId={record.id} />}
       <div className="transcript" role="log" aria-live="polite" hidden={reviewing}>
-        {view.items.map(item => {
+        {groupSteps(view.items, hydra).map(item => {
           switch (item.kind) {
+            case 'steps': return <ToolSteps key={item.key} tools={item.tools} />;
             case 'user': return <div key={item.key} className="msg user"><div className="bubble">{item.text}{item.images ? <span className="chip">{item.images} image{item.images > 1 ? 's' : ''}</span> : null}</div></div>;
             case 'text': return <div key={item.key} className="msg assistant"><Markdown text={item.text} /></div>;
             case 'thinking': return <details key={item.key} className="thinking"><summary>Thinking</summary><div className="thinking-text">{item.text}</div></details>;
-            case 'tool': return hydraCard(item, hydra) ?? <ToolBlock key={item.key} item={item} />;
+            case 'tool': return hydraCard(item, hydra);
             case 'request': {
               const active = view.pending.includes(item.event.id);
               if (item.event.type === 'approval') return <ApprovalCard key={item.key} item={item} active={active} onAnswer={answerOnce} />;
@@ -286,8 +291,10 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
           }
         })}
         {view.running && !view.pending.length && <Working provider={record.provider} starting={events[events.length - 1]?.type === 'user'} doing={activity(events)} />}
+        {tasks > 0 && <div className="running-tasks" role="status">{tasks} running task{tasks > 1 ? 's' : ''}</div>}
         <div ref={end} />
       </div>
+      {!cloudStarted && onBrowser && <PrBars urls={pullRequests} onOpen={url => onBrowser(url)} />}
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
         : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} commands={commands?.length ? commands : latestCommands(events)}

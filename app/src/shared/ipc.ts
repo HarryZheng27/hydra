@@ -97,6 +97,16 @@ export interface ProviderStatus {
 export interface RegistrationStatus { registered: boolean; where: string; error?: string }
 export interface OnboardingReport { providers: ProviderStatus[]; registration: Record<CliProvider, RegistrationStatus>; checkedAt: string }
 
+/** A pull request's check, from gh: still running, passed, failed, or skipped (cancelled, skipped, stale). */
+/** A GitHub pull request link, as `gh pr create` prints it (core's pullRequestUrlPattern). */
+export const pullRequestLink = /^https:\/\/github\.com\/[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}\/pull\/\d{1,9}$/;
+export interface PullRequestCheck { name: string; status: 'pending' | 'success' | 'failure' | 'skipped' }
+/** The chat's PR bar (Claude desktop's): gh's view of one GitHub pull request. */
+export interface PullRequestInfo {
+  url: string; number: number; owner: string; repo: string; title: string; branch: string; additions: number; deletions: number;
+  state: 'open' | 'merged' | 'closed'; draft: boolean; checks: PullRequestCheck[]; ci: 'pending' | 'success' | 'failure' | 'none';
+}
+
 /** The sidebar and the projects, in state.json. */
 export interface AppState { version: 1; sidebarOpen: boolean; projects: Project[] }
 
@@ -143,6 +153,8 @@ export interface Channels {
   /** The browser panel (Claude desktop's globe): http(s) pages only, in a session of its own (browserPanel.ts). */
   /** The home's / menu: Claude Code's commands for a trusted project, before any chat there (claudeCommands.ts). */
   'chats.commands': { payload: { projectId: string }; result: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> };
+  /** A chat's PR bar: gh's read-only view of a GitHub pull request link (pullRequests.ts). */
+  'chats.pullRequest': { payload: { url: string }; result: PullRequestInfo };
   'browser.open': { payload: { url?: string }; result: BrowserState };
   'browser.navigate': { payload: { url: string }; result: BrowserState };
   'browser.bounds': { payload: { x: number; y: number; width: number; height: number }; result: null };
@@ -260,6 +272,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'terminal.resize': exactly<{ id: string; cols: number; rows: number }>({ id: isId, cols: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 500, rows: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 300 }),
   'terminal.close': exactly<{ id: string }>({ id: isId }),
   'chats.commands': exactly<{ projectId: string }>({ projectId: isId }),
+  'chats.pullRequest': exactly<{ url: string }>({ url: value => typeof value === 'string' && pullRequestLink.test(value) }),
   'browser.open': exactly<{ url?: string }>({ url: isText(2048) }),
   'browser.navigate': exactly<{ url: string }>({ url: isText(2048) }),
   'browser.bounds': exactly<{ x: number; y: number; width: number; height: number }>({ x: isPixels, y: isPixels, width: isPixels, height: isPixels }),
@@ -337,6 +350,7 @@ export interface HydraApi {
   terminalClose(id: string): Promise<null>;
   onTerminal(listener: (message: TerminalMessage) => void): () => void;
   claudeCommands(projectId: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
+  pullRequest(url: string): Promise<PullRequestInfo>;
   browserOpen(url?: string): Promise<BrowserState>;
   browserNavigate(url: string): Promise<BrowserState>;
   browserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<null>;
