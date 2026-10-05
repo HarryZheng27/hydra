@@ -140,8 +140,11 @@ class CdpConnection {
   }
 }
 
-/** The browser writes its DevTools port and path to this file in its profile once it is listening. */
-async function devToolsEndpoint(profile: string, exited: () => boolean, timeoutMs = 20_000): Promise<string> {
+/**
+ * The browser writes its DevTools port and path to this file in its profile once it is listening. A first start on a
+ * cold machine (a fresh CI runner, a new profile) can take more than 20 seconds, so it gets a minute.
+ */
+async function devToolsEndpoint(profile: string, exited: () => boolean, timeoutMs = 60_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (exited()) throw new Error('The browser exited as soon as it started.');
