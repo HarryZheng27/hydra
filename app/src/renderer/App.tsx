@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { watchTerminals } from './terminalBus';
+import type { SlashCommand } from './SlashMenu';
 import { BrowserPanel } from './BrowserPanel';
 import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
@@ -59,6 +60,8 @@ export function App() {
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
   const [deleting, setDeleting] = useState<ChatRecord>();
+  // Each Claude chat's / menu, from its process's initialize reply (with descriptions).
+  const [commands, setCommands] = useState<Record<string, SlashCommand[]>>({});
   // The browser panel beside the chat (Claude desktop's globe): main's state, and whether it's shown.
   const [browser, setBrowser] = useState<BrowserState>({ open: false, url: '', title: '', canGoBack: false, canGoForward: false, loading: false });
   const [browserShown, setBrowserShown] = useState(false);
@@ -105,7 +108,13 @@ export function App() {
     // Live events for every chat this window has open; the list refreshes when a turn ends or a title appears.
     const stopChats = window.hydra.onChatEvents(message => {
       const { chatId, events, start } = message;
-      if (start < 0) { const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message); return; }
+      if (start < 0) {
+        // The / menu's commands (Claude Code's initialize reply): kept by chat, never logged.
+        const listed = events.find(event => event.type === 'commands');
+        if (listed?.type === 'commands') setCommands(current => ({ ...current, [chatId]: listed.commands.map(command => ({ ...command, skill: false })) }));
+        const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message);
+        return;
+      }
       const pending = waiting.current.get(chatId) ?? new Set<string>();
       waiting.current.set(chatId, pending);
       setStatuses(current => {
@@ -152,15 +161,17 @@ export function App() {
       }
     }
     // The user's own Claude default mode, from any Claude chat opened so far (their settings' defaultMode).
-    // The / menu's commands before a chat starts: the latest Claude session's list, from any chat opened.
-    let claudeCommands: KnownModels['claudeCommands'];
+    // The / menu's commands before a chat starts: any Claude chat's list from this run (initialize's, with
+    // descriptions), else the latest session's names.
+    let claudeCommands: KnownModels['claudeCommands'] = Object.values(commands).find(list => list.length);
     for (const [id, events] of Object.entries(chatEvents)) {
       if (chats.find(chat => chat.id === id)?.provider !== 'claude') continue;
+      if (claudeCommands) break;
       for (const event of events) if (event.type === 'session' && event.commands) { const skills = new Set(event.skills ?? []); claudeCommands = event.commands.map(name => ({ name, skill: skills.has(name) })); }
     }
     const claudeMode = Object.entries(defaults).find(([id]) => chats.find(chat => chat.id === id)?.provider === 'claude')?.[1]?.mode;
     return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}), ...(claudeCommands ? { claudeCommands } : {}) };
-  }, [chatEvents, chats, defaults]);
+  }, [chatEvents, chats, defaults, commands]);
   const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
     project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
@@ -315,6 +326,7 @@ export function App() {
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   terminalId={terminals[chat.id]}
+                  commands={commands[chat.id]}
                   onBrowser={toggleBrowser}
                   browserOpen={browserShown}
                   {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {

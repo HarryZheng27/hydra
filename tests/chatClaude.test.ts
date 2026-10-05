@@ -247,3 +247,12 @@ test('Claude: a session\'s init lists its slash commands and skills for the / me
   const session = events.find(event => event.type === 'session');
   assert.deepEqual(session?.type === 'session' ? [session.commands, session.skills] : undefined, [['compact', 'review', 'frontend-design'], ['frontend-design']]);
 });
+
+test('Claude: initialize\'s reply lists every slash command with its description, before any turn, for the / menu', () => {
+  const adapter = new ClaudeAdapter();
+  const events = adapter.feed(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'g1-control-1', response: { commands: [
+    { name: 'compact', description: 'Clear conversation history but keep a summary', argumentHint: '<instructions>' },
+    { name: 'bad name', description: 'x' }, { name: 'review', description: '' }, 'odd',
+  ] } } })).events;
+  assert.deepEqual(events, [{ type: 'commands', commands: [{ name: 'compact', description: 'Clear conversation history but keep a summary', argumentHint: '<instructions>' }, { name: 'review' }] }]);
+});

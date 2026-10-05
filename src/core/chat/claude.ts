@@ -287,6 +287,16 @@ export class ClaudeAdapter implements ChatAdapter {
     if (response.subtype === 'error') return [{ type: 'error', message: `Claude Code refused a request: ${text(response.error).slice(0, 300)}`, fatal: false }];
     // initialize's reply comes before any turn and names the mode Claude is in (G1).
     if (isRecord(response.response) && refusedMode(response.response.current_permission_mode)) return [bypassRefused];
+    // It also lists every slash command, with its description, for the / menu, before the user has sent anything.
+    if (isRecord(response.response) && Array.isArray(response.response.commands)) {
+      const commands = response.response.commands.filter(isRecord).flatMap(command => {
+        const name = text(command.name);
+        if (!/^[a-z0-9][\w:.-]{0,63}$/i.test(name)) return [];
+        const description = text(command.description).slice(0, 300), argumentHint = text(command.argumentHint).slice(0, 100);
+        return [{ name, ...(description ? { description } : {}), ...(argumentHint ? { argumentHint } : {}) }];
+      }).slice(0, 400);
+      if (commands.length) return [{ type: 'commands', commands }];
+    }
     return [];
   }
 

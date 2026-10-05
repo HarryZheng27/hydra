@@ -620,3 +620,6 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .prompt-box { position: relative; }
 .slash-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); max-width: 420px; max-height: 300px; overflow-y: auto; }
 .slash-menu li { cursor: pointer; }
+.slash-menu { max-width: 520px; }
+.slash-menu .picker-description { white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
+.slash-hint { color: var(--muted); font-size: 12.5px; }

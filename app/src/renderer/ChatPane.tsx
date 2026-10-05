@@ -36,6 +36,8 @@ interface Props {
   /** The browser panel: the globe opens or closes it, with this chat's PR or cloud session to start with. */
   onBrowser?(url?: string): void;
   browserOpen?: boolean;
+  /** The / menu's commands, from the chat's Claude Code process (with descriptions); else its session's names. */
+  commands?: SlashCommand[];
   /** A cloud chat continued here: its terminal inside the chat (G7). */
   terminalId?: string;
   /** The project's name, for the header's pill. */
@@ -202,7 +204,7 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return undefined;
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands }: Props) {
   // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
   const [slot, setSlot] = useState<Element | null>(null);
   useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
@@ -289,7 +291,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       </div>
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
-        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} commands={latestCommands(events)}
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} commands={commands?.length ? commands : latestCommands(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );

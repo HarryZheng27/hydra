@@ -690,3 +690,21 @@ test('the / menu offers what fits what\'s typed: names starting with it first, t
   assert.deepEqual(matchCommands('/compact now', commands), []);
   assert.deepEqual(matchCommands('hello', commands), []);
 });
+
+test('a Claude chat\'s command list reaches the window as soon as its CLI starts, and is never written to the chat\'s log', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const pushed: Array<{ events: ChatEvent[]; start: number }> = [];
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: (_id, events, start) => pushed.push({ events, start }), warm: true });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.open(chat.id);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    starts[0]!.handlers.line(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'x', response: { commands: [{ name: 'compact', description: 'Summarise' }] } } }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(pushed.find(entry => entry.events.some(event => event.type === 'commands')), { events: [{ type: 'commands', commands: [{ name: 'compact', description: 'Summarise' }] }], start: -1 });
+    assert.ok(!(await manager.open(chat.id)).log.some(entry => entry.event.type === 'commands'), 'not in the log');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});

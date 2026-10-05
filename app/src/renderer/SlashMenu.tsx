@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 
 /** A slash command the CLI listed, and whether it's one of the user's skills. */
-export interface SlashCommand { name: string; skill: boolean }
+export interface SlashCommand { name: string; skill: boolean; description?: string; argumentHint?: string }
 
 const shown = 8;
 
@@ -39,8 +39,10 @@ export function useSlashMenu(text: string, commands: SlashCommand[], setText: (t
       {items.map((command, index) => (
         <li key={command.name} role="option" aria-selected={index === active} className={index === active ? 'active' : ''}
           onMouseEnter={() => setActive(index)} onMouseDown={event => event.preventDefault()} onClick={() => choose(command)}>
-          <span className="picker-label">/{command.name}</span>
-          {command.skill && <span className="picker-badge">skill</span>}
+          <span className="picker-text">
+            <span className="picker-line"><span className="picker-label">/{command.name}</span>{command.argumentHint && <span className="slash-hint">{command.argumentHint}</span>}{command.skill && <span className="picker-badge">skill</span>}</span>
+            {command.description && <span className="picker-description">{command.description}</span>}
+          </span>
         </li>
       ))}
     </ul>
