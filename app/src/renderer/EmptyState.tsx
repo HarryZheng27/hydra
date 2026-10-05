@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
-import { approvalModes, claudeEfforts, claudeModels, modes, titleCase } from './Composer';
+import { approvalModes, claudeEfforts, modes, titleCase } from './Composer';
+import { claudeDefaultModel, claudeModelOptions } from './claudeModels';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 import { AgentLogo } from './AgentLogo';
@@ -79,9 +80,9 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   const cloud = provider === 'claude' && where === 'cloud';
   const codexDefault = knownModels.codex.find(candidate => candidate.isDefault) ?? knownModels.codex[0];
   const modelOptions = provider === 'claude'
-    ? claudeModels.map(option => ({ ...option, label: knownModels.claudeVersions[option.value] ? `${option.label} ${knownModels.claudeVersions[option.value]}` : option.label, ...(option.value === 'opus' ? { badge: 'Default' } : {}) }))
+    ? claudeModelOptions()
     : knownModels.codex.map(candidate => ({ value: candidate.id, label: candidate.label, ...(candidate.isDefault ? { badge: 'Default' } : {}) }));
-  const shownModel = model ?? (provider === 'claude' ? 'opus' : codexDefault?.id);
+  const shownModel = model ?? (provider === 'claude' ? claudeDefaultModel : codexDefault?.id);
   const efforts = provider === 'claude' ? claudeEfforts : knownModels.codex.find(candidate => candidate.id === shownModel)?.efforts ?? [];
   const defaultEffort = provider === 'claude' ? 'medium' : knownModels.codex.find(candidate => candidate.id === shownModel)?.defaultEffort;
   const effortOptions = efforts.map(value => ({ value, label: titleCase(value), ...(value === defaultEffort ? { badge: 'Default' } : {}) }));

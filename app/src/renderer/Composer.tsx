@@ -1,6 +1,7 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
+import { claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
 import { AgentLogo } from './AgentLogo';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
@@ -74,12 +75,12 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const codex = record.provider === 'codex';
   const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
-  const model = record.model ?? (codex ? sessionModel ?? defaults?.model ?? models.find(m => m.isDefault)?.id : defaults?.model ?? claudeAlias(sessionModel) ?? 'opus');
+  const model = codex ? record.model ?? sessionModel ?? defaults?.model ?? models.find(m => m.isDefault)?.id : claudeModelId(record.model ?? defaults?.model ?? sessionModel) ?? claudeDefaultModel;
   const codexModel = models.find(m => m.id === model) ?? models.find(m => m.isDefault);
   const effort = record.effort ?? defaults?.effort ?? (codex ? codexModel?.defaultEffort : undefined);
-  const version = /claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(sessionModel ?? '');
-  const named = claudeModels.map(option => (version && version[1]!.toLowerCase() === option.value ? { ...option, label: `${option.label} ${version[2]}.${version[3]}` } : option));
-  const modelOptions = withValue(codex ? models.map(m => ({ value: m.id, label: m.label })) : named, model);
+  // Claude: Claude desktop's menu (claudeModels.ts); a model it doesn't list is added at the top, as for Codex.
+  const claudeKnown = [...claudeLatest, ...claudeMore].some(option => option.value === model);
+  const modelOptions = codex ? withValue(models.map(m => ({ value: m.id, label: m.label })), model) : claudeKnown ? claudeModelOptions() : withValue(claudeModelOptions(), model);
   const effortOptions = withValue((codex ? codexModel?.efforts ?? [] : claudeEfforts).map(value => ({ value, label: titleCase(value) })), effort);
   const mode = !record.permissionMode || record.permissionMode === 'settings' ? (defaults?.mode as ClaudePermissionMode | undefined) ?? 'default' : record.permissionMode;
   const [text, setText] = useState('');

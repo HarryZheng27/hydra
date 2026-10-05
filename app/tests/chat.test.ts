@@ -17,6 +17,7 @@ import { consoleScript } from '../src/main/console';
 import { Markdown, safeHref } from '../src/renderer/markdown';
 import { EmptyState } from '../src/renderer/EmptyState';
 import { nextStatus } from '../src/renderer/chatStatus';
+import { claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -644,4 +645,16 @@ test('a chat that opens a pull request with gh pr create keeps its link; its sta
     assert.equal((await manager.open(chat.id)).record.pr?.state, 'merged');
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Claude\'s model menu is Claude desktop\'s: the latest per family, then More models; aliases and dated ids map onto it', () => {
+  const options = claudeModelOptions();
+  assert.deepEqual(options.filter(option => !option.submenu).map(option => option.label), ['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5', 'Haiku 4.5']);
+  assert.equal(options[0]!.badge, 'Default');
+  assert.deepEqual(options.find(option => option.submenu)!.submenu!.map(option => option.label), ['Sonnet 5', 'Opus 5', 'Fable 5', 'Opus 4.8', 'Opus 4.7', 'Opus 4.6', 'Sonnet 4.6']);
+  assert.equal(claudeModelId('opus'), 'claude-opus-5-5');
+  assert.equal(claudeModelId('fable'), 'claude-fable-5-1');
+  assert.equal(claudeModelId('claude-haiku-4-5-20251001'), 'claude-haiku-4-5');
+  assert.equal(claudeModelId('claude-opus-4-7'), 'claude-opus-4-7');
+  assert.equal(claudeModelId('claude-opus-4-1'), 'claude-opus-4-1', 'one the menu lacks stays as it is');
 });

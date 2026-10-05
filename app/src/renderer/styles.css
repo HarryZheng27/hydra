@@ -471,3 +471,10 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .composer-agent .agent-logo { display: block; }
 /* Centred on the lowercase letters beside it, not their capitals: the logo's middle lines up with the x-height. */
 .picker .agent-logo, .composer-agent .agent-logo, .picker-menu li .agent-logo { transform: translateY(1.5px); }
+
+/* A menu's side menu (More models), beside its row as in Claude desktop: to the right, or to the left for a menu that
+   opens from the right of the bar, so it stays in the window. */
+.picker-menu li { position: relative; }
+.picker-menu li.has-submenu .picker-key .icon { width: 14px; height: 14px; color: var(--muted); }
+.picker-root .picker-menu li > .picker-submenu { top: auto; bottom: -5px; left: calc(100% + 8px); right: auto; max-height: 60vh; }
+.composer-spacer ~ .picker-root .picker-menu li > .picker-submenu { left: auto; right: calc(100% + 8px); }
