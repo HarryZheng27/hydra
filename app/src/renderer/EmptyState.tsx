@@ -126,6 +126,16 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
     { value: 'open', label: 'Open folder…', separator: true },
     { value: 'clone', label: 'Clone a repo…' },
   ];
+  // Claude desktop starts the agent as it is picked: the choices below, a moment after the last change, start it in
+  // the background (a trusted project, on this computer), so the first message doesn't wait for it to start.
+  const pickedMode = provider === 'claude' && mode !== defaultMode ? mode : undefined;
+  useEffect(() => {
+    if (!project?.trustedAt || cloud) return undefined;
+    const timer = setTimeout(() => {
+      void window.hydra.prepareChat({ projectId: project.id, provider, ...(provider === 'claude' ? (pickedMode ? { permissionMode: pickedMode } : {}) : { approvals }), ...(model ? { model } : {}), ...(effort ? { effort } : {}) }).catch(() => undefined);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [project?.id, project?.trustedAt, cloud, provider, pickedMode, approvals, model, effort]);
   const start = async () => {
     if (!project || !text.trim() || busy) return;
     setBusy(true);
