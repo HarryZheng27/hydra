@@ -2,6 +2,7 @@ import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEve
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 import { PlusMenu } from './PlusMenu';
+import { useSlashMenu, type SlashCommand } from './SlashMenu';
 import { ContextWheel } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
 import { claudeContextWindow, claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
@@ -74,6 +75,8 @@ interface Props {
   onWhere?(where: 'local' | 'cloud'): void;
   /** How full the chat's context is: its latest turn's prompt, and the window when the CLI said it. */
   context?: { used: number; window?: number };
+  /** The / menu's commands: what the chat's Claude Code session offered. */
+  commands?: SlashCommand[];
 }
 
 const whereOptions = [
@@ -81,7 +84,7 @@ const whereOptions = [
   { value: 'cloud', label: 'Cloud', description: 'Claude Code runs on claude.ai; the first message starts it.' },
 ];
 
-export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context }: Props) {
+export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context, commands = [] }: Props) {
   const codex = record.provider === 'codex';
   const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
@@ -120,7 +123,8 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
     setImages([]);
     if (box.current) box.current.style.height = ''; // back to one line
   };
-  const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
+  const slash = useSlashMenu(text, commands, value => { setText(value); box.current?.focus(); });
+  const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (slash.keyDown(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
   // Like Claude desktop's prompt: the message in a rounded box with one button in its corner (send, or stop while a
   // turn runs and nothing is typed), and the chat's settings in a quiet row under it.
   const stopping = running && !text.trim() && !images.length;
@@ -128,6 +132,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
       {record.where === 'cloud' && !seen('cloud') && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
       <div className="prompt-box">
+        {slash.menu}
         {(images.length > 0 || problem) && (
           <div className="attachments">
             {images.map((image, index) => (

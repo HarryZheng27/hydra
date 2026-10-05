@@ -20,6 +20,7 @@ import { nextStatus } from '../src/renderer/chatStatus';
 import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
 import { claudeContextWindow, claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
 import { ContextWheel } from '../src/renderer/ContextWheel';
+import { matchCommands } from '../src/renderer/SlashMenu';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -679,4 +680,13 @@ test('the context wheel shows how full the context is, and offers compacting onl
   assert.ok(quiet.includes('disabled') && quiet.includes('Context: nothing used yet'));
   assert.equal(claudeContextWindow('claude-haiku-4-5-20251001'), 200_000);
   assert.equal(claudeContextWindow('opus'), 1_000_000);
+});
+
+test('the / menu offers what fits what\'s typed: names starting with it first, then names containing it; none once a space follows', () => {
+  const commands = [{ name: 'compact', skill: false }, { name: 'context', skill: false }, { name: 'frontend-design', skill: true }, { name: 'code-review', skill: true }];
+  assert.deepEqual(matchCommands('/co', commands).map(command => command.name), ['compact', 'context', 'code-review']);
+  assert.deepEqual(matchCommands('/view', commands).map(command => command.name), ['code-review']);
+  assert.equal(matchCommands('/', commands).length, 4);
+  assert.deepEqual(matchCommands('/compact now', commands), []);
+  assert.deepEqual(matchCommands('hello', commands), []);
 });

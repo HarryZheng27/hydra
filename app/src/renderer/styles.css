@@ -615,3 +615,8 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .browser-problem { padding: 6px 12px; color: var(--error); font-size: 13px; }
 .browser-surface { flex: 1; min-height: 0; display: grid; place-items: center; }
 .browser-surface .hint { max-width: 280px; text-align: center; }
+
+/* The / menu (SlashMenu.tsx): above the prompt box, as Claude Code's, its commands and the user's skills. */
+.prompt-box { position: relative; }
+.slash-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); max-width: 420px; max-height: 300px; overflow-y: auto; }
+.slash-menu li { cursor: pointer; }

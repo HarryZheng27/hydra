@@ -152,8 +152,14 @@ export function App() {
       }
     }
     // The user's own Claude default mode, from any Claude chat opened so far (their settings' defaultMode).
+    // The / menu's commands before a chat starts: the latest Claude session's list, from any chat opened.
+    let claudeCommands: KnownModels['claudeCommands'];
+    for (const [id, events] of Object.entries(chatEvents)) {
+      if (chats.find(chat => chat.id === id)?.provider !== 'claude') continue;
+      for (const event of events) if (event.type === 'session' && event.commands) { const skills = new Set(event.skills ?? []); claudeCommands = event.commands.map(name => ({ name, skill: skills.has(name) })); }
+    }
     const claudeMode = Object.entries(defaults).find(([id]) => chats.find(chat => chat.id === id)?.provider === 'claude')?.[1]?.mode;
-    return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}) };
+    return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}), ...(claudeCommands ? { claudeCommands } : {}) };
   }, [chatEvents, chats, defaults]);
   const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,

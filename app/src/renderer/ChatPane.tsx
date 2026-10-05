@@ -8,6 +8,7 @@ import { Icon } from './Icon';
 import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
 import { TerminalPane } from './TerminalPane';
+import type { SlashCommand } from './SlashMenu';
 
 interface Props {
   record: ChatRecord;
@@ -47,6 +48,8 @@ interface Props {
 /** The CLI's latest model list in this chat (Codex sends one when a thread starts). */
 const latestModels = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'models') return event.models; } return []; };
 
+/** The slash commands the chat's latest Claude session offered (its init), skills marked. */
+const latestCommands = (events: ChatEvent[]): SlashCommand[] => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.commands) { const skills = new Set(event.skills ?? []); return event.commands.map(name => ({ name, skill: skills.has(name) })); } } return []; };
 const latestSessionModel = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.model) return event.model; } return undefined; };
 
 const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
@@ -286,7 +289,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       </div>
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
-        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)}
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} commands={latestCommands(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );
