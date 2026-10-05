@@ -12,6 +12,9 @@ export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRec
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
 export const CHAT_EVENTS = 'hydra:chat-events';
+/** A terminal in the window (G7's Continue here): its output, or that it ended. */
+export const TERMINAL = 'hydra:terminal';
+export interface TerminalMessage { id: string; data?: string; exit?: number }
 /** Push: one project's heads and plans changed (G5). */
 export const HYDRA_TREE = 'hydra:tree';
 /** Push: a message from a project's controller to its Agents view (the IDE webview's own messages, G5). */
@@ -128,7 +131,11 @@ export interface Channels {
   'chats.openTerminal': { payload: { id: string }; result: { started: boolean; error?: string } };
   /** G7: Local or Cloud, before a Claude chat's first message; and Continue here for a cloud chat. */
   'chats.setWhere': { payload: { id: string; where: 'local' | 'cloud' }; result: ChatRecord };
-  'chats.continueCloud': { payload: { id: string }; result: { started: boolean; worktree?: string; error?: string } };
+  'chats.continueCloud': { payload: { id: string }; result: { started: boolean; worktree?: string; error?: string; terminalId?: string } };
+  /** A terminal main started in the window: the window's keys, its size, and closing it. None can be started from here. */
+  'terminal.write': { payload: { id: string; data: string }; result: null };
+  'terminal.resize': { payload: { id: string; cols: number; rows: number }; result: null };
+  'terminal.close': { payload: { id: string }; result: null };
   /** The chat folder's working tree against HEAD, read-only. */
   'review.diff': { payload: { id: string }; result: ReviewResult };
   /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
@@ -233,6 +240,9 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
   'chats.setWhere': exactly<{ id: string; where: 'local' | 'cloud' }>({ id: isId, where: oneOf('local', 'cloud') }),
   'chats.continueCloud': exactly<{ id: string }>({ id: isId }),
+  'terminal.write': exactly<{ id: string; data: string }>({ id: isId, data: isText(65_536) }),
+  'terminal.resize': exactly<{ id: string; cols: number; rows: number }>({ id: isId, cols: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 500, rows: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 300 }),
+  'terminal.close': exactly<{ id: string }>({ id: isId }),
   'review.diff': exactly<{ id: string }>({ id: isId }),
   // A path relative to the chat's folder, checked again in main against the files the diff lists.
   'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
@@ -297,7 +307,11 @@ export interface HydraApi {
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;
   openTerminal(id: string): Promise<{ started: boolean; error?: string }>;
   setChatWhere(id: string, where: 'local' | 'cloud'): Promise<ChatRecord>;
-  continueCloud(id: string): Promise<{ started: boolean; worktree?: string; error?: string }>;
+  continueCloud(id: string): Promise<{ started: boolean; worktree?: string; error?: string; terminalId?: string }>;
+  terminalWrite(id: string, data: string): Promise<null>;
+  terminalResize(id: string, cols: number, rows: number): Promise<null>;
+  terminalClose(id: string): Promise<null>;
+  onTerminal(listener: (message: TerminalMessage) => void): () => void;
   reviewDiff(id: string): Promise<ReviewResult>;
   openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;
   terminalClosed(id: string): Promise<null>;

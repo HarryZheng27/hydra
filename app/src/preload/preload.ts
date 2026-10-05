@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraHostMessage, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
+import { CHAT_EVENTS, TERMINAL, type TerminalMessage, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraHostMessage, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
 
 // The renderer gets these typed functions and nothing else: no ipcRenderer, no channel names, no Node.
 const call = <C extends Channel>(channel: C, payload: Payload<C>): Promise<Result<C>> =>
@@ -30,6 +30,9 @@ const api: HydraApi = {
   openTerminal: id => call('chats.openTerminal', { id }),
   setChatWhere: (id, where) => call('chats.setWhere', { id, where }),
   continueCloud: id => call('chats.continueCloud', { id }),
+  terminalWrite: (id, data) => call('terminal.write', { id, data }),
+  terminalResize: (id, cols, rows) => call('terminal.resize', { id, cols, rows }),
+  terminalClose: id => call('terminal.close', { id }),
   reviewDiff: id => call('review.diff', { id }),
   openReviewFile: (id, path) => call('review.open', { id, path }),
   terminalClosed: id => call('chats.terminalClosed', { id }),
@@ -62,6 +65,11 @@ const api: HydraApi = {
     return () => { ipcRenderer.removeListener(HYDRA_TREE, handler); };
   },
   // The page gets the message, never the Electron event or the sender.
+  onTerminal: listener => {
+    const handler = (_event: unknown, message: TerminalMessage) => listener(message);
+    ipcRenderer.on(TERMINAL, handler);
+    return () => { ipcRenderer.removeListener(TERMINAL, handler); };
+  },
   onChatEvents: listener => {
     const handler = (_event: unknown, message: ChatEventsMessage) => listener(message);
     ipcRenderer.on(CHAT_EVENTS, handler);

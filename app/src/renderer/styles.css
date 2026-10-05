@@ -587,3 +587,9 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .chat-head .head-action:first-of-type { margin-left: auto; }
 .head-more { position: relative; -webkit-app-region: no-drag; }
 .head-menu { top: calc(100% + 4px); right: 0; min-width: 160px; }
+
+/* A cloud chat continued in the window (TerminalPane.tsx): the terminal fills the chat under the session's card. */
+.chat-terminal { flex: 1.6; min-height: 260px; display: flex; padding: 0 max(24px, calc((100% - 960px) / 2)) 14px; }
+.terminal-pane { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); overflow: hidden; }
+.terminal-pane .xterm { height: 100%; }
+.chat:has(.chat-terminal) .transcript { flex: 0 1 auto; max-height: 38%; }
