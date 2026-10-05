@@ -25,6 +25,7 @@ const api: HydraApi = {
   trustProject: id => call('projects.trust', { id }),
   listChats: () => call('chats.list', null),
   createChat: request => call('chats.create', request),
+  prepareChat: request => call('chats.prepare', request),
   openChat: (id, background) => call('chats.open', background ? { id, background: true } : { id }),
   sendMessage: (id, text, images) => call('chats.send', images?.length ? { id, text, images } : { id, text }),
   openTerminal: id => call('chats.openTerminal', { id }),

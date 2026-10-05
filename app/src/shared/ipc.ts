@@ -139,6 +139,8 @@ export interface Channels {
   'projects.trust': { payload: { id: string }; result: AppState };
   'chats.list': { payload: null; result: ChatRecord[] };
   'chats.create': { payload: NewChatRequest; result: ChatRecord };
+  /** The home's picks, started ahead of the first message (a trusted project only); a matching create takes it over. */
+  'chats.prepare': { payload: Omit<NewChatRequest, 'where'>; result: null };
   'chats.open': { payload: { id: string; background?: boolean }; result: OpenChat };
   'chats.send': { payload: { id: string; text: string; images?: ChatImage[] }; result: null };
   /** The CLI's own interactive resume of the chat, in a console window Hydra never reads. */
@@ -263,6 +265,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'projects.trust': exactly<{ id: string }>({ id: isId }),
   'chats.list': isNull,
   'chats.create': shaped<NewChatRequest>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals, where: oneOf('cloud') }),
+  'chats.prepare': shaped<Omit<NewChatRequest, 'where'>>({ projectId: isId, provider: oneOf('claude', 'codex') }, { model: isModel, effort: isEffort, permissionMode: isPermissionMode, sandbox: isSandbox, approvals: isApprovals }),
   'chats.open': shaped<{ id: string; background?: boolean }>({ id: isId }, { background: value => value === true }),
   'chats.send': shaped<{ id: string; text: string; images?: ChatImage[] }>({ id: isId, text: isText(200_000) }, { images: isImages }),
   'chats.openTerminal': exactly<{ id: string }>({ id: isId }),
@@ -339,6 +342,7 @@ export interface HydraApi {
   trustProject(id: string): Promise<AppState>;
   listChats(): Promise<ChatRecord[]>;
   createChat(request: NewChatRequest): Promise<ChatRecord>;
+  prepareChat(request: Omit<NewChatRequest, 'where'>): Promise<null>;
   /** `background`: the page catching up on a chat the user isn't looking at. */
   openChat(id: string, background?: boolean): Promise<OpenChat>;
   sendMessage(id: string, text: string, images?: ChatImage[]): Promise<null>;

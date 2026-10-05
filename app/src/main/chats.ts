@@ -166,7 +166,55 @@ export class ChatManager {
   /** Chats whose place (Local or Cloud) is being changed: a message waits for it. */
   private readonly placing = new Set<string>();
 
+  /**
+   * The home screen's spare: the agent the user has picked, started before there is a chat, so the first message
+   * doesn't wait for Claude Code or Codex to start. One at a time; a chat made with the same choices takes it over.
+   */
+  private spare: { key: string; sessionId?: string; session: ChatSession; buffered: ChatEvent[][]; target?: string } | undefined;
+  private spareToken = 0;
+
   constructor(private readonly deps: ChatManagerDeps) {}
+
+  /** What must match for a new chat to take over the spare: folder, agent, model, effort and permissions. */
+  private static spareKey(input: NewChat): string {
+    return JSON.stringify([input.cwd.toLowerCase(), input.provider, input.model ?? '', input.effort ?? '',
+      input.provider === 'claude' ? input.permissionMode ?? 'auto' : '', input.provider === 'codex' ? input.sandbox ?? 'read-only' : '', input.provider === 'codex' ? input.approvals ?? 'settings' : '']);
+  }
+
+  /** Ends the spare, unless a chat has taken it. */
+  private dropSpare(): void {
+    const spare = this.spare;
+    this.spare = undefined;
+    if (spare && !spare.target) { try { spare.session.close(); } catch { /* already gone */ } }
+  }
+
+  /**
+   * Starts the agent the home screen has picked (Claude desktop starts it as you choose), in a trusted folder only,
+   * never for a cloud chat. Picking something else replaces it; a chat warmed before is cooled, so one process waits.
+   */
+  async prepare(input: NewChat): Promise<void> {
+    if (!this.deps.warm || this.closing || input.where === 'cloud' || !path.isAbsolute(input.cwd)) return;
+    const key = ChatManager.spareKey(input);
+    if (this.spare?.key === key) return;
+    const token = ++this.spareToken;
+    this.dropSpare();
+    if (!(await this.deps.trusted(input.cwd))) return;
+    const executable = await this.deps.executable(input.provider);
+    if (!executable || this.closing || token !== this.spareToken) return;
+    if (!(await this.deps.trusted(input.cwd)) || this.closing || token !== this.spareToken) return;
+    const sessionId = input.provider === 'claude' ? randomUUID() : undefined;
+    const options: ChatOptions = {
+      provider: input.provider, cwd: input.cwd, executable,
+      ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
+      ...(input.provider === 'claude' ? { permissionMode: input.permissionMode ?? 'auto', sessionId } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
+    };
+    const spare: NonNullable<ChatManager['spare']> = { key, ...(sessionId ? { sessionId } : {}), buffered: [], session: undefined as unknown as ChatSession };
+    // Until a chat takes it, what the process says (its / commands) waits here; then it goes to that chat.
+    spare.session = new ChatSession(this.adapter(input.provider), options, this.deps.launch, events => { if (spare.target) void this.persist(spare.target, events); else spare.buffered.push(events); }, this.deps.timings);
+    if (this.warmed) { this.sessions.get(this.warmed)?.cool(); this.warmed = undefined; }
+    this.spare = spare;
+    spare.session.warm();
+  }
 
   private adapter(provider: ChatProvider): () => ChatAdapter {
     return this.deps.adapters?.[provider] ?? (provider === 'claude' ? () => new ClaudeAdapter() : () => new CodexAdapter());
@@ -196,11 +244,26 @@ export class ChatManager {
     if (!(await this.deps.trusted(input.cwd))) throw new Error('Trust this folder before starting a chat in it.');
     if (input.where === 'cloud' && input.provider !== 'claude') throw new Error('Only Claude Code chats can run in the cloud for now.');
     this.adapter(input.provider);
-    return this.deps.store.create({
+    // The home's spare, if it was started with these same choices, becomes this chat's process.
+    const old = this.spare;
+    const spare = old && input.where !== 'cloud' && old.key === ChatManager.spareKey(input) ? old : undefined;
+    this.spare = undefined;
+    // A prepare still starting is outrun; a spare with other choices is ended.
+    this.spareToken++;
+    if (old && !spare) old.session.close();
+    const record = await this.deps.store.create({
       provider: input.provider, cwd: input.cwd, ...(input.where === 'cloud' ? { where: 'cloud' as const } : {}),
-      ...(input.provider === 'claude' ? { providerSessionId: randomUUID(), permissionMode: input.permissionMode ?? 'auto' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
+      ...(input.provider === 'claude' ? { providerSessionId: spare?.sessionId ?? randomUUID(), permissionMode: input.permissionMode ?? 'auto' } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
       ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
-    });
+    }).catch((error: unknown) => { if (spare) spare.session.close(); throw error; });
+    if (spare) {
+      if (this.closing) { spare.session.close(); return record; }
+      spare.target = record.id;
+      this.sessions.set(record.id, spare.session);
+      this.warmed = record.id;
+      for (const events of spare.buffered.splice(0)) void this.persist(record.id, events);
+    }
+    return record;
   }
 
   /** `warm: false` for an open the user doesn't see (the page catching up on a background chat). */
@@ -222,6 +285,9 @@ export class ChatManager {
     // A cloud chat never runs the CLI here.
     if (record.where === 'cloud') return;
     if (!this.deps.warm || this.closing || this.inTerminal.has(id) || this.starting.has(id)) return;
+    // Opening a chat ends the home's spare: one waiting process at a time.
+    this.spareToken++;
+    this.dropSpare();
     if (this.warmed && this.warmed !== id) this.sessions.get(this.warmed)?.cool();
     this.warmed = id;
     void this.session(id).then(session => {
@@ -567,6 +633,7 @@ export class ChatManager {
   /** Ends every chat's process, for quit. */
   closeAll(): void {
     this.closing = true;
+    this.dropSpare();
     for (const abort of this.cloudStarting.values()) abort.abort();
     for (const session of this.sessions.values()) { try { session.close(); } catch { /* keep closing the rest */ } }
     this.sessions.clear();

@@ -754,3 +754,41 @@ test('a Claude chat gets a short name from Claude after its first message, unles
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
+
+test('the home screen starts the picked agent before the first message, and a chat with the same choices takes it over', async () => {
+  const dir = scratch();
+  try {
+    const launched = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    let trusted = true;
+    const manager = new ChatManager({ store, launch: launched.launch, executable: async () => 'claude.exe', trusted: async () => trusted, push: () => undefined, warm: true });
+    await manager.prepare({ cwd: dir, provider: 'claude', model: 'opus' });
+    assert.equal(launched.starts.length, 1, 'picking starts the agent');
+    await manager.prepare({ cwd: dir, provider: 'claude', model: 'opus' });
+    assert.equal(launched.starts.length, 1, 'the same picks start nothing more');
+    const spareId = launched.starts[0]!.args[launched.starts[0]!.args.indexOf('--session-id') + 1];
+    // Changing a pick replaces it: one waiting process.
+    await manager.prepare({ cwd: dir, provider: 'claude', model: 'sonnet' });
+    assert.equal(launched.starts.length, 2);
+    const chat = await manager.create({ cwd: dir, provider: 'claude', model: 'sonnet' });
+    const second = launched.starts[1]!;
+    assert.equal(chat.providerSessionId, second.args[second.args.indexOf('--session-id') + 1], 'the chat took the running process');
+    assert.notEqual(chat.providerSessionId, spareId);
+    await manager.send(chat.id, 'hello');
+    assert.equal(launched.starts.length, 2, 'the message went to the process already running');
+    assert.ok(second.written.some(line => line.includes('hello')));
+    // Different picks from the spare: the chat starts its own, and the spare is ended.
+    await manager.prepare({ cwd: dir, provider: 'claude', effort: 'high' });
+    const other = await manager.create({ cwd: dir, provider: 'claude', effort: 'low' });
+    assert.notEqual(other.providerSessionId, launched.starts[2]!.args[launched.starts[2]!.args.indexOf('--session-id') + 1]);
+    // Nothing starts in a folder that isn't trusted, or for a cloud chat.
+    trusted = false;
+    const before = launched.starts.length;
+    await manager.prepare({ cwd: dir, provider: 'codex' });
+    trusted = true;
+    await manager.prepare({ cwd: dir, provider: 'claude', where: 'cloud' });
+    assert.equal(launched.starts.length, before);
+    manager.closeAll();
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});

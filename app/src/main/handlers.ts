@@ -50,7 +50,7 @@ export interface HandlerDeps {
   claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   /** The browser panel beside a chat. */
   browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'prepare' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
   updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
@@ -152,6 +152,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const created = await deps.chats.create({ cwd: project.path, ...rest });
       deps.projectOpened?.(project.path);
       return created;
+    },
+    'chats.prepare': async ({ projectId, ...rest }) => {
+      // Only a folder the user trusted in Hydra: starting the agent there runs the project's hooks.
+      const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
+      if (project?.trustedAt) await deps.chats.prepare({ cwd: project.path, ...rest });
+      return null;
     },
     'chats.open': async ({ id, background }) => {
       const opened = await deps.chats.open(id, { warm: !background });
