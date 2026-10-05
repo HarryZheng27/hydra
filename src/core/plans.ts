@@ -59,6 +59,12 @@ export interface PlanJobOutcome { state: 'failed' | 'cancelled' | 'skipped'; rea
 export interface PlanJob {
   key: string; title: string; brief: string; provider?: Provider;
   dependsOn: string[]; writeScope?: string[];
+  /**
+   * G7 (docs/internal/hydra-app/G7-cloud.md): 'cloud' asks for a Codex cloud head; missing means local, as in every
+   * plan saved before it existed. Only a Codex head job may ask, and until cloud heads are built every such job is
+   * refused when its plan is made or changed (validatePlanJobs), so none ever reaches the runner.
+   */
+  where?: 'cloud';
   /** Who drives it. Missing means 'head', as in every plan saved before lanes could run jobs. */
   runAs?: PlanJobRunAs;
   /** runAs 'head': the head's job id, once started; makes running the plan again idempotent. */
@@ -426,7 +432,7 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
       keys.add(job.key);
       return {
         key: job.key, title: job.title, brief: job.brief, writeScope: job.write_scope, dependsOn: job.depends_on ?? [], runAs: 'head', rigor: job.rigor ?? 'standard',
-        ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}),
+        ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}), ...leadJobWhere(job),
       };
     });
     jobs = [...jobs, ...added];
@@ -531,6 +537,21 @@ function validateRunFields(job: PlanJob): void {
   if (job.conflict !== undefined) validateJobConflict(job.conflict, where);
 }
 
+/** G7: a job that asks to run in the cloud. Cloud heads aren't built yet, so a Codex one is refused too, with how to run it. */
+function validateJobWhere(job: PlanJob): void {
+  if (job.where !== 'cloud') throw new Error(`Job "${job.key}" has an unknown place to run; leave out "where" to run it here.`);
+  if (job.provider !== 'codex') throw new Error(`Job "${job.key}" asks to run in the cloud, which only Codex jobs can: set its provider to "codex", or leave out "where".`);
+  if ((job.runAs ?? 'head') !== 'head') throw new Error(`Job "${job.key}" is a lane, which runs on this computer; only a head can run in the cloud.`);
+  throw new Error(`Job "${job.key}" asks for a Codex cloud head, which this version of Hydra can't run yet. Leave out "where" to run it here.`);
+}
+
+/** A lead's `where` for a job (hydra_plan_create, hydra_plan_amend's add): 'local' is the default, so only 'cloud' is kept. */
+function leadJobWhere(job: PlanLeadJobInput): { where?: 'cloud' } {
+  if (job.where === undefined || job.where === 'local') return {};
+  if (job.where === 'cloud') return { where: 'cloud' };
+  throw new Error(`Job "${String(job.key)}" has an unknown place to run: use "local" or "cloud".`);
+}
+
 /** Unique keys that exist, dependencies that resolve, and the plan's size and text limits. Throws the first problem found. */
 export function validatePlanJobs(jobs: readonly PlanJob[]): void {
   if (!Array.isArray(jobs)) throw new Error('A plan\'s jobs must be a list.');
@@ -546,6 +567,7 @@ export function validatePlanJobs(jobs: readonly PlanJob[]): void {
     if (job.provider !== undefined && job.provider !== 'claude' && job.provider !== 'codex') throw new Error(`Job "${job.key}" has an unknown provider.`);
     if (job.role !== undefined && (typeof job.role !== 'string' || !planJobRolePattern.test(job.role))) throw new Error(`Job "${job.key}" names its role as "pack/role", like "coding/builder".`);
     if (job.rigor !== undefined && job.rigor !== 'quick' && job.rigor !== 'standard' && job.rigor !== 'strict') throw new Error(`Job "${job.key}" has an unknown rigor.`);
+    if (job.where !== undefined) validateJobWhere(job);
     if (!Array.isArray(job.dependsOn)) throw new Error(`Job "${job.key}" dependsOn must be a list.`);
     validateRunFields(job);
   }
@@ -748,6 +770,7 @@ export function createPlan(input: { title: string; brief?: string; state?: PlanS
 /** hydra_plan_create's job shape: the same fields hydra_start_head takes, keyed so dependencies name each other. */
 export interface PlanLeadJobInput {
   key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; role?: string; rigor?: PlanRigor;
+  where?: 'local' | 'cloud';
 }
 /** O7: hydra_plan_create's own shape for a budget (snake_case, at the MCP boundary). */
 export interface PlanBudgetInput { usd?: number; wall_clock_minutes?: number; max_jobs?: number }
@@ -771,6 +794,7 @@ export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSess
       writeScope: job.write_scope, rigor: job.rigor ?? 'standard',
       ...(job.provider !== undefined ? { provider: job.provider } : {}),
       ...(job.role !== undefined ? { role: job.role } : {}),
+      ...leadJobWhere(job),
     };
   });
   // O7: unattended plans (docs/Heads.md, "Unattended plans"): heads only (already every job a lead's
