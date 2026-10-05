@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { watchTerminals } from './terminalBus';
+import { BrowserPanel } from './BrowserPanel';
 import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project, BrowserState } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -58,6 +59,15 @@ export function App() {
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
   const [deleting, setDeleting] = useState<ChatRecord>();
+  // The browser panel beside the chat (Claude desktop's globe): main's state, and whether it's shown.
+  const [browser, setBrowser] = useState<BrowserState>({ open: false, url: '', title: '', canGoBack: false, canGoForward: false, loading: false });
+  const [browserShown, setBrowserShown] = useState(false);
+  useEffect(() => window.hydra.onBrowser(setBrowser), []);
+  const toggleBrowser = (url?: string) => {
+    if (browserShown) { setBrowserShown(false); void window.hydra.browserClose(); return; }
+    setBrowserShown(true);
+    void run(window.hydra.browserOpen(url), setBrowser);
+  };
   // A cloud chat continued in the window: its terminal, by chat (G7). Listening starts now, so no output is missed.
   const [terminals, setTerminals] = useState<Record<string, string>>({});
   useEffect(() => { watchTerminals(); }, []);
@@ -299,6 +309,8 @@ export function App() {
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   terminalId={terminals[chat.id]}
+                  onBrowser={toggleBrowser}
+                  browserOpen={browserShown}
                   {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {
                     if (!result.started) setError(result.error ?? "The terminal didn't open.");
                     else if (result.terminalId) setTerminals(current => ({ ...current, [chat.id]: result.terminalId! }));
@@ -307,6 +319,7 @@ export function App() {
                 knownModels={knownModels}
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
+        {browserShown && mode === 'chat' && <BrowserPanel state={browser} covered={!!deleting} onClose={() => { setBrowserShown(false); void window.hydra.browserClose(); }} />}
       </div>
     </div>
   );

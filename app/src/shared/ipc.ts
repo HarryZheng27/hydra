@@ -15,6 +15,9 @@ export const CHAT_EVENTS = 'hydra:chat-events';
 /** A terminal in the window (G7's Continue here): its output, or that it ended. */
 export const TERMINAL = 'hydra:terminal';
 export interface TerminalMessage { id: string; data?: string; exit?: number }
+/** The browser panel beside a chat: what its toolbar shows. */
+export const BROWSER = 'hydra:browser';
+export interface BrowserState { open: boolean; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean }
 /** Push: one project's heads and plans changed (G5). */
 export const HYDRA_TREE = 'hydra:tree';
 /** Push: a message from a project's controller to its Agents view (the IDE webview's own messages, G5). */
@@ -136,6 +139,14 @@ export interface Channels {
   'terminal.write': { payload: { id: string; data: string }; result: null };
   'terminal.resize': { payload: { id: string; cols: number; rows: number }; result: null };
   'terminal.close': { payload: { id: string }; result: null };
+  /** The browser panel (Claude desktop's globe): http(s) pages only, in a session of its own (browserPanel.ts). */
+  'browser.open': { payload: { url?: string }; result: BrowserState };
+  'browser.navigate': { payload: { url: string }; result: BrowserState };
+  'browser.bounds': { payload: { x: number; y: number; width: number; height: number }; result: null };
+  'browser.back': { payload: null; result: null };
+  'browser.forward': { payload: null; result: null };
+  'browser.reload': { payload: null; result: null };
+  'browser.close': { payload: null; result: null };
   /** The chat folder's working tree against HEAD, read-only. */
   'review.diff': { payload: { id: string }; result: ReviewResult };
   /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
@@ -192,6 +203,8 @@ function shaped<T>(required: Record<string, (value: unknown) => boolean>, option
     return true;
   };
 }
+/** A position or size in the window's CSS pixels. */
+const isPixels = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 20_000;
 const isText = (max: number) => (value: unknown): boolean => typeof value === 'string' && value.length <= max;
 const isModel = (value: unknown): boolean => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,79}$/.test(value);
 /** An effort word; each CLI checks it against its own list (Codex models offer `ultra`, for one). */
@@ -243,6 +256,13 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'terminal.write': exactly<{ id: string; data: string }>({ id: isId, data: isText(65_536) }),
   'terminal.resize': exactly<{ id: string; cols: number; rows: number }>({ id: isId, cols: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 500, rows: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 300 }),
   'terminal.close': exactly<{ id: string }>({ id: isId }),
+  'browser.open': exactly<{ url?: string }>({ url: isText(2048) }),
+  'browser.navigate': exactly<{ url: string }>({ url: isText(2048) }),
+  'browser.bounds': exactly<{ x: number; y: number; width: number; height: number }>({ x: isPixels, y: isPixels, width: isPixels, height: isPixels }),
+  'browser.back': isNull,
+  'browser.forward': isNull,
+  'browser.reload': isNull,
+  'browser.close': isNull,
   'review.diff': exactly<{ id: string }>({ id: isId }),
   // A path relative to the chat's folder, checked again in main against the files the diff lists.
   'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
@@ -312,6 +332,14 @@ export interface HydraApi {
   terminalResize(id: string, cols: number, rows: number): Promise<null>;
   terminalClose(id: string): Promise<null>;
   onTerminal(listener: (message: TerminalMessage) => void): () => void;
+  browserOpen(url?: string): Promise<BrowserState>;
+  browserNavigate(url: string): Promise<BrowserState>;
+  browserBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<null>;
+  browserBack(): Promise<null>;
+  browserForward(): Promise<null>;
+  browserReload(): Promise<null>;
+  browserClose(): Promise<null>;
+  onBrowser(listener: (state: BrowserState) => void): () => void;
   reviewDiff(id: string): Promise<ReviewResult>;
   openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;
   terminalClosed(id: string): Promise<null>;

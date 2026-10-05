@@ -1,4 +1,5 @@
 import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project, HydraControl, HydraStopState, UpdateStatusView } from '../shared/ipc';
+import type { BrowserPanel } from './browserPanel';
 import type { AppTerminals } from './terminals';
 import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
@@ -43,6 +44,8 @@ export interface HandlerDeps {
   confirmTrust(project: Project): Promise<boolean>;
   /** The window's terminals (G7's Continue here). */
   terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close'>;
+  /** The browser panel beside a chat. */
+  browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
   chats: Pick<ChatManager, 'list' | 'create' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
@@ -80,6 +83,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   // One sign-in per provider at a time, so a page can't stack up browser logins.
   const signingIn = new Set<CliProvider>();
   const requireHydra = () => { if (!deps.hydra) throw new Error('Hydra isn\'t available here.'); return deps.hydra; };
+  const requireBrowser = () => { if (!deps.browser) throw new Error('The browser isn\'t available here.'); return deps.browser; };
   return {
     'app.info': () => deps.info,
     'app.problems': async () => {
@@ -157,6 +161,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'terminal.write': ({ id, data }) => { deps.terminals?.write(id, data); return null; },
     'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); return null; },
     'terminal.close': ({ id }) => { deps.terminals?.close(id); return null; },
+    'browser.open': ({ url }) => requireBrowser().open(url),
+    'browser.navigate': ({ url }) => requireBrowser().navigate(url),
+    'browser.bounds': bounds => { deps.browser?.setBounds(bounds); return null; },
+    'browser.back': () => { deps.browser?.back(); return null; },
+    'browser.forward': () => { deps.browser?.forward(); return null; },
+    'browser.reload': () => { deps.browser?.reload(); return null; },
+    'browser.close': () => { deps.browser?.close(); return null; },
     'review.diff': async ({ id }) => {
       if (!deps.review) throw new Error('Review isn\'t available here.');
       return deps.review.diff(await deps.chats.reviewFolder(id));

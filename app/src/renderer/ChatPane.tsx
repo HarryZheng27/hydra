@@ -32,6 +32,9 @@ interface Props {
   onWhere?(where: 'local' | 'cloud'): void;
   /** G7: a cloud chat's session, continued in a terminal in a fresh worktree. */
   onContinueCloud?(): void;
+  /** The browser panel: the globe opens or closes it, with this chat's PR or cloud session to start with. */
+  onBrowser?(url?: string): void;
+  browserOpen?: boolean;
   /** A cloud chat continued here: its terminal inside the chat (G7). */
   terminalId?: string;
   /** The project's name, for the header's pill. */
@@ -196,7 +199,7 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return undefined;
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen }: Props) {
   // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
   const [slot, setSlot] = useState<Element | null>(null);
   useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
@@ -234,7 +237,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
           {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
           <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
           <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
-          {(record.pr?.url ?? cloudUrl) && <a className="head-action" href={record.pr?.url ?? cloudUrl} target="_blank" rel="noreferrer" aria-label={record.pr ? 'Open the pull request' : 'Open on claude.ai'} title={record.pr ? 'Open the pull request' : 'Open on claude.ai'}><Icon name="globe" /></a>}
+          {onBrowser && <button className="head-action" onClick={() => onBrowser(record.pr?.url ?? cloudUrl)} aria-pressed={!!browserOpen} aria-label="Browser" title={record.pr ? 'Browser: opens the pull request' : cloudUrl ? 'Browser: opens the session on claude.ai' : 'Browser'}><Icon name="globe" /></button>}
           <div className="head-more" ref={moreRoot}>
             <button className="head-action" aria-label="More" aria-haspopup="menu" aria-expanded={more} title="More" onClick={() => setMore(value => !value)}><Icon name="more" /></button>
             {more && (

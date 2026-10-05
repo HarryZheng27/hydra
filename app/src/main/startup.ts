@@ -8,8 +8,9 @@ import { findProvider } from '../../../src/core/providers';
 import { pathWithUsualCliFolders } from './cliLookup';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
-import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, TERMINAL, type HydraHostMessage, type Project } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, TERMINAL, BROWSER, type HydraHostMessage, type Project } from '../shared/ipc';
 import { AppTerminals } from './terminals';
+import { BrowserPanel } from './browserPanel';
 import { ChatManager } from './chats';
 import { cloudChats } from './cloud';
 import { consoleLaunch, consoleScript, openConsole } from './console';
@@ -108,6 +109,8 @@ export function start(): void {
   const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
   const chatStore = new ChatStore(path.join(userData, 'chats'));
   // The window's terminals (G7's Continue here), in node-pty as lanes are.
+  // The browser panel beside a chat (Claude desktop's globe), in a session of its own.
+  const browser = new BrowserPanel({ window: getMainWindow, send: state => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(BROWSER, state); } });
   const terminals = new AppTerminals({ appRoot: path.dirname(distDir), send: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(TERMINAL, message); } });
   const chats = new ChatManager({
     store: chatStore,
@@ -167,6 +170,7 @@ export function start(): void {
     event.preventDefault();
     try { chats.closeAll(); } catch { /* quit anyway */ }
     try { terminals.closeAll(); } catch { /* quit anyway */ }
+    try { browser.close(); } catch { /* quit anyway */ }
     try { stopSignIns(); } catch { /* quit anyway */ }
     const timeout = new Promise(resolve => setTimeout(resolve, 5000));
     void Promise.race([Promise.all([chatStore.flush().catch(() => undefined), hydra.shutdown().catch(() => undefined)]), timeout]).finally(() => { flushed = true; app.quit(); });
@@ -191,6 +195,7 @@ export function start(): void {
   app.on('will-quit', () => updates.stop());
   const handlers = createHandlers({
     terminals,
+    browser,
     updates,
     info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
     settings,

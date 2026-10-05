@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { CHAT_EVENTS, TERMINAL, type TerminalMessage, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraHostMessage, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
+import { BROWSER, CHAT_EVENTS, TERMINAL, type BrowserState, type TerminalMessage, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraHostMessage, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
 
 // The renderer gets these typed functions and nothing else: no ipcRenderer, no channel names, no Node.
 const call = <C extends Channel>(channel: C, payload: Payload<C>): Promise<Result<C>> =>
@@ -33,6 +33,13 @@ const api: HydraApi = {
   terminalWrite: (id, data) => call('terminal.write', { id, data }),
   terminalResize: (id, cols, rows) => call('terminal.resize', { id, cols, rows }),
   terminalClose: id => call('terminal.close', { id }),
+  browserOpen: url => call('browser.open', url === undefined ? {} : { url }),
+  browserNavigate: url => call('browser.navigate', { url }),
+  browserBounds: bounds => call('browser.bounds', { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }),
+  browserBack: () => call('browser.back', null),
+  browserForward: () => call('browser.forward', null),
+  browserReload: () => call('browser.reload', null),
+  browserClose: () => call('browser.close', null),
   reviewDiff: id => call('review.diff', { id }),
   openReviewFile: (id, path) => call('review.open', { id, path }),
   terminalClosed: id => call('chats.terminalClosed', { id }),
@@ -65,6 +72,11 @@ const api: HydraApi = {
     return () => { ipcRenderer.removeListener(HYDRA_TREE, handler); };
   },
   // The page gets the message, never the Electron event or the sender.
+  onBrowser: listener => {
+    const handler = (_event: unknown, state: BrowserState) => listener(state);
+    ipcRenderer.on(BROWSER, handler);
+    return () => { ipcRenderer.removeListener(BROWSER, handler); };
+  },
   onTerminal: listener => {
     const handler = (_event: unknown, message: TerminalMessage) => listener(message);
     ipcRenderer.on(TERMINAL, handler);
