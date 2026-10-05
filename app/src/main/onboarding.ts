@@ -24,20 +24,21 @@ import type { AccountStatus, CliProvider, OnboardingReport, ProviderStatus, Regi
 export const providerNames: Record<CliProvider, string> = { claude: 'Claude Code', codex: 'Codex' };
 const providers: CliProvider[] = ['claude', 'codex'];
 
-export async function providerStatus(provider: CliProvider, configured: string | undefined, cwd: string): Promise<ProviderStatus> {
+export async function providerStatus(provider: CliProvider, configured: string | undefined, cwd: string, timeoutMs = 15_000): Promise<ProviderStatus> {
   const base = { provider, name: providerNames[provider], minimum: supportedCliMinimum(provider), requirement: supportedCliDescription(provider), configured: !!configured };
   let found;
   try { found = await findProvider(provider, configured); } catch (error) { return { ...base, found: false, supported: false, error: error instanceof Error ? error.message : String(error) }; }
   if (!found.available || !found.executable) {
     return { ...base, found: false, supported: false, error: configured ? `Hydra can't find ${configured}.` : `${providerNames[provider]} isn't on your PATH.` };
   }
-  // The same 15 seconds as the sign-in status check: a CLI's first start on a busy machine can take longer than 8.
-  const diagnostic = await checkProvider({ provider, executable: found.executable, available: true }, cwd, undefined, 15_000);
+  // 15 seconds by default, as the sign-in status check: a CLI's first start on a busy machine can take longer than 8.
+  // Tests pass more: a fresh .cmd stand-in on a CI runner can wait on a virus scan past 15.
+  const diagnostic = await checkProvider({ provider, executable: found.executable, available: true }, cwd, undefined, timeoutMs);
   if (diagnostic.status !== 'checked' || !diagnostic.version) {
     return { ...base, found: true, executable: found.executable, supported: false, error: diagnostic.error ?? 'The check failed.' };
   }
   const supported = supportedCliVersion(provider, diagnostic.version);
-  const account = supported ? await accountStatus(provider, found.executable, cwd) : undefined;
+  const account = supported ? await accountStatus(provider, found.executable, cwd, timeoutMs) : undefined;
   return {
     ...base, found: true, executable: found.executable, version: diagnostic.version, supported, advertised: diagnostic.advertised, ...(account ? { account } : {}),
     ...(supported ? {} : { error: `Hydra needs ${supportedCliDescription(provider)}; this is ${diagnostic.version}.` }),
@@ -71,8 +72,8 @@ export const signInArgs = { claude: ['auth', 'login', '--claudeai'] };
 export const SIGN_IN_TIMEOUT_MS = 5 * 60_000;
 
 /** Whether the CLI says the user is signed in. Only that answer is kept; nothing else it prints is read or returned. */
-export async function accountStatus(provider: CliProvider, executable: string, cwd: string): Promise<AccountStatus> {
-  const probe = await runProbe(executable, statusArgs[provider], cwd, { timeoutMs: 15_000, maxBytes: 16_384 }).catch(() => undefined);
+export async function accountStatus(provider: CliProvider, executable: string, cwd: string, timeoutMs = 15_000): Promise<AccountStatus> {
+  const probe = await runProbe(executable, statusArgs[provider], cwd, { timeoutMs, maxBytes: 16_384 }).catch(() => undefined);
   if (!probe || probe.error) return 'unknown';
   // Codex's first line says how ("Logged in using ChatGPT"); an API key isn't the user's subscription. Only that is kept.
   if (provider === 'codex') return probe.exitCode === 0 ? (/^Logged in using ChatGPT\b/.test(probe.stdout.trim()) ? 'signed-in' : 'other') : probe.exitCode === 1 ? 'signed-out' : 'unknown';

@@ -13,6 +13,7 @@ import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, TERMINAL, BROWSER, type 
 import { AppTerminals } from './terminals';
 import { BrowserPanel } from './browserPanel';
 import { claudeCommands } from './claudeCommands';
+import { pullRequests } from './pullRequests';
 import { ChatManager } from './chats';
 import { cloudChats } from './cloud';
 import { consoleLaunch, consoleScript, openConsole } from './console';
@@ -199,6 +200,7 @@ export function start(): void {
   const handlers = createHandlers({
     terminals,
     browser,
+    pullRequest: pullRequests(),
     claudeCommands: async cwd => {
       const found = await findProvider('claude', (await settings.load()).cliPaths.claude).catch(() => undefined);
       return found?.available && found.executable ? claudeCommands(found.executable, cwd) : [];

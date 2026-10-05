@@ -12,16 +12,19 @@ import { standinCalls, writeStandins } from '../smoke/standins.mjs';
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-onboarding-'));
 const windows = process.platform === 'win32';
 
+// CI runners can hold a fresh .cmd stand-in on a virus scan for more than the app's 15 seconds.
+const SLOW = 60_000;
+
 test('onboarding finds each CLI, reads its version, and runs nothing but the version, help and sign-in status checks', { skip: !windows }, async () => {
   const dir = writeStandins(scratch());
   try {
-    const claude = await providerStatus('claude', path.join(dir, 'claude.cmd'), dir);
+    const claude = await providerStatus('claude', path.join(dir, 'claude.cmd'), dir, SLOW);
     assert.equal(claude.found, true);
     assert.equal(claude.version, '2.1.282');
     assert.equal(claude.supported, true);
     assert.equal(claude.error, undefined);
     assert.ok(claude.advertised?.includes('Structured output'));
-    const codex = await providerStatus('codex', path.join(dir, 'codex.cmd'), dir);
+    const codex = await providerStatus('codex', path.join(dir, 'codex.cmd'), dir, SLOW);
     assert.equal(codex.version, '0.157.1');
     assert.equal(codex.supported, true);
     assert.equal(claude.account, 'signed-out');
@@ -33,18 +36,18 @@ test('onboarding finds each CLI, reads its version, and runs nothing but the ver
 test('an old CLI is found but not supported, and a missing one says so', { skip: !windows }, async () => {
   const dir = writeStandins(scratch(), { claude: '2.0.5', codex: false });
   try {
-    const claude = await providerStatus('claude', path.join(dir, 'claude.cmd'), dir);
+    const claude = await providerStatus('claude', path.join(dir, 'claude.cmd'), dir, SLOW);
     assert.equal(claude.found, true);
     assert.equal(claude.supported, false);
     assert.match(claude.error ?? '', /needs Claude Code 2\.1\.270 or newer/);
-    const missing = await providerStatus('codex', path.join(dir, 'codex.cmd'), dir);
+    const missing = await providerStatus('codex', path.join(dir, 'codex.cmd'), dir, SLOW);
     assert.equal(missing.found, false);
     assert.match(missing.error ?? '', /can't find/);
-    const relative = await providerStatus('codex', 'codex.cmd', dir);
+    const relative = await providerStatus('codex', 'codex.cmd', dir, SLOW);
     assert.equal(relative.found, false);
     const savedPath = process.env.PATH;
     process.env.PATH = dir;
-    try { assert.match((await providerStatus('codex', undefined, dir)).error ?? '', /isn't on your PATH/); } finally { process.env.PATH = savedPath; }
+    try { assert.match((await providerStatus('codex', undefined, dir, SLOW)).error ?? '', /isn't on your PATH/); } finally { process.env.PATH = savedPath; }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -522,7 +522,7 @@ if (role === 'first') {
       await chat.until(`document.querySelectorAll('.turn-end').length >= 3`, 'the stopped turn to end');
       report.chat.outcomes = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);
       report.chat.turnEnds = await ui(`[...document.querySelectorAll('.turn-end')].map(e => e.className.replace('turn-end', '').trim())`);
-      report.chat.tools = await ui(`[...document.querySelectorAll('details.tool .tool-name')].map(e => e.textContent)`);
+      report.chat.tools = await ui(`[...document.querySelectorAll('.steps')].flatMap(e => e.dataset.tools.split(','))`);
       report.chat.assistantTexts = await ui(`document.querySelectorAll('.msg.assistant').length`);
       report.chat.title = await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent)`);
       const chats = path.join(app.getPath('userData'), 'chats');
@@ -557,11 +557,16 @@ if (role === 'first') {
       await chat.click('.card.approval .card-actions button', 'Allow');
       await chat.until(`document.querySelectorAll('.turn-end').length >= 2`, 'Codex turn two to end');
       await chat.send('Run a slow command.');
-      await chat.until(`!!document.querySelector('details.tool .tool-state.running')`, 'the command to start');
+      await chat.until(`!!document.querySelector('.steps-label.running')`, 'the command to start');
       await ui(`document.querySelector('.composer .stop').click(); 1`);
       await chat.until(`document.querySelectorAll('.turn-end').length >= 3`, 'the stopped Codex turn to end');
       report.codex.outcomes = await ui(`[...document.querySelectorAll('.card .card-outcome')].map(e => e.textContent)`);
       report.codex.turnEnds = await ui(`[...document.querySelectorAll('.turn-end')].map(e => e.className.replace('turn-end', '').trim())`);
+      // Tool steps fold into a grey line (Claude desktop's): open each group, then each step, to read the output.
+      await ui(`document.querySelectorAll('.steps-line[aria-expanded=false]').forEach(b => b.click()); 1`);
+      await chat.until(`!!document.querySelector('.step-line')`, 'the steps to open');
+      await ui(`document.querySelectorAll('.step-line[aria-expanded=false]').forEach(b => b.click()); 1`);
+      await chat.until(`!!document.querySelector('.step-body')`, 'a step to open');
       report.codex.output = await ui(`[...document.querySelectorAll('pre.code.output')].map(e => e.textContent).join(' | ')`);
       await shot('codex');
 
