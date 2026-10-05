@@ -21,9 +21,9 @@ function readImage(file: File): Promise<Attached> {
 }
 
 /** Claude's model aliases; the CLI resolves each to the current model. */
-const claudeModels = [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }];
-const titleCase = (value: string) => value[0]!.toUpperCase() + value.slice(1);
-const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const claudeModels = [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }];
+export const titleCase = (value: string) => value[0]!.toUpperCase() + value.slice(1);
+export const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** A model id the CLI reported (claude-opus-5-5) as the alias the menu offers (opus). */
 const claudeAlias = (id: string | undefined) => (id ? claudeModels.find(model => id.toLowerCase().includes(model.value))?.value ?? id : undefined);
 /** The options, with the current value added if the list doesn't have it, so the menu always shows what's in use. */

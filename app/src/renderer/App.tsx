@@ -4,7 +4,7 @@ import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEven
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
-import { EmptyState, type StartRequest } from './EmptyState';
+import { EmptyState, type KnownModels, type StartRequest } from './EmptyState';
 import { SettingsView } from './SettingsView';
 import { AgentsView } from './AgentsView';
 import { HostLayer } from './HostLayer';
@@ -124,6 +124,19 @@ export function App() {
   }
   const setupPanel = <Setup report={setup} checking={checking} onCheck={() => void checkSetup(true)} onSignIn={provider => window.hydra.signIn(provider)} />;
   /** The latest chats, newest first, for the home screen. */
+  // What chats so far reported about models, for the home's Model menu before a chat starts.
+  const knownModels = useMemo((): KnownModels => {
+    const claudeVersions: Record<string, string> = {};
+    let codex: KnownModels['codex'] = [];
+    for (const [id, events] of Object.entries(chatEvents)) {
+      const provider = chats.find(chat => chat.id === id)?.provider;
+      for (const event of events) {
+        if (event.type === 'session' && event.model) { const version = /claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(event.model); if (version) claudeVersions[version[1]!.toLowerCase()] = `${version[2]}.${version[3]}`; }
+        if (event.type === 'models' && provider === 'codex' && event.models.length) codex = event.models;
+      }
+    }
+    return { claudeVersions, codex };
+  }, [chatEvents, chats]);
   const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
     project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
@@ -198,7 +211,7 @@ export function App() {
     });
   };
   /** The home's prompt: a chat in the chosen project, with that agent (and place), and the message sent at once. */
-  const startChat = async ({ project: target, provider, where, text, permissionMode, approvals }: StartRequest): Promise<boolean> => {
+  const startChat = async ({ project: target, provider, where, text, permissionMode, approvals, model, effort }: StartRequest): Promise<boolean> => {
     let current = target;
     try {
       if (!current.trustedAt) {
@@ -207,7 +220,7 @@ export function App() {
         current = next.projects.find(p => p.id === target.id) ?? target;
         if (!current.trustedAt) return false;
       }
-      const record = await window.hydra.createChat({ projectId: current.id, provider, ...(where === 'cloud' ? { where: 'cloud' as const } : {}), ...(permissionMode ? { permissionMode } : {}), ...(approvals ? { approvals } : {}) });
+      const record = await window.hydra.createChat({ projectId: current.id, provider, ...(where === 'cloud' ? { where: 'cloud' as const } : {}), ...(permissionMode ? { permissionMode } : {}), ...(approvals ? { approvals } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
       setChats(list => [record, ...list]);
       setChatEvents(events => ({ ...events, [record.id]: [] }));
       setSettled(settled => ({ ...settled, [record.id]: 0 }));
@@ -276,6 +289,7 @@ export function App() {
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   onContinueCloud={() => void run(window.hydra.continueCloud(chat.id), result => { if (!result.started) setError(result.error ?? "The terminal didn't open."); })} />
               : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat}
+                knownModels={knownModels}
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
       </div>

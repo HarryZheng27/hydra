@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
-import { approvalModes, modes } from './Composer';
+import type { ChatModel, ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
+import { approvalModes, claudeEfforts, claudeModels, modes, titleCase } from './Composer';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 
@@ -19,7 +19,9 @@ function ago(iso: string, now = Date.now()): string {
 }
 
 /** What the home's prompt starts: a chat in a project, with an agent, here or (Claude) in the cloud. */
-export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals }
+export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; model?: string; effort?: string }
+/** What the home knows of the models before a chat starts: Claude's versions ("5.5") and Codex's list, from chats so far. */
+export interface KnownModels { claudeVersions: Record<string, string>; codex: ChatModel[] }
 
 interface Props {
   project?: Project;
@@ -33,6 +35,7 @@ interface Props {
   onStart?(request: StartRequest): Promise<boolean>;
   /** The chats that need the user (the home's Sessions list, as Claude desktop's). */
   waiting?: Waiting[];
+  knownModels?: KnownModels;
 }
 
 const agentOptions = [
@@ -51,7 +54,7 @@ const whereOptions = [
  */
 const shownSessions = 3;
 
-function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; waiting: Waiting[]; onOpenChat?(id: string): void; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
+function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; waiting: Waiting[]; knownModels: KnownModels; onOpenChat?(id: string): void; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
   const [allSessions, setAllSessions] = useState(false);
   // The project of the most recent chat, else the first one.
   const initial = projects.find(project => project.name === recents[0]?.project)?.id ?? projects[0]?.id;
@@ -61,6 +64,9 @@ function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClo
   // 'settings': Claude Code follows the user's own default mode, as a new chat does; Codex asks, as Hydra starts it.
   const [mode, setMode] = useState<ClaudePermissionMode>('settings');
   const [approvals, setApprovals] = useState<CodexApprovals>('ask');
+  // Model and effort, as Claude desktop shows them: left as the CLI's own defaults unless the user picks one.
+  const [model, setModel] = useState<string>();
+  const [effort, setEffort] = useState<string>();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [cloning, setCloning] = useState(false);
@@ -70,6 +76,15 @@ function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClo
   useEffect(() => { box.current?.focus(); }, []);
   const project = projects.find(candidate => candidate.id === projectId);
   const cloud = provider === 'claude' && where === 'cloud';
+  const codexDefault = knownModels.codex.find(candidate => candidate.isDefault) ?? knownModels.codex[0];
+  const modelOptions = provider === 'claude'
+    ? claudeModels.map(option => ({ ...option, label: knownModels.claudeVersions[option.value] ? `${option.label} ${knownModels.claudeVersions[option.value]}` : option.label, ...(option.value === 'opus' ? { badge: 'Default' } : {}) }))
+    : knownModels.codex.map(candidate => ({ value: candidate.id, label: candidate.label, ...(candidate.isDefault ? { badge: 'Default' } : {}) }));
+  const shownModel = model ?? (provider === 'claude' ? 'opus' : codexDefault?.id);
+  const efforts = provider === 'claude' ? claudeEfforts : knownModels.codex.find(candidate => candidate.id === shownModel)?.efforts ?? [];
+  const defaultEffort = provider === 'claude' ? 'medium' : knownModels.codex.find(candidate => candidate.id === shownModel)?.defaultEffort;
+  const effortOptions = efforts.map(value => ({ value, label: titleCase(value), ...(value === defaultEffort ? { badge: 'Default' } : {}) }));
+  const shownEffort = effort ?? defaultEffort;
   const projectOptions = [
     ...projects.map(candidate => ({ value: candidate.id, label: candidate.name, description: candidate.path })),
     { value: 'open', label: 'Open a folder…' },
@@ -78,7 +93,7 @@ function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClo
   const start = async () => {
     if (!project || !text.trim() || busy) return;
     setBusy(true);
-    const settings = provider === 'claude' ? (mode === 'settings' ? {} : { permissionMode: mode }) : { approvals };
+    const settings = { ...(provider === 'claude' ? (mode === 'settings' ? {} : { permissionMode: mode }) : { approvals }), ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
     try { if (await onStart({ project, provider, where: cloud ? 'cloud' : 'local', text: text.trim(), ...settings })) setText(''); } finally { setBusy(false); }
   };
   const clone = async () => {
@@ -135,7 +150,9 @@ function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClo
             ? <Picker bare label="Permission mode" value={mode} options={[{ value: 'settings', label: 'Your settings', description: 'Claude Code follows your own default mode' }, ...modes]} onChange={value => setMode(value as ClaudePermissionMode)} />
             : <Picker bare label="Approvals" value={approvals} options={approvalModes()} onChange={value => setApprovals(value as CodexApprovals)} />}
           <span className="composer-spacer" />
-          <Picker bare label="Agent" value={provider} options={agentOptions} onChange={value => setProvider(value === 'codex' ? 'codex' : 'claude')} />
+          {modelOptions.length > 0 && <Picker bare label="Model" value={shownModel} options={modelOptions} onChange={setModel} />}
+          {effortOptions.length > 0 && <Picker bare label="Effort" value={shownEffort} options={effortOptions} onChange={setEffort} />}
+          <Picker bare label="Agent" value={provider} options={agentOptions} onChange={value => { setProvider(value === 'codex' ? 'codex' : 'claude'); setModel(undefined); setEffort(undefined); }} />
         </div>
         {cloud && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
       </div>
@@ -143,7 +160,7 @@ function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClo
   );
 }
 
-export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart, waiting = [] }: Props) {
+export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart, waiting = [], knownModels = { claudeVersions: {}, codex: [] } }: Props) {
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -160,7 +177,7 @@ export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents 
       </section>
     );
   }
-  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} waiting={waiting} onOpenChat={onOpenChat} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
+  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} waiting={waiting} knownModels={knownModels} onOpenChat={onOpenChat} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
   const clone = async () => {
     if (!url.trim() || busy) return;
     setBusy(true);
