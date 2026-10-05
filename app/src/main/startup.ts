@@ -4,6 +4,7 @@ import type { CliProvider } from '../shared/ipc';
 import { ChatStore } from '../../../src/core/chat/store';
 import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
+import { pathWithUsualCliFolders } from './cliLookup';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
 import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, type HydraHostMessage, type Project } from '../shared/ipc';
@@ -81,6 +82,9 @@ export function start(): void {
     app.exit(1);
     return;
   }
+  // Every CLI lookup in the app goes through PATH (after Settings' path): make sure the installers' folders are on it.
+  const withClis = pathWithUsualCliFolders();
+  if (withClis) process.env.PATH = withClis;
   // The lock is keyed on the user-data folder, which is already %APPDATA%\Hydra App, so the IDE's never collides.
   if (!app.requestSingleInstanceLock()) {
     app.quit();
