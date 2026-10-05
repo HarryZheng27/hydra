@@ -73,7 +73,9 @@ function Uninstall-Product($product, [string]$label) {
   if (-not (Test-Path -LiteralPath $uninstaller)) { return }
   $process = Start-Process -FilePath $uninstaller -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $testRoot ($label + '-uninstall.log')) + '"')) -WindowStyle Hidden -Wait -PassThru
   if ($process.ExitCode -ne 0) { throw "Uninstalling $($product.name) ($label) failed: $($process.ExitCode)" }
-  for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $product.dir); $i++) { Start-Sleep -Milliseconds 500 }
+  # Inno's uninstaller hands off to a copy of itself in TEMP and returns at once; on a slow runner that copy can take
+  # more than 30 seconds, so wait (up to two minutes) for the program, its registration and its folder to go.
+  for ($i = 0; $i -lt 240 -and ((Test-Path -LiteralPath $product.exe) -or (Test-Path -LiteralPath $product.key) -or (Test-Path -LiteralPath $product.dir)); $i++) { Start-Sleep -Milliseconds 500 }
   if ((Test-Path -LiteralPath $product.exe) -or (Test-Path -LiteralPath $product.key)) { throw "Uninstalling $($product.name) left its program or registration." }
   if (Test-Path -LiteralPath $product.dir) { throw "Uninstalling $($product.name) left files: $((Get-ChildItem -LiteralPath $product.dir -Recurse -File | Select-Object -First 10 | ForEach-Object FullName) -join ', ')" }
 }
