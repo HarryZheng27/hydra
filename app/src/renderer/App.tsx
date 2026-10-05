@@ -19,6 +19,7 @@ import { TitleBar } from './TitleBar';
 export type View = { kind: 'home' } | { kind: 'project'; id: string } | { kind: 'chat'; id: string } | { kind: 'settings' };
 
 const samePath = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+const sameView = (a: View, b: View) => a.kind === b.kind && ('id' in a ? a.id : '') === ('id' in b ? b.id : '');
 
 /** Follows the system's light or dark preference, which main sets from the theme setting. */
 function useSystemDark(): boolean {
@@ -183,6 +184,38 @@ export function App() {
   }));
   const afterCliChange = (next: AppSettings) => { setSettings(next); void checkSetup(false); };
 
+  // The title bar's back and forward: every screen shown, newest last; going back or forward moves the cursor only.
+  const history = useRef<{ stack: View[]; at: number }>({ stack: [{ kind: 'home' }], at: 0 });
+  const traveling = useRef(false);
+  const [, setHistoryTick] = useState(0);
+  useEffect(() => {
+    const h = history.current;
+    if (traveling.current) { traveling.current = false; return; }
+    if (sameView(h.stack[h.at]!, view)) return;
+    h.stack = [...h.stack.slice(0, h.at + 1), view].slice(-50);
+    h.at = h.stack.length - 1;
+    setHistoryTick(tick => tick + 1);
+  }, [view]);
+  // A step skips screens that are gone (a deleted chat or removed project).
+  const exists = (target: View) => target.kind === 'chat' ? chats.some(c => c.id === target.id) : target.kind === 'project' ? !!state?.projects.some(p => p.id === target.id) : true;
+  const stepTo = (delta: 1 | -1) => {
+    const h = history.current;
+    let at = h.at + delta;
+    while (at >= 0 && at < h.stack.length && !exists(h.stack[at]!)) at += delta;
+    return at >= 0 && at < h.stack.length ? at : undefined;
+  };
+  const travel = (delta: 1 | -1) => {
+    const at = stepTo(delta);
+    if (at === undefined) return;
+    history.current.at = at;
+    const target = history.current.stack[at]!;
+    traveling.current = !sameView(target, view);
+    setMode('chat');
+    setView(target);
+    setHistoryTick(tick => tick + 1);
+  };
+  const signedIn = (setup?.providers ?? []).filter(p => p.account === 'signed-in').map(p => (p.provider === 'claude' ? 'Claude' : 'Codex'));
+
   const sidebarOpen = state?.sidebarOpen ?? true;
   // The sidebar follows the click at once; saving it is best effort, and a failed save only shows its error.
   useEffect(() => {
@@ -282,7 +315,7 @@ export function App() {
     <div className={`app ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
       <HostLayer />
       {deleting && <ConfirmDelete chat={deleting} onCancel={() => setDeleting(undefined)} onConfirm={() => { removeChat(deleting); setDeleting(undefined); }} />}
-      <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} mode={mode} onMode={setMode} />
+      <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} mode={mode} onMode={setMode} canBack={stepTo(-1) !== undefined} canForward={stepTo(1) !== undefined} onBack={() => travel(-1)} onForward={() => travel(1)} />
       <div className="body">
         {/* Kept mounted so the toggle can slide it; closed, it is inert (no focus, clicks or screen reader). */}
         {state && (
@@ -292,13 +325,17 @@ export function App() {
               chats={chats}
               statuses={statuses}
               view={view}
+              user={info?.user}
+              agents={signedIn}
               // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
               onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
               onOpenChat={openChat}
               onOpenProject={id => setView({ kind: 'project', id })}
               onAddProject={pickProject}
+              onClone={cloneRepo}
+              onNewChatIn={(id, provider) => { const target = state.projects.find(p => p.id === id); if (target) { setMode('chat'); void newChat(target, provider); } }}
               onRemoveProject={id => void run(window.hydra.removeProject(id), next => { setState(next); if (view.kind === 'project' && view.id === id) setView({ kind: 'home' }); })}
-              onOpenSettings={() => setView({ kind: 'settings' })}
+              onOpenSettings={() => { setMode('chat'); setView({ kind: 'settings' }); }}
               onRenameChat={(id, title) => void run(window.hydra.renameChat(id, title), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
               onArchiveChat={(id, archived) => void run(window.hydra.archiveChat(id, archived), record => {
                 setChats(list => list.map(c => (c.id === record.id ? record : c)));

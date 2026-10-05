@@ -8,7 +8,7 @@ import type { Handlers } from './ipc';
 import { addProject, projectFor, removeProject, setCliPath, trustProject, type JsonStore } from './settings';
 
 export interface HandlerDeps {
-  info: { name: string; version: string; electron: string; platform: string };
+  info: { name: string; version: string; electron: string; platform: string; user?: string };
   settings: JsonStore<AppSettings>;
   state: JsonStore<AppState>;
   /** Main's own folder picker (for a project, or where a clone goes). Undefined when the user cancels. */

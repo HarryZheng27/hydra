@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, type WebContents } from 'electron';
@@ -203,7 +204,7 @@ export function start(): void {
       return found?.available && found.executable ? claudeCommands(found.executable, cwd) : [];
     },
     updates,
-    info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform },
+    info: { name: PRODUCT_NAME, version: HYDRA_APP_VERSION, electron: process.versions.electron ?? '', platform: process.platform, user: accountName() },
     settings,
     state,
     pickFolder: purpose => pickFolder(purpose),
@@ -237,4 +238,9 @@ export function start(): void {
     void hydra.sync((await state.load()).projects);
     updates.start();
   });
+}
+
+/** The Windows account's name for the sidebar's account row, or nothing if the OS won't say. */
+function accountName(): string | undefined {
+  try { return os.userInfo().username || undefined; } catch { return undefined; }
 }
