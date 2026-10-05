@@ -463,7 +463,7 @@ if (role === 'first') {
     await ui(`document.querySelector('.empty .primary').click(); 1`);
     await until(`document.querySelectorAll('.project-name').length === 1 && document.querySelector('.empty h1')?.textContent === 'Project One'`, 'the picked project');
     await shot('project-'+(await themeNow()).theme);
-    report.afterPick = await ui(`({ projects: [...document.querySelectorAll('.project-name span')].map(e => e.textContent), heading: document.querySelector('.empty h1')?.textContent })`);
+    report.afterPick = await ui(`({ projects: [...document.querySelectorAll('.project-name > span:first-child')].map(e => e.textContent), heading: document.querySelector('.empty h1')?.textContent })`);
     await ui(`document.querySelector('.titlebar .icon-button').click(); 1`);
     // Closed, the sidebar stays in the page so it can slide, but is inert: nothing in it can be reached.
     await until(`!document.querySelector('.sidebar-slot:not([inert]) .sidebar')`, 'the sidebar to hide');
