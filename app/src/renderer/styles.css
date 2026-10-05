@@ -631,3 +631,6 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .slash-menu li .picker-label { overflow: hidden; text-overflow: ellipsis; }
 .slash-ghost { position: absolute; left: calc(13px + 0.55em); top: 50%; transform: translateY(-50%); color: var(--faint); font-size: 14px; pointer-events: none; }
 .composer .prompt-box:has(textarea:not(:placeholder-shown)) .slash-ghost { display: block; }
+
+/* A turn that simply finished leaves no line under it. */
+.turn-end:empty { display: none; }
