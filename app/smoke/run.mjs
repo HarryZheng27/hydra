@@ -12,7 +12,7 @@ import { standinCalls, writeStandins } from './standins.mjs';
 const appDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 // G1's CSP (docs/internal/hydra-app/G1-spikes.md, S4 item 4), written out here so the smoke checks the app against
 // the decision, not against itself.
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify";
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self'; font-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types hydraWorker defaultWorkerFactory diffEditorWidget diffReview domLineBreaksComputer editorViewLayer richScreenReaderContent standaloneColorizer tokenizeToString stickyScrollViewLayer editorGhostText dompurify";
 const require = createRequire(import.meta.url);
 const electron = require('electron');
 const work = path.join(appDir, '.smoke', String(Date.now()));

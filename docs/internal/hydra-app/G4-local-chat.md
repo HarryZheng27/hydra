@@ -198,7 +198,7 @@ Five PRs, one per milestone: [#302](https://github.com/ndunl075/hydra/pull/302) 
 - **The app smoke** sometimes times out waiting for the first window when run straight after the test suite; a rerun passes.
 - **Codex write access:** find why the elevated Windows sandbox fails from a spawned app-server (`~/.codex/logs_2.sqlite`, G1). Then live-check the per-turn `sandboxPolicy` route, and switch `codexWriteVerified` on if it neither persists trust nor fails.
 - **Codex's model list** comes only from a new thread's `model/list`: before the first message, and after a resume, the composer offers just the default.
-- **The review pane** hides Monaco's gutter icons, because the CSP loads no fonts. The build still emits the font and its `@font-face`, which could be dropped.
+- **The review pane** hides Monaco's gutter icons. The CSP's `font-src 'self'` (added for Geist) would let Monaco's icon font load, but styles.css still hides the codicons.
 - **The review pane with git LFS:** emptying LFS's clean filter shows a changed LFS file as its pointer against its content. `--ignore-submodules` hides submodule changes.
 - **A slash command with an image attached** goes as content blocks, so the CLI may not read it as a command.
 - **`extraArguments`** takes any flag. Only the live script uses it, but an allowlist would be safer if it ever reaches the app.
