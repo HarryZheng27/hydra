@@ -15,6 +15,7 @@ import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
 import { consoleScript } from '../src/main/console';
 import { Markdown, safeHref } from '../src/renderer/markdown';
+import { EmptyState } from '../src/renderer/EmptyState';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -588,4 +589,17 @@ test('the sidebar menu renames, archives and unarchives a chat; a rename sticks,
     assert.equal(parseCall({ channel: 'chats.rename', payload: { id: chat.id, title: 'x'.repeat(401) } }).ok, false);
     manager.closeAll();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the home is Claude desktop\'s start screen once there are projects: recent chats and a prompt with project, agent and place', () => {
+  const projects = [{ id: '0f8fad5b-d9cb-469f-a165-70867728950e', path: 'C:\code\shop', name: 'shop', trustedAt: '2026-10-05T00:00:00.000Z' }];
+  const recents = Array.from({ length: 8 }, (_, index) => ({ id: `0f8fad5b-d9cb-469f-a165-7086772895${String(index).padStart(2, '0')}`, title: `Chat ${index}`, project: 'shop', provider: 'claude' as const, updatedAt: new Date().toISOString() }));
+  const page = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, recents, projects, onStart: async () => true }));
+  assert.ok(page.includes('placeholder="Describe a task or ask a question"'));
+  for (const chip of ['Project', 'Agent', 'Where']) assert.ok(page.includes(`aria-label="${chip}`) || page.includes(chip), chip);
+  assert.ok(page.includes('Show 2 more'));
+  assert.equal((page.match(/class="recent-title"/g) ?? []).length, 6);
+  // No projects yet: the first-run choices, as before.
+  const first = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, projects: [], onStart: async () => true }));
+  assert.ok(first.includes('Open a project') && !first.includes('Describe a task'));
 });

@@ -3,7 +3,7 @@ import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEven
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
-import { EmptyState } from './EmptyState';
+import { EmptyState, type StartRequest } from './EmptyState';
 import { SettingsView } from './SettingsView';
 import { AgentsView } from './AgentsView';
 import { HostLayer } from './HostLayer';
@@ -73,7 +73,8 @@ export function App() {
     const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
     void window.hydra.appInfo().then(setInfo, fail);
     void window.hydra.getSettings().then(setSettings, fail);
-    void window.hydra.getState().then(setState, fail);
+    // The app opens with its sidebar, as Claude desktop does; hiding it lasts until the app closes.
+    void window.hydra.getState().then(loaded => setState({ ...loaded, sidebarOpen: true }), fail);
     void checkSetup(false);
     void window.hydra.problems().then(list => setProblems(list), fail);
     void window.hydra.listChats().then(setChats, fail);
@@ -174,6 +175,27 @@ export function App() {
       openChat(record.id);
     });
   };
+  /** The home's prompt: a chat in the chosen project, with that agent (and place), and the message sent at once. */
+  const startChat = async ({ project: target, provider, where, text }: StartRequest): Promise<boolean> => {
+    let current = target;
+    try {
+      if (!current.trustedAt) {
+        const next = await window.hydra.trustProject(target.id);
+        setState(next);
+        current = next.projects.find(p => p.id === target.id) ?? target;
+        if (!current.trustedAt) return false;
+      }
+      const record = await window.hydra.createChat({ projectId: current.id, provider, ...(where === 'cloud' ? { where: 'cloud' as const } : {}) });
+      setChats(list => [record, ...list]);
+      setChatEvents(events => ({ ...events, [record.id]: [] }));
+      setSettled(settled => ({ ...settled, [record.id]: 0 }));
+      setView({ kind: 'chat', id: record.id });
+      openChat(record.id);
+      await window.hydra.sendMessage(record.id, text);
+      setError(undefined);
+      return true;
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
+  };
   const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }) =>
     void run(window.hydra.configureChat(id, Object.fromEntries(Object.entries(change).map(([key, value]) => [key, value ?? ''])) as typeof change), record => setChats(list => list.map(c => (c.id === record.id ? record : c))));
 
@@ -230,7 +252,7 @@ export function App() {
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   onContinueCloud={() => void run(window.hydra.continueCloud(chat.id), result => { if (!result.started) setError(result.error ?? "The terminal didn't open."); })} />
-              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} />}
+              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat} />}
         </main>
       </div>
     </div>

@@ -351,3 +351,21 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .row-menu .separator { height: 1px; margin: 4px 6px; background: var(--border); }
 .archived-head { width: 100%; margin-top: 6px; cursor: pointer; }
 .archived-head .icon { width: 14px; height: 14px; }
+
+/* The home screen with projects (EmptyState.tsx HomeStart): Claude desktop's start screen, greeting and recent chats
+   in a left-aligned column, the prompt at the bottom with the project, agent and place chips above it. */
+.home-start { height: 100%; display: flex; flex-direction: column; }
+.home-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.home-column { max-width: 760px; margin: 0 auto; padding: 56px 24px 16px; }
+.home-column h1 { margin: 0 0 28px; font-size: 24px; font-weight: 600; }
+.sessions-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.sessions-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.link-quiet { color: var(--muted); font-size: 12px; }
+.link-quiet:hover { color: var(--fg); }
+.sessions ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sessions button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: var(--radius); text-align: left; }
+.sessions button:hover { background: var(--hover); }
+.sessions button > .icon { color: var(--faint); width: 14px; height: 14px; }
+.home-chips { display: flex; gap: 2px; align-items: center; margin: 0 0 6px -4px; }
+.home-prompt .clone-form { max-width: none; margin-bottom: 8px; align-items: center; }
+.home-prompt .hint { margin: 6px 2px 0; }
