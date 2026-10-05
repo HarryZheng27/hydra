@@ -122,7 +122,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
     <section className="home-start">
       <div className="home-scroll">
         <div className="home-column">
-          <h1><span className="home-mark" aria-hidden="true">✳</span>Welcome back</h1>
+          <h1>Welcome back</h1>
           {waiting.length > 0 && (
             <div className="sessions">
               <div className="sessions-head"><h2>Sessions</h2>{waiting.length > shownSessions && <button className="link-quiet" onClick={() => setAllSessions(value => !value)}>{allSessions ? 'Show fewer' : `Show ${waiting.length - shownSessions} more`}</button>}</div>
