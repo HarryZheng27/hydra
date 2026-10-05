@@ -2,7 +2,9 @@ import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEve
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 import { PlusMenu } from './PlusMenu';
-import { claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
+import { ContextWheel } from './ContextWheel';
+import { markSeen, seen } from './onceNotes';
+import { claudeContextWindow, claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
 import { AgentLogo } from './AgentLogo';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
@@ -70,6 +72,8 @@ interface Props {
   sessionModel?: string;
   /** G7: Local or Cloud, offered for a Claude chat until its first message. */
   onWhere?(where: 'local' | 'cloud'): void;
+  /** How full the chat's context is: its latest turn's prompt, and the window when the CLI said it. */
+  context?: { used: number; window?: number };
 }
 
 const whereOptions = [
@@ -77,7 +81,7 @@ const whereOptions = [
   { value: 'cloud', label: 'Cloud', description: 'Claude Code runs on claude.ai; the first message starts it.' },
 ];
 
-export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere }: Props) {
+export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context }: Props) {
   const codex = record.provider === 'codex';
   const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
@@ -111,6 +115,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const send = () => {
     if (!text.trim() && !images.length) return;
     onSend(text, images.map(({ mediaType, data }) => ({ mediaType, data })));
+    if (record.where === 'cloud') markSeen('cloud');
     setText('');
     setImages([]);
     if (box.current) box.current.style.height = ''; // back to one line
@@ -121,7 +126,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const stopping = running && !text.trim() && !images.length;
   return (
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
-      {record.where === 'cloud' && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
+      {record.where === 'cloud' && !seen('cloud') && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
       <div className="prompt-box">
         {(images.length > 0 || problem) && (
           <div className="attachments">
@@ -147,6 +152,9 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
         {!cloud && <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />}
         {!cloud && <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />}
         <span className="composer-agent" title={`This chat runs ${codex ? 'Codex' : 'Claude Code'}; a new chat can use the other.`}><AgentLogo provider={codex ? 'codex' : 'claude'} /></span>
+        {/* The context wheel: a Claude chat compacts with Claude Code's own /compact; Codex compacts by itself. */}
+        {!cloud && <ContextWheel used={context?.used} window={context?.window ?? (codex ? undefined : claudeContextWindow(model))}
+          {...(!codex && !running && context ? { onCompact: () => onSend('/compact') } : {})} />}
       </div>
     </div>
   );

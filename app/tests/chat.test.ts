@@ -18,7 +18,8 @@ import { Markdown, safeHref } from '../src/renderer/markdown';
 import { EmptyState } from '../src/renderer/EmptyState';
 import { nextStatus } from '../src/renderer/chatStatus';
 import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
-import { claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
+import { claudeContextWindow, claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
+import { ContextWheel } from '../src/renderer/ContextWheel';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -667,4 +668,14 @@ test('the first Delete asks in the app\'s own dialog, once: Delete is the defaul
   assert.ok(page.includes('won&#x27;t ask again') || page.includes("won't ask again"));
   assert.ok(page.indexOf('>Cancel<') < page.indexOf('>Delete<'));
   assert.equal(deleteConfirmed(), false, 'nothing confirmed yet (no storage in tests)');
+});
+
+test('the context wheel shows how full the context is, and offers compacting only where it can', () => {
+  const page = renderToStaticMarkup(createElement(ContextWheel, { used: 42_520, window: 1_000_000, onCompact: () => undefined }));
+  assert.ok(page.includes('Context: 43k of 1M (4%). Click to compact the conversation.'));
+  assert.ok(!page.includes('disabled'));
+  const quiet = renderToStaticMarkup(createElement(ContextWheel, {}));
+  assert.ok(quiet.includes('disabled') && quiet.includes('Context: nothing used yet'));
+  assert.equal(claudeContextWindow('claude-haiku-4-5-20251001'), 200_000);
+  assert.equal(claudeContextWindow('opus'), 1_000_000);
 });

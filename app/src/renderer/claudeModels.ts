@@ -22,6 +22,11 @@ export const claudeMore = [
 ];
 export const claudeDefaultModel = 'claude-opus-5-5';
 
+/** Each model's context window, from the same table: 1M, but 200k for Haiku 4.5, Opus 4.6 and Sonnet 4.6. */
+export function claudeContextWindow(model: string | undefined): number {
+  return ['claude-haiku-4-5', 'claude-opus-4-6', 'claude-sonnet-4-6'].includes(claudeModelId(model) ?? '') ? 200_000 : 1_000_000;
+}
+
 /**
  * A model as the menu knows it: an alias (opus, which older chats and settings hold) is its family's latest; a dated
  * id (claude-haiku-4-5-20251001, as the CLI reports it) is the undated one.
