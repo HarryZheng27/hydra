@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, type WebContents } from 'electron';
 import type { CliProvider } from '../shared/ipc';
@@ -111,6 +112,11 @@ export function start(): void {
     warm: true,
     // G7: Claude cloud chats; Continue here's worktrees live under the app's own data.
     cloud: cloudChats({ appRoot: path.dirname(distDir), worktrees: path.join(userData, 'cloud-worktrees') }),
+    // The PR icon: gh's own view of a pull request a chat opened. No gh, or no access: no icon change.
+    prState: url => new Promise(resolve => execFile('gh', ['pr', 'view', url, '--json', 'state', '-q', '.state'], { windowsHide: true, timeout: 20_000 }, (error, stdout) => {
+      const state = String(stdout).trim().toLowerCase();
+      resolve(!error && (state === 'open' || state === 'merged' || state === 'closed') ? state : undefined);
+    })),
     executable: async provider => { const found = await findProvider(provider, (await settings.load()).cliPaths[provider]).catch(() => undefined); return found?.available ? found.executable : undefined; },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
     codexConfig: () => readFile(providerPaths().codexConfig, 'utf8').catch(() => undefined),

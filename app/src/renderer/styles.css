@@ -336,3 +336,180 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .agents-toolbar-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .danger-link { color: var(--error); }
 .danger-link:disabled { color: var(--faint); cursor: default; }
+
+/* A chat row's menu (ChatRow.tsx): ⋮ on hover, then Rename, Archive and Delete, as in Claude desktop's sidebar. */
+.chat-row { position: relative; display: flex; align-items: center; border-radius: var(--radius); }
+.chat-row .chat-link { flex: 1; min-width: 0; }
+.chat-row .row-more { position: absolute; right: 2px; opacity: 0; color: var(--muted); }
+.chat-row:hover .row-more, .chat-row:focus-within .row-more, .chat-row.menu-open .row-more { opacity: 1; }
+.chat-row:hover .chat-link, .chat-row.menu-open .chat-link { padding-right: 28px; }
+.chat-rename { flex: 1; min-width: 0; margin: 1px 0; padding: 3px 7px; border-radius: var(--radius); border: 1px solid var(--focus); background: var(--input-bg); color: var(--input-fg); font: inherit; font-size: 13px; outline: none; }
+.row-menu { position: absolute; top: calc(100% + 2px); right: 0; z-index: 30; min-width: 180px; margin: 0; padding: 4px; list-style: none; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); box-shadow: 0 8px 28px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .06); }
+.row-menu li[role=menuitem] { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--fg); }
+.row-menu li[role=menuitem]:hover, .row-menu li[role=menuitem]:focus-visible { background: var(--hover); outline: none; }
+.row-menu li.danger { color: var(--error); }
+.row-menu .separator { height: 1px; margin: 4px 6px; background: var(--border); }
+.archived-head { width: 100%; margin-top: 6px; cursor: pointer; }
+.archived-head .icon { width: 14px; height: 14px; }
+
+/* The home screen with projects (EmptyState.tsx HomeStart): Claude desktop's start screen, greeting and recent chats
+   in a left-aligned column, the prompt at the bottom with the project, agent and place chips above it. */
+.home-start { height: 100%; display: flex; flex-direction: column; }
+.home-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.home-column { max-width: 760px; margin: 0 auto; padding: 56px 24px 16px; }
+.home-column h1 { margin: 0 0 28px; font-size: 24px; font-weight: 600; }
+.sessions-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.sessions-head h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.link-quiet { color: var(--muted); font-size: 12px; }
+.link-quiet:hover { color: var(--fg); }
+.sessions ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sessions button { width: 100%; display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: var(--radius); text-align: left; }
+.sessions button:hover { background: var(--hover); }
+.sessions button > .icon { color: var(--faint); width: 14px; height: 14px; }
+.home-chips { display: flex; gap: 2px; align-items: center; margin: 0 0 6px -4px; }
+.home-prompt .clone-form { max-width: none; margin-bottom: 8px; align-items: center; }
+.home-prompt .hint { margin: 6px 2px 0; }
+
+/* Chat marks in the sidebar (ChatRow.tsx Mark), sized and coloured as Claude desktop's: a 6px dot (grey and flashing
+   while it works, amber while it waits on the user, blue when it finished unseen), a 1px light ring when idle, and a
+   14px pull request icon (purple merged, green open, grey closed), 12px from the title. */
+.chat-link { display: flex; align-items: center; gap: 12px; }
+.chat-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-mark { flex: none; display: inline-grid; place-items: center; width: 14px; height: 14px; }
+.chat-mark.dot::before { content: ''; box-sizing: border-box; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chat-mark.idle { color: #C8C8C5; }
+.chat-mark.idle::before { background: transparent; border: 1px solid currentColor; }
+.chat-mark.working { color: #A6A6A2; animation: chat-mark-pulse 1.4s ease-in-out infinite; }
+.chat-mark.needs { color: #E7A13C; }
+.chat-mark.unread { color: #4A6CDB; }
+.chat-mark.pr .icon { width: 14px; height: 14px; }
+.chat-mark.pr.merged { color: #8E6AD8; }
+.chat-mark.pr.open { color: #2DA44E; }
+.chat-mark.pr.closed { color: #A6A6A2; }
+@keyframes chat-mark-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .chat-mark.working { animation: none; } }
+/* Dark mode: the same marks, the greys a step darker so the ring stays as quiet as Claude desktop's. */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chat-mark.idle { color: #5C5C5C; } :root:not([data-theme="light"]) .chat-mark.working, :root:not([data-theme="light"]) .chat-mark.pr.closed { color: #8A8A8A; } }
+:root[data-theme="dark"] .chat-mark.idle { color: #5C5C5C; }
+:root[data-theme="dark"] .chat-mark.working, :root[data-theme="dark"] .chat-mark.pr.closed { color: #8A8A8A; }
+
+/* Claude desktop's prompt: bordered chips above the box, a quiet return arrow inside it, the agent below. */
+.picker.chip { gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 13px; }
+.picker.chip:hover, .picker.chip[aria-expanded=true] { background: var(--hover); }
+.picker.chip .icon:first-child { width: 15px; height: 15px; opacity: 1; color: var(--muted); }
+.home-chips { gap: 6px; margin: 0 0 8px; }
+.composer .round.send { background: transparent; color: var(--fg); border-radius: 6px; }
+.composer .round.send:hover:not(:disabled) { background: var(--hover); }
+.composer .round.send:disabled { opacity: 1; color: var(--faint); }
+.home-column h1 { font-size: 26px; }
+
+/* The home prompt, closer to Claude desktop's: chips with an icon and no chevron, 8px apart; a taller box with rounder
+   corners and a softer border; the row below in plain text. */
+.home-chips { gap: 8px; margin: 0 0 10px; }
+.picker.chip { padding: 5px 10px; gap: 7px; border-color: var(--border); }
+.home-prompt .prompt-box { border-radius: 12px; padding: 17px 52px 17px 18px; border-color: var(--border); box-shadow: 0 1px 2px rgba(0, 0, 0, .04); }
+.home-prompt .prompt-box:focus-within { border-color: var(--input-border); }
+.home-prompt textarea { font-size: 15px; }
+.home-prompt .round { right: 10px; bottom: 12px; }
+.home-prompt .composer-bar { padding: 8px 0 0; }
+
+/* The home, laid out and sized as Claude desktop's (measured from a 150% screenshot, so ÷1.5): 40px margins, the
+   heading 20px below the title bar, the Sessions list of chats that need the user, and the prompt along the bottom. */
+.home-start { padding: 0 40px 18px; }
+.home-column { max-width: none; margin: 0; padding: 20px 0 0; }
+.home-column h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 20px; font-weight: 400; letter-spacing: -.01em; }
+.home-mark { color: var(--link); font-size: 18px; line-height: 1; }
+.home-start .sessions { margin: 50px 10px 0; }
+.home-start .sessions-head { margin-bottom: 8px; }
+.home-start .sessions-head h2 { font-size: 14px; font-weight: 500; }
+.home-start .link-quiet { font-size: 13px; }
+.home-start .sessions ul { gap: 4px; }
+.home-start .sessions button { height: 40px; gap: 8px; padding: 0 12px; border-radius: 8px; background: var(--hover); font-size: 14px; }
+.home-start .sessions button:hover { background: var(--selected-bg); }
+.session-state { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.session-state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.session-state.needs { color: #B7791F; }
+.session-state.unread { color: #4A6CDB; }
+.session-title { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.session-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.session-when { flex: none; color: var(--muted); }
+.home-start .sessions button > .icon { width: 14px; height: 14px; color: var(--muted); }
+.home-prompt.composer { padding: 0; }
+.home-chips { gap: 6px; margin: 0 0 8px; }
+.picker.chip { height: 24px; padding: 0 7px; gap: 6px; border-radius: 6px; font-size: 13px; }
+.picker.chip .icon:first-child { width: 14px; height: 14px; }
+.home-prompt .prompt-box { min-height: 41px; justify-content: center; border-radius: 11px; padding: 9px 40px 9px 12px; }
+.home-prompt textarea { font-size: 14px; line-height: 22px; min-height: 22px; }
+.home-prompt .round { right: 7px; bottom: 6px; width: 28px; height: 28px; }
+.home-prompt .composer-bar { padding: 7px 4px 0; }
+.home-prompt .composer-bar .picker { color: var(--fg); font-size: 13px; padding: 2px 6px; }
+
+/* Every dropdown (Picker.tsx), as Claude desktop's menus: a compact panel, one line per choice, a grey Default badge, a
+   blue check on the current choice and a number key on the others. */
+.picker-menu { min-width: 170px; padding: 4px; border-radius: 10px; }
+.picker-menu li { gap: 8px; padding: 5px 9px; border-radius: 6px; font-size: 13.5px; }
+.picker-menu li.active { background: var(--hover); }
+.picker-menu li.separated { margin-top: 9px; position: relative; }
+.picker-menu li.separated::before { content: ''; position: absolute; left: 8px; right: 8px; top: -5px; height: 1px; background: var(--border); }
+.picker-label { white-space: nowrap; }
+.picker-badge { padding: 1px 6px; border-radius: 4px; background: var(--hover); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.picker-menu li.active .picker-badge { background: var(--selected-bg); }
+.picker-key { margin-left: auto; padding-left: 14px; min-width: 14px; display: inline-flex; justify-content: flex-end; color: var(--muted); font-size: 12.5px; }
+.picker-key .icon { width: 15px; height: 15px; color: #3B6FE0; }
+.picker[aria-expanded=true] { background: var(--hover); color: var(--fg); }
+
+/* The agents' logos (AgentLogo.tsx): in the home's Agent menu, beside a Codex chat's name, and fixed in a chat's bar. */
+.agent-logo { flex: none; display: block; }
+.agent-logo.codex { color: var(--fg); }
+.picker-menu li .agent-logo { width: 16px; height: 16px; }
+.chat-link .agent-logo { opacity: .75; }
+.composer-agent { display: inline-flex; align-items: center; padding: 0 6px 0 4px; }
+/* A picker whose trigger is only a logo has no text baseline: centring every picker's wrapper keeps logo and text on one
+   line. */
+.picker-root { display: inline-flex; align-items: center; }
+.picker .agent-logo { display: block; }
+.composer-agent .agent-logo { display: block; }
+/* Centred on the lowercase letters beside it, not their capitals: the logo's middle lines up with the x-height. */
+.picker .agent-logo, .composer-agent .agent-logo, .picker-menu li .agent-logo { transform: translateY(1.5px); }
+
+/* A menu's side menu (More models), beside its row as in Claude desktop: to the right, or to the left for a menu that
+   opens from the right of the bar, so it stays in the window. */
+.picker-menu li { position: relative; }
+.picker-menu li.has-submenu .picker-key .icon { width: 14px; height: 14px; color: var(--muted); }
+.picker-root .picker-menu li > .picker-submenu { top: auto; bottom: -5px; left: calc(100% + 8px); right: auto; max-height: 60vh; }
+.composer-spacer ~ .picker-root .picker-menu li > .picker-submenu { left: auto; right: calc(100% + 8px); }
+
+/* Claude desktop's type, across the app: its fallback stack (Anthropic Sans is Anthropic's own and isn't ours to ship),
+   14px body text, 13px for secondary and 12px for captions, and its weights (500 medium, 580 semibold). */
+body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; }
+.chat-link, .side-action, .search input, .recents button, .host-pick-list button { font-size: 14px; }
+.project-name { font-size: 13px; }
+.section-head, .hint, .provider-account, .connector-status, .review-count, .recent-meta, .recent-when, .turn-end, .working { font-size: 13px; }
+.chip, .provider-tag, .hydra-state, .card-outcome { font-size: 12px; }
+.chat-title, .card-title, .hydra-card-title, .provider-name, .tool-name, .settings h2, .setup-head h2 { font-weight: 580; }
+.settings h1, .empty h1 { font-weight: 580; }
+.mode { font-size: 13px; }
+.picker, .composer select.quiet { font-size: 14px; }
+.home-prompt .composer-bar .picker { font-size: 14px; }
+.picker.chip { font-size: 14px; }
+.home-prompt textarea, .composer textarea { font-size: 14px; }
+.msg.assistant, .msg.user .bubble { font-size: 15px; }
+
+/* Claude desktop's menus, continued: a heading row (Mode, Recent), a description under its label, the check before the
+   number key, and the + menu with its shortcut. */
+.picker-menu li.picker-heading { padding: 6px 9px 2px; color: var(--muted); font-size: 13px; cursor: default; }
+.picker-menu li.picker-heading:hover { background: none; }
+.picker-menu li.described { align-items: flex-start; padding-top: 6px; padding-bottom: 6px; }
+.picker-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.picker-line { display: flex; align-items: center; gap: 8px; }
+.picker-description { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.picker-menu li { font-size: 14px; }
+.picker-key { gap: 10px; align-items: center; }
+.picker-number { color: var(--muted); font-size: 13px; }
+.picker-menu li.described .picker-key { align-self: center; }
+.plus-root { position: relative; display: inline-flex; align-items: center; }
+.plus-menu { bottom: calc(100% + 6px); left: 0; min-width: 230px; }
+.plus-menu li { cursor: pointer; }
+.plus-menu li .icon { width: 16px; height: 16px; color: var(--muted); }
+.plus-menu li .picker-key { font-size: 13px; }
+.composer .icon-button.plus { width: 28px; height: 28px; }

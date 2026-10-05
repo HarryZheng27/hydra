@@ -1,15 +1,18 @@
 import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
+import { PlusMenu } from './PlusMenu';
+import { claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
+import { AgentLogo } from './AgentLogo';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 // Claude's API takes an image of at most 5 MB of base64, about 3.75 MB of file.
-const MAX_IMAGES = 4, MAX_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
-type Attached = ChatImage & { name: string; size: number };
+export const MAX_IMAGES = 4, MAX_BYTES = Math.floor(5 * 1024 * 1024 * 3 / 4);
+export type Attached = ChatImage & { name: string; size: number };
 
 /** Reads an image file as base64. Main checks its bytes again before anything reaches a CLI. */
-function readImage(file: File): Promise<Attached> {
+export function readImage(file: File): Promise<Attached> {
   return new Promise((resolve, reject) => {
     if (!imageTypes.includes(file.type as ChatImage['mediaType'])) { reject(new Error(`${file.name || 'That file'} isn't a PNG, JPEG, GIF or WebP image.`)); return; }
     if (file.size > MAX_BYTES) { reject(new Error(`${file.name || 'That image'} is over 3.7 MB.`)); return; }
@@ -21,9 +24,9 @@ function readImage(file: File): Promise<Attached> {
 }
 
 /** Claude's model aliases; the CLI resolves each to the current model. */
-const claudeModels = [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }];
-const titleCase = (value: string) => value[0]!.toUpperCase() + value.slice(1);
-const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const claudeModels = [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }, { value: 'haiku', label: 'Haiku' }];
+export const titleCase = (value: string) => value[0]!.toUpperCase() + value.slice(1);
+export const claudeEfforts = ['low', 'medium', 'high', 'xhigh', 'max'];
 /** A model id the CLI reported (claude-opus-5-5) as the alias the menu offers (opus). */
 const claudeAlias = (id: string | undefined) => (id ? claudeModels.find(model => id.toLowerCase().includes(model.value))?.value ?? id : undefined);
 /** The options, with the current value added if the list doesn't have it, so the menu always shows what's in use. */
@@ -33,7 +36,7 @@ const withValue = (options: Array<{ value: string; label: string }>, value: stri
  * Who answers a Codex chat's approvals. A Codex chat is read-only for now either way: letting it edit the folder waits
  * for its live check, and full access is never offered. Approved file changes still apply.
  */
-const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string; description: string }> => [
+export const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string; description: string }> => [
   { value: 'settings', label: defaults?.approvals === 'auto_review' ? 'Auto-review' : 'Codex decides', description: defaults?.approvals === 'auto_review' ? 'Codex\'s reviewer approves what it can' : 'Your Codex config decides what to ask' },
   { value: 'ask', label: 'Ask me', description: 'Every approval comes to you' },
 ];
@@ -41,11 +44,16 @@ const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; 
  * "Your settings" passes no mode, so Claude Code follows the user's own (their defaultMode, such as auto). Bypass
  * permissions isn't offered (HSEC-82).
  */
-const modes: Array<{ value: ClaudePermissionMode; label: string; description: string }> = [
-  { value: 'auto', label: 'Auto', description: 'Claude Code decides what needs your OK' },
-  { value: 'default', label: 'Ask before edits', description: 'Asks before editing files or running commands' },
-  { value: 'acceptEdits', label: 'Accept edits', description: 'Edits files without asking; asks before commands' },
-  { value: 'plan', label: 'Plan first', description: 'Plans, and changes nothing until you approve' },
+export const modes: Array<{ value: ClaudePermissionMode; label: string; description: string }> = [
+  { value: 'auto', label: 'Auto', description: 'Claude handles permission decisions' },
+  { value: 'default', label: 'Manual', description: 'Always ask before making changes' },
+  { value: 'acceptEdits', label: 'Accept edits', description: 'Automatically accept all file edits' },
+  { value: 'plan', label: 'Plan', description: 'Create a plan before making changes' },
+];
+/** Claude desktop's Mode menu: a heading, then the modes, the user's own default badged. Bypass permissions isn't offered (HSEC-82). */
+export const modeMenu = (defaultMode: string | undefined) => [
+  { value: 'heading', label: 'Mode', heading: true },
+  ...modes.map(option => (option.value === (defaultMode ?? 'default') ? { ...option, badge: 'Default' } : option)),
 ];
 
 interface Props {
@@ -73,12 +81,12 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const codex = record.provider === 'codex';
   const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
-  const model = record.model ?? (codex ? sessionModel ?? defaults?.model ?? models.find(m => m.isDefault)?.id : defaults?.model ?? claudeAlias(sessionModel) ?? 'opus');
+  const model = codex ? record.model ?? sessionModel ?? defaults?.model ?? models.find(m => m.isDefault)?.id : claudeModelId(record.model ?? defaults?.model ?? sessionModel) ?? claudeDefaultModel;
   const codexModel = models.find(m => m.id === model) ?? models.find(m => m.isDefault);
   const effort = record.effort ?? defaults?.effort ?? (codex ? codexModel?.defaultEffort : undefined);
-  const version = /claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(sessionModel ?? '');
-  const named = claudeModels.map(option => (version && version[1]!.toLowerCase() === option.value ? { ...option, label: `${option.label} ${version[2]}.${version[3]}` } : option));
-  const modelOptions = withValue(codex ? models.map(m => ({ value: m.id, label: m.label })) : named, model);
+  // Claude: Claude desktop's menu (claudeModels.ts); a model it doesn't list is added at the top, as for Codex.
+  const claudeKnown = [...claudeLatest, ...claudeMore].some(option => option.value === model);
+  const modelOptions = codex ? withValue(models.map(m => ({ value: m.id, label: m.label })), model) : claudeKnown ? claudeModelOptions() : withValue(claudeModelOptions(), model);
   const effortOptions = withValue((codex ? codexModel?.efforts ?? [] : claudeEfforts).map(value => ({ value, label: titleCase(value) })), effort);
   const mode = !record.permissionMode || record.permissionMode === 'settings' ? (defaults?.mode as ClaudePermissionMode | undefined) ?? 'default' : record.permissionMode;
   const [text, setText] = useState('');
@@ -125,19 +133,20 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
           </div>
         )}
         <textarea ref={box} value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={1} onInput={event => { const box = event.currentTarget; box.style.height = 'auto'; box.style.height = `${box.scrollHeight}px`; }} />
-        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'arrowUp'} /></button>
+        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'enter'} /></button>
       </div>
       <div className="composer-bar">
         {/* A cloud chat's `--cloud` takes only the message: no images, mode, model or effort. */}
-        {!cloud && <button className="icon-button attach" onClick={() => picker.current?.click()} aria-label="Attach images" title="Attach images (or paste or drop them)"><Icon name="plus" /></button>}
+        {!cloud && <PlusMenu onFiles={files => void attach(files)} onSlash={() => { setText(current => (current.startsWith('/') ? current : `/${current}`)); box.current?.focus(); }} />}
         <input ref={picker} type="file" accept={imageTypes.join(',')} multiple hidden onChange={event => { void attach(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
         {cloud ? null : codex
           ? <Picker label="Approvals" value={record.approvals ?? 'ask'} options={approvalModes(defaults)} onChange={value => onConfigure({ approvals: value as CodexApprovals })} title="Who answers Codex's approvals. Hydra starts Codex read-only." />
-          : <Picker label="Permission mode" value={mode} options={modes} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
+          : <Picker label="Permission mode" value={mode} options={modeMenu(defaults?.mode)} onChange={value => onConfigure({ permissionMode: value as ClaudePermissionMode })} title="What Claude Code asks you about; anything it asks comes here as a card." />}
         {onWhere && <Picker label="Where" value={record.where ?? 'local'} options={whereOptions} onChange={value => onWhere(value === 'cloud' ? 'cloud' : 'local')} title="Run this chat here or on claude.ai. Chosen before the first message." />}
         <span className="composer-spacer" />
         {!cloud && <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />}
         {!cloud && <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />}
+        <span className="composer-agent" title={`This chat runs ${codex ? 'Codex' : 'Claude Code'}; a new chat can use the other.`}><AgentLogo provider={codex ? 'codex' : 'claude'} /></span>
       </div>
     </div>
   );

@@ -8,13 +8,16 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
+import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
 import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
 import { consoleScript } from '../src/main/console';
 import { Markdown, safeHref } from '../src/renderer/markdown';
+import { EmptyState } from '../src/renderer/EmptyState';
+import { nextStatus } from '../src/renderer/chatStatus';
+import { claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -86,7 +89,7 @@ test('no chat starts in an untrusted folder', async () => {
     assert.equal(starts.length, 1);
     assert.equal(starts[0]!.cwd, dir);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('a chat is saved as it streams, and after a restart the next message resumes its session', async () => {
@@ -120,7 +123,7 @@ test('a chat is saved as it streams, and after a restart the next message resume
     assert.equal(resumed[resumed.indexOf('--resume') + 1], chat.providerSessionId);
     assert.ok(!resumed.includes('--session-id'));
     reopened.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('chat channels take ids, text and structured answers only', () => {
@@ -197,7 +200,7 @@ test('two quick messages share one session; every message checks trust; a remove
     await manager.closeFolder(dir);
     manager.closeAll();
     await assert.rejects(manager.send(chat.id, 'five'), /quitting/);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('Codex chats are read-only (write access waits for its live check, full access never); allow for the session is a choice', () => {
@@ -251,7 +254,7 @@ test('if a Codex turn adds the folder to Codex\'s own trusted projects, the chat
     await turn('t2', `[projects.'${dir}']\ntrust_level = "trusted"\n`);
     assert.equal(notice(), true, JSON.stringify(pushed.map(event => event.type)));
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('images: a known type whose bytes match it, at most four of 5 MB; the declared type can\'t lie', () => {
@@ -292,7 +295,7 @@ test('Open in terminal runs the CLI\'s own resume of the chat in a console, afte
     assert.deepEqual(await manager.openTerminal(chat.id), { started: true });
     assert.deepEqual(consoles, [{ title: 'Claude Code chat', executable: 'claude.exe', args: ['--resume', chat.providerSessionId], cwd: dir }]);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('slash commands pass through to the CLI exactly as typed', () => {
@@ -338,7 +341,7 @@ test('after Open in terminal, the chat sends nothing until the user says the ter
     manager.closeAll();
     const fresh = new ChatManager({ store, launch, executable: async () => 'codex.exe', trusted: async () => true, push: () => undefined });
     await assert.rejects(fresh.openTerminal(chat.id), /session id isn't one Hydra can pass on/);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('approving a plan takes the chat out of plan mode, so a later process doesn\'t go back to it', async () => {
@@ -354,7 +357,7 @@ test('approving a plan takes the chat out of plan mode, so a later process doesn
     for (let i = 0; i < 50 && (await store.get(chat.id))?.permissionMode !== 'default'; i++) await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal((await store.get(chat.id))?.permissionMode, 'default');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('new chats follow the user\'s own CLI settings; opening a Claude chat starts its CLI ahead of the message, one at a time', async () => {
@@ -394,7 +397,7 @@ test('new chats follow the user\'s own CLI settings; opening a Claude chat start
     assert.equal((await store.get(second.id))!.permissionMode, 'settings');
     manager.closeAll();
     await store.flush();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('nothing starts ahead for a chat removed, quitting, or opened in the background', async () => {
@@ -422,7 +425,7 @@ test('nothing starts ahead for a chat removed, quitting, or opened in the backgr
     await settle();
     assert.equal(launched.starts.length, 0, 'quit began while the CLI was starting');
     await store.flush();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('the composer shows the user\'s own model, effort and mode, read from their CLI settings and nothing else', () => {
@@ -463,7 +466,7 @@ test('a Claude chat set to Cloud starts a claude.ai session with its first messa
     assert.deepEqual(await manager.continueCloud(chat.id), { started: true, worktree: path.join(dir, 'wt', chat.id) });
     assert.deepEqual(consoles, [{ args: ['--teleport', session.sessionId], cwd: path.join(dir, 'wt', chat.id) }]);
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('a cloud chat that fails to start says why in the chat; the stored session must be a real claude.ai one', async () => {
@@ -492,7 +495,7 @@ test('a cloud chat that fails to start says why in the chat; the stored session 
     fs.writeFileSync(index, JSON.stringify({ ...stored, chats: stored.chats.map((entry: { id: string }) => entry.id === chat.id ? { ...mine, provider: 'codex' } : entry) }));
     assert.equal(await new ChatStore(path.join(dir, 'chats'), noAcl).get(chat.id), undefined, 'a Codex chat in the cloud');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('a cloud chat\'s card links to claude.ai, and the composer gives way to it', () => {
@@ -556,11 +559,102 @@ test('one cloud session per chat: a second send is refused while the first start
     await assert.rejects(manager.send(fresh.id, 'hi'), /place is changing/);
     assert.equal((await placing).where, 'cloud');
     manager.closeAll();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
 
 test('Continue here\'s window says it is fetching the cloud session before teleport draws anything; other windows say nothing extra', () => {
   const cloud = consoleScript('Claude Code cloud session', 'claude.exe', ['--teleport', 'session_01ApFs1X7hjubWFrUBiN4Bht'], 'C:\wt');
   assert.ok(cloud.indexOf("Write-Host 'Fetching the cloud session") < cloud.indexOf("& 'claude.exe'"));
   assert.ok(!consoleScript('Claude Code chat', 'claude.exe', ['--resume', 'x'], 'C:\wt').includes('Fetching'));
+});
+
+test('the sidebar menu renames, archives and unarchives a chat; a rename sticks, and a working chat isn\'t archived', async () => {
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const manager = new ChatManager({ store: new ChatStore(path.join(dir, 'chats'), noAcl), launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    assert.equal((await manager.rename(chat.id, '  Fix   the\nlogin  ')).title, 'Fix the login');
+    await assert.rejects(manager.rename(chat.id, '   '), /needs a name/);
+    await assert.rejects(manager.rename(chat.id, 'x'.repeat(201)), /at most 200/);
+    // The first message names only a chat still called "New chat".
+    await manager.send(chat.id, 'please refactor everything');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal((await manager.open(chat.id)).record.title, 'Fix the login');
+    await assert.rejects(manager.archive(chat.id, true), /working/);
+    starts[0]!.handlers.line(JSON.stringify({ type: 'result', subtype: 'success', usage: {} }));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const archived = await manager.archive(chat.id, true);
+    assert.match(archived.archivedAt ?? '', /^\d{4}-/);
+    assert.equal((await manager.archive(chat.id, false)).archivedAt, undefined);
+    assert.equal(parseCall({ channel: 'chats.archive', payload: { id: chat.id, archived: 'yes' } }).ok, false);
+    assert.equal(parseCall({ channel: 'chats.rename', payload: { id: chat.id, title: 'x'.repeat(401) } }).ok, false);
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});
+
+test('the home is Claude desktop\'s start screen once there are projects: a prompt with where, project and agent', () => {
+  const projects = [{ id: '0f8fad5b-d9cb-469f-a165-70867728950e', path: 'C:\\code\\shop', name: 'shop', trustedAt: '2026-10-05T00:00:00.000Z' }];
+  const page = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, recents: [], projects, onStart: async () => true }));
+  assert.ok(page.includes('placeholder="Describe a task or ask a question"'));
+  for (const chip of ['aria-label="Where"', 'aria-label="Project"', 'aria-label="Agent"']) assert.ok(page.includes(chip), chip);
+  assert.ok(page.includes('class="picker chip"'));
+  assert.ok(!page.includes('recent-title'), 'no recent chats list');
+  // No projects yet: the first-run choices, as before.
+  const first = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, projects: [], onStart: async () => true }));
+  assert.ok(first.includes('Open a project') && !first.includes('Describe a task'));
+});
+
+test('a chat\'s sidebar dot: working, then waiting on an approval, then finished unseen (blue) or seen (none)', () => {
+  const waiting = new Set<string>();
+  let status = nextStatus(undefined, [{ type: 'user', text: 'go' }], waiting, false);
+  assert.equal(status, 'working');
+  status = nextStatus(status, [{ type: 'approval', id: 'a1', kind: 'tool', tool: 'Bash', input: {}, choices: ['allow', 'deny'] }], waiting, false);
+  assert.equal(status, 'needs');
+  status = nextStatus(status, [{ type: 'resolved', id: 'a1', outcome: 'allowed', by: 'user' }], waiting, false);
+  assert.equal(status, 'working');
+  assert.equal(nextStatus(status, [{ type: 'done', status: 'success' }], waiting, false), 'unread');
+  assert.equal(nextStatus(status, [{ type: 'done', status: 'success' }], waiting, true), undefined);
+});
+
+test('a chat that opens a pull request with gh pr create keeps its link; its state is checked again, in the background', async () => {
+  assert.equal(opensPullRequest({ command: 'git push -u origin x && gh pr create --fill' }), true);
+  assert.equal(opensPullRequest({ command: ['gh', 'pr', 'create', '--title', 'x'] }), true);
+  // Only gh itself: another tool whose name ends in "gh" doesn't count. (A mention of it elsewhere in a command
+  // might, but nothing is recorded unless the command printed a pull request link.)
+  assert.equal(opensPullRequest({ command: 'xgh pr create' }), false);
+  assert.equal(opensPullRequest({ command: 'gh pr view 3' }), false);
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const checked: string[] = [];
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined, prState: async url => { checked.push(url); return 'merged'; } });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.send(chat.id, 'open a PR');
+    const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
+    say({ type: 'system', subtype: 'init', session_id: chat.providerSessionId });
+    say({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'gh pr create --fill' } }] } });
+    say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'https://github.com/ndunl075/shop/pull/12\n' }] } });
+    say({ type: 'result', subtype: 'success', usage: {} });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual((await manager.open(chat.id)).record.pr, { url: 'https://github.com/ndunl075/shop/pull/12', state: 'open' });
+    await manager.list();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(checked, ['https://github.com/ndunl075/shop/pull/12']);
+    assert.equal((await manager.open(chat.id)).record.pr?.state, 'merged');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});
+
+test('Claude\'s model menu is Claude desktop\'s: the latest per family, then More models; aliases and dated ids map onto it', () => {
+  const options = claudeModelOptions();
+  assert.deepEqual(options.filter(option => !option.submenu).map(option => option.label), ['Opus 5.5', 'Fable 5.1', 'Sonnet 5.5', 'Haiku 4.5']);
+  assert.equal(options[0]!.badge, 'Default');
+  assert.deepEqual(options.find(option => option.submenu)!.submenu!.map(option => option.label), ['Sonnet 5', 'Opus 5', 'Fable 5', 'Opus 4.8', 'Opus 4.7', 'Opus 4.6', 'Sonnet 4.6']);
+  assert.equal(claudeModelId('opus'), 'claude-opus-5-5');
+  assert.equal(claudeModelId('fable'), 'claude-fable-5-1');
+  assert.equal(claudeModelId('claude-haiku-4-5-20251001'), 'claude-haiku-4-5');
+  assert.equal(claudeModelId('claude-opus-4-7'), 'claude-opus-4-7');
+  assert.equal(claudeModelId('claude-opus-4-1'), 'claude-opus-4-1', 'one the menu lacks stays as it is');
 });

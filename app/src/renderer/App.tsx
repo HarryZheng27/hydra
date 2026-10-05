@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { nextStatus, type ChatStatus } from './chatStatus';
 import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
-import { EmptyState } from './EmptyState';
+import { EmptyState, type KnownModels, type StartRequest } from './EmptyState';
 import { SettingsView } from './SettingsView';
 import { AgentsView } from './AgentsView';
 import { HostLayer } from './HostLayer';
@@ -54,6 +55,10 @@ export function App() {
   const [checking, setChecking] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
+  // Each chat's dot in the sidebar (chatStatus.ts), from the events main pushes for every chat.
+  const [statuses, setStatuses] = useState<Record<string, ChatStatus>>({});
+  const waiting = useRef(new Map<string, Set<string>>());
+  const onScreen = useRef<string | undefined>(undefined);
   const [chatEvents, setChatEvents] = useState<Record<string, ChatEvent[]>>({});
   /** Per chat: events before this position were already settled when it was opened (see foldEvents). */
   const [settled, setSettled] = useState<Record<string, number>>({});
@@ -73,7 +78,8 @@ export function App() {
     const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
     void window.hydra.appInfo().then(setInfo, fail);
     void window.hydra.getSettings().then(setSettings, fail);
-    void window.hydra.getState().then(setState, fail);
+    // The app opens with its sidebar, as Claude desktop does; hiding it lasts until the app closes.
+    void window.hydra.getState().then(loaded => setState({ ...loaded, sidebarOpen: true }), fail);
     void checkSetup(false);
     void window.hydra.problems().then(list => setProblems(list), fail);
     void window.hydra.listChats().then(setChats, fail);
@@ -84,6 +90,15 @@ export function App() {
     const stopChats = window.hydra.onChatEvents(message => {
       const { chatId, events, start } = message;
       if (start < 0) { const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message); return; }
+      const pending = waiting.current.get(chatId) ?? new Set<string>();
+      waiting.current.set(chatId, pending);
+      setStatuses(current => {
+        const next = nextStatus(current[chatId], events, pending, onScreen.current === chatId);
+        if (next === current[chatId]) return current;
+        const copy = { ...current };
+        if (next) copy[chatId] = next; else delete copy[chatId];
+        return copy;
+      });
       const buffered = opening.current.get(chatId);
       if (buffered) buffered.push(message);
       else setChatEvents(current => {
@@ -109,7 +124,22 @@ export function App() {
   }
   const setupPanel = <Setup report={setup} checking={checking} onCheck={() => void checkSetup(true)} onSignIn={provider => window.hydra.signIn(provider)} />;
   /** The latest chats, newest first, for the home screen. */
-  const recents = [...chats].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
+  // What chats so far reported about models, for the home's Model menu before a chat starts.
+  const knownModels = useMemo((): KnownModels => {
+    const claudeVersions: Record<string, string> = {};
+    let codex: KnownModels['codex'] = [];
+    for (const [id, events] of Object.entries(chatEvents)) {
+      const provider = chats.find(chat => chat.id === id)?.provider;
+      for (const event of events) {
+        if (event.type === 'session' && event.model) { const version = /claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i.exec(event.model); if (version) claudeVersions[version[1]!.toLowerCase()] = `${version[2]}.${version[3]}`; }
+        if (event.type === 'models' && provider === 'codex' && event.models.length) codex = event.models;
+      }
+    }
+    // The user's own Claude default mode, from any Claude chat opened so far (their settings' defaultMode).
+    const claudeMode = Object.entries(defaults).find(([id]) => chats.find(chat => chat.id === id)?.provider === 'claude')?.[1]?.mode;
+    return { claudeVersions, codex, ...(claudeMode ? { claudeMode } : {}) };
+  }, [chatEvents, chats, defaults]);
+  const recents = chats.filter(chat => !chat.archivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 8).map(chat => ({
     id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt,
     project: state?.projects.find(p => samePath(p.path, chat.cwd))?.name,
   }));
@@ -117,6 +147,14 @@ export function App() {
 
   const sidebarOpen = state?.sidebarOpen ?? true;
   // The sidebar follows the click at once; saving it is best effort, and a failed save only shows its error.
+  useEffect(() => {
+    onScreen.current = view.kind === 'chat' ? view.id : undefined;
+    if (view.kind === 'chat') setStatuses(current => { if (current[view.id] !== 'unread') return current; const copy = { ...current }; delete copy[view.id]; return copy; });
+  }, [view]);
+  useEffect(() => {
+    const timer = setInterval(() => { void window.hydra.listChats().then(setChats, () => undefined); }, 120_000);
+    return () => clearInterval(timer);
+  }, []);
   const toggleSidebar = () => {
     if (!state) return;
     const open = !state.sidebarOpen;
@@ -174,6 +212,27 @@ export function App() {
       openChat(record.id);
     });
   };
+  /** The home's prompt: a chat in the chosen project, with that agent (and place), and the message sent at once. */
+  const startChat = async ({ project: target, provider, where, text, permissionMode, approvals, model, effort, images }: StartRequest): Promise<boolean> => {
+    let current = target;
+    try {
+      if (!current.trustedAt) {
+        const next = await window.hydra.trustProject(target.id);
+        setState(next);
+        current = next.projects.find(p => p.id === target.id) ?? target;
+        if (!current.trustedAt) return false;
+      }
+      const record = await window.hydra.createChat({ projectId: current.id, provider, ...(where === 'cloud' ? { where: 'cloud' as const } : {}), ...(permissionMode ? { permissionMode } : {}), ...(approvals ? { approvals } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
+      setChats(list => [record, ...list]);
+      setChatEvents(events => ({ ...events, [record.id]: [] }));
+      setSettled(settled => ({ ...settled, [record.id]: 0 }));
+      setView({ kind: 'chat', id: record.id });
+      openChat(record.id);
+      await window.hydra.sendMessage(record.id, text, images);
+      setError(undefined);
+      return true;
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
+  };
   const configure = (id: string, change: { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals; sandbox?: 'read-only' | 'workspace-write' }) =>
     void run(window.hydra.configureChat(id, Object.fromEntries(Object.entries(change).map(([key, value]) => [key, value ?? ''])) as typeof change), record => setChats(list => list.map(c => (c.id === record.id ? record : c))));
 
@@ -188,6 +247,7 @@ export function App() {
             <Sidebar
               projects={state.projects}
               chats={chats}
+              statuses={statuses}
               view={view}
               // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
               onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
@@ -196,6 +256,18 @@ export function App() {
               onAddProject={pickProject}
               onRemoveProject={id => void run(window.hydra.removeProject(id), next => { setState(next); if (view.kind === 'project' && view.id === id) setView({ kind: 'home' }); })}
               onOpenSettings={() => setView({ kind: 'settings' })}
+              onRenameChat={(id, title) => void run(window.hydra.renameChat(id, title), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
+              onArchiveChat={(id, archived) => void run(window.hydra.archiveChat(id, archived), record => {
+                setChats(list => list.map(c => (c.id === record.id ? record : c)));
+                if (archived && view.kind === 'chat' && view.id === id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
+              })}
+              onDeleteChat={chat => {
+                if (!window.confirm(`Delete “${chat.title}”? Its conversation is removed from Hydra, and this can't be undone.`)) return;
+                void run(window.hydra.removeChat(chat.id), () => {
+                  setChats(list => list.filter(c => c.id !== chat.id));
+                  if (view.kind === 'chat' && view.id === chat.id) setView(project ? { kind: 'project', id: project.id } : { kind: 'home' });
+                });
+              }}
             />
           </div>
         )}
@@ -218,7 +290,9 @@ export function App() {
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   onContinueCloud={() => void run(window.hydra.continueCloud(chat.id), result => { if (!result.started) setError(result.error ?? "The terminal didn't open."); })} />
-              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} />}
+              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat}
+                knownModels={knownModels}
+                waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
       </div>
     </div>

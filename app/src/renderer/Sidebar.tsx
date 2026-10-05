@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import type { ChatRecord, Project } from '../shared/ipc';
 import type { View } from './App';
+import { ChatRow } from './ChatRow';
+import type { ChatStatus } from './chatStatus';
 import { Icon } from './Icon';
 
 interface Props {
   projects: Project[];
   chats: ChatRecord[];
+  /** Each chat's dot: working, waiting on the user, or finished unseen (chatStatus.ts). */
+  statuses?: Record<string, ChatStatus>;
   view: View;
   onNewChat(): void;
   onOpenChat(id: string): void;
@@ -13,12 +17,24 @@ interface Props {
   onAddProject(): void;
   onRemoveProject(id: string): void;
   onOpenSettings(): void;
+  /** The chat menu's Rename, Archive or Unarchive, and Delete. */
+  onRenameChat(id: string, title: string): void;
+  onArchiveChat(id: string, archived: boolean): void;
+  onDeleteChat(chat: ChatRecord): void;
 }
 
 /** New chat, search, the projects with their chats, and Settings. */
-export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenProject, onAddProject, onRemoveProject, onOpenSettings }: Props) {
+export function Sidebar({ projects, chats: allChats, statuses = {}, view, onNewChat, onOpenChat, onOpenProject, onAddProject, onRemoveProject, onOpenSettings, onRenameChat, onArchiveChat, onDeleteChat }: Props) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [showArchived, setShowArchived] = useState(false);
+  // Archived chats leave their project's list for the Archived section at the bottom.
+  const chats = allChats.filter(chat => !chat.archivedAt);
+  const archived = allChats.filter(chat => chat.archivedAt);
+  const row = (chat: ChatRecord, tooltip?: string) => (
+    <ChatRow key={chat.id} chat={chat} status={statuses[chat.id]} tooltip={tooltip} selected={view.kind === 'chat' && view.id === chat.id} onOpen={() => onOpenChat(chat.id)}
+      onRename={title => onRenameChat(chat.id, title)} onArchive={value => onArchiveChat(chat.id, value)} onDelete={() => onDeleteChat(chat)} />
+  );
   const needle = query.trim().toLowerCase();
   const chatsOf = (project: Project) => chats.filter(chat => chat.cwd.toLowerCase() === project.path.toLowerCase());
   const matches = (chat: ChatRecord) => !needle || chat.title.toLowerCase().includes(needle);
@@ -49,9 +65,7 @@ export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenPr
                 <button className="icon-button small hover-only" aria-label={`Remove ${project.name} from Hydra`} title="Remove from Hydra (the folder stays on disk)" onClick={() => onRemoveProject(project.id)}><Icon name="close" /></button>
               </div>
               {open && (chatsOf(project).length
-                ? <ul className="chats">{chatsOf(project).filter(chat => matches(chat) || project.name.toLowerCase().includes(needle)).map(chat => (
-                    <li key={chat.id}><button className={`chat-link ${view.kind === 'chat' && view.id === chat.id ? 'selected' : ''}`} title={chat.title} onClick={() => onOpenChat(chat.id)}>{chat.title}{chat.provider === 'codex' ? <span className="provider-tag">Codex</span> : null}</button></li>
-                  ))}</ul>
+                ? <ul className="chats">{chatsOf(project).filter(chat => matches(chat) || project.name.toLowerCase().includes(needle)).map(chat => row(chat))}</ul>
                 : <div className="chats-empty">No chats yet</div>)}
             </li>
           );
@@ -65,12 +79,18 @@ export function Sidebar({ projects, chats, view, onNewChat, onOpenChat, onOpenPr
         return orphans.length ? (
           <div className="orphans">
             <div className="section-head"><span>Other chats</span></div>
-            <ul className="chats">{orphans.map(chat => (
-              <li key={chat.id}><button className={`chat-link ${view.kind === 'chat' && view.id === chat.id ? 'selected' : ''}`} title={chat.cwd} onClick={() => onOpenChat(chat.id)}>{chat.title}</button></li>
-            ))}</ul>
+            <ul className="chats">{orphans.map(chat => row(chat, chat.cwd))}</ul>
           </div>
         ) : null;
       })()}
+      {!!archived.length && (
+        <div className="archived">
+          <button className="section-head archived-head" aria-expanded={showArchived} onClick={() => setShowArchived(open => !open)}>
+            <span>Archived ({archived.length})</span><Icon name={showArchived ? 'chevronDown' : 'chevron'} />
+          </button>
+          {showArchived && <ul className="chats">{archived.filter(matches).map(chat => row(chat, chat.cwd))}</ul>}
+        </div>
+      )}
       <button className={`side-action settings-link ${view.kind === 'settings' ? 'selected' : ''}`} onClick={onOpenSettings}><Icon name="settings" /><span>Settings</span></button>
     </nav>
   );
