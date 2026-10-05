@@ -194,14 +194,16 @@ function Working({ provider, starting, doing }: { provider: ChatRecord['provider
 
 /** How full the chat's context is after its latest turn, and the window when the CLI said it. */
 function latestContext(events: ChatEvent[]): { used: number; window?: number } | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
+  // The newest fill, and the newest window size said (a compact says only the fill).
+  let used: number | undefined, window: number | undefined;
+  for (let i = events.length - 1; i >= 0 && (used === undefined || window === undefined); i--) {
     const event = events[i]!;
     if (event.type !== 'usage') continue;
-    const used = event.contextTokens ?? ((event.inputTokens ?? 0) + (event.cachedTokens ?? 0));
-    if (!used) continue;
-    return { used, ...(event.contextWindow ? { window: event.contextWindow } : {}) };
+    const fill = event.contextTokens ?? ((event.inputTokens ?? 0) + (event.cachedTokens ?? 0));
+    if (used === undefined && fill) used = fill;
+    if (window === undefined && event.contextWindow) window = event.contextWindow;
   }
-  return undefined;
+  return used === undefined ? undefined : { used, ...(window ? { window } : {}) };
 }
 
 export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands }: Props) {

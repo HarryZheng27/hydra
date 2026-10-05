@@ -56,7 +56,7 @@ const appColors: Record<ThemeName, Record<string, string>> = {
   },
   light: {
     '--bg': '#FBFBFA', '--fg': '#20201E', '--muted': '#73736E', '--faint': '#A3A39E',
-    '--sidebar-bg': '#F5F5F3', '--sidebar-fg': '#3A3A37', '--sidebar-border': '#E3E3E0', '--border': '#E3E3E0',
+    '--sidebar-bg': '#F7F7F5', '--sidebar-fg': '#3A3A37', '--sidebar-border': '#E3E3E0', '--border': '#E3E3E0',
     '--hover': '#ECECEA', '--selected-bg': '#E7E7E4', '--selected-fg': '#20201E',
     '--input-bg': '#FFFFFF', '--input-fg': '#20201E', '--input-border': '#DADAD6',
     '--button-bg': '#1F7A4D', '--button-fg': '#FFFFFF', '--button-hover': '#19663F',

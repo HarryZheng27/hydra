@@ -76,7 +76,13 @@ export function App() {
   const [terminals, setTerminals] = useState<Record<string, string>>({});
   useEffect(() => { watchTerminals(); }, []);
   // Each chat's dot in the sidebar (chatStatus.ts), from the events main pushes for every chat.
-  const [statuses, setStatuses] = useState<Record<string, ChatStatus>>({});
+  const [statuses, setStatuses] = useState<Record<string, ChatStatus>>(() => {
+    try { const raw = JSON.parse(localStorage.getItem('hydra.unreadChats.v1') ?? '[]') as unknown; return Object.fromEntries((Array.isArray(raw) ? raw : []).filter((id): id is string => typeof id === 'string').map(id => [id, 'unread' as const])); } catch { return {}; }
+  });
+  // A finished reply the user hasn't seen keeps its blue dot after a restart, as Claude desktop's does.
+  useEffect(() => {
+    try { localStorage.setItem('hydra.unreadChats.v1', JSON.stringify(Object.entries(statuses).filter(([, status]) => status === 'unread').map(([id]) => id).slice(-500))); } catch { /* best effort */ }
+  }, [statuses]);
   const waiting = useRef(new Map<string, Set<string>>());
   const onScreen = useRef<string | undefined>(undefined);
   const [chatEvents, setChatEvents] = useState<Record<string, ChatEvent[]>>({});
@@ -118,6 +124,8 @@ export function App() {
           rememberCommands(list);
         }
         const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message);
+        const renamed = events.find(event => event.type === 'renamed');
+        if (renamed?.type === 'renamed') setChats(list => list.map(c => (c.id === chatId ? { ...c, title: renamed.title } : c)));
         return;
       }
       const pending = waiting.current.get(chatId) ?? new Set<string>();

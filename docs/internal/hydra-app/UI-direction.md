@@ -19,7 +19,7 @@ A warm off-white canvas and a slightly darker neutral sidebar, with neutral grey
 | Token | Colour |
 | --- | --- |
 | Canvas | #FBFBFA |
-| Sidebar | #F5F5F3 |
+| Sidebar | #F7F7F5 |
 | Hover | #ECECEA |
 | Selection | #E7E7E4 |
 | Border | #E3E3E0 |

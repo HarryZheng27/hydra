@@ -17,7 +17,7 @@
   :root {
     color-scheme: light;
     --bg: #FBFBFA; --fg: #20201E; --muted: #73736E; --faint: #A3A39E;
-    --sidebar-bg: #F5F5F3; --sidebar-fg: #3A3A37; --sidebar-border: #E3E3E0; --border: #E3E3E0;
+    --sidebar-bg: #F7F7F5; --sidebar-fg: #3A3A37; --sidebar-border: #E3E3E0; --border: #E3E3E0;
     --hover: #ECECEA; --selected-bg: #E7E7E4; --selected-fg: #20201E;
     --input-bg: #FFFFFF; --input-fg: #20201E; --input-border: #DADAD6;
     --button-bg: #1F7A4D; --button-fg: #FFFFFF; --button-hover: #19663F;
@@ -754,3 +754,14 @@ button.pr-ci:hover { background: var(--input-bg); }
 .pr-checks-empty { padding: 6px 10px; font-size: 13px; color: var(--muted); list-style: none; }
 .pr-more { align-self: flex-start; padding: 2px 4px; font-size: 13px; color: var(--fg); }
 .pr-more:hover { text-decoration: underline; }
+
+/* A project's label (Claude desktop's): a chevron beside the name on hover folds its chats away; + always shows. */
+.project-row .project-name { flex: 0 1 auto; gap: 4px; padding-right: 4px; }
+.project-row .project-new { margin-left: auto; opacity: 1; color: var(--muted); }
+.project-row .project-new:hover { color: var(--fg); }
+.project-fold { display: inline-grid; place-items: center; opacity: 0; transition: opacity 80ms, transform 110ms; }
+.project-fold .icon { width: 12px; height: 12px; }
+.project-fold.folded { transform: rotate(-90deg); opacity: 1; }
+.project-row:hover .project-fold, .project-name:focus-visible .project-fold { opacity: 1; }
+.project-row .project-more { margin-left: auto; }
+.project-row .project-more + .project-new { margin-left: 0; }

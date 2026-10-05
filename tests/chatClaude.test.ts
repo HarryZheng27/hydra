@@ -256,3 +256,10 @@ test('Claude: initialize\'s reply lists every slash command with its description
   ] } } })).events;
   assert.deepEqual(events, [{ type: 'commands', commands: [{ name: 'compact', description: 'Clear conversation history but keep a summary', argumentHint: '<instructions>' }, { name: 'review' }] }]);
 });
+
+test('a /compact tells the chat how full the context is right after it', () => {
+  const adapter = new ClaudeAdapter();
+  const out = adapter.feed(JSON.stringify({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 22137, post_tokens: 1321 } }));
+  assert.deepEqual(out.events, [{ type: 'usage', contextTokens: 1321 }]);
+  assert.deepEqual(adapter.feed(JSON.stringify({ type: 'system', subtype: 'compact_boundary', compact_metadata: {} })).events, []);
+});
