@@ -30,16 +30,27 @@ export function renderTerminal(raw: string): string {
     .split(/\r?\n|\r/).map(line => line.trimEnd()).filter(line => line.trim() && !/^[◐◑◒◓◯\s]+$/.test(line)).join('\n');
 }
 
+/** The query the CLI's link may carry (`?from=cli&m=0`): plain name=value pairs only, kept as printed. */
+const linkQuery = /^\?[A-Za-z0-9_.-]{1,20}=[A-Za-z0-9_.-]{0,40}(?:&[A-Za-z0-9_.-]{1,20}=[A-Za-z0-9_.-]{0,40}){0,4}$/;
+
+/** Whether a link is claude.ai/code's own for this session: its path is the id, with at most the CLI's plain query. */
+export function isClaudeCloudUrl(url: string, sessionId: string): boolean {
+  const base = `https://claude.ai/code/${sessionId}`;
+  return claudeCloudSessionIdPattern.test(sessionId) && (url === base || (url.startsWith(`${base}?`) && linkQuery.test(url.slice(base.length))));
+}
+
 /**
  * The session `--cloud` created, from its rendered output: the title line, the link and the teleport line must all
- * be there and agree on one id, and the link must be claude.ai/code's own. Anything else is undefined.
+ * be there and agree on one id, and the link must be claude.ai/code's own. The link keeps the CLI's query: claude.ai
+ * may need it to open the session (G7 live check). Anything else is undefined.
  */
 export function parseClaudeCloudStart(text: string): ClaudeCloudSession | undefined {
   const title = /^\s*Created cloud session:\s*(.+?)\s*$/m.exec(text)?.[1];
   const url = /^\s*View:\s*(https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9]+)(?:\?[A-Za-z0-9=&_.-]*)?)\s*$/m.exec(text);
   const teleport = /^\s*Resume with:\s*claude --teleport\s+(session_[A-Za-z0-9]+)\s*$/m.exec(text)?.[1];
   if (!title || !url || !teleport || url[2] !== teleport || !claudeCloudSessionIdPattern.test(teleport)) return undefined;
-  return { sessionId: teleport, title: title.slice(0, 200), url: `https://claude.ai/code/${teleport}` };
+  const link = isClaudeCloudUrl(url[1]!, teleport) ? url[1]! : `https://claude.ai/code/${teleport}`;
+  return { sessionId: teleport, title: title.slice(0, 200), url: link };
 }
 
 /**
