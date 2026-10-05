@@ -148,9 +148,7 @@ function usageLine(item: ChatItem & { kind: 'turn-end' }): string {
   const parts: string[] = [];
   if (item.status === 'interrupted') parts.push('Stopped');
   if (item.status === 'error') parts.push('Ended with an error');
-  const usage = item.usage;
-  if (usage?.inputTokens !== undefined || usage?.outputTokens !== undefined) parts.push(`${(usage.inputTokens ?? 0) + (usage.cachedTokens ?? 0)} in · ${usage.outputTokens ?? 0} out`);
-  if (usage?.costUsd !== undefined) parts.push(`$${usage.costUsd.toFixed(4)}`);
+  // No token counts or cost under a turn (Nico's ask): the context wheel shows how full the chat is.
   if (item.detail) parts.push(item.detail);
   return parts.join(' · ');
 }
@@ -276,7 +274,8 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
               if (item.code === 'malformed') return <div key={item.key} className="msg chat-error" role="alert">{item.message} Send a message to start it again, or use Open in terminal.</div>;
               return <div key={item.key} className="msg chat-error" role="alert">{item.message}</div>;
             }
-            case 'turn-end': { const line = usageLine(item); return line ? <div key={item.key} className={`turn-end ${item.status}`}>{line}</div> : null; }
+            // Every turn keeps its end marker (empty when it simply finished), so what follows knows where a turn ended.
+            case 'turn-end': return <div key={item.key} className={`turn-end ${item.status}`}>{usageLine(item)}</div>;
             case 'cloud': return (
               <div key={item.key} className="card cloud-card" role="status">
                 <div className="card-title">Running on claude.ai: {item.title}</div>
