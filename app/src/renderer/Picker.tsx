@@ -7,7 +7,7 @@ export interface PickerOption { value: string; label: string; description?: stri
  * A quiet menu like Claude desktop's: the current choice as text with a small chevron, opening a rounded panel above
  * it with a check on the current one. Escape or a click outside closes it; arrow keys move, Enter picks.
  */
-export function Picker({ label, value, options, onChange, title, placeholder, icon, chip }: { label: string; value: string | undefined; options: PickerOption[]; onChange(value: string): void; title?: string; placeholder?: string; icon?: IconName; chip?: boolean }) {
+export function Picker({ label, value, options, onChange, title, placeholder, icon, chip, bare }: { label: string; value: string | undefined; options: PickerOption[]; onChange(value: string): void; title?: string; placeholder?: string; icon?: IconName; chip?: boolean; bare?: boolean }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -31,7 +31,7 @@ export function Picker({ label, value, options, onChange, title, placeholder, ic
     <div className="picker-root" ref={root} onKeyDown={key}>
       <button type="button" className={`picker ${chip ? 'chip' : ''}`} aria-label={label} aria-haspopup="listbox" aria-expanded={open} data-value={value ?? ''} title={title}
         onClick={() => { setActive(Math.max(0, options.findIndex(option => option.value === value))); setOpen(current => !current); }}>
-        {icon && <Icon name={icon} />}<span>{current?.label ?? placeholder ?? label}</span><Icon name="chevronDown" />
+        {icon && <Icon name={icon} />}<span>{current?.label ?? placeholder ?? label}</span>{!bare && <Icon name="chevronDown" />}
       </button>
       {open && (
         <ul className="picker-menu" role="listbox" aria-label={label}>

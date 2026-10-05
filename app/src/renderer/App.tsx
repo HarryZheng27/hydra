@@ -198,7 +198,7 @@ export function App() {
     });
   };
   /** The home's prompt: a chat in the chosen project, with that agent (and place), and the message sent at once. */
-  const startChat = async ({ project: target, provider, where, text }: StartRequest): Promise<boolean> => {
+  const startChat = async ({ project: target, provider, where, text, permissionMode, approvals }: StartRequest): Promise<boolean> => {
     let current = target;
     try {
       if (!current.trustedAt) {
@@ -207,7 +207,7 @@ export function App() {
         current = next.projects.find(p => p.id === target.id) ?? target;
         if (!current.trustedAt) return false;
       }
-      const record = await window.hydra.createChat({ projectId: current.id, provider, ...(where === 'cloud' ? { where: 'cloud' as const } : {}) });
+      const record = await window.hydra.createChat({ projectId: current.id, provider, ...(where === 'cloud' ? { where: 'cloud' as const } : {}), ...(permissionMode ? { permissionMode } : {}), ...(approvals ? { approvals } : {}) });
       setChats(list => [record, ...list]);
       setChatEvents(events => ({ ...events, [record.id]: [] }));
       setSettled(settled => ({ ...settled, [record.id]: 0 }));

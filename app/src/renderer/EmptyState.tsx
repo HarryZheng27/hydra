@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Project } from '../shared/ipc';
+import type { ClaudePermissionMode, CodexApprovals, Project } from '../shared/ipc';
+import { approvalModes, modes } from './Composer';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 
@@ -16,7 +17,7 @@ function ago(iso: string, now = Date.now()): string {
 }
 
 /** What the home's prompt starts: a chat in a project, with an agent, here or (Claude) in the cloud. */
-export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string }
+export interface StartRequest { project: Project; provider: 'claude' | 'codex'; where: 'local' | 'cloud'; text: string; permissionMode?: ClaudePermissionMode; approvals?: CodexApprovals }
 
 interface Props {
   project?: Project;
@@ -50,6 +51,9 @@ function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { proj
   const [projectId, setProjectId] = useState(initial);
   const [provider, setProvider] = useState<'claude' | 'codex'>('claude');
   const [where, setWhere] = useState<'local' | 'cloud'>('local');
+  // 'settings': Claude Code follows the user's own default mode, as a new chat does; Codex asks, as Hydra starts it.
+  const [mode, setMode] = useState<ClaudePermissionMode>('settings');
+  const [approvals, setApprovals] = useState<CodexApprovals>('ask');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [cloning, setCloning] = useState(false);
@@ -67,7 +71,8 @@ function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { proj
   const start = async () => {
     if (!project || !text.trim() || busy) return;
     setBusy(true);
-    try { if (await onStart({ project, provider, where: cloud ? 'cloud' : 'local', text: text.trim() })) setText(''); } finally { setBusy(false); }
+    const settings = provider === 'claude' ? (mode === 'settings' ? {} : { permissionMode: mode }) : { approvals };
+    try { if (await onStart({ project, provider, where: cloud ? 'cloud' : 'local', text: text.trim(), ...settings })) setText(''); } finally { setBusy(false); }
   };
   const clone = async () => {
     if (!url.trim()) return;
@@ -88,8 +93,8 @@ function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { proj
           </form>
         )}
         <div className="home-chips">
-          {provider === 'claude' && <Picker chip icon={cloud ? 'cloud' : 'laptop'} label="Where" value={where} options={whereOptions} onChange={value => setWhere(value === 'cloud' ? 'cloud' : 'local')} />}
-          <Picker chip icon="folder" label="Project" value={projectId} options={projectOptions} title={project?.path}
+          {provider === 'claude' && <Picker chip bare icon={cloud ? 'cloud' : 'laptop'} label="Where" value={where} options={whereOptions} onChange={value => setWhere(value === 'cloud' ? 'cloud' : 'local')} />}
+          <Picker chip bare icon="folder" label="Project" value={projectId} options={projectOptions} title={project?.path}
             onChange={value => { if (value === 'open') onPickFolder(); else if (value === 'clone') setCloning(true); else setProjectId(value); }} />
         </div>
         <div className="prompt-box">
@@ -99,8 +104,11 @@ function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { proj
           <button className="round send" onClick={() => void start()} disabled={!text.trim() || !project || busy} aria-label="Start the chat" title="Start the chat (Enter)"><Icon name="enter" /></button>
         </div>
         <div className="composer-bar">
+          {provider === 'claude'
+            ? <Picker bare label="Permission mode" value={mode} options={[{ value: 'settings', label: 'Your settings', description: 'Claude Code follows your own default mode' }, ...modes]} onChange={value => setMode(value as ClaudePermissionMode)} />
+            : <Picker bare label="Approvals" value={approvals} options={approvalModes()} onChange={value => setApprovals(value as CodexApprovals)} />}
           <span className="composer-spacer" />
-          <Picker label="Agent" value={provider} options={agentOptions} onChange={value => setProvider(value === 'codex' ? 'codex' : 'claude')} />
+          <Picker bare label="Agent" value={provider} options={agentOptions} onChange={value => setProvider(value === 'codex' ? 'codex' : 'claude')} />
         </div>
         {cloud && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
       </div>

@@ -33,7 +33,7 @@ const withValue = (options: Array<{ value: string; label: string }>, value: stri
  * Who answers a Codex chat's approvals. A Codex chat is read-only for now either way: letting it edit the folder waits
  * for its live check, and full access is never offered. Approved file changes still apply.
  */
-const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string; description: string }> => [
+export const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; label: string; description: string }> => [
   { value: 'settings', label: defaults?.approvals === 'auto_review' ? 'Auto-review' : 'Codex decides', description: defaults?.approvals === 'auto_review' ? 'Codex\'s reviewer approves what it can' : 'Your Codex config decides what to ask' },
   { value: 'ask', label: 'Ask me', description: 'Every approval comes to you' },
 ];
@@ -41,7 +41,7 @@ const approvalModes = (defaults?: ChatDefaults): Array<{ value: CodexApprovals; 
  * "Your settings" passes no mode, so Claude Code follows the user's own (their defaultMode, such as auto). Bypass
  * permissions isn't offered (HSEC-82).
  */
-const modes: Array<{ value: ClaudePermissionMode; label: string; description: string }> = [
+export const modes: Array<{ value: ClaudePermissionMode; label: string; description: string }> = [
   { value: 'auto', label: 'Auto', description: 'Claude Code decides what needs your OK' },
   { value: 'default', label: 'Ask before edits', description: 'Asks before editing files or running commands' },
   { value: 'acceptEdits', label: 'Accept edits', description: 'Edits files without asking; asks before commands' },
