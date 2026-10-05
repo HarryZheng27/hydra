@@ -4,7 +4,7 @@ import path from 'node:path';
 import { replaceAtomic } from '../atomicFile';
 import { ownerOnlyProblem, restrictToOwner } from '../userHandshake';
 import type { ChatEvent, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from './events';
-import { claudeCloudSessionIdPattern } from './cloud';
+import { claudeCloudSessionIdPattern, isClaudeCloudUrl } from './cloud';
 
 /**
  * Hydra's own record of each chat (docs/internal/hydra-app/G4-local-chat.md): an append-only JSONL log of ChatEvents
@@ -61,7 +61,7 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
   if (raw.cloud !== undefined) {
     const value = raw.cloud;
     if (raw.where !== 'cloud' || !isRecord(value) || typeof value.sessionId !== 'string' || !claudeCloudSessionIdPattern.test(value.sessionId)
-      || value.url !== `https://claude.ai/code/${value.sessionId}` || typeof value.title !== 'string' || value.title.length > 200 || typeof value.startedAt !== 'string') return undefined;
+      || typeof value.url !== 'string' || !isClaudeCloudUrl(value.url, value.sessionId) || typeof value.title !== 'string' || value.title.length > 200 || typeof value.startedAt !== 'string') return undefined;
     cloud = { sessionId: value.sessionId, url: value.url, title: value.title, startedAt: value.startedAt };
   }
   return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals'),

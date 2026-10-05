@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { cloudEnvironment, windowsCommandLine, parseClaudeCloudStart, renderTerminal, startClaudeCloud, type PseudoTerminal, type SpawnPseudoTerminal } from '../src/core/chat/cloud';
+import { cloudEnvironment, isClaudeCloudUrl, windowsCommandLine, parseClaudeCloudStart, renderTerminal, startClaudeCloud, type PseudoTerminal, type SpawnPseudoTerminal } from '../src/core/chat/cloud';
 
 // Spike S3's redacted captures of the real CLI (docs/internal/hydra-app/G7-cloud.md).
 const fixture = (name: string) => readFileSync(path.join(__dirname, '..', 'tests', 'fixtures', 'app', 'claude-cloud', `${name}.txt`), 'utf8').replace(/\r\n/g, '\n');
@@ -13,7 +13,7 @@ test('a started Claude cloud session is read from what the real CLI printed, and
     const session = parseClaudeCloudStart(fixture(name));
     assert.ok(session, name);
     assert.match(session.sessionId, /^session_01StandIn\d{14}$/);
-    assert.equal(session.url, `https://claude.ai/code/${session.sessionId}`, 'the link is rebuilt from the id, without the CLI\'s query string');
+    assert.equal(session.url, `https://claude.ai/code/${session.sessionId}?from=cli&m=0`, 'the link keeps the CLI\'s plain query, which claude.ai may need');
   }
   assert.equal(parseClaudeCloudStart(fixture('cloud-created'))!.title, 'README sandbox note');
   for (const name of ['cloud-requires-tty', 'resume-rejects-cloud-id', 'teleport-push-refused']) assert.equal(parseClaudeCloudStart(fixture(name)), undefined, name);
@@ -56,7 +56,7 @@ test('a cloud chat starts with --cloud in a pseudo-terminal, answering Claude Co
     const wait = setInterval(() => { if (term.typed.includes('\r')) { clearInterval(wait); term.emit(created); term.exit(0); } }, 20);
   });
   const session = await startClaudeCloud({ executable: 'claude.exe', cwd: 'C:\\repo', message: 'Add a line to README.md', spawn: run.spawn, answerTrust: true, env: { PATH: 'p', CLAUDECODE: '1' } });
-  assert.deepEqual(session, { sessionId: 'session_01ApFs1X7hjubWFrUBiN4Bht', title: 'README sandbox note', url: 'https://claude.ai/code/session_01ApFs1X7hjubWFrUBiN4Bht' });
+  assert.deepEqual(session, { sessionId: 'session_01ApFs1X7hjubWFrUBiN4Bht', title: 'README sandbox note', url: 'https://claude.ai/code/session_01ApFs1X7hjubWFrUBiN4Bht?from=cli&m=0' });
   assert.deepEqual(run.calls[0]!.args, ['--cloud', 'Add a line to README.md']);
   assert.equal(run.calls[0]!.env.CLAUDECODE, undefined);
   // It answered the terminal's version query, then chose "Yes, I trust this folder": down, then Enter.
@@ -109,5 +109,14 @@ test('Stop, removing the chat or quitting kills a cloud chat\'s CLI before its s
   };
   await assert.rejects(startClaudeCloud({ executable: 'claude.exe', cwd: 'C:\\repo', message: 'x', spawn, answerTrust: true, signal: abort.signal }), /Stopped before the cloud session started/);
   assert.equal(killed, 1);
+});
+
+test('a cloud link is claude.ai/code\'s own for its session, with at most a plain query', () => {
+  const id = 'session_01ApFs1X7hjubWFrUBiN4Bht';
+  for (const ok of [`https://claude.ai/code/${id}`, `https://claude.ai/code/${id}?from=cli&m=0`]) assert.equal(isClaudeCloudUrl(ok, id), true, ok);
+  for (const bad of [`https://claude.ai/code/${id}?x=<script>`, `https://claude.ai/code/${id}?a=1#frag`, `https://claude.ai/code/${id}/../x`, `https://claude.ai.evil.example/code/${id}`, `https://claude.ai/code/${id}?`, 'https://claude.ai/code/session_01Other0000000']) {
+    assert.equal(isClaudeCloudUrl(bad, id), false, bad);
+  }
+  assert.equal(isClaudeCloudUrl('https://claude.ai/code/--x', '--x'), false);
 });
 
