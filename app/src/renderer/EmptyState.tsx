@@ -5,6 +5,8 @@ import { Icon } from './Icon';
 import { Picker } from './Picker';
 
 export interface Recent { id: string; title: string; project?: string; provider: 'claude' | 'codex'; updatedAt: string }
+/** A chat on the home's Sessions list: one waiting on the user, or finished while they were elsewhere. */
+export interface Waiting extends Recent { status: 'needs' | 'unread' }
 
 /** "3m", "2h", "5d": how long ago, for the recents list. */
 function ago(iso: string, now = Date.now()): string {
@@ -29,6 +31,8 @@ interface Props {
   /** The home's projects and prompt (Claude desktop's start screen); without projects, the first-run choices show. */
   projects?: Project[];
   onStart?(request: StartRequest): Promise<boolean>;
+  /** The chats that need the user (the home's Sessions list, as Claude desktop's). */
+  waiting?: Waiting[];
 }
 
 const agentOptions = [
@@ -45,7 +49,10 @@ const whereOptions = [
  * (which also opens or clones one); inside, a quiet return arrow sends; below, the agent. Enter makes the chat in that
  * project and sends the message.
  */
-function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
+const shownSessions = 3;
+
+function HomeStart({ projects, recents, waiting, onOpenChat, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; waiting: Waiting[]; onOpenChat?(id: string): void; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
+  const [allSessions, setAllSessions] = useState(false);
   // The project of the most recent chat, else the first one.
   const initial = projects.find(project => project.name === recents[0]?.project)?.id ?? projects[0]?.id;
   const [projectId, setProjectId] = useState(initial);
@@ -82,7 +89,27 @@ function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { proj
   return (
     <section className="home-start">
       <div className="home-scroll">
-        <div className="home-column"><h1>What are we working on?</h1></div>
+        <div className="home-column">
+          <h1><span className="home-mark" aria-hidden="true">✳</span>Welcome back</h1>
+          {waiting.length > 0 && (
+            <div className="sessions">
+              <div className="sessions-head"><h2>Sessions</h2>{waiting.length > shownSessions && <button className="link-quiet" onClick={() => setAllSessions(value => !value)}>{allSessions ? 'Show fewer' : `Show ${waiting.length - shownSessions} more`}</button>}</div>
+              <ul>
+                {(allSessions ? waiting : waiting.slice(0, shownSessions)).map(chat => (
+                  <li key={chat.id}>
+                    <button onClick={() => onOpenChat?.(chat.id)}>
+                      <span className={`session-state ${chat.status}`}>{chat.status === 'needs' ? 'Needs input' : 'Ready'}</span>
+                      <span className="session-title">{chat.title}</span>
+                      <span className="session-meta">{chat.project}</span>
+                      <span className="session-when">{ago(chat.updatedAt)} ago</span>
+                      <Icon name="chevron" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       </div>
       <div className="home-prompt composer">
         {cloning && (
@@ -116,7 +143,7 @@ function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { proj
   );
 }
 
-export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart }: Props) {
+export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart, waiting = [] }: Props) {
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -133,7 +160,7 @@ export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents 
       </section>
     );
   }
-  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
+  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} waiting={waiting} onOpenChat={onOpenChat} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
   const clone = async () => {
     if (!url.trim() || busy) return;
     setBusy(true);

@@ -275,7 +275,8 @@ export function App() {
                   onConfigure={change => configure(chat.id, change)}
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   onContinueCloud={() => void run(window.hydra.continueCloud(chat.id), result => { if (!result.started) setError(result.error ?? "The terminal didn't open."); })} />
-              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat} />}
+              : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat}
+                waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
       </div>
     </div>
