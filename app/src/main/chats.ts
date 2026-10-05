@@ -7,7 +7,7 @@ import { claudePermissionModes } from '../../../src/core/chat/events';
 import { claudeSessionIdPattern } from '../../../src/core/chat/claude';
 import { cmdUnsafe, isWindowsShim } from '../../../src/core/process';
 import { ChatSession, type Launch, type SessionTimings } from '../../../src/core/chat/session';
-import { ChatStore, titleFrom, type ChatRecord, type LogEntry } from '../../../src/core/chat/store';
+import { ChatStore, titleFrom, type ChatRecord, type LogEntry, pullRequestUrlPattern } from '../../../src/core/chat/store';
 import { claudeCloudSessionIdPattern, type ClaudeCloudSession } from '../../../src/core/chat/cloud';
 
 /**
@@ -41,6 +41,8 @@ export interface ChatManagerDeps {
    * Claude cloud chats (G7, src/core/chat/cloud.ts): `start` runs `claude --cloud` for a chat's first message;
    * `worktree` makes (or finds) a fresh worktree of the project on a new branch, for Continue here.
    */
+  /** The state of a pull request a chat opened (`gh pr view`), for the sidebar's PR icon; undefined when unknown. */
+  prState?(url: string): Promise<'open' | 'merged' | 'closed' | undefined>;
   cloud?: {
     start(input: { executable: string; cwd: string; message: string; signal: AbortSignal }): Promise<ClaudeCloudSession>;
     worktree(cwd: string, chatId: string): Promise<string>;
@@ -128,6 +130,13 @@ export function trustedProjects(toml: string): Set<string> {
 
 export interface NewChat { cwd: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals; where?: 'cloud' }
 
+/** Whether a tool call runs `gh pr create`: Claude's Bash takes a command string, Codex's an argument list or a string. */
+export function opensPullRequest(input: unknown): boolean {
+  const command = (input as { command?: unknown } | undefined)?.command;
+  const text = typeof command === 'string' ? command : Array.isArray(command) ? command.filter(part => typeof part === 'string').join(' ') : '';
+  return /(^|[\s;&|(])gh(\.exe)?\s+pr\s+create\b/.test(text);
+}
+
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
   /** Sessions being set up, so two quick messages share one. */
@@ -157,7 +166,24 @@ export class ChatManager {
     return this.deps.adapters?.[provider] ?? (provider === 'claude' ? () => new ClaudeAdapter() : () => new CodexAdapter());
   }
 
-  list(): Promise<ChatRecord[]> { return this.deps.store.list(); }
+  /** The chats; an open pull request a chat made is checked again now and then, in the background, for its icon. */
+  async list(): Promise<ChatRecord[]> {
+    const chats = await this.deps.store.list();
+    void this.refreshPullRequests(chats);
+    return chats;
+  }
+
+  private readonly prCalls = new Map<string, Set<string>>();
+  private readonly prChecked = new Map<string, number>();
+  private async refreshPullRequests(chats: ChatRecord[]): Promise<void> {
+    if (!this.deps.prState) return;
+    for (const chat of chats) {
+      if (chat.pr?.state !== 'open' || Date.now() - (this.prChecked.get(chat.id) ?? 0) < 120_000) continue;
+      this.prChecked.set(chat.id, Date.now());
+      const state = await this.deps.prState(chat.pr.url).catch(() => undefined);
+      if (state && state !== chat.pr.state && !this.removed.has(chat.id)) await this.deps.store.update(chat.id, { pr: { url: chat.pr.url, state } }).catch(() => undefined);
+    }
+  }
 
   async create(input: NewChat): Promise<ChatRecord> {
     if (!path.isAbsolute(input.cwd)) throw new Error('A chat needs a project folder.');
@@ -251,6 +277,17 @@ export class ChatManager {
       const record = events.some(event => event.type === 'user') && this.deps.codexConfig ? await this.deps.store.get(id) : undefined;
       if (record?.provider === 'codex') this.codexBefore.set(id, await this.deps.codexConfig!().catch(() => undefined));
       const patch: Partial<ChatRecord> = {};
+      // A pull request this chat opened: its own `gh pr create`, and the link that command printed.
+      for (const event of events) {
+        if (event.type === 'tool-call' && opensPullRequest(event.input)) {
+          const calls = this.prCalls.get(id) ?? new Set<string>();
+          calls.add(event.id);
+          this.prCalls.set(id, calls);
+        } else if (event.type === 'tool-result' && this.prCalls.get(id)?.delete(event.id) && !event.isError) {
+          const url = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/.exec(event.output)?.[0];
+          if (url && pullRequestUrlPattern.test(url)) patch.pr = { url, state: 'open' };
+        }
+      }
       const session = events.find((event): event is Extract<ChatEvent, { type: 'session' }> => event.type === 'session');
       if (session) patch.providerSessionId = session.providerSessionId;
       // Claude left plan mode (an approved plan): the next process starts in the mode it is in now. A chat on the user's

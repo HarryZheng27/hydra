@@ -2,11 +2,14 @@ import { useState } from 'react';
 import type { ChatRecord, Project } from '../shared/ipc';
 import type { View } from './App';
 import { ChatRow } from './ChatRow';
+import type { ChatStatus } from './chatStatus';
 import { Icon } from './Icon';
 
 interface Props {
   projects: Project[];
   chats: ChatRecord[];
+  /** Each chat's dot: working, waiting on the user, or finished unseen (chatStatus.ts). */
+  statuses?: Record<string, ChatStatus>;
   view: View;
   onNewChat(): void;
   onOpenChat(id: string): void;
@@ -21,7 +24,7 @@ interface Props {
 }
 
 /** New chat, search, the projects with their chats, and Settings. */
-export function Sidebar({ projects, chats: allChats, view, onNewChat, onOpenChat, onOpenProject, onAddProject, onRemoveProject, onOpenSettings, onRenameChat, onArchiveChat, onDeleteChat }: Props) {
+export function Sidebar({ projects, chats: allChats, statuses = {}, view, onNewChat, onOpenChat, onOpenProject, onAddProject, onRemoveProject, onOpenSettings, onRenameChat, onArchiveChat, onDeleteChat }: Props) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showArchived, setShowArchived] = useState(false);
@@ -29,7 +32,7 @@ export function Sidebar({ projects, chats: allChats, view, onNewChat, onOpenChat
   const chats = allChats.filter(chat => !chat.archivedAt);
   const archived = allChats.filter(chat => chat.archivedAt);
   const row = (chat: ChatRecord, tooltip?: string) => (
-    <ChatRow key={chat.id} chat={chat} tooltip={tooltip} selected={view.kind === 'chat' && view.id === chat.id} onOpen={() => onOpenChat(chat.id)}
+    <ChatRow key={chat.id} chat={chat} status={statuses[chat.id]} tooltip={tooltip} selected={view.kind === 'chat' && view.id === chat.id} onOpen={() => onOpenChat(chat.id)}
       onRename={title => onRenameChat(chat.id, title)} onArchive={value => onArchiveChat(chat.id, value)} onDelete={() => onDeleteChat(chat)} />
   );
   const needle = query.trim().toLowerCase();

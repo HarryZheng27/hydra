@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { nextStatus, type ChatStatus } from './chatStatus';
 import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
@@ -54,6 +55,10 @@ export function App() {
   const [checking, setChecking] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);
   const [chats, setChats] = useState<ChatRecord[]>([]);
+  // Each chat's dot in the sidebar (chatStatus.ts), from the events main pushes for every chat.
+  const [statuses, setStatuses] = useState<Record<string, ChatStatus>>({});
+  const waiting = useRef(new Map<string, Set<string>>());
+  const onScreen = useRef<string | undefined>(undefined);
   const [chatEvents, setChatEvents] = useState<Record<string, ChatEvent[]>>({});
   /** Per chat: events before this position were already settled when it was opened (see foldEvents). */
   const [settled, setSettled] = useState<Record<string, number>>({});
@@ -85,6 +90,15 @@ export function App() {
     const stopChats = window.hydra.onChatEvents(message => {
       const { chatId, events, start } = message;
       if (start < 0) { const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message); return; }
+      const pending = waiting.current.get(chatId) ?? new Set<string>();
+      waiting.current.set(chatId, pending);
+      setStatuses(current => {
+        const next = nextStatus(current[chatId], events, pending, onScreen.current === chatId);
+        if (next === current[chatId]) return current;
+        const copy = { ...current };
+        if (next) copy[chatId] = next; else delete copy[chatId];
+        return copy;
+      });
       const buffered = opening.current.get(chatId);
       if (buffered) buffered.push(message);
       else setChatEvents(current => {
@@ -118,6 +132,14 @@ export function App() {
 
   const sidebarOpen = state?.sidebarOpen ?? true;
   // The sidebar follows the click at once; saving it is best effort, and a failed save only shows its error.
+  useEffect(() => {
+    onScreen.current = view.kind === 'chat' ? view.id : undefined;
+    if (view.kind === 'chat') setStatuses(current => { if (current[view.id] !== 'unread') return current; const copy = { ...current }; delete copy[view.id]; return copy; });
+  }, [view]);
+  useEffect(() => {
+    const timer = setInterval(() => { void window.hydra.listChats().then(setChats, () => undefined); }, 120_000);
+    return () => clearInterval(timer);
+  }, []);
   const toggleSidebar = () => {
     if (!state) return;
     const open = !state.sidebarOpen;
@@ -210,6 +232,7 @@ export function App() {
             <Sidebar
               projects={state.projects}
               chats={chats}
+              statuses={statuses}
               view={view}
               // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
               onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}

@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
+import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
 import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
@@ -16,6 +16,7 @@ import { foldEvents, mergePush } from '../src/renderer/chatModel';
 import { consoleScript } from '../src/main/console';
 import { Markdown, safeHref } from '../src/renderer/markdown';
 import { EmptyState } from '../src/renderer/EmptyState';
+import { nextStatus } from '../src/renderer/chatStatus';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -591,15 +592,56 @@ test('the sidebar menu renames, archives and unarchives a chat; a rename sticks,
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('the home is Claude desktop\'s start screen once there are projects: recent chats and a prompt with project, agent and place', () => {
-  const projects = [{ id: '0f8fad5b-d9cb-469f-a165-70867728950e', path: 'C:\code\shop', name: 'shop', trustedAt: '2026-10-05T00:00:00.000Z' }];
-  const recents = Array.from({ length: 8 }, (_, index) => ({ id: `0f8fad5b-d9cb-469f-a165-7086772895${String(index).padStart(2, '0')}`, title: `Chat ${index}`, project: 'shop', provider: 'claude' as const, updatedAt: new Date().toISOString() }));
-  const page = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, recents, projects, onStart: async () => true }));
+test('the home is Claude desktop\'s start screen once there are projects: a prompt with where, project and agent', () => {
+  const projects = [{ id: '0f8fad5b-d9cb-469f-a165-70867728950e', path: 'C:\\code\\shop', name: 'shop', trustedAt: '2026-10-05T00:00:00.000Z' }];
+  const page = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, recents: [], projects, onStart: async () => true }));
   assert.ok(page.includes('placeholder="Describe a task or ask a question"'));
-  for (const chip of ['Project', 'Agent', 'Where']) assert.ok(page.includes(`aria-label="${chip}`) || page.includes(chip), chip);
-  assert.ok(page.includes('Show 2 more'));
-  assert.equal((page.match(/class="recent-title"/g) ?? []).length, 6);
+  for (const chip of ['aria-label="Where"', 'aria-label="Project"', 'aria-label="Agent"']) assert.ok(page.includes(chip), chip);
+  assert.ok(page.includes('class="picker chip"'));
+  assert.ok(!page.includes('recent-title'), 'no recent chats list');
   // No projects yet: the first-run choices, as before.
   const first = renderToStaticMarkup(createElement(EmptyState, { onPickFolder: () => undefined, onClone: async () => undefined, onNewChat: () => undefined, projects: [], onStart: async () => true }));
   assert.ok(first.includes('Open a project') && !first.includes('Describe a task'));
+});
+
+test('a chat\'s sidebar dot: working, then waiting on an approval, then finished unseen (blue) or seen (none)', () => {
+  const waiting = new Set<string>();
+  let status = nextStatus(undefined, [{ type: 'user', text: 'go' }], waiting, false);
+  assert.equal(status, 'working');
+  status = nextStatus(status, [{ type: 'approval', id: 'a1', kind: 'tool', tool: 'Bash', input: {}, choices: ['allow', 'deny'] }], waiting, false);
+  assert.equal(status, 'needs');
+  status = nextStatus(status, [{ type: 'resolved', id: 'a1', outcome: 'allowed', by: 'user' }], waiting, false);
+  assert.equal(status, 'working');
+  assert.equal(nextStatus(status, [{ type: 'done', status: 'success' }], waiting, false), 'unread');
+  assert.equal(nextStatus(status, [{ type: 'done', status: 'success' }], waiting, true), undefined);
+});
+
+test('a chat that opens a pull request with gh pr create keeps its link; its state is checked again, in the background', async () => {
+  assert.equal(opensPullRequest({ command: 'git push -u origin x && gh pr create --fill' }), true);
+  assert.equal(opensPullRequest({ command: ['gh', 'pr', 'create', '--title', 'x'] }), true);
+  // Only gh itself: another tool whose name ends in "gh" doesn't count. (A mention of it elsewhere in a command
+  // might, but nothing is recorded unless the command printed a pull request link.)
+  assert.equal(opensPullRequest({ command: 'xgh pr create' }), false);
+  assert.equal(opensPullRequest({ command: 'gh pr view 3' }), false);
+  const dir = scratch();
+  try {
+    const { starts, launch } = fakeLaunch();
+    const checked: string[] = [];
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async provider => `${provider}.exe`, trusted: async () => true, push: () => undefined, prState: async url => { checked.push(url); return 'merged'; } });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.send(chat.id, 'open a PR');
+    const say = (message: unknown) => starts[0]!.handlers.line(JSON.stringify(message));
+    say({ type: 'system', subtype: 'init', session_id: chat.providerSessionId });
+    say({ type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'gh pr create --fill' } }] } });
+    say({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'https://github.com/ndunl075/shop/pull/12\n' }] } });
+    say({ type: 'result', subtype: 'success', usage: {} });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual((await manager.open(chat.id)).record.pr, { url: 'https://github.com/ndunl075/shop/pull/12', state: 'open' });
+    await manager.list();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(checked, ['https://github.com/ndunl075/shop/pull/12']);
+    assert.equal((await manager.open(chat.id)).record.pr?.state, 'merged');
+    manager.closeAll();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

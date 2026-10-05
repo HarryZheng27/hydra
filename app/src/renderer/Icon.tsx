@@ -9,6 +9,11 @@ const paths: Record<string, string> = {
   // A row's menu (three dots), Rename (a pencil) and Archive (a box with a lid).
   more: 'M10 3.6a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8zM10 9.1a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8zM10 14.6a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8z',
   pencil: 'M13.2 3.8l3 3L7 16H4v-3zM11.2 5.8l3 3',
+  // Claude desktop's send (a return arrow), where a chat runs (a laptop, a cloud), and a pull request.
+  enter: 'M15.5 5v5a2 2 0 0 1-2 2H5M8 9l-3 3l3 3',
+  laptop: 'M4.5 5h11v7.5h-11zM2.5 15h15',
+  cloud: 'M6 15.5h8a3 3 0 0 0 .5-5.96A4.5 4.5 0 0 0 5.9 9.6A3 3 0 0 0 6 15.5z',
+  pullRequest: 'M6 6.5v7M6 3.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3zM6 13.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3zM14 13.5a1.5 1.5 0 1 1 0 3a1.5 1.5 0 0 1 0-3zM14 13.5V8.5a2 2 0 0 0-2-2H9.5M11 5l-1.5 1.5L11 8',
   archive: 'M3 4.5h14v3H3zM4.5 7.5v8h11v-8M8 10.5h4',
   close: 'M5.5 5.5l9 9M14.5 5.5l-9 9',
   clone: 'M6 3.5v9M6 12.5a2 2 0 1 0 0 4a2 2 0 0 0 0-4zM14 7.5a2 2 0 1 0 0-4a2 2 0 0 0 0 4zM14 7.5c0 3-8 2-8 5',
@@ -21,7 +26,9 @@ const paths: Record<string, string> = {
 };
 
 /** A small line icon, drawn with the current text color. */
-export function Icon({ name }: { name: keyof typeof paths }) {
+export type IconName = keyof typeof paths;
+
+export function Icon({ name }: { name: IconName }) {
   return (
     <svg className="icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false">
       <path d={paths[name]} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />

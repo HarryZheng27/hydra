@@ -31,7 +31,12 @@ export interface ChatRecord {
   cloud?: { sessionId: string; url: string; title: string; startedAt: string };
   /** When the user archived it: the sidebar keeps it under Archived, out of its project's list. */
   archivedAt?: string;
+  /** The pull request this chat's own `gh pr create` opened, and its state when last checked (the sidebar's PR icon). */
+  pr?: { url: string; state: ChatPullRequestState };
 }
+export type ChatPullRequestState = 'open' | 'merged' | 'closed';
+/** A GitHub pull request link, as `gh pr create` prints it. */
+export const pullRequestUrlPattern = /^https:\/\/github\.com\/[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}\/pull\/\d{1,9}$/;
 export interface LogEntry { t: string; event: ChatEvent }
 
 export const chatIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -66,8 +71,14 @@ function parseRecord(raw: unknown): ChatRecord | undefined {
       || typeof value.url !== 'string' || !isClaudeCloudUrl(value.url, value.sessionId) || typeof value.title !== 'string' || value.title.length > 200 || typeof value.startedAt !== 'string') return undefined;
     cloud = { sessionId: value.sessionId, url: value.url, title: value.title, startedAt: value.startedAt };
   }
+  let pr: ChatRecord['pr'];
+  if (raw.pr !== undefined) {
+    const value = raw.pr;
+    if (!isRecord(value) || typeof value.url !== 'string' || !pullRequestUrlPattern.test(value.url) || (value.state !== 'open' && value.state !== 'merged' && value.state !== 'closed')) return undefined;
+    pr = { url: value.url, state: value.state };
+  }
   return { id, provider, cwd, title, createdAt, updatedAt, ...pick('providerSessionId'), ...pick('model'), ...pick('effort'), ...pick('permissionMode'), ...pick('sandbox'), ...pick('approvals'), ...pick('archivedAt'),
-    ...(raw.where === 'cloud' ? { where: 'cloud' as const } : {}), ...(cloud ? { cloud } : {}) } as ChatRecord;
+    ...(raw.where === 'cloud' ? { where: 'cloud' as const } : {}), ...(cloud ? { cloud } : {}), ...(pr ? { pr } : {}) } as ChatRecord;
 }
 
 /** True when a file is non-empty and its last byte isn't a newline. */

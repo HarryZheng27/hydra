@@ -30,7 +30,6 @@ interface Props {
   onStart?(request: StartRequest): Promise<boolean>;
 }
 
-const shownRecents = 6;
 const agentOptions = [
   { value: 'claude', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
@@ -41,11 +40,11 @@ const whereOptions = [
 ];
 
 /**
- * Claude desktop's start screen: a greeting, the recent chats, and a prompt at the bottom with the project, the agent
- * and (for Claude) where it runs. Enter makes the chat in that project and sends the message; the project's own
- * page still offers New chat. Opening or cloning a project is in the project menu.
+ * Claude desktop's start screen: a greeting, and its prompt at the bottom. Above the box, where it runs and the project
+ * (which also opens or clones one); inside, a quiet return arrow sends; below, the agent. Enter makes the chat in that
+ * project and sends the message.
  */
-function HomeStart({ projects, recents, onOpenChat, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; onOpenChat?(id: string): void; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
+function HomeStart({ projects, recents, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
   // The project of the most recent chat, else the first one.
   const initial = projects.find(project => project.name === recents[0]?.project)?.id ?? projects[0]?.id;
   const [projectId, setProjectId] = useState(initial);
@@ -53,13 +52,13 @@ function HomeStart({ projects, recents, onOpenChat, onPickFolder, onClone, onSta
   const [where, setWhere] = useState<'local' | 'cloud'>('local');
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [all, setAll] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (!projects.some(project => project.id === projectId)) setProjectId(projects[0]?.id); }, [projects, projectId]);
   useEffect(() => { box.current?.focus(); }, []);
   const project = projects.find(candidate => candidate.id === projectId);
+  const cloud = provider === 'claude' && where === 'cloud';
   const projectOptions = [
     ...projects.map(candidate => ({ value: candidate.id, label: candidate.name, description: candidate.path })),
     { value: 'open', label: 'Open a folder…' },
@@ -68,37 +67,17 @@ function HomeStart({ projects, recents, onOpenChat, onPickFolder, onClone, onSta
   const start = async () => {
     if (!project || !text.trim() || busy) return;
     setBusy(true);
-    try { if (await onStart({ project, provider, where: provider === 'claude' ? where : 'local', text: text.trim() })) setText(''); } finally { setBusy(false); }
+    try { if (await onStart({ project, provider, where: cloud ? 'cloud' : 'local', text: text.trim() })) setText(''); } finally { setBusy(false); }
   };
   const clone = async () => {
     if (!url.trim()) return;
     setBusy(true);
     try { await onClone(url.trim()); setUrl(''); setCloning(false); } finally { setBusy(false); }
   };
-  const list = all ? recents : recents.slice(0, shownRecents);
   return (
     <section className="home-start">
       <div className="home-scroll">
-        <div className="home-column">
-          <h1>What are we working on?</h1>
-          {recents.length > 0 && (
-            <div className="sessions">
-              <div className="sessions-head"><h2>Recent chats</h2>{recents.length > shownRecents && <button className="link-quiet" onClick={() => setAll(value => !value)}>{all ? 'Show fewer' : `Show ${recents.length - shownRecents} more`}</button>}</div>
-              <ul>
-                {list.map(recent => (
-                  <li key={recent.id}>
-                    <button onClick={() => onOpenChat?.(recent.id)}>
-                      <span className="recent-title">{recent.title}</span>
-                      <span className="recent-meta">{[recent.project, recent.provider === 'claude' ? 'Claude Code' : 'Codex'].filter(Boolean).join(' · ')}</span>
-                      <span className="recent-when">{ago(recent.updatedAt)}</span>
-                      <Icon name="chevron" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
+        <div className="home-column"><h1>What are we working on?</h1></div>
       </div>
       <div className="home-prompt composer">
         {cloning && (
@@ -109,24 +88,26 @@ function HomeStart({ projects, recents, onOpenChat, onPickFolder, onClone, onSta
           </form>
         )}
         <div className="home-chips">
-          <Picker label="Project" value={projectId} options={projectOptions} title={project?.path}
+          {provider === 'claude' && <Picker chip icon={cloud ? 'cloud' : 'laptop'} label="Where" value={where} options={whereOptions} onChange={value => setWhere(value === 'cloud' ? 'cloud' : 'local')} />}
+          <Picker chip icon="folder" label="Project" value={projectId} options={projectOptions} title={project?.path}
             onChange={value => { if (value === 'open') onPickFolder(); else if (value === 'clone') setCloning(true); else setProjectId(value); }} />
-          <Picker label="Agent" value={provider} options={agentOptions} onChange={value => setProvider(value === 'codex' ? 'codex' : 'claude')} />
-          {provider === 'claude' && <Picker label="Where" value={where} options={whereOptions} onChange={value => setWhere(value === 'cloud' ? 'cloud' : 'local')} />}
         </div>
         <div className="prompt-box">
           <textarea ref={box} rows={1} value={text} placeholder="Describe a task or ask a question" aria-label="Start a chat" disabled={busy}
             onChange={event => setText(event.target.value)}
             onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void start(); } }} />
-          <button className="round send" onClick={() => void start()} disabled={!text.trim() || !project || busy} aria-label="Start the chat" title="Start the chat (Enter)"><Icon name="arrowUp" /></button>
+          <button className="round send" onClick={() => void start()} disabled={!text.trim() || !project || busy} aria-label="Start the chat" title="Start the chat (Enter)"><Icon name="enter" /></button>
         </div>
-        {where === 'cloud' && provider === 'claude' && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
+        <div className="composer-bar">
+          <span className="composer-spacer" />
+          <Picker label="Agent" value={provider} options={agentOptions} onChange={value => setProvider(value === 'codex' ? 'codex' : 'claude')} />
+        </div>
+        {cloud && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
       </div>
     </section>
   );
 }
 
-/** What the main pane shows before there's a chat: open or clone a project, and recent chats; or the chosen project. */
 export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart }: Props) {
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
@@ -144,7 +125,7 @@ export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents 
       </section>
     );
   }
-  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} onOpenChat={onOpenChat} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
+  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
   const clone = async () => {
     if (!url.trim() || busy) return;
     setBusy(true);

@@ -369,3 +369,31 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .home-chips { display: flex; gap: 2px; align-items: center; margin: 0 0 6px -4px; }
 .home-prompt .clone-form { max-width: none; margin-bottom: 8px; align-items: center; }
 .home-prompt .hint { margin: 6px 2px 0; }
+
+/* Chat marks in the sidebar (ChatRow.tsx Mark), as Claude desktop's: working, needs input, finished unseen, idle,
+   and a chat's pull request. */
+.chat-link { display: flex; align-items: center; gap: 9px; }
+.chat-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-mark { flex: none; display: inline-grid; place-items: center; width: 14px; height: 14px; }
+.chat-mark.dot::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.chat-mark.idle { color: var(--faint); }
+.chat-mark.idle::before { background: transparent; border: 1.4px solid currentColor; width: 6px; height: 6px; }
+.chat-mark.working { color: var(--muted); animation: chat-mark-pulse 1.2s ease-in-out infinite; }
+.chat-mark.needs { color: #E3A33A; }
+.chat-mark.unread { color: #3B82F6; }
+.chat-mark.pr .icon { width: 14px; height: 14px; }
+.chat-mark.pr.merged { color: #8B5CF6; }
+.chat-mark.pr.open { color: var(--error); }
+.chat-mark.pr.closed { color: var(--faint); }
+@keyframes chat-mark-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .chat-mark.working { animation: none; } }
+
+/* Claude desktop's prompt: bordered chips above the box, a quiet return arrow inside it, the agent below. */
+.picker.chip { gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 13px; }
+.picker.chip:hover, .picker.chip[aria-expanded=true] { background: var(--hover); }
+.picker.chip .icon:first-child { width: 15px; height: 15px; opacity: 1; color: var(--muted); }
+.home-chips { gap: 6px; margin: 0 0 8px; }
+.composer .round.send { background: transparent; color: var(--fg); border-radius: 6px; }
+.composer .round.send:hover:not(:disabled) { background: var(--hover); }
+.composer .round.send:disabled { opacity: 1; color: var(--faint); }
+.home-column h1 { font-size: 26px; }

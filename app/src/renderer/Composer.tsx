@@ -125,7 +125,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
           </div>
         )}
         <textarea ref={box} value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={1} onInput={event => { const box = event.currentTarget; box.style.height = 'auto'; box.style.height = `${box.scrollHeight}px`; }} />
-        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'arrowUp'} /></button>
+        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'enter'} /></button>
       </div>
       <div className="composer-bar">
         {/* A cloud chat's `--cloud` takes only the message: no images, mode, model or effort. */}
