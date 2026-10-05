@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { watchTerminals } from './terminalBus';
-import type { SlashCommand } from './SlashMenu';
+import { rememberCommands, rememberedCommands, type SlashCommand } from './SlashMenu';
 import { BrowserPanel } from './BrowserPanel';
 import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
@@ -111,7 +111,11 @@ export function App() {
       if (start < 0) {
         // The / menu's commands (Claude Code's initialize reply): kept by chat, never logged.
         const listed = events.find(event => event.type === 'commands');
-        if (listed?.type === 'commands') setCommands(current => ({ ...current, [chatId]: listed.commands.map(command => ({ ...command, skill: false })) }));
+        if (listed?.type === 'commands') {
+          const list = listed.commands.map(command => ({ ...command, skill: false }));
+          setCommands(current => ({ ...current, [chatId]: list }));
+          rememberCommands(list);
+        }
         const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message);
         return;
       }
@@ -164,6 +168,7 @@ export function App() {
     // The / menu's commands before a chat starts: any Claude chat's list from this run (initialize's, with
     // descriptions), else the latest session's names.
     let claudeCommands: KnownModels['claudeCommands'] = Object.values(commands).find(list => list.length);
+    if (!claudeCommands) { const remembered = rememberedCommands(); if (remembered.length) claudeCommands = remembered; }
     for (const [id, events] of Object.entries(chatEvents)) {
       if (chats.find(chat => chat.id === id)?.provider !== 'claude') continue;
       if (claudeCommands) break;

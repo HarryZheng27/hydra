@@ -4,6 +4,20 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 export interface SlashCommand { name: string; skill: boolean; description?: string; argumentHint?: string }
 
 const shown = 8;
+const rememberedKey = 'hydra.claudeCommands';
+
+/** The latest Claude command list, kept so the home's / menu works before any chat opens (after a restart, say). */
+export function rememberCommands(commands: SlashCommand[]): void {
+  try { window.localStorage.setItem(rememberedKey, JSON.stringify(commands.slice(0, 400))); } catch { /* the home waits for a chat */ }
+}
+export function rememberedCommands(): SlashCommand[] {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(rememberedKey) ?? '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((command): command is SlashCommand => !!command && typeof command === 'object' && typeof (command as SlashCommand).name === 'string' && /^[a-z0-9][\w:.-]{0,63}$/i.test((command as SlashCommand).name))
+      .map(command => ({ name: command.name, skill: !!command.skill, ...(typeof command.description === 'string' ? { description: command.description.slice(0, 300) } : {}), ...(typeof command.argumentHint === 'string' ? { argumentHint: command.argumentHint.slice(0, 100) } : {}) }));
+  } catch { return []; }
+}
 
 /** The commands that fit what's typed so far: names starting with it first, then names containing it. */
 export function matchCommands(text: string, commands: SlashCommand[]): SlashCommand[] {
