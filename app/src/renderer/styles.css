@@ -464,3 +464,8 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .picker-menu li .agent-logo { width: 16px; height: 16px; }
 .chat-link .agent-logo { opacity: .75; }
 .composer-agent { display: inline-flex; align-items: center; padding: 0 6px 0 4px; }
+/* A picker whose trigger is only a logo has no text baseline: centring every picker's wrapper keeps logo and text on one
+   line. */
+.picker-root { display: inline-flex; align-items: center; }
+.picker .agent-logo { display: block; }
+.composer-agent .agent-logo { display: block; }
