@@ -721,16 +721,17 @@ test('the / menu lists Claude Code\'s own commands before skills, each alphabeti
   assert.deepEqual(matchCommands('/c', commands).map(command => command.name), ['clear', 'compact', 'cloudflare']);
 });
 
-test('a Claude chat gets a short name from Claude after its first message, unless the user renamed it first; Codex keeps its first line', async () => {
+test('a Claude chat gets a short name from Claude, and a Codex chat from Codex, after its first message, unless the user renamed it first', async () => {
   const dir = scratch();
   try {
     const store = new ChatStore(path.join(dir, 'chats'), noAcl);
     const pushed: Array<{ id: string; events: ChatEvent[]; start: number }> = [];
-    const asked: string[] = [];
+    const asked: string[] = [], askedCodex: string[] = [];
     let answer: (title: string | undefined) => void = () => undefined;
     const { launch } = fakeLaunch();
     const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: (id, events, start) => pushed.push({ id, events, start }),
-      titleChat: message => { asked.push(message); return new Promise(resolve => { answer = resolve; }); } });
+      titleChat: message => { asked.push(message); return new Promise(resolve => { answer = resolve; }); },
+      titleCodexChat: message => { askedCodex.push(message); return Promise.resolve('List the files'); } });
     const chat = await manager.create({ cwd: dir, provider: 'claude' });
     await manager.send(chat.id, 'when u hover over a project it shoud show a lil arrow');
     for (let i = 0; i < 50 && !asked.length; i++) await new Promise(resolve => setTimeout(resolve, 10));
@@ -754,6 +755,9 @@ test('a Claude chat gets a short name from Claude after its first message, unles
     await manager.send(codex.id, 'list the files');
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal(asked.length, 2, "a Codex chat's message isn't sent to Claude for a name");
+    assert.deepEqual(askedCodex, ['list the files'], 'Codex names its own chat');
+    for (let i = 0; i < 50 && (await store.get(codex.id))?.title !== 'List the files'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await store.get(codex.id))?.title, 'List the files');
     manager.closeAll();
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }

@@ -49,6 +49,8 @@ export interface ChatManagerDeps {
   prState?(url: string): Promise<'open' | 'merged' | 'closed' | undefined>;
   /** A short name for a Claude chat from its first message (chatTitles.ts); undefined leaves the first-line title. */
   titleChat?(message: string): Promise<string | undefined>;
+  /** The same for a Codex chat, from Codex itself: nothing goes to Anthropic. */
+  titleCodexChat?(message: string): Promise<string | undefined>;
   cloud?: {
     start(input: { executable: string; cwd: string; message: string; signal: AbortSignal }): Promise<ClaudeCloudSession>;
     worktree(cwd: string, chatId: string): Promise<string>;
@@ -381,9 +383,10 @@ export class ChatManager {
         if (record?.title === 'New chat') {
           const provisional = patch.title = titleFrom(user.text);
           // Claude desktop names its sessions: a Claude chat asks Claude for a short name, and keeps it only if the
-          // user hasn't renamed the chat meanwhile. A Codex chat keeps its first line: its message isn't sent elsewhere.
-          if (record.provider === 'claude' && this.deps.titleChat) {
-            void this.deps.titleChat(user.text).then(async title => {
+          // user hasn't renamed the chat meanwhile. A Codex chat asks Codex itself, so its message never goes to Anthropic.
+          const namer = record.provider === 'claude' ? this.deps.titleChat : this.deps.titleCodexChat;
+          if (namer) {
+            void namer(user.text).then(async title => {
               if (!title || title === provisional || this.removed.has(id)) return;
               const current = await this.deps.store.get(id);
               if (current?.title !== provisional) return;

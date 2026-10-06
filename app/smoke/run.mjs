@@ -258,7 +258,10 @@ try {
     // A lane's own CLI (G5 milestone 4): interactive, with its lane's settings file.
     const lane = call => /^claude --settings .*[\\/]lanes[\\/][0-9a-f]{12}\.settings\.json$/.test(call);
     assert.equal(calls.filter(lane).length, 1, 'the lane started its CLI once');
-    assert.deepEqual(calls.filter(call => !checks.includes(call) && !lane(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
+    // A Codex chat's name comes from Codex itself: one ephemeral `codex exec`, in a folder of Hydra's own, per chat's first message.
+    const codexName = call => call.startsWith('codex exec --ephemeral --ignore-user-config --ignore-rules ') && / -s read-only /.test(call);
+    assert.equal(calls.filter(codexName).length, 1, 'the Codex chat asked Codex for its name once');
+    assert.deepEqual(calls.filter(call => !checks.includes(call) && !lane(call) && !codexName(call)), ['claude auth login --claudeai', 'claude auth login --claudeai'], 'only the two sign-ins asked for (the button, and the one of two at once that ran)');
     const count = call => calls.filter(c => c === call).length;
     // At least three checks (the first run, its Check again, the restarted app); the last may be cut short by the quit.
     assert.ok(count('claude --version') >= 3 && count('codex --version') >= 3, calls.join(', '));
