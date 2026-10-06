@@ -103,6 +103,7 @@ export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' |
   if (plan.dispatch || jobs.some(job => (job.runAs ?? 'head') !== 'head')) return { single: false, reason: 'it has lane jobs' };
   if (jobs.some(job => job.role)) return { single: false, reason: 'its jobs have pack roles' };
   if (new Set(jobs.map(job => job.provider ?? '')).size > 1) return { single: false, reason: 'its jobs use different providers' };
+  if (new Set(jobs.map(job => job.model ?? '')).size > 1) return { single: false, reason: 'its jobs use different models' };
   if (jobs.some(job => job.jobId || job.laneId || job.result || job.outcome || job.attempt || job.conflict)) return { single: false, reason: 'some of its jobs already ran' };
   const shape = planShape(jobs);
   if (shape.depth < 2) return { single: false, reason: `its ${shape.jobs} jobs can all run at once` };
@@ -125,11 +126,12 @@ export function singleHeadPlan(plan: Pick<Plan, 'jobs' | 'board'>, reason: strin
   const rigors = jobs.map(job => job.rigor).filter((rigor): rigor is PlanRigor => !!rigor);
   const rigor = rigors.length ? rigors.reduce((a, b) => rigorRank[b] > rigorRank[a] ? b : a) : undefined;
   const provider = jobs[0]?.provider;
+  const model = jobs[0]?.model;
   const order = singleHeadOrder(jobs).map(job => job.key);
   const whole: PlanJob = {
     key: singleHeadKey, title: `All ${jobs.length} jobs, as one head`, runAs: 'head', dependsOn: [],
     brief: singleHeadPlaceholder(order),
-    ...(scopes ? { writeScope: scopes } : {}), ...(rigor ? { rigor } : {}), ...(provider ? { provider } : {}),
+    ...(scopes ? { writeScope: scopes } : {}), ...(rigor ? { rigor } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}),
   };
   // A post the lead addressed to one of the jobs now goes to the head doing it.
   const keys = new Set(jobs.map(job => job.key));

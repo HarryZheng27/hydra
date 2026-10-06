@@ -73,6 +73,10 @@
               "codex"
             ]
           },
+          "model": {
+            "type": "string",
+            "description": "Optional model for this job's head, as its CLI names it: for Claude \"haiku\", \"sonnet\" or \"opus\"; for Codex its own model names. Use a cheaper one for simple jobs. Defaults to the CLI's own default."
+          },
           "role": {
             "type": "string",
             "description": "A role from an active pack, as \"pack/role\", if one fits this job."
