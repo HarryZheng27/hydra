@@ -8,6 +8,8 @@ What changed in each Hydra release. Installers and checksums are on the [release
 - **The Hydra app gets an installer** (`HydraAppSetup.exe`): per user with no admin prompt, beside Hydra IDE and never in its way. Uninstalling it removes only its own Claude Code and Codex entries, and its data only when you ask. See the [app guide](docs/App.md).
 - **The app updates itself** from stable releases, checked against the release's own `SHA256SUMS-app`; previews never do. Hydra IDE's update prompt is unchanged.
 - **Releases carry both installers.** `SHA256SUMS` still lists only `HydraSetup.exe`, so every installed Hydra IDE keeps updating; the app's installer has `SHA256SUMS-app`. App previews are prereleases tagged `v<version>-app.<n>`. `install.ps1` installs the app with `-App` or `$env:HYDRA_INSTALL_APP = '1'`.
+- **Heads split less often, and only when it pays.** The lead now splits a task only when each piece is a substantial change and the whole would take one agent well over 15 minutes. A plan whose jobs would mostly queue behind the heads-at-once limit (`hydra.maxConcurrentHelpers`) now runs as one head, like a small chained plan already did.
+- **Benchmark results show where each head's time went:** waiting, working and gates, and why each failed gate attempt failed.
 
 ## 0.27.1 (2026-10-01)
 

@@ -319,6 +319,8 @@ export interface PlanRunnerOptions {
    * Hydra run a small, tightly coupled plan as one head (hydra.plans.singleHeadForSmallPlans). Missing means off.
    */
   singleHead?(): boolean;
+  /** How many heads may run at once (hydra.maxConcurrentHelpers), for the single-head decision. Missing means no cap. */
+  maxConcurrent?(): number;
   /** O3: a plan's integration gate run finished (its record is on the plan): the morning report waits for this. */
   onGateDone?(plan: Plan): void;
   /** The runner started a plan's lane (the extension says so, with Show lane). */
@@ -454,7 +456,7 @@ export class PlanRunner {
       const firstRun = !plan.singleHead && !plan.startedAt && !plan.jobs.some(jobStarted) && !!this.options.singleHead?.();
       let decided: string | undefined;
       await this.options.store.update(planId, current => {
-        const decision = firstRun && !current.singleHead && !current.jobs.some(jobStarted) ? singleHeadDecision(current) : undefined;
+        const decision = firstRun && !current.singleHead && !current.jobs.some(jobStarted) ? singleHeadDecision(current, this.options.maxConcurrent?.()) : undefined;
         decided = decision ? `${decision.single ? 'runs as one head' : 'runs one head per job'}: ${decision.reason}` : undefined;
         return {
           ...(integration && !current.integration ? { integration } : {}),

@@ -230,6 +230,8 @@ It first checks that `predictions.jsonl` has lines, `SWEBENCH_API_KEY` is set an
 - **One task, one run:** a single run of one task is an anecdote, not a distribution. Runs are kept, not replaced, so a pattern (or its absence) can show over time; `summarize` shows the spread of repeat runs.
 - **Wall-clock depends on the moment:** it depends on the providers' load then, and on how many heads Hydra may run at once (`hydra.maxConcurrentHelpers`, 3 by default, up to 8). With 3, `shop-features`' seven independent jobs run three at a time; say which you used in the run's `--notes`.
 - **Cost is what the providers report:** there's no independent meter.
+- **Compare like with like:** Hydra's side always includes the other agent's review of the combined work (and its fix rounds); the single agent's side has none until `benchmark.mjs review` runs. Compare Hydra with the `single+review` row, not the bare single run. The two published runs below predate that row and Hydra's single-head mode (their results have no `mode`), so `discounts` would now run as one head.
+- **Where a head's time went:** each Hydra job's `timing` (from its head's timeline) splits its time into waiting (for a free head, its worktree and process), working, and its gates, and lists why each failed gate attempt failed. Results written before timelines existed have none.
 - **The hidden check is only as good as its cases:** it checks what `SPEC.md` specifies, the same for both setups, and not everything a reviewer might.
 
 ## Results

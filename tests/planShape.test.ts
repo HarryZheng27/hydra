@@ -30,14 +30,35 @@ const fixtures = {
 test('the benchmark plans: discounts runs as one head; kanban-app, cli-toolkit, shop-features and module-refactor run one head per job', () => {
   const shapes = Object.fromEntries(Object.entries(fixtures).map(([name, file]) => { const built = fixturePlan(file); return [name, { ...planShape(built.jobs), single: singleHeadDecision(built).single }]; }));
   assert.deepEqual(shapes, {
-    discounts: { jobs: 6, depth: 3, widest: 3, averageWidth: 2, single: true },
-    'shop-features': { jobs: 8, depth: 2, widest: 7, averageWidth: 4, single: false },
-    'kanban-app': { jobs: 10, depth: 3, widest: 8, averageWidth: 10 / 3, single: false },
-    'cli-toolkit': { jobs: 9, depth: 2, widest: 8, averageWidth: 4.5, single: false },
-    'module-refactor': { jobs: 10, depth: 3, widest: 6, averageWidth: 10 / 3, single: false },
+    discounts: { jobs: 6, depth: 3, widest: 3, averageWidth: 2, rounds: 3, effectiveWidth: 2, single: true },
+    'shop-features': { jobs: 8, depth: 2, widest: 7, averageWidth: 4, rounds: 2, effectiveWidth: 4, single: false },
+    'kanban-app': { jobs: 10, depth: 3, widest: 8, averageWidth: 10 / 3, rounds: 3, effectiveWidth: 10 / 3, single: false },
+    'cli-toolkit': { jobs: 9, depth: 2, widest: 8, averageWidth: 4.5, rounds: 2, effectiveWidth: 4.5, single: false },
+    'module-refactor': { jobs: 10, depth: 3, widest: 6, averageWidth: 10 / 3, rounds: 3, effectiveWidth: 10 / 3, single: false },
   });
   assert.match(singleHeadDecision(fixturePlan(fixtures.discounts)).reason, /^6 jobs in a dependency chain of 3, about 2\.0 at once on average \(under 2\.5\)/);
   assert.match(singleHeadDecision(fixturePlan(fixtures['kanban-app'])).reason, /^10 jobs in a dependency chain of 3, about 3\.3 at once on average \(2\.5 or more runs them apart\)$/);
+});
+
+test('the cap on heads at once: jobs that wait for a free head count as another round', () => {
+  // shop-features under the default cap of 3: its seven independent jobs take 3 rounds, then wire: 8 jobs in 4 rounds.
+  const shop = fixturePlan(fixtures['shop-features']);
+  const capped = planShape(shop.jobs, 3);
+  assert.deepEqual([capped.rounds, capped.effectiveWidth], [4, 2]);
+  assert.match(singleHeadDecision(shop, 3).reason, /^8 jobs in a dependency chain of 2, 4 rounds at 3 heads at once, about 2\.0 at once on average \(under 2\.5\)/);
+  assert.equal(singleHeadDecision(shop, 3).single, true);
+  assert.equal(singleHeadDecision(shop, 8).single, false, 'with 8 heads at once it still runs apart');
+  // Independent jobs: within the cap they all run at once; past it they take rounds too.
+  const independent = (count: number) => plan(Array.from({ length: count }, (_, i) => job(`j${i}`)));
+  assert.deepEqual(singleHeadDecision(independent(3), 3), { single: false, reason: 'its 3 jobs can all run at once' });
+  assert.match(singleHeadDecision(independent(7), 3).reason, /^7 jobs with no dependencies, 3 rounds at 3 heads at once, about 2\.3 at once/);
+  assert.equal(singleHeadDecision(independent(7), 3).single, true);
+  assert.equal(singleHeadDecision(independent(5), 3).single, false, '5 jobs in 2 rounds: 2.5 at once');
+  // The benchmark's larger plans under the default cap: kanban-app (8+1+1 in 5 rounds: 2.0) and cli-toolkit (8+1 in 4:
+  // 2.25) run as one head; module-refactor (3+6+1 in 4: 2.5) still runs apart. With 8 heads at once, all three run apart.
+  const decide = (cap: number) => (['kanban-app', 'cli-toolkit', 'module-refactor'] as const).map(name => singleHeadDecision(fixturePlan(fixtures[name]), cap).single);
+  assert.deepEqual(decide(3), [true, true, false]);
+  assert.deepEqual(decide(8), [false, false, false]);
 });
 
 test('the threshold: under 2.5 jobs at once on average runs as one head, 2.5 or more doesn\'t, and jobs that can all start at once never do', () => {
