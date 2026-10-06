@@ -197,6 +197,13 @@ test('after a crash mid-turn, the reopened chat shows that turn over and its car
   assert.equal(next.running, true);
 });
 
+test('underscores inside a word stay text; at word edges they still emphasize', () => {
+  assert.match(html('call list_terminal_tabs and run_in_terminal'), /list_terminal_tabs and run_in_terminal/);
+  assert.doesNotMatch(html('call list_terminal_tabs'), /<em>/);
+  assert.match(html('this is _quiet_ and __loud__'), /<em>quiet<\/em> and <strong>loud<\/strong>/);
+  assert.match(html('snake_case and *star*'), /snake_case and <em>star<\/em>/);
+});
+
 test('hostile markdown can\'t stall the page', () => {
   const started = Date.now();
   html('```' + ' '.repeat(200_000) + '!');

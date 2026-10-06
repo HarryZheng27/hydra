@@ -602,6 +602,7 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .chat-terminal { flex: 1.6; min-height: 260px; display: flex; padding: 0 max(24px, calc((100% - 960px) / 2)) 14px; }
 .terminal-pane { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg); overflow: hidden; }
 .terminal-pane .xterm { height: 100%; }
+.terminal-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
 .chat:has(.chat-terminal) .transcript { flex: 0 1 auto; max-height: 38%; }
 
 /* Wider side margins in a chat, nearer Claude desktop's: at least 56px each side, and a 720px column once there's room. */
@@ -819,7 +820,7 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .shell-tab-close .icon { width: 12px; height: 12px; }
 .shell-add { color: var(--muted); }
 .shell-body { flex: 1; min-height: 0; padding: 4px 10px 8px; }
-.shell-body .terminal-pane { height: 100%; }
+.shell-body .terminal-wrap, .shell-body .terminal-pane { height: 100%; }
 .head-menu li.disabled { opacity: .45; cursor: default; }
 
 /* The Agents view, as Claude desktop would draw it. The IDE's canvas (webview/) brings its own styles but not its
