@@ -201,6 +201,9 @@ export function headSettings(input: HeadSettingsInput): ClaudeSettings {
     ...denyPairs([{ path: input.storage, dir: true }], input.platform, ['Edit']),
     ...denyPairs(input.otherWorktrees.map(item => ({ path: item, dir: true })), input.platform),
     ...denyPairs([{ path: api.join(input.leadFolder, '.hydra'), dir: true }, { path: api.join(input.leadFolder, '.git'), dir: true }], input.platform),
+    // HSEC-09: the worktree's own .git file says where git finds its metadata; a head that rewrote it could have
+    // Hydra's git calls read a config of its making. It reads it freely (git tools do), but never edits it.
+    ...denyPairs([{ path: api.join(input.worktree, '.git'), dir: false }, { path: api.join(input.worktree, '.git'), dir: true }], input.platform, ['Edit']),
     ...denyPairs(secretTargets(input.env, input.platform), input.platform),
   ])];
   const plugins = [...new Set(input.userPlugins ?? [])].filter(id => pluginIdForm.test(id)).sort();

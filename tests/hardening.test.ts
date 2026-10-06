@@ -186,6 +186,59 @@ test('1.4 git hardening: hydra_done refuses acceptance when .git/hooks changed m
   } finally { await f.close(); }
 });
 
+test('HSEC-09: hydra_done refuses a worktree whose .git was repointed, before Hydra runs git there', async () => {
+  let marker = '';
+  const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
+    const wt = helper.spec.worktree;
+    await helper.commit('src/x.ts', 'x\n');
+    const original = await readFile(path.join(wt, '.git'), 'utf8');
+    // A repository of the head's own making, whose config runs a command on `git add` (a clean filter).
+    marker = path.join(path.dirname(wt), 'pwned');
+    const fake = path.join(wt, 'fake');
+    await git(wt, ['init', '-q', fake]);
+    await git(fake, ['config', 'filter.p.clean', `echo pwned > "${marker.replace(/\\/g, '/')}"; cat`]);
+    await writeFile(path.join(wt, '.gitattributes'), '* filter=p\n');
+    await writeFile(path.join(wt, 'src', 'y.ts'), 'y\n');
+    await writeFile(path.join(wt, '.git'), `gitdir: ${path.join(fake, '.git')}\n`);
+    const first = await helper.call('hydra_done', { summary: 'repointed .git' });
+    assert.equal(first.result.accepted, false);
+    assert.match(first.result.message, /won't run git in your worktree: its \.git file points outside/);
+    await assert.rejects(readFile(marker), 'the filter never ran');
+    // Put back, the work is accepted.
+    await writeFile(path.join(wt, '.git'), original);
+    await rm(fake, { recursive: true, force: true }); await rm(path.join(wt, '.gitattributes'));
+    const second = await helper.call('hydra_done', { summary: 'put it back' });
+    assert.equal(second.result.accepted, true);
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('repoint');
+    const [head] = (await f.wait([job_id])).heads;
+    assert.equal(head.state, 'done'); assert.equal(head.attempts, 1, 'the refusal spends no attempt');
+    await assert.rejects(readFile(marker), 'the filter never ran, not even later');
+  } finally { await f.close(); }
+});
+
+test('HSEC-30: hydra_done refuses when the git settings check can\'t run, rather than calling it unchanged', async () => {
+  const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
+    await helper.commit('src/x.ts', 'x\n');
+    const common = (await git(helper.spec.worktree, ['rev-parse', '--git-common-dir'])).trim();
+    const hooksDir = path.isAbsolute(common) ? path.join(common, 'hooks') : path.join(helper.spec.worktree, common, 'hooks');
+    // A folder among the hooks can't be read as a file: the fingerprint throws.
+    await mkdir(path.join(hooksDir, 'zz'), { recursive: true });
+    const first = await helper.call('hydra_done', { summary: 'unreadable hooks' });
+    assert.equal(first.result.accepted, false);
+    assert.match(first.result.message, /git settings or hooks changed.*couldn't be read/s);
+    await rm(path.join(hooksDir, 'zz'), { recursive: true });
+    assert.equal((await helper.call('hydra_done', { summary: 'readable again' })).result.accepted, true);
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('unreadable');
+    assert.equal((await f.wait([job_id])).heads[0].state, 'done');
+  } finally { await f.close(); }
+});
+
 test('gitMetaFingerprint changes when a hook is added or core.fsmonitor is set', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-gitmeta-'));
   try {
