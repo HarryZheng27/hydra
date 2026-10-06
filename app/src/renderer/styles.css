@@ -786,3 +786,23 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .composer .round.send .icon path, .home-prompt .round.send .icon path { stroke-width: 1.8; }
 .composer .round.send:not(:disabled), .home-prompt .round.send:not(:disabled) { color: var(--fg); }
 .composer .round.send:disabled, .home-prompt .round.send:disabled { color: var(--muted); opacity: .55; }
+
+/* Claude desktop's terminal panel, beside the chat: a card with tabs (Terminal 1, the shell's name on the open one),
+   + for another, then maximize and close; the shell fills the rest. Maximized, it takes the chat's place. */
+.shell-panel { flex: 0 0 52%; min-width: 380px; display: flex; flex-direction: column; margin: 8px 8px 8px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--input-bg); overflow: hidden; }
+.shell-max .main { display: none; }
+.shell-max .shell-panel { flex: 1 1 auto; margin-left: 8px; }
+.shell-bar { flex: none; display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 8px; }
+.shell-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.shell-tab { flex: none; display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 4px 0 10px; border-radius: 6px; color: var(--muted); font-size: 14px; }
+.shell-tab:hover { color: var(--fg); }
+.shell-tab.active { background: var(--hover); color: var(--fg); }
+.shell-tab-name { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.shell-kind { color: var(--muted); max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+.shell-tab-close { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--muted); }
+.shell-tab-close:hover { background: var(--hover); color: var(--fg); }
+.shell-tab-close .icon { width: 12px; height: 12px; }
+.shell-add { color: var(--muted); }
+.shell-body { flex: 1; min-height: 0; padding: 4px 10px 8px; }
+.shell-body .terminal-pane { height: 100%; }
+.head-menu li.disabled { opacity: .45; cursor: default; }

@@ -202,8 +202,10 @@ if (role === 'resume') {
     await until(`document.querySelectorAll('.turn-end').length > ${report.resume.restoredTurnEnds}`, 'the resumed turn to end');
     report.resume.lastTurn = await ui(`[...document.querySelectorAll('.turn-end')].at(-1)?.className ?? ''`);
     report.resume.reply = await ui(`[...document.querySelectorAll('.msg.assistant')].at(-1)?.textContent ?? ''`);
-    // Open in terminal: the CLI's own resume in a console (the harness records the launch; no window opens).
-    await ui(`document.querySelector('.chat-head .head-action[aria-label="Open in terminal"]').click(); 1`);
+    // Open in terminal, from the header's ⋮ menu: the CLI's own resume in a console (the harness records the launch; no window opens).
+    await ui(`document.querySelector('.chat-head .head-action[aria-label="More"]').click(); 1`);
+    await until(`!!document.querySelector('.head-menu [aria-label="Open in terminal"]')`, 'the chat menu');
+    await ui(`document.querySelector('.head-menu [aria-label="Open in terminal"]').click(); 1`);
     for (let i = 0; i < 100 && !report.signIns.length; i++) await wait(100);
     report.resume.terminal = report.signIns[0] ?? null;
     // The Codex chat: the next message resumes its thread in a new app-server.
