@@ -73,10 +73,35 @@ export function App() {
   const [shells, setShells] = useState<Record<string, { tabs: ShellTab[]; active?: string; next: number }>>({});
   const [shellShown, setShellShown] = useState(false);
   const [shellMax, setShellMax] = useState(false);
-  const addShell = (chatId: string) => void window.hydra.terminalShell(chatId).then(({ id }) => setShells(current => {
-    const mine = current[chatId] ?? { tabs: [], next: 1 };
-    return { ...current, [chatId]: { tabs: [...mine.tabs, { id, n: mine.next }], active: id, next: mine.next + 1 } };
-  }), (e: unknown) => { setShellShown(false); setError(e instanceof Error ? e.message : String(e)); });
+  // Each chat's shell that is still starting, for Run (runInShell).
+  const startingShell = useRef<Record<string, Promise<string | undefined>>>({});
+  const addShell = (chatId: string, then?: (id: string | undefined) => void) => void window.hydra.terminalShell(chatId).then(({ id }) => {
+    setShells(current => {
+      const mine = current[chatId] ?? { tabs: [], next: 1 };
+      return { ...current, [chatId]: { tabs: [...mine.tabs, { id, n: mine.next }], active: id, next: mine.next + 1 } };
+    });
+    then?.(id);
+  }, (e: unknown) => { setShellShown(false); setError(e instanceof Error ? e.message : String(e)); then?.(undefined); });
+  // A shell block's Run (Claude desktop's): the panel shows, and the command is typed into the chat's open shell, or a
+  // new one. The user clicked it and watches it run there; the chat's agent never runs anything this way.
+  const runInShell = (chatId: string, command: string) => {
+    if (browserShown) { setBrowserShown(false); void window.hydra.browserClose(); }
+    setShellShown(true);
+    const type = (id: string | undefined) => void (id && window.hydra.terminalWrite(id, command).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))));
+    // A shell still starting takes the command too, so two quick clicks don't open two shells.
+    const starting = startingShell.current[chatId];
+    if (starting) { void starting.then(type); return; }
+    const mine = shells[chatId];
+    const live = mine?.tabs.find(tab => tab.id === mine.active && !tab.ended) ?? mine?.tabs.filter(tab => !tab.ended).at(-1);
+    if (live) {
+      setShells(current => ({ ...current, [chatId]: { ...current[chatId]!, active: live.id } }));
+      type(live.id);
+      return;
+    }
+    const started = new Promise<string | undefined>(resolve => addShell(chatId, resolve));
+    startingShell.current[chatId] = started;
+    void started.then(id => { delete startingShell.current[chatId]; type(id); });
+  };
   const closeShell = (chatId: string, id: string) => {
     void window.hydra.terminalClose(id).catch(() => undefined);
     setShells(current => {
@@ -428,6 +453,7 @@ export function App() {
                     if (!shells[chat.id]?.tabs.length) addShell(chat.id);
                   }}
                   shellOpen={shellShown}
+                  onRun={command => runInShell(chat.id, command)}
                   browserOpen={browserShown}
                   {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {
                     if (!result.started) setError(result.error ?? "The terminal didn't open.");

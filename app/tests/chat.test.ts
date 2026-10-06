@@ -8,13 +8,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
+import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, runButtonNote, trustedProjects } from '../src/main/chats';
+import { cmdUnsafe } from '../../src/core/process';
 import { ClaudeAdapter } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
 import { consoleScript } from '../src/main/console';
-import { Markdown, safeHref } from '../src/renderer/markdown';
+import { Markdown, runnable, safeHref } from '../src/renderer/markdown';
 import { EmptyState } from '../src/renderer/EmptyState';
 import { nextStatus } from '../src/renderer/chatStatus';
 import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
@@ -47,6 +48,22 @@ test('HTML, scripts and javascript: links in model output render inert', () => {
   assert.equal(safeHref('JaVaScRiPt:alert(1)'), undefined);
   assert.equal(safeHref('https://user:pw@example.com'), undefined);
   assert.equal(safeHref(' https://example.com '), 'https://example.com/');
+});
+
+test('a closed shell block gets Run; other blocks, open fences and long scripts do not', () => {
+  const ran: string[] = [];
+  const withRun = (text: string) => renderToStaticMarkup(createElement(Markdown, { text, onRun: command => ran.push(command) }));
+  assert.match(withRun('```bash\ngh pr view 3\n```'), /class="code-run"/);
+  assert.match(withRun('```powershell\nGet-Date\n```'), /class="code-run"/);
+  assert.doesNotMatch(withRun('```ts\nconst a = 1;\n```'), /code-run/);
+  assert.doesNotMatch(withRun('```bash\ngh pr merge 3 --ad'), /code-run/, 'still streaming');
+  assert.doesNotMatch(withRun('```bash\n\n```'), /code-run/, 'nothing to run');
+  assert.doesNotMatch(html('```bash\nls\n```'), /code-run/, 'no Run where the chat offers none');
+  assert.equal(runnable('bash', 'npm test\n\n'), 'npm test\r');
+  assert.equal(runnable('sh', 'cd app\nnpm test'), 'cd app\rnpm test\r');
+  assert.equal(runnable('bash', 'x'.repeat(5000)), undefined);
+  for (const hidden of ['\t', '\x1b[2K', '\x03', '‮', '​', '﻿']) assert.equal(runnable('bash', `echo hi${hidden}rm x`), undefined, JSON.stringify(hidden));
+  assert.equal(ran.length, 0, 'rendering runs nothing');
 });
 
 test('approval-looking text in a reply renders as text, never as a card', () => {
@@ -108,6 +125,9 @@ test('a chat is saved as it streams, and after a restart the next message resume
     const args = first.starts[0]!.args;
     assert.equal(args[args.indexOf('--session-id') + 1], chat.providerSessionId);
     assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
+    // Claude is told about the Run button, in words the CLI's cmd launcher takes as one argument.
+    assert.equal(args[args.indexOf('--append-system-prompt') + 1], runButtonNote);
+    assert.doesNotMatch(runButtonNote, cmdUnsafe);
     const say = (message: unknown) => first.starts[0]!.handlers.line(JSON.stringify(message));
     say({ type: 'system', subtype: 'init', session_id: chat.providerSessionId });
     say({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } } });

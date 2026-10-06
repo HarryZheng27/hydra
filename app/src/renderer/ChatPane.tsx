@@ -25,6 +25,8 @@ interface Props {
   onOpenTerminal(): void;
   /** Claude desktop's terminal panel (a shell in this chat's folder, beside it): the header's terminal button. */
   onShell?(): void;
+  /** A shell block's Run: types the command into this chat's terminal panel. */
+  onRun?(command: string): void;
   shellOpen?: boolean;
   /** Opens Settings, where Your agents shows what is installed. */
   onOpenSettings?(): void;
@@ -214,7 +216,7 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return used === undefined ? undefined : { used, ...(window ? { window } : {}) };
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands, weekly, onShell, shellOpen }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands, weekly, onShell, shellOpen, onRun }: Props) {
   // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
   const [slot, setSlot] = useState<Element | null>(null);
   useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
@@ -276,7 +278,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
           switch (item.kind) {
             case 'steps': return <ToolSteps key={item.key} tools={item.tools} />;
             case 'user': return <div key={item.key} className="msg user"><div className="bubble">{item.text}{item.images ? <span className="chip">{item.images} image{item.images > 1 ? 's' : ''}</span> : null}</div></div>;
-            case 'text': return <div key={item.key} className="msg assistant"><Markdown text={item.text} /></div>;
+            case 'text': return <div key={item.key} className="msg assistant"><Markdown text={item.text} {...(onRun ? { onRun } : {})} /></div>;
             case 'thinking': return <details key={item.key} className="thinking"><summary>Thinking</summary><div className="thinking-text">{item.text}</div></details>;
             case 'tool': return hydraCard(item, hydra);
             case 'request': {
