@@ -5,6 +5,8 @@ What changed in each Hydra release. Installers and checksums are on the [release
 ## Unreleased
 
 - **Security: a head can no longer get Hydra to run git in a repository of its own making.** A head can't edit its worktree's `.git` file, and Hydra checks that it still points into your repository before running any git there, so a planted filter or diff driver never runs outside the sandbox. The git settings check now also refuses work when it can't read the settings, instead of letting it through.
+- **Heads split less often, and only when it pays.** The lead now splits a task only when each piece is a substantial change and the whole would take one agent well over 15 minutes. A plan whose jobs would mostly queue behind the heads-at-once limit (`hydra.maxConcurrentHelpers`) now runs as one head, like a small chained plan already did.
+- **Benchmark results show where each head's time went:** waiting, working and gates, and why each failed gate attempt failed.
 
 ## 0.28.0 (2026-10-07)
 

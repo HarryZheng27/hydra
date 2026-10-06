@@ -743,15 +743,17 @@ export class HelperService {
   }
 
   private async checkFailed(jobId: string, attempts: number, maxAttempts: number, message: string, checks: JobCheckResult[] = [], note?: string) {
+    // What failed, in the job's history (and so in its timeline): the failing gates' ids, or the write scope.
+    const why = checks.some(gateBlocks) ? `: ${checks.filter(gateBlocks).map(check => check.id).join(', ')}` : checks.length ? '' : ': outside its write scope';
     const job = this.options.store.get(jobId)!;
     await this.options.store.update(jobId, { attempts, maxAttempts });
     if (attempts >= maxAttempts) {
-      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
+      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}${why}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
       this.changed();
       void this.stopRun(jobId);
       return { accepted: false, message: `${message}\n\nThat was the last attempt (${attempts} of ${maxAttempts}). Stop now; the lead will see the failure.` };
     }
-    await this.options.store.transition(jobId, 'running', `Gates failed (attempt ${attempts} of ${maxAttempts}).`);
+    await this.options.store.transition(jobId, 'running', `Gates failed (attempt ${attempts} of ${maxAttempts})${why}.`);
     this.changed();
     return { accepted: false, attempt: attempts, attempts_left: maxAttempts - attempts, message };
   }
@@ -1457,6 +1459,8 @@ export class HelperService {
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
+      // O9: when it moved between states, and why (the benchmark times each job's phases and gate failures from it).
+      ...(detail ? { timeline: job.history.map(event => ({ at: event.at, to: event.to, ...(event.reason ? { reason: event.reason } : {}) })) } : {}),
       // Waiting on the provider (docs/Heads.md): an open wait while it runs, and the total its runs waited.
       ...(job.providerWait && job.state === 'running' ? { provider_wait: describeProviderWait(job.provider, job.providerWait, this.now()) } : {}),
       ...(job.providerWaitMs ? { provider_wait_ms: job.providerWaitMs } : {}),

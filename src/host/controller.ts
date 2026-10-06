@@ -538,6 +538,7 @@ export class HydraController {
       onSettled: plan => { if (plan.unattended && integrationSettled(plan)) void this.writePlanReport(plan); },
       // Small plans run as one head (docs/Heads.md): on unless hydra.plans.singleHeadForSmallPlans is off.
       singleHead: () => settings.get<boolean>('plans.singleHeadForSmallPlans', true),
+      maxConcurrent: () => Math.max(1, Math.min(8, this.host.settings.get<number>('maxConcurrentHelpers', 3))),
       onGateDone: plan => { if (plan.unattended && plan.state === 'done' && integrationSettled(plan)) void this.writePlanReport(plan); },
       log: line => this.host.log(line),
       // ---- Stop all (5.3) ----

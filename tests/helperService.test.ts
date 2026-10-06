@@ -505,7 +505,7 @@ test('maxAttempts comes from gates.json; a review that can\'t run never fails th
   try {
     const once = await f.start('once');
     const failed = (await f.wait([once.job_id])).heads[0];
-    assert.equal(failed.state, 'failed'); assert.equal(failed.reason, 'Gates failed 1 time.'); assert.equal(failed.max_attempts, 1);
+    assert.equal(failed.state, 'failed'); assert.equal(failed.reason, 'Gates failed 1 time: unit.'); assert.equal(failed.max_attempts, 1);
     assert.deepEqual(failed.checks.map((check: { id: string; state: string }) => [check.id, check.state]), [['unit', 'failed'], ['review', 'notRun']]);
     const notRun = await f.start('not-run');
     const accepted = (await f.wait([notRun.job_id])).heads[0];
