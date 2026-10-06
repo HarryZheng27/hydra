@@ -779,3 +779,10 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .hover-tip { position: absolute; bottom: calc(100% + 8px); right: -6px; z-index: 50; display: flex; flex-direction: column; gap: 2px; width: max-content; max-width: 320px; padding: 8px 12px; border-radius: 8px; background: #1F1F1E; color: #FAFAF9; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); pointer-events: none; text-align: left; white-space: nowrap; }
 .hover-tip-title { font-size: 14px; font-weight: 500; }
 .hover-tip-line { font-size: 13px; color: #B5B5B0; }
+
+/* Claude desktop's send (measured at 150%): a 16px return arrow in a heavier line, dark once there is something to
+   send and grey before. */
+.composer .round.send .icon, .home-prompt .round.send .icon { width: 16px; height: 16px; }
+.composer .round.send .icon path, .home-prompt .round.send .icon path { stroke-width: 1.8; }
+.composer .round.send:not(:disabled), .home-prompt .round.send:not(:disabled) { color: var(--fg); }
+.composer .round.send:disabled, .home-prompt .round.send:disabled { color: var(--muted); opacity: .55; }

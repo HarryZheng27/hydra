@@ -10,7 +10,7 @@ const paths: Record<string, string> = {
   more: 'M10 3.6a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8zM10 9.1a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8zM10 14.6a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8z',
   pencil: 'M13.2 3.8l3 3L7 16H4v-3zM11.2 5.8l3 3',
   // Claude desktop's send (a return arrow), where a chat runs (a laptop, a cloud), and a pull request.
-  enter: 'M15.5 5v5a2 2 0 0 1-2 2H5M8 9l-3 3l3 3',
+  enter: 'M15.5 4v6.5a2 2 0 0 1-2 2H4.5M8.5 9l-3.5 3.5l3.5 3.5',
   paperclip: 'M14.5 9.5l-5 5a3 3 0 0 1-4.2-4.2l5.8-5.8a2 2 0 0 1 2.8 2.8l-5.6 5.6a1 1 0 0 1-1.4-1.4l5-5',
   slash: 'M4 4h12v12H4zM11.5 7l-3 6',
   laptop: 'M4.5 5h11v7.5h-11zM2.5 15h15',
