@@ -9,8 +9,10 @@ import { findProvider } from '../../../src/core/providers';
 import { pathWithUsualCliFolders } from './cliLookup';
 import { providerPaths } from '../../../src/core/helperRegistration';
 import { readFile } from 'node:fs/promises';
-import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, TERMINAL, BROWSER, type HydraHostMessage, type Project } from '../shared/ipc';
+import { CHAT_EVENTS, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, TERMINAL, TERMINAL_TABS, BROWSER, type HydraHostMessage, type Project } from '../shared/ipc';
 import { AppTerminals } from './terminals';
+import { AgentTerminal } from './agentTerminal';
+import { ShellTabs } from './shellTabs';
 import { BrowserPanel } from './browserPanel';
 import { claudeCommands } from './claudeCommands';
 import { pullRequests } from './pullRequests';
@@ -115,11 +117,22 @@ export function start(): void {
   // The window's terminals (G7's Continue here), in node-pty as lanes are.
   // The browser panel beside a chat (Claude desktop's globe), in a session of its own.
   const browser = new BrowserPanel({ window: getMainWindow, send: state => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(BROWSER, state); } });
-  const terminals = new AppTerminals({ appRoot: path.dirname(distDir), send: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(TERMINAL, message); } });
-  const chats = new ChatManager({
+  // The terminal panel's tabs per chat live in main (shellTabs.ts); what a terminal prints goes to its pane and to the tab's read buffer.
+  const terminals = new AppTerminals({ appRoot: path.dirname(distDir), send: message => { shellTabs.feed(message); const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(TERMINAL, message); } });
+  const shellTabs: ShellTabs = new ShellTabs({
+    terminals,
+    shell: path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    folder: chatId => chats.shellFolder(chatId),
+    push: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(TERMINAL_TABS, message); },
+  });
+  // A Claude chat's own terminal tools (agentTerminal.ts): if the endpoint or its private folder can't start, no chat gets them.
+  const agentTerminal: AgentTerminal = new AgentTerminal({ tabs: shellTabs, dir: path.join(userData, 'agent-terminal'), script: path.join(distDir, 'hydra-terminal-mcp.cjs'), executable: process.execPath, log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); } });
+  void agentTerminal.start().catch((error: unknown) => { if (process.env.HYDRA_APP_LOG === '1') console.log(`terminal tools off: ${error instanceof Error ? error.message : String(error)}`); });
+  const chats: ChatManager = new ChatManager({
     store: chatStore,
     launch: nodeLaunch(),
     warm: true,
+    agentTerminal,
     // G7: Claude cloud chats; Continue here's worktrees live under the app's own data.
     cloud: cloudChats({ appRoot: path.dirname(distDir), worktrees: path.join(userData, 'cloud-worktrees') }),
     // The PR icon: gh's own view of a pull request a chat opened. No gh, or no access: no icon change.
@@ -176,6 +189,7 @@ export function start(): void {
     if (flushed) return;
     event.preventDefault();
     try { chats.closeAll(); } catch { /* quit anyway */ }
+    try { agentTerminal.stop(); } catch { /* quit anyway */ }
     try { terminals.closeAll(); } catch { /* quit anyway */ }
     try { browser.close(); } catch { /* quit anyway */ }
     try { stopSignIns(); } catch { /* quit anyway */ }
@@ -202,10 +216,10 @@ export function start(): void {
   app.on('will-quit', () => updates.stop());
   const handlers = createHandlers({
     terminals,
+    shellTabs,
     browser,
     pullRequest: pullRequests(),
     fullName: windowsFullName,
-    shell: path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     claudeCommands: async cwd => {
       const found = await findProvider('claude', (await settings.load()).cliPaths.claude).catch(() => undefined);
       return found?.available && found.executable ? claudeCommands(found.executable, cwd) : [];

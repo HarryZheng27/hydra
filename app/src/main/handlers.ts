@@ -1,6 +1,7 @@
 import type { AppSettings, AppState, CliProvider, HydraConnection, HydraTreeMessage, OnboardingReport, Project, HydraControl, HydraStopState, UpdateStatusView } from '../shared/ipc';
 import type { BrowserPanel } from './browserPanel';
 import type { AppTerminals } from './terminals';
+import type { ShellTabs } from './shellTabs';
 import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
@@ -48,8 +49,8 @@ export interface HandlerDeps {
   confirmTrust(project: Project): Promise<boolean>;
   /** The window's terminals (G7's Continue here). */
   terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close' | 'start'>;
-  /** The shell the terminal panel starts (Windows PowerShell). */
-  shell?: string;
+  /** The terminal panel's tabs per chat, kept in main (the user's and the chat's agent's). */
+  shellTabs?: Pick<ShellTabs, 'openForUser' | 'closeById' | 'list'>;
   /** Claude Code's slash commands for a trusted folder (claudeCommands.ts). */
   claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   /** The browser panel beside a chat. */
@@ -183,13 +184,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.continueCloud': ({ id }) => deps.chats.continueCloud(id),
     'terminal.write': ({ id, data }) => { deps.terminals?.write(id, data); return null; },
     'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); return null; },
-    'terminal.close': ({ id }) => { deps.terminals?.close(id); return null; },
+    'terminal.close': ({ id }) => { deps.shellTabs?.closeById(id); deps.terminals?.close(id); return null; },
     'terminal.shell': async ({ chatId }) => {
-      if (!deps.terminals || !deps.shell) throw new Error("Hydra can't open a terminal here.");
       // Only in the folder of a chat the user trusted, as a chat runs there; the window names the chat, never a path.
-      const cwd = await deps.chats.shellFolder(chatId);
-      return { id: deps.terminals.start(deps.shell, [], cwd) };
+      if (!deps.shellTabs) throw new Error("Hydra can't open a terminal here.");
+      return { id: await deps.shellTabs.openForUser(chatId) };
     },
+    'terminal.tabs': ({ chatId }) => deps.shellTabs?.list(chatId) ?? [],
     'chats.commands': async ({ projectId }) => {
       // Only in a folder the user trusted: starting Claude Code there runs the project's hooks.
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
