@@ -50,7 +50,7 @@ export interface HandlerDeps {
   /** The window's terminals (G7's Continue here). */
   terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close' | 'start'>;
   /** The terminal panel's tabs per chat, kept in main (the user's and the chat's agent's). */
-  shellTabs?: Pick<ShellTabs, 'openForUser' | 'closeById' | 'list'>;
+  shellTabs?: Pick<ShellTabs, 'openForUser' | 'closeById' | 'list' | 'resize'>;
   /** Claude Code's slash commands for a trusted folder (claudeCommands.ts). */
   claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   /** The browser panel beside a chat. */
@@ -183,7 +183,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.setWhere': ({ id, where }) => deps.chats.setWhere(id, where),
     'chats.continueCloud': ({ id }) => deps.chats.continueCloud(id),
     'terminal.write': ({ id, data }) => { deps.terminals?.write(id, data); return null; },
-    'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); return null; },
+    'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); deps.shellTabs?.resize(id, cols, rows); return null; },
     'terminal.close': ({ id }) => { deps.shellTabs?.closeById(id); deps.terminals?.close(id); return null; },
     'terminal.shell': async ({ chatId }) => {
       // Only in the folder of a chat the user trusted, as a chat runs there; the window names the chat, never a path.

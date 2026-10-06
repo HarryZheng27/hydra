@@ -28,7 +28,8 @@ const MAX_INLINE = 4000;
 export function inline(text: string): ReactNode[] {
   if (text.length > MAX_INLINE) return [text];
   const out: ReactNode[] = [];
-  const pattern = /(`{1,8})([^`]{1,4000}?)\1(?!`)|\[([^\]\n]{1,500})\]\(([^)\s]{1,2000})\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
+  // Underscores emphasize only at word edges, as in CommonMark: run_in_terminal stays one word.
+  const pattern = /(`{1,8})([^`]{1,4000}?)\1(?!`)|\[([^\]\n]{1,500})\]\(([^)\s]{1,2000})\)|\*\*([^*\n]+)\*\*|(?<![\p{L}\p{N}_])__([^_\n]+)__(?![\p{L}\p{N}_])|\*([^*\n]+)\*|(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])/gu;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text))) {
