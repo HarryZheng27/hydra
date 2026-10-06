@@ -35,6 +35,7 @@ test('a Codex name comes from one ephemeral, read-only codex exec on the user\'s
     const exe = process.platform === 'win32' ? path.join(dir, 'codex.cmd') : path.join(dir, 'codex');
     fs.writeFileSync(exe, process.platform === 'win32' ? `@"${process.execPath}" "%~dp0fake.js" %*\r\n` : `#!/bin/sh\nexec "${process.execPath}" "${path.join(dir, 'fake.js')}" "$@"\n`, { mode: 0o755 });
     process.env.FAKE_LOG = path.join(dir, 'log.json');
+    fs.mkdirSync(path.join(os.tmpdir(), 'hydra-chat-titles'), { recursive: true });
     const before = new Set(fs.readdirSync(path.join(os.tmpdir(), 'hydra-chat-titles')).filter(name => name.startsWith('codex-')));
     assert.equal(await codexTitle(exe, 'the login page throws when the password has a quote in it'), 'Fix the login page');
     const called = JSON.parse(fs.readFileSync(process.env.FAKE_LOG, 'utf8')) as { args: string[]; input: string };
