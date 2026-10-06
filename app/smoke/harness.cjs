@@ -294,6 +294,14 @@ if (role === 'resume') {
       // The canvas fills the view (it once had no height, so only its toolbar showed); --smoke-shots saves a picture of it.
       report.agents.canvasSize = await ui(`(() => { const box = document.querySelector('.ide-agents .canvas-viewport')?.getBoundingClientRect(); return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null; })()`);
       if (arg('shots')) fs.writeFileSync(path.join(arg('shots'), 'agents.png'), (await wc.capturePage()).toPNG());
+      // The canvas in both themes, so a dark-mode or light-mode slip shows in the pictures (--smoke-shots only).
+      const agentsTheme = async theme => {
+        await ui(`window.hydra.setTheme(${JSON.stringify(theme)}).then(() => 1)`);
+        for (let i = 0; i < 50 && (await ui(`document.documentElement.dataset.theme`)) !== theme; i++) await wait(100);
+        await ui(`new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(1))))`);
+        await wait(500);
+      };
+      if (arg('shots')) for (const theme of ['light', 'dark']) { await agentsTheme(theme); fs.writeFileSync(path.join(arg('shots'), `agents-canvas-${theme}.png`), (await wc.capturePage()).toPNG()); }
 
       // G5 milestone 4: a lane, a real terminal (node-pty and xterm) over the CLI in its own worktree. The stand-in
       // CLI answers nothing interactive and exits, so the lane starts, runs it, and shows it ended.
@@ -302,10 +310,13 @@ if (role === 'resume') {
       report.agents.lanes = { unavailable: await ui(`document.querySelector('.ide-agents .lanes-empty')?.textContent ?? ''`) };
       await ui(`[...document.querySelectorAll('.ide-agents .lanes-controls button')].find(b => b.textContent === 'New lane').click(); 1`);
       await until(`[...document.querySelectorAll('.ide-agents .lanes-grid button')].some(b => b.textContent === 'Start lane')`, 'the new lane form');
+      if (arg('shots')) for (const theme of ['light', 'dark']) { await agentsTheme(theme); fs.writeFileSync(path.join(arg('shots'), `agents-lanes-new-${theme}.png`), (await wc.capturePage()).toPNG()); }
       await ui(`[...document.querySelectorAll('.ide-agents .lanes-grid button')].find(b => b.textContent === 'Start lane').click(); 1`);
       await until(`!!document.querySelector('.ide-agents .lanes-grid .xterm, .ide-agents .lane-row')`, 'the lane\'s terminal', 30000);
       report.agents.lanes.terminal = await ui(`!!document.querySelector('.ide-agents .lanes-grid .xterm')`);
       await until(`!!document.querySelector('.ide-agents .lane-row')`, 'the lane to end', 30000).catch(() => undefined);
+      if (arg('shots')) for (const theme of ['light', 'dark']) { await agentsTheme(theme); fs.writeFileSync(path.join(arg('shots'), `agents-lanes-${theme}.png`), (await wc.capturePage()).toPNG()); }
+      if (arg('shots')) await ui(`window.hydra.setTheme('system').then(() => 1)`);
       report.agents.lanes.rows = await ui(`[...document.querySelectorAll('.ide-agents .lane-row, .ide-agents .lane-dot')].map(e => e.className)`);
       report.agents.lanes.worktrees = (() => { try { return fs.readdirSync(path.join(path.dirname(arg('folder')), 'Project One.worktrees')); } catch { return []; } })();
 
@@ -532,7 +543,20 @@ if (role === 'first') {
       report.chat.title = await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent)`);
       const chats = path.join(app.getPath('userData'), 'chats');
       report.chat.files = fs.readdirSync(chats).sort();
+      // The branch bar above the prompt: the project's repository and branch, and no Create PR on its default branch.
+      await until(`!!document.querySelector('.branch-bar .pr-branch')`, 'the branch bar', 15000).catch(() => undefined);
+      report.chat.branchBar = await ui(`(() => { const bar = document.querySelector('.branch-bar'); return bar ? { repo: bar.querySelector('.pr-repo')?.textContent, branch: bar.querySelector('.pr-branch')?.textContent, createPr: !!bar.querySelector('.branch-create') } : null; })()`);
       await shot('chat');
+      // --smoke-shots only: the same chat on a feature branch with a GitHub origin, where Create PR shows.
+      if (arg('shots')) {
+        const git = (...args) => childProcess.spawnSync('git', args, { cwd: arg('folder'), windowsHide: true, encoding: 'utf8' });
+        const original = git('symbolic-ref', '--short', 'HEAD').stdout.trim();
+        git('checkout', '-q', '-b', 'smoke-feature'); git('remote', 'add', 'origin', 'https://github.com/example/project-one.git');
+        await ui(`window.dispatchEvent(new Event('focus')); 1`);
+        await until(`!!document.querySelector('.branch-bar .branch-create')`, 'Create PR on a feature branch', 15000).catch(() => undefined);
+        await shot('chat-create-pr');
+        git('remote', 'remove', 'origin'); git('checkout', '-q', original); git('branch', '-q', '-D', 'smoke-feature');
+      }
 
       // A chat with Codex in the same, already trusted folder: deny, allow, then stop mid-command.
       await ui(`document.querySelector('[aria-label="New chat in Project One"]').click(); 1`);

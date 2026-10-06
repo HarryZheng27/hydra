@@ -9,6 +9,7 @@ import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
 import { TerminalPane } from './TerminalPane';
 import { PrBars, chatPullRequests } from './PrBars';
+import { BranchBar, createPrPrompt } from './BranchBar';
 import { ToolSteps, runningTasks } from './ToolSteps';
 import type { SlashCommand } from './SlashMenu';
 import type { WeeklyLimit } from './ContextWheel';
@@ -307,6 +308,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
         <div ref={end} />
       </div>
       {!cloudStarted && onBrowser && <PrBars urls={pullRequests} onOpen={url => onBrowser(url)} />}
+      {!cloudStarted && record.where !== 'cloud' && pullRequests.length === 0 && <BranchBar chatId={record.id} running={view.running} onCreatePr={summary => onSend(createPrPrompt(summary))} />}
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
         : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} {...(record.provider === 'claude' && latestReportedMode(events) ? { reportedMode: latestReportedMode(events)! } : {})} context={latestContext(events)} weekly={weekly} commands={commands?.length ? commands : latestCommands(events)}
