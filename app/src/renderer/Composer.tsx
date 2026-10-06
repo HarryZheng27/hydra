@@ -159,10 +159,11 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
         <span className="composer-spacer" />
         {!cloud && <Picker label="Model" value={model} options={modelOptions} onChange={value => onConfigure({ model: value })} placeholder="Model" />}
         {!cloud && <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />}
-        <span className="composer-agent" title={`This chat runs ${codex ? 'Codex' : 'Claude Code'}; a new chat can use the other.`}><AgentLogo provider={codex ? 'codex' : 'claude'} /></span>
         {/* The context wheel: a Claude chat compacts with Claude Code's own /compact; Codex compacts by itself. */}
         {!cloud && <ContextWheel used={context?.used} window={context?.window ?? (codex ? undefined : claudeContextWindow(model))} {...(!codex && weekly ? { weekly } : {})}
           {...(!codex && !running && context ? { onCompact: () => onSend('/compact') } : {})} />}
+        {/* The agent's logo last, as on the home screen: the context ring sits to its left. */}
+        <span className="composer-agent" title={`This chat runs ${codex ? 'Codex' : 'Claude Code'}; a new chat can use the other.`}><AgentLogo provider={codex ? 'codex' : 'claude'} /></span>
       </div>
     </div>
   );
