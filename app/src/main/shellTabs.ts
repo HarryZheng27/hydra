@@ -11,13 +11,13 @@ export function lastLines(text: string, count: number): string {
   return lines.slice(-count).join('\n');
 }
 
+/** Rows a tab's screen copy keeps above what shows, for read_terminal (which reads at most 1000 lines). */
+export const SCROLLBACK = 2000;
+
 /**
  * What a tab's screen shows, kept by a headless xterm fed the same output as its pane: Windows' console redraws (the
  * cursor going home and repainting) overwrite here as they do on screen, where stripping the raw stream repeats them.
  */
-/** Rows a tab's screen copy keeps above what shows, for read_terminal (which reads at most 1000 lines). */
-export const SCROLLBACK = 2000;
-
 export class TabScreen {
   private readonly term: Headless;
   constructor(cols = 120, rows = 30) { this.term = new Headless({ cols, rows, scrollback: SCROLLBACK, allowProposedApi: true }); }
@@ -119,6 +119,13 @@ export class ShellTabs {
     mine.find(tab => tab.id === id)?.screen.dispose();
     this.tabs.set(chatId, mine.filter(tab => tab.id !== id));
     this.changed(chatId);
+  }
+
+  /** A deleted chat: its shells end and its tabs, screens included, go. */
+  dropChat(chatId: string): void {
+    for (const tab of this.tabs.get(chatId) ?? []) { this.deps.terminals.close(tab.id); tab.screen.dispose(); }
+    this.tabs.delete(chatId);
+    this.counters.delete(chatId);
   }
 
   /** The tab a window-side close names, whichever chat has it. */

@@ -132,6 +132,13 @@ test('stop_terminal_tab ends only a tab the agent started, and nothing lets the 
     // The user closing a tab (theirs or the agent's) removes it for the agent too.
     s.tabs.close(chatA, userTab);
     assert.deepEqual(JSON.parse((await s.call(token, 'list_terminal_tabs')).body.result!).map((tab: { tab_id: string }) => tab.tab_id), [agentTab]);
+    // Deleting the chat ends its shells and drops its tabs; another chat's are untouched.
+    const other = await s.tabs.openForUser(chatB);
+    const userTab2 = await s.tabs.openForUser(chatA);
+    s.tabs.dropChat(chatA);
+    assert.deepEqual(s.tabs.list(chatA), []);
+    assert.ok(s.closed.includes(userTab2) && !s.closed.includes(other));
+    assert.equal(s.tabs.list(chatB).length, 1);
   } finally { s.finish(); }
 });
 
