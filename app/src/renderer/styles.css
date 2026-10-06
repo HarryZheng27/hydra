@@ -829,7 +829,7 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .ide-agents .agents-view-pane[hidden] { display: none; }
 .ide-agents .agents-view-pane > * { flex: 1; min-height: 0; }
 /* The canvas: a white board with a soft dot grid, a light side list, rounded cards. */
-.ide-agents .agents-canvas { --canvas-dot: #00000014; height: auto; grid-template-columns: minmax(0, 1fr) 300px; margin: 12px 20px 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.ide-agents .agents-canvas { --canvas-dot: #ffffff14; height: auto; grid-template-columns: minmax(0, 1fr) 300px; margin: 12px 20px 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
 .ide-agents .canvas-toolbar { padding: 10px 14px; }
 .ide-agents .canvas-title strong { font-size: 14px; }
 .ide-agents .canvas-title span { font-size: 13px; }
@@ -838,7 +838,9 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .ide-agents .canvas-zoom button:first-child { border-radius: var(--radius-m) 0 0 var(--radius-m); }
 .ide-agents .canvas-zoom button:last-child { border-radius: 0 var(--radius-m) var(--radius-m) 0; }
 .ide-agents .canvas-viewport { min-height: 240px; background: radial-gradient(var(--canvas-dot) 1px, transparent 1.2px) 0 0 / 20px 20px, var(--bg); }
-.ide-agents .canvas-node-card, .ide-agents .canvas-lead, .ide-agents .canvas-plan-lead { border-radius: 12px; background: var(--input-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 8px 24px -16px rgba(0, 0, 0, .25); }
+.ide-agents .canvas-node-card, .ide-agents .canvas-lead, .ide-agents .canvas-plan-lead { border-radius: 12px; background: var(--input-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 8px 24px -16px rgba(0, 0, 0, .6); }
+:root[data-theme="light"] .ide-agents .agents-canvas { --canvas-dot: #00000014; }
+:root[data-theme="light"] .ide-agents .canvas-node-card, :root[data-theme="light"] .ide-agents .canvas-lead, :root[data-theme="light"] .ide-agents .canvas-plan-lead { box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 8px 24px -16px rgba(0, 0, 0, .25); }
 .ide-agents .canvas-node-title { font-size: 14px; }
 .ide-agents .canvas-node-detail, .ide-agents .canvas-plan-status { font-size: 13px; }
 .ide-agents .canvas-node-top, .ide-agents .canvas-node-foot { font-size: 12px; }
@@ -869,3 +871,40 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .ide-agents .canvas-controls { flex-wrap: wrap; gap: 6px; }
 .ide-agents .canvas-zoom { flex: none; }
 @media (max-width: 1280px) { .ide-agents .agents-canvas { grid-template-columns: minmax(0, 1fr) 240px; } }
+
+/* The Lanes tab: the same frame, buttons and corners as the canvas, in both themes. */
+.ide-agents .lanes-view { height: auto; margin: 12px 20px 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.ide-agents .lanes-toolbar { padding: 10px 14px; }
+.ide-agents .lanes-title strong { font-size: 14px; }
+.ide-agents .lanes-title span { font-size: 13px; }
+.ide-agents .lanes-controls { gap: 6px; }
+.ide-agents .lanes-controls .canvas-button:disabled { opacity: .45; cursor: default; }
+.ide-agents .lanes-controls .canvas-button:disabled:hover { background: transparent; }
+.ide-agents .lanes-grid { padding: 14px; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr)); }
+.ide-agents .lanes-empty, .ide-agents .lanes-empty-hint { padding: 32px 20px; font-size: 13px; }
+.ide-agents .lane-new, .ide-agents .lane-tile, .ide-agents .lane-row { border-radius: 12px; background: var(--input-bg); }
+.ide-agents .lane-row { padding: 8px 12px; border-radius: var(--radius-m); }
+.ide-agents .lane-new { gap: 12px; padding: 16px; }
+.ide-agents .lane-new label, .ide-agents .lane-new-field { font-size: 12px; }
+.ide-agents .lane-new input, .ide-agents .lane-new textarea, .ide-agents .lane-new select { padding: 7px 10px; border-radius: var(--radius-m); background: var(--bg); border-color: var(--input-border); font-size: 13.5px; color: var(--fg); }
+.ide-agents .lane-new input:focus-visible, .ide-agents .lane-new textarea:focus-visible, .ide-agents .lane-new select:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.ide-agents .lane-new-provider button { height: 30px; padding: 0 12px; border-radius: var(--radius-m); font-size: 13px; }
+.ide-agents .lane-new-provider button.on, .ide-agents .lane-tile-actions button.primary, .ide-agents .lane-limit-actions button.primary { background: var(--button-bg); color: var(--button-fg); border-color: transparent; }
+.ide-agents .lane-new-actions { align-items: center; }
+.ide-agents .lane-new-actions button, .ide-agents .lane-exited-actions button, .ide-agents .lane-row-actions button, .ide-agents .lane-tile-actions button:not(.text-button), .ide-agents .lane-limit-actions button { height: 28px; padding: 0 12px; border-radius: var(--radius-m); font-size: 13px; }
+.ide-agents .lane-new-actions .primary { border: 0; }
+.ide-agents .lane-new-actions .primary:hover:not(:disabled) { background: var(--button-hover); }
+.ide-agents .lane-new-actions .primary:disabled { opacity: .5; }
+.ide-agents .text-button, .ide-agents .lane-row-actions button:not(.lane-row-toggle) { border: 0; background: transparent; color: var(--muted); }
+.ide-agents .text-button:hover:not(:disabled), .ide-agents .lane-row-actions button:not(.lane-row-toggle):hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.ide-agents .text-button:disabled, .ide-agents .lane-row-actions button:disabled { opacity: .45; }
+.ide-agents .lane-row-actions .danger { color: var(--error); }
+.ide-agents .lane-tile-head, .ide-agents .lane-tile-foot { border-color: var(--border); }
+.ide-agents .lane-name { font-size: 14px; }
+.ide-agents .lane-branch { font-size: 12px; }
+.ide-agents .lane-chip, .ide-agents .gate-chip, .ide-agents .lane-role-chip { font-size: 11.5px; }
+.ide-agents .lane-menu { border-radius: 10px; background: var(--input-bg); box-shadow: 0 8px 28px rgba(0, 0, 0, .3), 0 1px 3px rgba(0, 0, 0, .1); }
+.ide-agents .lane-menu button { font-size: 13px; }
+:root[data-theme="light"] .ide-agents .lane-menu { box-shadow: 0 8px 28px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .06); }
+.ide-agents .lane-tile-body { background: var(--bg); }
+.ide-agents .lane-dot.state-running { background: var(--state-run); }
