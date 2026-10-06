@@ -8,13 +8,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatEvent } from '../../src/core/chat/events';
 import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
-import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, trustedProjects } from '../src/main/chats';
-import { ClaudeAdapter } from '../../src/core/chat/claude';
+import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, runButtonNote, trustedProjects } from '../src/main/chats';
+import { cmdUnsafe } from '../../src/core/process';
+import { ClaudeAdapter, claudeArguments } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
 import { consoleScript } from '../src/main/console';
-import { Markdown, safeHref } from '../src/renderer/markdown';
+import { Markdown, runnable, safeHref } from '../src/renderer/markdown';
 import { EmptyState } from '../src/renderer/EmptyState';
 import { nextStatus } from '../src/renderer/chatStatus';
 import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
@@ -47,6 +48,22 @@ test('HTML, scripts and javascript: links in model output render inert', () => {
   assert.equal(safeHref('JaVaScRiPt:alert(1)'), undefined);
   assert.equal(safeHref('https://user:pw@example.com'), undefined);
   assert.equal(safeHref(' https://example.com '), 'https://example.com/');
+});
+
+test('a closed shell block gets Run; other blocks, open fences and long scripts do not', () => {
+  const ran: string[] = [];
+  const withRun = (text: string) => renderToStaticMarkup(createElement(Markdown, { text, onRun: command => ran.push(command) }));
+  assert.match(withRun('```bash\ngh pr view 3\n```'), /class="code-run"/);
+  assert.match(withRun('```powershell\nGet-Date\n```'), /class="code-run"/);
+  assert.doesNotMatch(withRun('```ts\nconst a = 1;\n```'), /code-run/);
+  assert.doesNotMatch(withRun('```bash\ngh pr merge 3 --ad'), /code-run/, 'still streaming');
+  assert.doesNotMatch(withRun('```bash\n\n```'), /code-run/, 'nothing to run');
+  assert.doesNotMatch(html('```bash\nls\n```'), /code-run/, 'no Run where the chat offers none');
+  assert.equal(runnable('bash', 'npm test\n\n'), 'npm test\r');
+  assert.equal(runnable('sh', 'cd app\nnpm test'), 'cd app\rnpm test\r');
+  assert.equal(runnable('bash', 'x'.repeat(5000)), undefined);
+  for (const hidden of ['\t', '\x1b[2K', '\x03', '‮', '​', '﻿']) assert.equal(runnable('bash', `echo hi${hidden}rm x`), undefined, JSON.stringify(hidden));
+  assert.equal(ran.length, 0, 'rendering runs nothing');
 });
 
 test('approval-looking text in a reply renders as text, never as a card', () => {
@@ -108,6 +125,9 @@ test('a chat is saved as it streams, and after a restart the next message resume
     const args = first.starts[0]!.args;
     assert.equal(args[args.indexOf('--session-id') + 1], chat.providerSessionId);
     assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
+    // Claude is told about the Run button, in words the CLI's cmd launcher takes as one argument.
+    assert.equal(args[args.indexOf('--append-system-prompt') + 1], runButtonNote);
+    assert.doesNotMatch(runButtonNote, cmdUnsafe);
     const say = (message: unknown) => first.starts[0]!.handlers.line(JSON.stringify(message));
     say({ type: 'system', subtype: 'init', session_id: chat.providerSessionId });
     say({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } } });
@@ -175,6 +195,13 @@ test('after a crash mid-turn, the reopened chat shows that turn over and its car
   // A new message after reopening is live again.
   const next = foldEvents([...events, { type: 'user', text: 'again' }], events.length);
   assert.equal(next.running, true);
+});
+
+test('underscores inside a word stay text; at word edges they still emphasize', () => {
+  assert.match(html('call list_terminal_tabs and run_in_terminal'), /list_terminal_tabs and run_in_terminal/);
+  assert.doesNotMatch(html('call list_terminal_tabs'), /<em>/);
+  assert.match(html('this is _quiet_ and __loud__'), /<em>quiet<\/em> and <strong>loud<\/strong>/);
+  assert.match(html('snake_case and *star*'), /snake_case and <em>star<\/em>/);
 });
 
 test('hostile markdown can\'t stall the page', () => {
@@ -837,4 +864,50 @@ test('a Claude chat chosen to run in Auto on Haiku shows a note under the prompt
   assert.match(page([{ type: 'session', providerSessionId: 's', model: 'claude-haiku-4-5', permissionMode: 'default' }, ...turn]), /Claude Code is running this chat in Manual mode, not Auto\. Auto isn&#x27;t available on Haiku\./);
   assert.ok(!page([{ type: 'session', providerSessionId: 's', model: 'claude-haiku-4-5', permissionMode: 'auto' }, ...turn]).includes('mode-note'));
   assert.ok(!page(turn).includes('mode-note'));
+});
+
+test('claudeArguments includes --mcp-config only for app Claude chats, and its file goes with the process', async () => {
+  // The core's own arguments never connect a terminal: only the app does, through the manager.
+  assert.ok(!claudeArguments({ provider: 'claude', cwd: '/', executable: 'claude', sessionId: '0f8fad5b-d9cb-469f-a165-70867728950e' }).includes('--mcp-config'));
+  const dir = scratch();
+  try {
+    const files: string[] = [], resolvers: Array<() => string | undefined> = [];
+    const agentTerminal = { grant: (chat: () => string | undefined) => {
+      const file = path.join(dir, `grant-${files.length}.json`);
+      fs.writeFileSync(file, '{}');
+      files.push(file); resolvers.push(chat);
+      return { args: ['--mcp-config', file], release: () => fs.rmSync(file, { force: true }) };
+    } };
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const { starts, launch } = fakeLaunch();
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined, agentTerminal });
+    // A Claude chat: the config rides on the command line, names the chat it belongs to, and is deleted when the process exits.
+    const claude = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.send(claude.id, 'hello');
+    const args = starts[0]!.args;
+    assert.equal(args[args.indexOf('--mcp-config') + 1], files[0]);
+    assert.equal(args[args.indexOf('--append-system-prompt') + 1], runButtonNote, 'the Run button note is still there');
+    assert.equal(resolvers[0]!(), claude.id);
+    assert.ok(fs.existsSync(files[0]!));
+    starts[0]!.handlers.exit(0);
+    assert.equal(fs.existsSync(files[0]!), false, 'the config file is removed when the process ends');
+    // A later process of the same chat gets a new token and file; closing the chat (kill) removes it too.
+    await manager.send(claude.id, 'again');
+    assert.equal(files.length, 2);
+    assert.notEqual(files[1], files[0]);
+    // A Codex chat gets none, and neither does a manager the app didn't give the endpoint (tests, live checks).
+    const codex = await manager.create({ cwd: dir, provider: 'codex' });
+    await manager.send(codex.id, 'hello');
+    assert.equal(files.length, 2, 'no token was minted for Codex');
+    assert.ok(starts.slice(2).every(start => !start.args.includes('--mcp-config')));
+    manager.closeAll();
+    assert.equal(fs.existsSync(files[1]!), false, 'ending the process by kill removes it too');
+    const bare = fakeLaunch();
+    const plain = new ChatManager({ store, launch: bare.launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined });
+    const chat = await plain.create({ cwd: dir, provider: 'claude' });
+    await plain.send(chat.id, 'hello');
+    assert.ok(!bare.starts[0]!.args.includes('--mcp-config'));
+    plain.closeAll();
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });

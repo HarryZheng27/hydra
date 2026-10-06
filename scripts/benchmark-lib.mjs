@@ -232,6 +232,28 @@ export function firstReviewOf({ jobKeys, fixBrief, finalReview }) {
 }
 
 /**
+ * Where one head's time went, from its timeline (hydra_get_head's `timeline`: each state it entered, when, and why)
+ * (pure): seconds from being queued to running (waiting for a free head, then its worktree and process), seconds
+ * running (blocked included), seconds in its gates, and in all; and why each failed attempt failed. Undefined
+ * without a timeline (a Hydra built before it existed).
+ */
+export function jobTiming(timeline) {
+  if (!Array.isArray(timeline) || !timeline.length) return undefined;
+  const at = event => Date.parse(event.at);
+  const spent = { queued: 0, starting: 0, running: 0, blocked: 0, checking: 0 };
+  for (let i = 0; i < timeline.length - 1; i++) if (timeline[i].to in spent) spent[timeline[i].to] += at(timeline[i + 1]) - at(timeline[i]);
+  const seconds = ms => Math.round(ms / 100) / 10;
+  const failures = timeline.filter(event => /^Gates failed/.test(event.reason ?? '')).map(event => event.reason);
+  return {
+    waitingSeconds: seconds(spent.queued + spent.starting),
+    workingSeconds: seconds(spent.running + spent.blocked),
+    gateSeconds: seconds(spent.checking),
+    totalSeconds: seconds(at(timeline[timeline.length - 1]) - at(timeline[0])),
+    ...(failures.length ? { gateFailures: failures } : {}),
+  };
+}
+
+/**
  * Hydra's run, summed up from the final plan view and what watching it saw (pure). `landing` (landingFromStore),
  * when Hydra's plan store could be read, gives exact landing times; otherwise they're as watching saw them.
  * `storedPlan`, the plan from Hydra's store, gives the first-pass review (firstReviewOf).
@@ -243,6 +265,8 @@ export function summarizeHydra({ view, observed, wallClockSeconds, passed, timed
     ...(job.head?.usage ? { usage: job.head.usage } : {}),
     // Time its head waited on the provider (rate limits, retries), so a comparison can subtract or flag it.
     ...(job.head?.provider_wait_ms ? { providerWaitMs: job.head.provider_wait_ms } : {}),
+    // Where its time went, and why its gates sent work back (jobTiming).
+    ...(jobTiming(job.head?.timeline) ? { timing: jobTiming(job.head.timeline) } : {}),
   }));
   let usd = 0, usdJobs = 0, inputTokens = 0, outputTokens = 0, tokenJobs = 0, fixUsd = 0;
   for (const job of view.jobs ?? []) {

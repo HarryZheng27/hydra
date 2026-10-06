@@ -7,7 +7,7 @@ import path from 'node:path';
 import { planFromLeadInput, findCycle } from '../src/core/plans';
 import { planFileArguments } from '../src/core/hydraCli';
 // @ts-expect-error: a plain .mjs module with no type declarations.
-import { observePlan, renderResults, summarizeHydra, summarizeSingle, taskFromPlan, tasks, withResults, resultsStart, resultsEnd, fixturePath, pickTask, taskLabel, workDoneSeconds, landingFromStore, parseCheckOutput, summarizeReview, withReview, runRows, renderSummary, spread, rate, median, globSegment, isFixJob } from '../scripts/benchmark-lib.mjs';
+import { observePlan, renderResults, summarizeHydra, summarizeSingle, taskFromPlan, tasks, withResults, resultsStart, resultsEnd, fixturePath, pickTask, taskLabel, workDoneSeconds, landingFromStore, parseCheckOutput, summarizeReview, withReview, runRows, renderSummary, spread, rate, median, globSegment, isFixJob, jobTiming } from '../scripts/benchmark-lib.mjs';
 
 /**
  * O9 (docs/Benchmark.md): the benchmark's harness, without spending anything: the fixture and its plan file are
@@ -173,4 +173,17 @@ test('benchmark results render every run, failures included, into docs/Benchmark
   assert.throws(() => withResults('no markers', []), /no results markers/);
   const history = JSON.parse(await readFile(path.join(root, 'bench', 'results.json'), 'utf8'));
   assert.equal(withResults(doc, history.runs), doc.replace(/(<!-- benchmark-results:start -->)[\s\S]*(<!-- benchmark-results:end -->)/, (_all: string, start: string, end: string) => `${start}\n${renderResults(history.runs)}\n${end}`), 'the published doc matches bench/results.json');
+});
+
+test('jobTiming: where a head\'s time went, and why its gates sent work back, from its timeline', () => {
+  const t = (seconds: number) => new Date(Date.UTC(2026, 9, 6, 12, 0, seconds)).toISOString();
+  const timeline = [
+    { at: t(0), to: 'queued' }, { at: t(5), to: 'starting' }, { at: t(10), to: 'running' },
+    { at: t(40), to: 'checking' }, { at: t(46), to: 'running', reason: 'Gates failed (attempt 1 of 3): test.' },
+    { at: t(50), to: 'blocked' }, { at: t(52), to: 'running' }, { at: t(60), to: 'checking' }, { at: t(64), to: 'done' },
+  ];
+  assert.deepEqual(jobTiming(timeline), { waitingSeconds: 10, workingSeconds: 44, gateSeconds: 10, totalSeconds: 64, gateFailures: ['Gates failed (attempt 1 of 3): test.'] });
+  assert.equal(jobTiming(undefined), undefined, 'a Hydra without timelines');
+  const summary = summarizeHydra({ view: { state: 'done', jobs: [{ key: 'a', status: 'done', head: { provider: 'claude', attempts: 1, timeline: timeline.slice(0, 4).concat({ at: t(44), to: 'done' }) } }] }, observed: { landed: [], landedAt: {} }, wallClockSeconds: 60, passed: true, timedOut: false });
+  assert.deepEqual(summary.jobs[0].timing, { waitingSeconds: 10, workingSeconds: 30, gateSeconds: 4, totalSeconds: 44 });
 });

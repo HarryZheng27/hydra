@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, readOnlyStatus, type GitMetaFingerprint } from './git';
+import { commonGitDir, git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, readOnlyStatus, worktreeGitPointerProblem, type GitMetaFingerprint } from './git';
 import { cmdUnsafe, isWindowsShim } from './process';
 import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
 import { otherWorktrees, storageListing, userClaudePlugins } from './confineFiles';
@@ -666,6 +666,26 @@ export class HelperService {
     };
     let commit: string, gates: Awaited<ReturnType<GatesLoader>>, note: string | undefined, changedFiles: string[], outside: string[];
     try {
+      // HSEC-09: before any of Hydra's own git calls in the worktree, its .git must still point into the main
+      // checkout's metadata. A head that repointed it could have git run a command of its choosing (a filter,
+      // say) as Hydra, outside any sandbox. Refused before git runs there, and no attempt is spent.
+      const pointer = await timeStep('gitdir', async () => worktreeGitPointerProblem(worktree, await commonGitDir(this.options.leadFolder)));
+      if (pointer) {
+        this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: worktree .git changed', detail: pointer, jobId });
+        return { accepted: false, message: `Hydra won't run git in your worktree: ${pointer}. Never edit .git. Put it back exactly as it was, then call hydra_done again; if you can't, call hydra_stuck with this message.` };
+      }
+      // 1.4: the git metadata a head shares with the main checkout (config, hooks, …) must not move. Checked
+      // before Hydra runs git in the worktree, so a changed setting never runs. A check that can't run refuses
+      // too (HSEC-30): it can't say nothing changed. It spends no attempt: the change may not be the head's (you,
+      // or another lane, can change them too), so the head restores what it changed or asks.
+      if (job.gitMetaAtStart) {
+        const changedMeta = await timeStep('gitmeta', () => gitMetaFingerprint(this.options.leadFolder).then(now => gitMetaChanges(job.gitMetaAtStart!, now), error => [`(couldn't be read: ${error instanceof Error ? error.message : String(error)})`]));
+        if (changedMeta.length) {
+          // 5.2: a denial — hydra_done refused for changed git settings or hooks.
+          this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: git settings or hooks changed', detail: changedMeta.join(', '), jobId });
+          return { accepted: false, message: `The repository's git settings or hooks changed while you worked: ${changedMeta.join(', ')}. Hydra won't accept work while they differ, because git runs them outside your worktree. If you changed them, put them back exactly as they were, then call hydra_done again. If you didn't, don't try to fix them: call hydra_stuck with this message and wait for the lead.` };
+        }
+      }
       // Hydra commits whatever the helper left uncommitted: in Codex's Windows sandbox a head can't
       // write its worktree's .git metadata, so it can't commit (R4). Hydra's own git calls in the head's
       // worktree run with hooks off (Step 2): a hook the head edited (a husky script, say) would otherwise
@@ -696,17 +716,6 @@ export class HelperService {
       note = [await timeStep('tamper', () => this.tamperNote(job)), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
       changedFiles = (await timeStep('diff', () => git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'], undefined, readOnlyGitTimeoutMs))).split('\0').filter(Boolean);
       outside = changedFiles.filter(file => !inScope(file, job.writeScope));
-      // 1.4: the git metadata a head shares with the main checkout (config, hooks, …) must not move.
-      // Checked before anything runs. It spends no attempt: the change may not be the head's (you,
-      // or another lane, can change them too), so the head restores what it changed or asks.
-      if (job.gitMetaAtStart) {
-        const changedMeta = await timeStep('gitmeta', () => gitMetaFingerprint(worktree).then(now => gitMetaChanges(job.gitMetaAtStart!, now), () => []));
-        if (changedMeta.length) {
-          // 5.2: a denial — hydra_done refused for changed git settings or hooks.
-          this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: git settings or hooks changed', detail: changedMeta.join(', '), jobId });
-          return { accepted: false, message: `The repository's git settings or hooks changed while you worked: ${changedMeta.join(', ')}. Hydra won't accept work while they differ, because git runs them outside your worktree. If you changed them, put them back exactly as they were, then call hydra_done again. If you didn't, don't try to fix them: call hydra_stuck with this message and wait for the lead.` };
-        }
-      }
       await this.options.store.transition(jobId, 'checking');
       this.changed();
     } finally { this.options.log?.(formatDoneTiming(jobId, this.now() - doneStart, steps)); }
@@ -739,15 +748,17 @@ export class HelperService {
   }
 
   private async checkFailed(jobId: string, attempts: number, maxAttempts: number, message: string, checks: JobCheckResult[] = [], note?: string) {
+    // What failed, in the job's history (and so in its timeline): the failing gates' ids, or the write scope.
+    const why = checks.some(gateBlocks) ? `: ${checks.filter(gateBlocks).map(check => check.id).join(', ')}` : checks.length ? '' : ': outside its write scope';
     const job = this.options.store.get(jobId)!;
     await this.options.store.update(jobId, { attempts, maxAttempts });
     if (attempts >= maxAttempts) {
-      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
+      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}${why}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
       this.changed();
       void this.stopRun(jobId);
       return { accepted: false, message: `${message}\n\nThat was the last attempt (${attempts} of ${maxAttempts}). Stop now; the lead will see the failure.` };
     }
-    await this.options.store.transition(jobId, 'running', `Gates failed (attempt ${attempts} of ${maxAttempts}).`);
+    await this.options.store.transition(jobId, 'running', `Gates failed (attempt ${attempts} of ${maxAttempts})${why}.`);
     this.changed();
     return { accepted: false, attempt: attempts, attempts_left: maxAttempts - attempts, message };
   }
@@ -1456,6 +1467,8 @@ export class HelperService {
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
+      // O9: when it moved between states, and why (the benchmark times each job's phases and gate failures from it).
+      ...(detail ? { timeline: job.history.map(event => ({ at: event.at, to: event.to, ...(event.reason ? { reason: event.reason } : {}) })) } : {}),
       // Waiting on the provider (docs/Heads.md): an open wait while it runs, and the total its runs waited.
       ...(job.providerWait && job.state === 'running' ? { provider_wait: describeProviderWait(job.provider, job.providerWait, this.now()) } : {}),
       ...(job.providerWaitMs ? { provider_wait_ms: job.providerWaitMs } : {}),

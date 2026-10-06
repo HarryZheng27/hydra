@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 const execute = promisify(execFile);
@@ -86,7 +86,7 @@ export function gitRun(cwd: string, args: string[], environment?: NodeJS.Process
  */
 export type GitMetaFingerprint = Readonly<Record<string, string>>;
 
-async function commonGitDir(repository: string): Promise<string> {
+export async function commonGitDir(repository: string): Promise<string> {
   const raw = (await git(repository, ['rev-parse', '--git-common-dir'], undefined, readOnlyGitTimeoutMs)).trim();
   return path.isAbsolute(raw) ? raw : path.resolve(repository, raw);
 }
@@ -158,4 +158,27 @@ export const gitMetaMaxEntries = 64;
 export function gitMetaChanges(before: GitMetaFingerprint, after: GitMetaFingerprint): string[] {
   const names = new Set([...Object.keys(before), ...Object.keys(after)]);
   return [...names].filter(name => before[name] !== after[name]).sort();
+}
+
+/**
+ * Why a head's worktree can't be trusted to run git in, or undefined when it can (HSEC-09). A linked worktree's
+ * `.git` is a one-line file, `gitdir: <the repository's .git>/worktrees/<name>`, that tells git where its
+ * metadata is. A head that rewrote it could point git at a repository of its own making, whose config runs a
+ * command (a filter, a diff driver) the next time Hydra runs git there, unsandboxed and as you. So before
+ * Hydra's own git calls in a head's worktree, `.git` must still be a plain file pointing straight into the main
+ * checkout's `.git/worktrees/`, which heads can't write. `commonDir` is the main checkout's common git dir.
+ */
+export async function worktreeGitPointerProblem(worktree: string, commonDir: string, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
+  const file = path.join(worktree, '.git');
+  const stat = await lstat(file).catch(() => undefined);
+  if (!stat) return 'its .git file is missing';
+  if (!stat.isFile()) return 'its .git is no longer the plain file git made for the worktree';
+  const text = (await readFile(file, 'utf8').catch(() => '')).trim();
+  const match = /^gitdir: (.+)$/.exec(text);
+  if (!match || text.includes('\n')) return 'its .git file no longer says where the worktree\'s metadata is';
+  const target = path.resolve(worktree, match[1]!.trim());
+  const key = (value: string) => { const resolved = path.resolve(value); return platform === 'win32' ? resolved.toLowerCase() : resolved; };
+  const parent = path.dirname(target);
+  if (key(parent) !== key(path.join(commonDir, 'worktrees')) || !path.basename(target)) return 'its .git file points outside the repository\'s own worktree metadata';
+  return undefined;
 }

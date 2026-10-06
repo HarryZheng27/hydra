@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { watchTerminals } from './terminalBus';
 import { rememberCommands, rememberedCommands, type SlashCommand } from './SlashMenu';
 import { BrowserPanel } from './BrowserPanel';
-import { TerminalPanel, type ShellTab } from './TerminalPanel';
-import { onTerminalExit } from './terminalBus';
+import { TerminalPanel } from './TerminalPanel';
 import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
-import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project, BrowserState } from '../shared/ipc';
+import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project, BrowserState, ShellTabInfo } from '../shared/ipc';
 import { mergePush } from './chatModel';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
@@ -69,32 +68,66 @@ export function App() {
   // The browser panel beside the chat (Claude desktop's globe): main's state, and whether it's shown.
   const [browser, setBrowser] = useState<BrowserState>({ open: false, url: '', title: '', canGoBack: false, canGoForward: false, loading: false });
   const [browserShown, setBrowserShown] = useState(false);
-  // Claude desktop's terminal panel: each chat's shells (tabs), whether the panel shows, and whether it fills the window.
-  const [shells, setShells] = useState<Record<string, { tabs: ShellTab[]; active?: string; next: number }>>({});
+  // Claude desktop's terminal panel: each chat's shell tabs (main owns them, the user's and the chat's agent's; it pushes
+  // changes), the tab each chat has selected, whether the panel shows, and whether it fills the window.
+  const [shellTabs, setShellTabs] = useState<Record<string, ShellTabInfo[]>>({});
+  const [shellActive, setShellActive] = useState<Record<string, string>>({});
   const [shellShown, setShellShown] = useState(false);
   const [shellMax, setShellMax] = useState(false);
-  const addShell = (chatId: string) => void window.hydra.terminalShell(chatId).then(({ id }) => setShells(current => {
-    const mine = current[chatId] ?? { tabs: [], next: 1 };
-    return { ...current, [chatId]: { tabs: [...mine.tabs, { id, n: mine.next }], active: id, next: mine.next + 1 } };
-  }), (e: unknown) => { setShellShown(false); setError(e instanceof Error ? e.message : String(e)); });
-  const closeShell = (chatId: string, id: string) => {
-    void window.hydra.terminalClose(id).catch(() => undefined);
-    setShells(current => {
-      const mine = current[chatId];
-      if (!mine) return current;
-      const tabs = mine.tabs.filter(tab => tab.id !== id);
-      if (!tabs.length) { setShellShown(false); setShellMax(false); }
-      return { ...current, [chatId]: { ...mine, tabs, active: mine.active === id ? tabs[tabs.length - 1]?.id : mine.active } };
-    });
+  // Each chat's shell that is still starting, for Run (runInShell).
+  const startingShell = useRef<Record<string, Promise<string | undefined>>>({});
+  const addShell = (chatId: string, then?: (id: string | undefined) => void) => void window.hydra.terminalShell(chatId).then(({ id }) => {
+    setShellActive(current => ({ ...current, [chatId]: id }));
+    then?.(id);
+  }, (e: unknown) => { setShellShown(false); setError(e instanceof Error ? e.message : String(e)); then?.(undefined); });
+  // A shell block's Run (Claude desktop's): the panel shows, and the command is typed into the chat's open shell, or a
+  // new one. The user clicked it and watches it run there; the chat's agent never runs anything this way.
+  const runInShell = (chatId: string, command: string) => {
+    if (browserShown) { setBrowserShown(false); void window.hydra.browserClose(); }
+    setShellShown(true);
+    const type = (id: string | undefined) => void (id && window.hydra.terminalWrite(id, command).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))));
+    // A shell still starting takes the command too, so two quick clicks don't open two shells.
+    const starting = startingShell.current[chatId];
+    if (starting) { void starting.then(type); return; }
+    // Only into a shell the user opened: never into a tab Claude started (a dev server, a sign-in prompt).
+    const mine = (shellTabs[chatId] ?? []).filter(tab => tab.startedBy === 'user');
+    const live = mine.find(tab => tab.id === shellActive[chatId] && !tab.ended) ?? mine.filter(tab => !tab.ended).at(-1);
+    if (live) {
+      setShellActive(current => ({ ...current, [chatId]: live.id }));
+      type(live.id);
+      return;
+    }
+    const started = new Promise<string | undefined>(resolve => addShell(chatId, resolve));
+    startingShell.current[chatId] = started;
+    void started.then(id => { delete startingShell.current[chatId]; type(id); });
   };
-  // A shell that exits says so on its tab.
-  useEffect(() => onTerminalExit(exitedId => {
-    setShells(current => {
-      let changed = false;
-      const next = Object.fromEntries(Object.entries(current).map(([chatId, mine]) => [chatId, { ...mine, tabs: mine.tabs.map(tab => (tab.id === exitedId ? (changed = true, { ...tab, ended: true }) : tab)) }]));
-      return changed ? next : current;
-    });
+  // Closing a tab ends its shell in main, which pushes the chat's tabs again.
+  const closeShell = (id: string) => void window.hydra.terminalClose(id).catch(() => undefined);
+  // A chat's agent opened a tab (run_in_terminal): the panel shows it, on the chat that owns it. A chat not on screen shows
+  // the panel when it is next opened.
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const pendingReveal = useRef<string | undefined>(undefined);
+  const browserShownRef = useRef(browserShown);
+  browserShownRef.current = browserShown;
+  const showPanelFor = (chatId: string) => {
+    const now = viewRef.current;
+    if (now.kind !== 'chat' || now.id !== chatId) { pendingReveal.current = chatId; return; }
+    if (browserShownRef.current) { setBrowserShown(false); void window.hydra.browserClose(); }
+    setShellShown(true);
+  };
+  useEffect(() => window.hydra.onTerminalTabs(message => {
+    setShellTabs(current => ({ ...current, [message.chatId]: message.tabs }));
+    // A tab that ended or closed says so; the panel goes when its last tab does.
+    if (!message.tabs.length && viewRef.current.kind === 'chat' && viewRef.current.id === message.chatId) { setShellShown(false); setShellMax(false); }
+    const { reveal } = message;
+    if (reveal) { setShellActive(current => ({ ...current, [message.chatId]: reveal })); showPanelFor(message.chatId); }
   }), []);
+  useEffect(() => {
+    if (view.kind !== 'chat') return;
+    if (pendingReveal.current === view.id) { pendingReveal.current = undefined; setShellShown(true); }
+    void window.hydra.terminalTabs(view.id).then(tabs => setShellTabs(current => ({ ...current, [view.id]: tabs })), () => undefined);
+  }, [view]);
   useEffect(() => window.hydra.onBrowser(setBrowser), []);
   const toggleBrowser = (url?: string) => {
     if (browserShown) { setBrowserShown(false); void window.hydra.browserClose(); return; }
@@ -425,9 +458,10 @@ export function App() {
                     if (shellShown) { setShellShown(false); setShellMax(false); return; }
                     if (browserShown) { setBrowserShown(false); void window.hydra.browserClose(); }
                     setShellShown(true);
-                    if (!shells[chat.id]?.tabs.length) addShell(chat.id);
+                    if (!shellTabs[chat.id]?.length) addShell(chat.id);
                   }}
                   shellOpen={shellShown}
+                  onRun={command => runInShell(chat.id, command)}
                   browserOpen={browserShown}
                   {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {
                     if (!result.started) setError(result.error ?? "The terminal didn't open.");
@@ -439,9 +473,9 @@ export function App() {
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
         {shellShown && mode === 'chat' && view.kind === 'chat' && (
-          <TerminalPanel tabs={shells[view.id]?.tabs ?? []} active={shells[view.id]?.active} maximized={shellMax}
-            onSelect={id => setShells(current => ({ ...current, [view.id]: { ...current[view.id]!, active: id } }))}
-            onAdd={() => addShell(view.id)} onCloseTab={id => closeShell(view.id, id)}
+          <TerminalPanel chatId={view.id} tabs={shellTabs[view.id] ?? []} active={shellActive[view.id]} maximized={shellMax}
+            onSelect={id => setShellActive(current => ({ ...current, [view.id]: id }))}
+            onAdd={() => addShell(view.id)} onCloseTab={closeShell}
             onMaximize={() => setShellMax(value => !value)} onClose={() => { setShellShown(false); setShellMax(false); }} />
         )}
         {browserShown && mode === 'chat' && <BrowserPanel state={browser} covered={!!deleting} onClose={() => { setBrowserShown(false); void window.hydra.browserClose(); }} />}

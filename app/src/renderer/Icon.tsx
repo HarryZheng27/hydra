@@ -38,6 +38,8 @@ const paths: Record<string, string> = {
   chat: 'M4 4.5h12v8.5H9.5L6 16v-3H4z',
   agents: 'M10 3.5a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 0 1 0-3.6zM5 12.5a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 0 1 0-3.6zM15 12.5a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 0 1 0-3.6zM9 6.8L6 12.7M11 6.8l3 5.9M6.8 14.3h6.4',
   check: 'M4.5 10.5l3.5 3.5l7.5-8',
+  // A code block's Run (Claude desktop's play triangle).
+  play: 'M7 5l8 5l-8 5z',
   terminal: 'M3.5 4.5h13v11h-13zM6.5 8.5l2 1.5l-2 1.5M10.5 12.5h3',
   diff: 'M6 3.5v6M3 6.5h6M3.5 14.5h6M12.5 3.5h4v13h-4',
 };

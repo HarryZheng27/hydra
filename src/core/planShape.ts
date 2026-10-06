@@ -28,6 +28,12 @@ export interface PlanShape {
   widest: number;
   /** jobs / depth: how many jobs run at once, on average, with nothing waiting longer than it must. */
   averageWidth: number;
+  /**
+   * With a cap on heads at once (hydra.maxConcurrentHelpers): how many rounds the jobs take, each level taking
+   * ceil(its jobs / cap) rounds, and jobs / rounds, how many really run at once. Without a cap, depth and averageWidth.
+   */
+  rounds: number;
+  effectiveWidth: number;
 }
 
 /** Each job's level: 1 with no dependencies, else one more than its deepest dependency (pure; a cycle is refused before this). */
@@ -49,14 +55,16 @@ function levels(jobs: readonly Pick<PlanJob, 'key' | 'dependsOn'>[]): Map<string
   return level;
 }
 
-/** A plan's shape, from its jobs and their dependencies (pure). */
-export function planShape(jobs: readonly Pick<PlanJob, 'key' | 'dependsOn'>[]): PlanShape {
-  if (!jobs.length) return { jobs: 0, depth: 0, widest: 0, averageWidth: 0 };
+/** A plan's shape, from its jobs and their dependencies, and the cap on heads at once when there is one (pure). */
+export function planShape(jobs: readonly Pick<PlanJob, 'key' | 'dependsOn'>[], maxConcurrent?: number): PlanShape {
+  if (!jobs.length) return { jobs: 0, depth: 0, widest: 0, averageWidth: 0, rounds: 0, effectiveWidth: 0 };
   const level = levels(jobs);
   const counts = new Map<number, number>();
   for (const value of level.values()) counts.set(value, (counts.get(value) ?? 0) + 1);
   const depth = Math.max(...level.values());
-  return { jobs: jobs.length, depth, widest: Math.max(...counts.values()), averageWidth: jobs.length / depth };
+  const cap = maxConcurrent && maxConcurrent >= 1 ? Math.floor(maxConcurrent) : undefined;
+  const rounds = cap ? [...counts.values()].reduce((sum, count) => sum + Math.ceil(count / cap), 0) : depth;
+  return { jobs: jobs.length, depth, widest: Math.max(...counts.values()), averageWidth: jobs.length / depth, rounds, effectiveWidth: jobs.length / rounds };
 }
 
 /** The jobs in the order one head does them: level by level, and in the plan's own order within a level (pure). */
@@ -92,10 +100,11 @@ export type SingleHeadDecision = { single: true; reason: string } | { single: fa
 /**
  * Whether a plan that hasn't started should run as one head, and why (pure). Only a plan of head jobs that could
  * all be one head: no lanes or auto-dispatch, one provider, no pack roles, nothing started or carried over. Then it
- * runs as one head when its jobs form a dependency chain (more than one level) and, on average, fewer than
- * singleHeadMaxAverageWidth of them could run at once.
+ * runs as one head when its jobs take more than one round (a dependency chain, or more jobs than heads may run at
+ * once) and, on average, fewer than singleHeadMaxAverageWidth of them really run at once. `maxConcurrent` is
+ * hydra.maxConcurrentHelpers: with it, seven independent jobs under a cap of 3 take 3 rounds (about 2.3 at once).
  */
-export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' | 'dispatch' | 'leadOrigin'>): SingleHeadDecision {
+export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' | 'dispatch' | 'leadOrigin'>, maxConcurrent?: number): SingleHeadDecision {
   const jobs = plan.jobs;
   // A plan you built on the canvas runs as you drew it; only a lead's (or `hydra plan run`'s) plan is reshaped.
   if (!plan.leadOrigin) return { single: false, reason: 'it was made on the canvas' };
@@ -105,10 +114,11 @@ export function singleHeadDecision(plan: Pick<Plan, 'title' | 'brief' | 'jobs' |
   if (new Set(jobs.map(job => job.provider ?? '')).size > 1) return { single: false, reason: 'its jobs use different providers' };
   if (new Set(jobs.map(job => job.model ?? '')).size > 1) return { single: false, reason: 'its jobs use different models' };
   if (jobs.some(job => job.jobId || job.laneId || job.result || job.outcome || job.attempt || job.conflict)) return { single: false, reason: 'some of its jobs already ran' };
-  const shape = planShape(jobs);
-  if (shape.depth < 2) return { single: false, reason: `its ${shape.jobs} jobs can all run at once` };
-  const shapeText = `${shape.jobs} jobs in a dependency chain of ${shape.depth}, about ${round(shape.averageWidth)} at once on average`;
-  if (shape.averageWidth >= singleHeadMaxAverageWidth) return { single: false, reason: `${shapeText} (${singleHeadMaxAverageWidth} or more runs them apart)` };
+  const shape = planShape(jobs, maxConcurrent);
+  if (shape.rounds < 2) return { single: false, reason: `its ${shape.jobs} jobs can all run at once` };
+  const capped = shape.rounds > shape.depth;
+  const shapeText = `${shape.jobs} jobs ${shape.depth > 1 ? `in a dependency chain of ${shape.depth}` : 'with no dependencies'}${capped ? `, ${shape.rounds} rounds at ${maxConcurrent} heads at once` : ''}, about ${round(shape.effectiveWidth)} at once on average`;
+  if (shape.effectiveWidth >= singleHeadMaxAverageWidth) return { single: false, reason: `${shapeText} (${singleHeadMaxAverageWidth} or more runs them apart)` };
   const reason = `${shapeText} (under ${singleHeadMaxAverageWidth}), so running them apart would cost a worktree, gates and a landing per job for little parallel work`;
   if (singleHeadBrief(plan, jobs).length > maxBriefLength - briefMargin) return { single: false, reason: 'its briefs together are too long for one head' };
   if (jobs.every(job => job.writeScope?.length) && new Set(jobs.flatMap(job => job.writeScope!)).size > singleHeadMaxScope) return { single: false, reason: `its write scopes together list more than ${singleHeadMaxScope} paths, more than one head takes` };

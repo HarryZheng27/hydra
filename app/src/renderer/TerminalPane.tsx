@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { subscribe } from './terminalBus';
+import { AttachButton } from './AttachButton';
 
 /** The theme's colours for xterm, read from the app's CSS variables, so the terminal matches light and dark. */
 function terminalTheme(): Record<string, string> {
@@ -13,8 +14,10 @@ function terminalTheme(): Record<string, string> {
  * A terminal inside the chat (xterm.js, as the IDE's lanes use): the CLI main started, its output and the user's keys.
  * It fits its box and tells main the new size.
  */
-export function TerminalPane({ id, ended = 'Claude Code' }: { id: string; ended?: string }) {
+export function TerminalPane({ id, ended = 'Claude Code', attach }: { id: string; ended?: string; /** Selected text can be attached to this chat's next message, as "Terminal n" (tab index `tab`). */ attach?: { chatId: string; tab: number; n: number } }) {
   const host = useRef<HTMLDivElement>(null);
+  const termRef = useRef<{ clearSelection(): void } | undefined>(undefined);
+  const [selection, setSelection] = useState('');
   useEffect(() => {
     let disposed = false;
     let cleanup = () => undefined as void;
@@ -29,6 +32,8 @@ export function TerminalPane({ id, ended = 'Claude Code' }: { id: string; ended?
         try { fit.fit(); } catch { return; }
         void window.hydra.terminalResize(id, term.cols, term.rows).catch(() => undefined);
       };
+      termRef.current = term;
+      const selecting = term.onSelectionChange(() => setSelection(term.hasSelection() ? term.getSelection() : ''));
       resize();
       const feed = subscribe(id, message => {
         if (message.data !== undefined) term.write(message.data);
@@ -40,9 +45,15 @@ export function TerminalPane({ id, ended = 'Claude Code' }: { id: string; ended?
       const observer = new ResizeObserver(() => resize());
       observer.observe(host.current);
       term.focus();
-      cleanup = () => { observer.disconnect(); input.dispose(); feed.stop(); term.dispose(); };
+      cleanup = () => { termRef.current = undefined; selecting.dispose(); observer.disconnect(); input.dispose(); feed.stop(); term.dispose(); };
     })();
     return () => { disposed = true; cleanup(); };
   }, [id, ended]);
-  return <div className="terminal-pane" ref={host} />;
+  return (
+    // xterm owns the pane's box; the button sits beside it in a wrapper, so React never edits what xterm drew.
+    <div className="terminal-wrap">
+      <div className="terminal-pane" ref={host} />
+      {attach && selection.trim() && <AttachButton chatId={attach.chatId} item={{ source: 'Terminal', label: `Terminal ${attach.n}`, tab: attach.tab, text: selection }} onDone={() => { termRef.current?.clearSelection(); setSelection(''); }} />}
+    </div>
+  );
 }
