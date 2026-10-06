@@ -2,7 +2,22 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
-## Unreleased
+## 0.28.0 (2026-10-07)
+
+**The Hydra app.** This release carries a second installer, `HydraAppSetup.exe`, beside `HydraSetup.exe`: Hydra, a desktop app built around the chat, in the style of Claude desktop. It's a new product, so it's worth reading the [app guide](docs/App.md) first.
+
+- **Chats with Claude Code and Codex**, saved and resumable, with approval cards, a `/` menu with each CLI's own commands, images, the context wheel, a terminal panel and a browser panel beside the chat, and Claude cloud chats (**Continue here**).
+- **A branch bar above the prompt:** the folder's repository and branch, the lines it changed against the default branch, and **Create PR**, which has the chat's agent commit, push and open the pull request. Pull requests the chat opens get their own bar with CI.
+- **Short chat names from the agent itself:** Claude names a Claude chat, and Codex names a Codex chat on your own Codex login; a message never goes to the other provider.
+- **A note when Claude Code runs another permission mode** than the one chosen, such as Manual where Auto isn't offered on Haiku.
+- **Hydra in the app:** heads, plans, gates and lanes work as in the IDE, on an **Agents** view with the same canvas and a Lanes tab, in light and dark. Hydra Settings opens in its own window.
+- **Beside Hydra IDE:** the two install separately and share Hydra's storage; a repository is driven by whichever opens it first.
+
+**Hydra:**
+- **A plan job can choose its head's model.**
+- **Clearer diagnostics:** the lead is told when a project has no gates, and Codex's broken sandbox state file is named.
+
+**Hydra IDE and releases:**
 
 - **The editor is now "Hydra IDE".** Its Start Menu entry, desktop shortcut and title bar say Hydra IDE; the name "Hydra" goes to the upcoming Hydra app. Updating renames the old Hydra shortcuts and keeps your taskbar pins, settings, extensions and data. Uninstalling the IDE later never removes the app's Hydra shortcut.
 - **The Hydra app gets an installer** (`HydraAppSetup.exe`): per user with no admin prompt, beside Hydra IDE and never in its way. Uninstalling it removes only its own Claude Code and Codex entries, and its data only when you ask. See the [app guide](docs/App.md).
