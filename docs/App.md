@@ -2,13 +2,13 @@
 
 **Hydra** is a desktop app for working with Claude Code and Codex. You chat with either one directly, and Hydra's heads, plans, gates and lanes work around that chat, as they do in the editor, without an editor around them. The editor is **Hydra IDE** ([user guide](Heads.md)). Both can be installed side by side.
 
-The app is new. It ships as previews first, then in Hydra's releases next to Hydra IDE.
+The app is new in 0.28.0. It ships in every Hydra release as `HydraAppSetup.exe`, next to Hydra IDE's `HydraSetup.exe`; between releases, previews are tagged `v<version>-app.<n>`.
 
 ## Installing
 
 Windows 10 or 11, x64, with [Git](https://git-scm.com/) and the [Claude Code](https://code.claude.com/docs/en/setup) and/or [Codex](https://developers.openai.com/codex/cli) CLI installed and signed in with your own account.
 
-- **Download** `HydraAppSetup.exe` from a release that includes it on the [releases page](https://github.com/ndunl075/hydra/releases). App previews are tagged `v<version>-app.<n>`. Or:
+- **Download** [`HydraAppSetup.exe`](https://github.com/ndunl075/hydra/releases/latest/download/HydraAppSetup.exe) from the latest release on the [releases page](https://github.com/ndunl075/hydra/releases). App previews are tagged `v<version>-app.<n>`. Or:
 - **In PowerShell:**
 
   ```powershell
@@ -23,7 +23,9 @@ It installs for your user only, with no admin prompt, into `%LOCALAPPDATA%\Progr
 
 - **Setup** checks that `claude` and `codex` are found and signed in, and offers each CLI's own sign-in when one isn't. Hydra never asks for an API key and never reads or copies your CLIs' credentials. Choose a different program for either in **Settings → Command-line tools**.
 - **Open a project** (a folder) or **Clone a repo**. Before chats run in a folder, Hydra asks you to **trust** it: a chat runs Claude Code or Codex with the project's own settings, so its hooks, MCP servers and commands run on your computer with your permissions.
-- **New chat** starts a chat with Claude Code or Codex in that project. Chats are saved and reopen where you left them.
+- **New chat** starts a chat with Claude Code or Codex in that project. Chats are saved and reopen where you left them. A chat gets a short name after its first message: Claude names a Claude chat, and Codex names a Codex chat on your own Codex login (one small `codex exec`), so a message goes only to the provider the chat already uses.
+- **The branch bar** above the prompt shows the folder's repository and branch and the lines the branch changed against its default branch. **Create PR** (on a branch with a remote and something to propose) asks the chat's agent to commit, push and open the pull request with `gh`; the chat's pull request bar then takes over, with its CI.
+- **The permission mode:** if Claude Code reports a different mode than the one you chose (Manual where Auto isn't offered on Haiku), a note under the prompt says so.
 
 ## Hydra in the app
 
