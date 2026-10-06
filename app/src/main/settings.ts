@@ -33,8 +33,17 @@ export const isAbsolutePath = (value: unknown, platform: NodeJS.Platform = proce
   return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/?.][^\\/]*[\\/][^\\/]+/.test(value);
 };
 
+/** The name the sidebar shows: one line of 1 to 60 printable characters, trimmed; anything else isn't a name. */
+export function cleanDisplayName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  // eslint-disable-next-line no-control-regex
+  const name = value.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim();
+  return name && name.length <= 60 ? name : undefined;
+}
+
 export function parseSettings(raw: unknown): AppSettings | undefined {
-  if (!isRecord(raw) || raw.version !== 1 || !onlyKeys(raw, ['version', 'theme', 'cliPaths'])) return undefined;
+  if (!isRecord(raw) || raw.version !== 1 || !onlyKeys(raw, ['version', 'theme', 'cliPaths', 'displayName'])) return undefined;
+  if (raw.displayName !== undefined && cleanDisplayName(raw.displayName) === undefined) return undefined;
   if (!themeSettings.includes(raw.theme as ThemeSetting)) return undefined;
   if (!isRecord(raw.cliPaths) || !onlyKeys(raw.cliPaths, ['claude', 'codex'])) return undefined;
   const cliPaths: AppSettings['cliPaths'] = {};
@@ -44,7 +53,7 @@ export function parseSettings(raw: unknown): AppSettings | undefined {
     if (!isAbsolutePath(value)) return undefined;
     cliPaths[provider] = value;
   }
-  return { version: 1, theme: raw.theme as ThemeSetting, cliPaths };
+  return { version: 1, theme: raw.theme as ThemeSetting, cliPaths, ...(raw.displayName !== undefined ? { displayName: cleanDisplayName(raw.displayName)! } : {}) };
 }
 
 const MAX_PROJECTS = 500;
