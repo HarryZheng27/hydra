@@ -1285,7 +1285,7 @@ test('hydra_done logs one timing line naming every step it ran, on the way into 
     await f.wait([started.job_id]);
     const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
     assert.ok(line, `expected a timing line among: ${JSON.stringify(f.logs)}`);
-    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s$`));
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: gitdir \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s, status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s$`));
   } finally { await f.close(); }
 });
 
@@ -1304,7 +1304,7 @@ test('hydra_done\'s timing line includes "commit" only when Hydra itself had to 
     await f.wait([started.job_id]);
     const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
     assert.ok(line, `expected a timing line among: ${JSON.stringify(f.logs)}`);
-    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, commit \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s$`));
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: gitdir \\d+\\.\\d+s, gitmeta \\d+\\.\\d+s, status \\d+\\.\\d+s, commit \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates \\d+\\.\\d+s, tamper \\d+\\.\\d+s, diff \\d+\\.\\d+s$`));
   } finally { await f.close(); }
 });
 
@@ -1320,8 +1320,8 @@ test('hydra_done still logs a timing line when a step throws, marking that step 
     const started = await f.start('timed-failure');
     await until(() => f.logs.some(entry => entry.includes('hydra_done → checking')), 'timing line logged');
     const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
-    // The gates step threw, so it's marked, and nothing after it (tamper/diff/gitmeta) ran.
-    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates! \\d+\\.\\d+s$`));
+    // The gates step threw, so it's marked, and nothing after it (tamper/diff) ran.
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: gitdir \\d+\\.\\d+s, (?:gitmeta \\d+\\.\\d+s, )?status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s, gates! \\d+\\.\\d+s$`));
   } finally { await f.close(); }
 });
 
@@ -1337,7 +1337,7 @@ test('hydra_done logs a partial timing line when refused because nothing changed
     await until(() => f.logs.some(entry => entry.includes('hydra_done → checking')), 'timing line logged');
     const line = f.logs.find(entry => entry.includes('hydra_done → checking'));
     // Refused before gates ever load: only status and rev-parse ran.
-    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s$`));
+    assert.match(line!, new RegExp(`^\\[heads\\] ${started.job_id} hydra_done → checking in \\d+\\.\\d+s: gitdir \\d+\\.\\d+s, (?:gitmeta \\d+\\.\\d+s, )?status \\d+\\.\\d+s, rev-parse \\d+\\.\\d+s$`));
   } finally { await f.close(); }
 });
 
