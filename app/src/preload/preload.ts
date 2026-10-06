@@ -34,6 +34,7 @@ const api: HydraApi = {
   terminalWrite: (id, data) => call('terminal.write', { id, data }),
   terminalResize: (id, cols, rows) => call('terminal.resize', { id, cols, rows }),
   terminalClose: id => call('terminal.close', { id }),
+  terminalShell: chatId => call('terminal.shell', { chatId }),
   claudeCommands: projectId => call('chats.commands', { projectId }),
   pullRequest: url => call('chats.pullRequest', { url }),
   browserOpen: url => call('browser.open', url === undefined ? {} : { url }),

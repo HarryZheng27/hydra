@@ -22,6 +22,9 @@ interface Props {
   settledBefore?: number;
   onSend(text: string, images?: ChatImage[]): void;
   onOpenTerminal(): void;
+  /** Claude desktop's terminal panel (a shell in this chat's folder, beside it): the header's terminal button. */
+  onShell?(): void;
+  shellOpen?: boolean;
   /** Opens Settings, where Your agents shows what is installed. */
   onOpenSettings?(): void;
   /** The chat is open in a terminal the user started: sends wait until they close it. */
@@ -209,7 +212,7 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return used === undefined ? undefined : { used, ...(window ? { window } : {}) };
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands, weekly }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands, weekly, onShell, shellOpen }: Props) {
   // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
   const [slot, setSlot] = useState<Element | null>(null);
   useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
@@ -247,13 +250,16 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
           {projectName && <span className="project-pill" title={record.cwd}>{projectName}</span>}
           <span className="chat-head-spacer" />
           {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
-          <button className="head-action terminal" onClick={onOpenTerminal} disabled={view.running || inTerminal} aria-label="Open in terminal" title={view.running ? 'Stop the chat first' : 'Open in terminal: continue this chat in the CLI itself, with its own default settings'}><Icon name="terminal" /></button>
+          {onShell && <button className="head-action terminal" onClick={onShell} aria-pressed={!!shellOpen} aria-label="Terminal" title="Terminal"><Icon name="terminal" /></button>}
           <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
           {onBrowser && <button className="head-action" onClick={() => onBrowser(record.pr?.url ?? cloudUrl)} aria-pressed={!!browserOpen} aria-label="Browser" title={record.pr ? 'Browser: opens the pull request' : cloudUrl ? 'Browser: opens the session on claude.ai' : 'Browser'}><Icon name="globe" /></button>}
           <div className="head-more" ref={moreRoot}>
             <button className="head-action" aria-label="More" aria-haspopup="menu" aria-expanded={more} title="More" onClick={() => setMore(value => !value)}><Icon name="more" /></button>
             {more && (
               <ul className="row-menu head-menu" role="menu">
+                {/* For anything the pane can't show: the CLI's own interactive resume of this chat, in its own window. */}
+                <li role="menuitem" tabIndex={0} aria-label="Open in terminal" className={view.running || inTerminal ? 'disabled' : ''} title={view.running ? 'Stop the chat first' : 'Continue this chat in the CLI itself, in its own window, with its own default settings'}
+                  onClick={() => { if (view.running || inTerminal) return; setMore(false); onOpenTerminal(); }}><Icon name="terminal" /><span>Continue in {record.provider === 'codex' ? 'Codex' : 'Claude Code'}'s own window</span></li>
                 {onArchive && <li role="menuitem" tabIndex={0} onClick={() => { setMore(false); onArchive(); }}><Icon name="archive" /><span>Archive</span></li>}
                 {onDelete && <li role="menuitem" tabIndex={0} className="danger" onClick={() => { setMore(false); onDelete(); }}><Icon name="close" /><span>Delete</span></li>}
               </ul>

@@ -14,7 +14,7 @@ function ensure(): void {
   if (subscribed || typeof window === 'undefined' || !window.hydra?.onTerminal) return;
   subscribed = true;
   window.hydra.onTerminal(message => {
-    if (message.exit !== undefined) ended.set(message.id, message.exit);
+    if (message.exit !== undefined) { ended.set(message.id, message.exit); for (const listener of exits) listener(message.id); }
     if (message.data !== undefined) {
       const chunks = buffers.get(message.id) ?? [];
       chunks.push(message.data);
@@ -36,4 +36,12 @@ export function subscribe(id: string, listener: (message: TerminalMessage) => vo
   set.add(listener);
   listeners.set(id, set);
   return { replay: (buffers.get(id) ?? []).join(''), ...(ended.has(id) ? { exit: ended.get(id) } : {}), stop: () => { set.delete(listener); } };
+}
+
+const exits = new Set<(id: string) => void>();
+/** Any terminal ending (the terminal panel marks its tab); returns a stop. */
+export function onTerminalExit(listener: (id: string) => void): () => void {
+  ensure();
+  exits.add(listener);
+  return () => { exits.delete(listener); };
 }

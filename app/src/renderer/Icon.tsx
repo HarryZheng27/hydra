@@ -28,6 +28,9 @@ const paths: Record<string, string> = {
   arrowUp: 'M10 15.5v-11M5.5 9l4.5-4.5L14.5 9',
   stop: 'M6.5 6.5h7v7h-7z',
   chevronDown: 'M6 8l4 4l4-4',
+  // The terminal panel's maximize and restore.
+  maximize: 'M11.5 4h4.5v4.5M8.5 16H4v-4.5M16 4l-5 5M4 16l5-5',
+  restore: 'M15.5 8.5H11.5V4.5M4.5 11.5h4v4M11.5 8.5l4.5-4.5M8.5 11.5L4 16',
   chevronUp: 'M6 12l4-4l4 4',
   moreHorizontal: 'M4.5 9.1a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8zM10 9.1a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8zM15.5 9.1a.9.9 0 1 1 0 1.8a.9.9 0 0 1 0-1.8z',
   // The title bar's Chat (a speech bubble) and Agents (three linked heads).
