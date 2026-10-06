@@ -60,6 +60,7 @@ const latestModels = (events: ChatEvent[]) => { for (let i = events.length - 1; 
 
 /** The slash commands the chat's latest Claude session offered (its init), skills marked. */
 const latestCommands = (events: ChatEvent[]): SlashCommand[] => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.commands) { const skills = new Set(event.skills ?? []); return event.commands.map(name => ({ name, skill: skills.has(name) })); } } return []; };
+const latestReportedMode = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.permissionMode) return { mode: event.permissionMode, at: i }; } return undefined; };
 const latestSessionModel = (events: ChatEvent[]) => { for (let i = events.length - 1; i >= 0; i--) { const event = events[i]!; if (event.type === 'session' && event.model) return event.model; } return undefined; };
 
 const pretty = (value: unknown) => { try { return JSON.stringify(value, null, 2); } catch { return String(value); } };
@@ -308,7 +309,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       {!cloudStarted && onBrowser && <PrBars urls={pullRequests} onOpen={url => onBrowser(url)} />}
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
-        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} weekly={weekly} commands={commands?.length ? commands : latestCommands(events)}
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} {...(record.provider === 'claude' && latestReportedMode(events) ? { reportedMode: latestReportedMode(events)! } : {})} context={latestContext(events)} weekly={weekly} commands={commands?.length ? commands : latestCommands(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );
