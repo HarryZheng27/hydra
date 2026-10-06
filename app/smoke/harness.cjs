@@ -532,7 +532,20 @@ if (role === 'first') {
       report.chat.title = await ui(`[...document.querySelectorAll('.chat-link')].map(e => e.textContent)`);
       const chats = path.join(app.getPath('userData'), 'chats');
       report.chat.files = fs.readdirSync(chats).sort();
+      // The branch bar above the prompt: the project's repository and branch, and no Create PR on its default branch.
+      await until(`!!document.querySelector('.branch-bar .pr-branch')`, 'the branch bar', 15000).catch(() => undefined);
+      report.chat.branchBar = await ui(`(() => { const bar = document.querySelector('.branch-bar'); return bar ? { repo: bar.querySelector('.pr-repo')?.textContent, branch: bar.querySelector('.pr-branch')?.textContent, createPr: !!bar.querySelector('.branch-create') } : null; })()`);
       await shot('chat');
+      // --smoke-shots only: the same chat on a feature branch with a GitHub origin, where Create PR shows.
+      if (arg('shots')) {
+        const git = (...args) => childProcess.spawnSync('git', args, { cwd: arg('folder'), windowsHide: true, encoding: 'utf8' });
+        const original = git('symbolic-ref', '--short', 'HEAD').stdout.trim();
+        git('checkout', '-q', '-b', 'smoke-feature'); git('remote', 'add', 'origin', 'https://github.com/example/project-one.git');
+        await ui(`window.dispatchEvent(new Event('focus')); 1`);
+        await until(`!!document.querySelector('.branch-bar .branch-create')`, 'Create PR on a feature branch', 15000).catch(() => undefined);
+        await shot('chat-create-pr');
+        git('remote', 'remove', 'origin'); git('checkout', '-q', original); git('branch', '-q', '-D', 'smoke-feature');
+      }
 
       // A chat with Codex in the same, already trusted folder: deny, allow, then stop mid-command.
       await ui(`document.querySelector('[aria-label="New chat in Project One"]').click(); 1`);

@@ -55,7 +55,7 @@ export interface HandlerDeps {
   /** The browser panel beside a chat. */
   browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
   chats: Pick<ChatManager, 'list' | 'create' | 'prepare' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'shellFolder' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
-  review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
+  review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; branch(cwd: string): Promise<import('../shared/ipc').BranchSummary | undefined>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
   updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
 }
@@ -207,6 +207,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'review.diff': async ({ id }) => {
       if (!deps.review) throw new Error('Review isn\'t available here.');
       return deps.review.diff(await deps.chats.reviewFolder(id));
+    },
+    'review.branch': async ({ id }) => {
+      if (!deps.review) return null;
+      return (await deps.review.branch(await deps.chats.reviewFolder(id))) ?? null;
     },
     'review.open': async ({ id, path }) => {
       if (!deps.review) throw new Error('Review isn\'t available here.');

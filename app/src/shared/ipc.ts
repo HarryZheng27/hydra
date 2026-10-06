@@ -75,6 +75,8 @@ export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolea
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals; where?: 'cloud' }
 export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
 export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
+/** The branch bar above the prompt (Claude desktop's): the chat folder's branch and its changes against the default branch. */
+export interface BranchSummary { repo: string; branch: string; base?: string; additions: number; deletions: number; files: number; canCreatePr: boolean }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
 
 export type CliProvider = 'claude' | 'codex';
@@ -171,6 +173,8 @@ export interface Channels {
   'browser.close': { payload: null; result: null };
   /** The chat folder's working tree against HEAD, read-only. */
   'review.diff': { payload: { id: string }; result: ReviewResult };
+  /** The branch bar above the prompt: the chat folder's branch and its changes against the default branch; null outside git. */
+  'review.branch': { payload: { id: string }; result: BranchSummary | null };
   /** Opens one of the changed files in an editor, or shows it in its folder. The path must be in the current diff. */
   'review.open': { payload: { id: string; path: string }; result: { opened: 'editor' | 'folder' } };
   /** Hydra's connection to Claude Code and Codex (Settings, Connectors), and Connect / Disconnect (G5). */
@@ -291,6 +295,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'browser.reload': isNull,
   'browser.close': isNull,
   'review.diff': exactly<{ id: string }>({ id: isId }),
+  'review.branch': exactly<{ id: string }>({ id: isId }),
   // A path relative to the chat's folder, checked again in main against the files the diff lists.
   'review.open': exactly<{ id: string; path: string }>({ id: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
   'hydra.connections': isNull,
@@ -373,6 +378,7 @@ export interface HydraApi {
   browserClose(): Promise<null>;
   onBrowser(listener: (state: BrowserState) => void): () => void;
   reviewDiff(id: string): Promise<ReviewResult>;
+  branchSummary(id: string): Promise<BranchSummary | null>;
   openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;
   terminalClosed(id: string): Promise<null>;
   answer(id: string, requestId: string, answer: ChatAnswer): Promise<null>;
