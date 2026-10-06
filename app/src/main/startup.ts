@@ -204,6 +204,7 @@ export function start(): void {
     browser,
     pullRequest: pullRequests(),
     fullName: windowsFullName,
+    shell: path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
     claudeCommands: async cwd => {
       const found = await findProvider('claude', (await settings.load()).cliPaths.claude).catch(() => undefined);
       return found?.available && found.executable ? claudeCommands(found.executable, cwd) : [];

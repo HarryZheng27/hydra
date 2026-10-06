@@ -155,6 +155,8 @@ export interface Channels {
   'terminal.write': { payload: { id: string; data: string }; result: null };
   'terminal.resize': { payload: { id: string; cols: number; rows: number }; result: null };
   'terminal.close': { payload: { id: string }; result: null };
+  /** Claude desktop's terminal panel: a shell (PowerShell) in a trusted chat's folder, inside the window. */
+  'terminal.shell': { payload: { chatId: string }; result: { id: string } };
   /** The browser panel (Claude desktop's globe): http(s) pages only, in a session of its own (browserPanel.ts). */
   /** The home's / menu: Claude Code's commands for a trusted project, before any chat there (claudeCommands.ts). */
   'chats.commands': { payload: { projectId: string }; result: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> };
@@ -278,6 +280,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'terminal.write': exactly<{ id: string; data: string }>({ id: isId, data: isText(65_536) }),
   'terminal.resize': exactly<{ id: string; cols: number; rows: number }>({ id: isId, cols: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 500, rows: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 300 }),
   'terminal.close': exactly<{ id: string }>({ id: isId }),
+  'terminal.shell': exactly<{ chatId: string }>({ chatId: isId }),
   'chats.commands': exactly<{ projectId: string }>({ projectId: isId }),
   'chats.pullRequest': exactly<{ url: string }>({ url: value => typeof value === 'string' && pullRequestLink.test(value) }),
   'browser.open': exactly<{ url?: string }>({ url: isText(2048) }),
@@ -357,6 +360,7 @@ export interface HydraApi {
   terminalWrite(id: string, data: string): Promise<null>;
   terminalResize(id: string, cols: number, rows: number): Promise<null>;
   terminalClose(id: string): Promise<null>;
+  terminalShell(chatId: string): Promise<{ id: string }>;
   onTerminal(listener: (message: TerminalMessage) => void): () => void;
   claudeCommands(projectId: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   pullRequest(url: string): Promise<PullRequestInfo>;

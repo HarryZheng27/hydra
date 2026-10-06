@@ -796,3 +796,20 @@ test('the home screen starts the picked agent before the first message, and a ch
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
+
+test('the terminal panel opens a shell only in the folder of a chat the user trusts', async () => {
+  const dir = scratch();
+  try {
+    let trusted = true;
+    const { launch } = fakeLaunch();
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => trusted, push: () => undefined });
+    const chat = await manager.create({ cwd: dir, provider: 'claude' });
+    assert.equal(await manager.shellFolder(chat.id), dir);
+    trusted = false;
+    await assert.rejects(manager.shellFolder(chat.id), /isn't trusted/);
+    await assert.rejects(manager.shellFolder('00000000-0000-4000-8000-000000000000'), /No such chat/);
+    manager.closeAll();
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});

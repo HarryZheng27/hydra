@@ -524,6 +524,13 @@ export class ChatManager {
    * Open in terminal: the CLI's own interactive resume of this chat, in a console window, for anything the chat pane
    * can't show. The chat's own process is ended first, so two processes never drive one session at once.
    */
+  /** The folder the terminal panel's shell starts in: the chat's own, and only while the user trusts it. */
+  async shellFolder(id: string): Promise<string> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so a terminal can\'t open in it.');
+    return record.cwd;
+  }
+
   async openTerminal(id: string): Promise<{ started: boolean; error?: string }> {
     const record = await this.record(id);
     if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra, so the chat can\'t run here.');

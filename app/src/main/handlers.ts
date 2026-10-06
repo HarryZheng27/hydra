@@ -47,12 +47,14 @@ export interface HandlerDeps {
   /** Main's own confirm before a folder may run chats. True only when the user chose to trust it. */
   confirmTrust(project: Project): Promise<boolean>;
   /** The window's terminals (G7's Continue here). */
-  terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close'>;
+  terminals?: Pick<AppTerminals, 'write' | 'resize' | 'close' | 'start'>;
+  /** The shell the terminal panel starts (Windows PowerShell). */
+  shell?: string;
   /** Claude Code's slash commands for a trusted folder (claudeCommands.ts). */
   claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   /** The browser panel beside a chat. */
   browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'prepare' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'prepare' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'shellFolder' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
   updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
@@ -182,6 +184,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'terminal.write': ({ id, data }) => { deps.terminals?.write(id, data); return null; },
     'terminal.resize': ({ id, cols, rows }) => { deps.terminals?.resize(id, cols, rows); return null; },
     'terminal.close': ({ id }) => { deps.terminals?.close(id); return null; },
+    'terminal.shell': async ({ chatId }) => {
+      if (!deps.terminals || !deps.shell) throw new Error("Hydra can't open a terminal here.");
+      // Only in the folder of a chat the user trusted, as a chat runs there; the window names the chat, never a path.
+      const cwd = await deps.chats.shellFolder(chatId);
+      return { id: deps.terminals.start(deps.shell, [], cwd) };
+    },
     'chats.commands': async ({ projectId }) => {
       // Only in a folder the user trusted: starting Claude Code there runs the project's hooks.
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
