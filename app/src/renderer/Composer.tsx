@@ -7,6 +7,8 @@ import { ContextWheel, type WeeklyLimit } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
 import { claudeContextWindow, claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
 import { AgentLogo } from './AgentLogo';
+import { chipLabel, formatAttachments } from './attachments';
+import { clear, pendingFor, remove, subscribe } from './contextBus';
 import type { ChatDefaults, ChatImage, ChatModel, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../shared/ipc';
 
 const imageTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
@@ -117,6 +119,9 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const [text, setText] = useState('');
   const [images, setImages] = useState<Attached[]>([]);
   const [problem, setProblem] = useState<string>();
+  // Selected text attached from a terminal or the transcript waits in the bus, so it survives switching chats.
+  const [attached, setAttached] = useState(() => pendingFor(record.id));
+  useEffect(() => { setAttached(pendingFor(record.id)); return subscribe(record.id, () => setAttached(pendingFor(record.id))); }, [record.id]);
   const picker = useRef<HTMLInputElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   const attach = async (files: File[]) => {
@@ -134,18 +139,19 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   };
   const drop = (event: DragEvent<HTMLDivElement>) => { const files = Array.from(event.dataTransfer.files); if (files.length) { event.preventDefault(); void attach(files); } };
   const send = () => {
-    if (!text.trim() && !images.length) return;
-    onSend(text, images.map(({ mediaType, data }) => ({ mediaType, data })));
+    if (!text.trim() && !images.length && !attached.length) return;
+    onSend(formatAttachments(attached, text), images.map(({ mediaType, data }) => ({ mediaType, data })));
     if (record.where === 'cloud') markSeen('cloud');
     setText('');
     setImages([]);
+    clear(record.id);
     if (box.current) box.current.style.height = ''; // back to one line
   };
   const slash = useSlashMenu(text, commands, value => { setText(value); box.current?.focus(); });
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (slash.keyDown(event)) return; if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } };
   // Like Claude desktop's prompt: the message in a rounded box with one button in its corner (send, or stop while a
   // turn runs and nothing is typed), and the chat's settings in a quiet row under it.
-  const stopping = running && !text.trim() && !images.length;
+  const stopping = running && !text.trim() && !images.length && !attached.length;
   return (
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
       {record.where === 'cloud' && !seen('cloud') && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
@@ -153,17 +159,21 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
       <div className="prompt-box">
         {slash.menu}
         {slash.ghost}
-        {(images.length > 0 || problem) && (
+        {(images.length > 0 || attached.length > 0 || problem) && (
           <div className="attachments">
             {images.map((image, index) => (
               <span key={index} className="chip attachment" title={image.name}>{image.name} · {Math.max(1, Math.round(image.size / 1024))} KB
                 <button aria-label={`Remove ${image.name}`} onClick={() => setImages(current => current.filter((_, i) => i !== index))}>×</button></span>
             ))}
+            {attached.map(item => (
+              <span key={item.id} className="chip attachment context" title={item.text.slice(0, 400)}>{chipLabel(item)}
+                <button aria-label={`Remove ${item.label}`} onClick={() => remove(record.id, item.id)}>×</button></span>
+            ))}
             {problem && <span className="error">{problem}</span>}
           </div>
         )}
         <textarea ref={box} value={text} onChange={e => setText(e.target.value)} onKeyDown={keyDown} onPaste={paste} placeholder={running ? 'Hydra sends this when the current turn ends' : 'How can I help you today?'} aria-label="Message" rows={1} onInput={event => { const box = event.currentTarget; box.style.height = 'auto'; box.style.height = `${box.scrollHeight}px`; }} />
-        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'enter'} /></button>
+        <button className={`round ${stopping ? 'stop' : 'send'}`} onClick={stopping ? onStop : send} disabled={!stopping && !text.trim() && !images.length && !attached.length} aria-label={stopping ? 'Stop' : 'Send'} title={stopping ? 'Stop' : 'Send (Enter)'}><Icon name={stopping ? 'stop' : 'enter'} /></button>
       </div>
       <div className="composer-bar">
         {/* A cloud chat's `--cloud` takes only the message: no images, mode, model or effort. */}

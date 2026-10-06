@@ -15,6 +15,11 @@ export const CHAT_EVENTS = 'hydra:chat-events';
 /** A terminal in the window (G7's Continue here): its output, or that it ended. */
 export const TERMINAL = 'hydra:terminal';
 export interface TerminalMessage { id: string; data?: string; exit?: number }
+/** Push: a chat's shell tabs changed (main owns them); `reveal` asks the window to show the panel on that tab. */
+export const TERMINAL_TABS = 'hydra:terminal-tabs';
+/** A tab of a chat's terminal panel: `startedBy` says whether the user or the chat's agent opened it. */
+export interface ShellTabInfo { id: string; chatId: string; n: number; startedBy: 'user' | 'agent'; title: string; ended: boolean }
+export interface TerminalTabsMessage { chatId: string; tabs: ShellTabInfo[]; reveal?: string }
 /** The browser panel beside a chat: what its toolbar shows. */
 export const BROWSER = 'hydra:browser';
 export interface BrowserState { open: boolean; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean }
@@ -159,6 +164,8 @@ export interface Channels {
   'terminal.close': { payload: { id: string }; result: null };
   /** Claude desktop's terminal panel: a shell (PowerShell) in a trusted chat's folder, inside the window. */
   'terminal.shell': { payload: { chatId: string }; result: { id: string } };
+  /** The chat's shell tabs, as main holds them. */
+  'terminal.tabs': { payload: { chatId: string }; result: ShellTabInfo[] };
   /** The browser panel (Claude desktop's globe): http(s) pages only, in a session of its own (browserPanel.ts). */
   /** The home's / menu: Claude Code's commands for a trusted project, before any chat there (claudeCommands.ts). */
   'chats.commands': { payload: { projectId: string }; result: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> };
@@ -285,6 +292,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'terminal.resize': exactly<{ id: string; cols: number; rows: number }>({ id: isId, cols: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 500, rows: value => Number.isInteger(value) && (value as number) >= 2 && (value as number) <= 300 }),
   'terminal.close': exactly<{ id: string }>({ id: isId }),
   'terminal.shell': exactly<{ chatId: string }>({ chatId: isId }),
+  'terminal.tabs': exactly<{ chatId: string }>({ chatId: isId }),
   'chats.commands': exactly<{ projectId: string }>({ projectId: isId }),
   'chats.pullRequest': exactly<{ url: string }>({ url: value => typeof value === 'string' && pullRequestLink.test(value) }),
   'browser.open': exactly<{ url?: string }>({ url: isText(2048) }),
@@ -366,7 +374,9 @@ export interface HydraApi {
   terminalResize(id: string, cols: number, rows: number): Promise<null>;
   terminalClose(id: string): Promise<null>;
   terminalShell(chatId: string): Promise<{ id: string }>;
+  terminalTabs(chatId: string): Promise<ShellTabInfo[]>;
   onTerminal(listener: (message: TerminalMessage) => void): () => void;
+  onTerminalTabs(listener: (message: TerminalTabsMessage) => void): () => void;
   claudeCommands(projectId: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   pullRequest(url: string): Promise<PullRequestInfo>;
   browserOpen(url?: string): Promise<BrowserState>;
