@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **Security: a head can no longer get Hydra to run git in a repository of its own making.** A head can't edit its worktree's `.git` file, and Hydra checks that it still points into your repository before running any git there, so a planted filter or diff driver never runs outside the sandbox. The git settings check now also refuses work when it can't read the settings, instead of letting it through.
+
 ## 0.28.0 (2026-10-07)
 
 **The Hydra app.** This release carries a second installer, `HydraAppSetup.exe`, beside `HydraSetup.exe`: Hydra, a desktop app built around the chat, in the style of Claude desktop. It's a new product, so it's worth reading the [app guide](docs/App.md) first.

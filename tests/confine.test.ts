@@ -76,6 +76,7 @@ test('a Claude head\'s settings: the read block, the deny pairs, hooks and claud
     'Read(//c/Data/Hydra/**)', 'Edit(//c/Data/Hydra/**)',
     'Read(//c/wt/bbb/**)', 'Edit(//c/wt/bbb/**)', 'Read(//c/wt/lane-ccc/**)', 'Edit(//c/wt/lane-ccc/**)',
     'Read(//c/repo/.hydra/**)', 'Edit(//c/repo/.hydra/**)', 'Read(//c/repo/.git/**)', 'Edit(//c/repo/.git/**)',
+    'Edit(//c/wt/aaa/.git)', 'Edit(//c/wt/aaa/.git/**)',
     ...homeRules,
   ] } });
   // What goes into the file is what Claude reads back: only known keys, each rule in the form R1 showed works.
@@ -549,7 +550,9 @@ test('a Claude head starts confined: its settings file on disk (0600, valid, the
     assert.ok(deny.includes(`Edit(${rulePath(path.join(repo, '.hydra'))}/**)`) && deny.includes(`Read(${rulePath(path.join(repo, '.git'))}/**)`));
     const secondDeny = (two!.settings as { permissions: { deny: string[] } }).permissions.deny;
     assert.ok(secondDeny.includes(`Edit(${rulePath(one!.spec.worktree)}/**)`), 'the first head\'s worktree is another worktree to the second');
-    assert.ok(!secondDeny.some(rule => ruleCovers(rule, rulePath(two!.spec.worktree)!, process.platform)), 'never its own');
+    // Nothing covers its own worktree but the Edit block on its .git file (HSEC-09), which it still reads.
+    const ownGit = rulePath(path.join(two!.spec.worktree, '.git'));
+    assert.deepEqual(secondDeny.filter(rule => ruleCovers(rule, rulePath(two!.spec.worktree)!, process.platform)), [`Edit(${ownGit})`, `Edit(${ownGit}/**)`], 'never its own, but its .git');
     // With the sandbox: Bash, the wrapper in its environment, and Hydra's bridge marked. Without: no shell, and it hears why.
     assert.equal(one!.spec.confine.shell, true); assert.equal(one!.spec.confine.env.CLAUDE_CODE_SHELL_PREFIX, sandboxed.wrapper); assert.equal(one!.spec.confine.env.HYDRA_WT, one!.spec.worktree);
     assert.match(flag(args, '--tools')!, /,Bash$/);
