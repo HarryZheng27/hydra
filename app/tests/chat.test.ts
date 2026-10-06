@@ -21,6 +21,7 @@ import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
 import { claudeContextWindow, claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
 import { ContextWheel, contextLines } from '../src/renderer/ContextWheel';
 import { matchCommands } from '../src/renderer/SlashMenu';
+import { modeNote } from '../src/renderer/Composer';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
 const noAcl: StoreSecurity = { restrict: async () => undefined, problem: async () => undefined };
@@ -812,4 +813,24 @@ test('the terminal panel opens a shell only in the folder of a chat the user tru
     manager.closeAll();
     await store.flush();
   } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
+});
+
+test('the composer says when Claude Code runs a chat in another permission mode than the one chosen, and why for Auto on Haiku', () => {
+  assert.equal(modeNote('auto', 'auto', 'sonnet'), undefined);
+  assert.equal(modeNote('auto', undefined, 'haiku'), undefined);
+  assert.equal(modeNote('auto', 'default', 'haiku'), "Claude Code is running this chat in Manual mode, not Auto. Auto isn't available on Haiku.");
+  assert.equal(modeNote('auto', 'default', 'claude-haiku-4-5'), "Claude Code is running this chat in Manual mode, not Auto. Auto isn't available on Haiku.");
+  // Another model gives no reason Hydra could be sure of.
+  assert.equal(modeNote('auto', 'default', 'sonnet'), 'Claude Code is running this chat in Manual mode, not Auto.');
+  assert.equal(modeNote('acceptEdits', 'plan', 'haiku'), 'Claude Code is running this chat in Plan mode, not Accept edits.');
+  assert.equal(modeNote('default', 'someNewMode', undefined), 'Claude Code is running this chat in someNewMode mode, not Manual.');
+});
+
+test('a Claude chat chosen to run in Auto on Haiku shows a note under the prompt when Claude Code reports Manual', () => {
+  const record = { id: '0f8fad5b-d9cb-469f-a165-70867728950e', provider: 'claude' as const, cwd: 'C:/x', title: 't', createdAt: '', updatedAt: '', permissionMode: 'auto' as const, model: 'haiku' };
+  const page = (events: ChatEvent[]) => renderToStaticMarkup(createElement(ChatPane, { record, onSend: () => undefined, onAnswer: () => undefined, onStop: () => undefined, onConfigure: () => undefined, onOpenTerminal: () => undefined, events }));
+  const turn: ChatEvent[] = [{ type: 'user', text: 'hi' }, { type: 'done', status: 'success' }];
+  assert.match(page([{ type: 'session', providerSessionId: 's', model: 'claude-haiku-4-5', permissionMode: 'default' }, ...turn]), /Claude Code is running this chat in Manual mode, not Auto\. Auto isn&#x27;t available on Haiku\./);
+  assert.ok(!page([{ type: 'session', providerSessionId: 's', model: 'claude-haiku-4-5', permissionMode: 'auto' }, ...turn]).includes('mode-note'));
+  assert.ok(!page(turn).includes('mode-note'));
 });

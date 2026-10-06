@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 import { PlusMenu } from './PlusMenu';
@@ -53,6 +53,16 @@ export const modes: Array<{ value: ClaudePermissionMode; label: string; descript
   { value: 'acceptEdits', label: 'Accept edits', description: 'Automatically accept all file edits' },
   { value: 'plan', label: 'Plan', description: 'Create a plan before making changes' },
 ];
+/**
+ * What to tell the user when Claude Code runs a chat in another permission mode than the one chosen (Auto isn't
+ * offered on Haiku, so a chat set to Auto reports Manual), or undefined when they agree or nothing was reported.
+ */
+export function modeNote(chosen: string, reported: string | undefined, model: string | undefined): string | undefined {
+  if (!reported || reported === chosen) return undefined;
+  const label = (value: string) => modes.find(option => option.value === value)?.label ?? value;
+  const haiku = chosen === 'auto' && /haiku/i.test(model ?? '');
+  return `Claude Code is running this chat in ${label(reported)} mode, not ${label(chosen)}.${haiku ? " Auto isn't available on Haiku." : ''}`;
+}
 /** Claude desktop's Mode menu: a heading, then the modes, the user's own default badged. Bypass permissions isn't offered (HSEC-82). */
 export const modeMenu = (defaultMode: string | undefined) => [
   { value: 'heading', label: 'Mode', heading: true },
@@ -79,6 +89,8 @@ interface Props {
   weekly?: WeeklyLimit;
   /** The / menu's commands: what the chat's Claude Code session offered. */
   commands?: SlashCommand[];
+  /** The permission mode Claude Code last reported for the session, and where in the log (so each report counts once). */
+  reportedMode?: { mode: string; at: number };
 }
 
 const whereOptions = [
@@ -86,7 +98,7 @@ const whereOptions = [
   { value: 'cloud', label: 'Cloud', description: 'Claude Code runs on claude.ai; the first message starts it.' },
 ];
 
-export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context, weekly, commands = [] }: Props) {
+export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context, weekly, commands = [], reportedMode }: Props) {
   const codex = record.provider === 'codex';
   const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
@@ -98,6 +110,10 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   const modelOptions = codex ? withValue(models.map(m => ({ value: m.id, label: m.label })), model) : claudeKnown ? claudeModelOptions() : withValue(claudeModelOptions(), model);
   const effortOptions = withValue((codex ? codexModel?.efforts ?? [] : claudeEfforts).map(value => ({ value, label: titleCase(value) })), effort);
   const mode = !record.permissionMode || record.permissionMode === 'settings' ? (defaults?.mode as ClaudePermissionMode | undefined) ?? 'default' : record.permissionMode;
+  // The mode chosen when Claude Code reported its own: a change made after is not yet reported, so it has no note.
+  const [reportedAgainst, setReportedAgainst] = useState<{ chosen: string; reported: string } | undefined>(() => (reportedMode ? { chosen: mode, reported: reportedMode.mode } : undefined));
+  useEffect(() => { if (reportedMode) setReportedAgainst({ chosen: mode, reported: reportedMode.mode }); }, [reportedMode?.at, reportedMode?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const note = !codex && !cloud && !running && reportedAgainst && reportedAgainst.chosen === mode ? modeNote(mode, reportedAgainst.reported, model) : undefined;
   const [text, setText] = useState('');
   const [images, setImages] = useState<Attached[]>([]);
   const [problem, setProblem] = useState<string>();
@@ -133,6 +149,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
   return (
     <div className="composer" onDragOver={event => event.preventDefault()} onDrop={drop}>
       {record.where === 'cloud' && !seen('cloud') && <p className="hint cloud-hint">Cloud: your first message starts a Claude Code session on claude.ai. It gets this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here. Its changes stay in the cloud.</p>}
+      {note && <p className="hint mode-note" role="status">{note}</p>}
       <div className="prompt-box">
         {slash.menu}
         {slash.ghost}
