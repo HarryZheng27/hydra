@@ -156,7 +156,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'chats.prepare': async ({ projectId, ...rest }) => {
       // Only a folder the user trusted in Hydra: starting the agent there runs the project's hooks.
       const project = (await deps.state.load()).projects.find(candidate => candidate.id === projectId);
-      if (project?.trustedAt) await deps.chats.prepare({ cwd: project.path, ...rest });
+      if (!project?.trustedAt) return null;
+      // As opening a chat does: the project's Hydra starts first, so the agent's hydra tools find it.
+      deps.projectOpened?.(project.path);
+      await deps.chats.prepare({ cwd: project.path, ...rest });
       return null;
     },
     'chats.open': async ({ id, background }) => {
