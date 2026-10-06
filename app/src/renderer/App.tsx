@@ -251,15 +251,22 @@ export function App() {
     setState({ ...state, sidebarOpen: open });
     void window.hydra.setSidebarOpen(open).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   };
+  // Opening a project shows the sidebar, so its chats are in view; saving that is best effort, as the toggle's.
+  const withSidebar = (next: AppState): AppState => {
+    if (next.sidebarOpen) return next;
+    void window.hydra.setSidebarOpen(true).catch(() => undefined);
+    return { ...next, sidebarOpen: true };
+  };
+  const openProject = (id: string) => { setState(current => (current ? withSidebar(current) : current)); setView({ kind: 'project', id }); };
   const pickProject = () => void run(window.hydra.pickProject(), ({ state: next, picked }) => {
-    setState(next);
+    setState(picked ? withSidebar(next) : next);
     if (picked) setView({ kind: 'project', id: picked });
   });
   /** Clone a repo: main asks where it goes, clones it, and the clone opens as a project. Errors show in the banner. */
   const cloneRepo = async (url: string) => {
     try {
       const { state: next, picked } = await window.hydra.cloneRepo(url);
-      setState(next);
+      setState(picked ? withSidebar(next) : next);
       if (picked) setView({ kind: 'project', id: picked });
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
@@ -345,7 +352,7 @@ export function App() {
               // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
               onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
               onOpenChat={openChat}
-              onOpenProject={id => setView({ kind: 'project', id })}
+              onOpenProject={openProject}
               onAddProject={pickProject}
               onClone={cloneRepo}
               onNewChatIn={(id, provider) => { const target = state.projects.find(p => p.id === id); if (target) { setMode('chat'); void newChat(target, provider); } }}
