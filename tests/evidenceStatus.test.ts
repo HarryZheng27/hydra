@@ -184,5 +184,7 @@ test('detectTestScript finds a non-empty package.json "test" script, and is fals
     assert.equal(await detectTestScript(root), true);
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: '   ' } }));
     assert.equal(await detectTestScript(root), false, 'a blank script does not count');
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'echo "Error: no test specified" && exit 1' } }));
+    assert.equal(await detectTestScript(root), false, 'the npm init placeholder fails every run, so it does not count');
   } finally { await rm(root, { recursive: true, force: true }); }
 });

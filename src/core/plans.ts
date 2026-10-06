@@ -134,7 +134,8 @@ export interface Plan {
    * Repeating the call with the same idempotencyKey returns this same plan instead of making
    * another; `hydra_plan_amend` and `hydra_plan_cancel` work only on a plan that has this.
    */
-  leadOrigin?: { leadSessionId: string; idempotencyKey: string };
+  /** `provider`: the lead's own agent, which the plan's heads fall back to before hydra.defaultProvider (a role's own agent still wins). */
+  leadOrigin?: { leadSessionId: string; idempotencyKey: string; provider?: 'claude' | 'codex' };
   /** O4: structured messages between the lead and its plan's jobs (docs/Heads.md, "The plan board"). */
   board?: BoardPost[];
   /** O5: every hydra_plan_amend change, oldest first (docs/Heads.md, "Plans that adapt"). Its length is the amendment count hydra.plans.maxAmendments limits. */
@@ -595,7 +596,8 @@ export function validatePlan(plan: Plan): void {
   if (plan.dispatch !== undefined) validatePlanDispatch(plan.dispatch);
   if (plan.leadOrigin !== undefined) {
     const origin = plan.leadOrigin as Partial<Plan['leadOrigin']>;
-    if (!origin || typeof origin !== 'object' || !trimmed(origin.leadSessionId) || !trimmed(origin.idempotencyKey) || origin.idempotencyKey.length > planIdempotencyKeyMax) {
+    if (!origin || typeof origin !== 'object' || !trimmed(origin.leadSessionId) || !trimmed(origin.idempotencyKey) || origin.idempotencyKey.length > planIdempotencyKeyMax
+      || (origin.provider !== undefined && origin.provider !== 'claude' && origin.provider !== 'codex')) {
       throw new Error('Invalid leadOrigin.');
     }
   }
@@ -787,7 +789,7 @@ export interface PlanCreateInput { title: string; brief?: string; jobs: PlanLead
  * (a lane job stays a user choice on the canvas). Throws the first problem found,
  * the same way validatePlan does; nothing here starts a process or touches storage.
  */
-export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSessionId: string; idempotencyKey: string }, defaultHeadBudgetUsd = 5): Plan {
+export function planFromLeadInput(input: PlanCreateInput, leadOrigin: NonNullable<Plan['leadOrigin']>, defaultHeadBudgetUsd = 5): Plan {
   if (!input || typeof input !== 'object') throw new Error('hydra_plan_create needs an object.');
   if (!Array.isArray(input.jobs) || input.jobs.length < 1) throw new Error('A plan needs at least one job.');
   if (input.jobs.length > maxPlanJobs) throw new Error(`A plan may have at most ${maxPlanJobs} jobs.`);

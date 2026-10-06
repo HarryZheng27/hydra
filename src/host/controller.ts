@@ -516,10 +516,11 @@ export class HydraController {
         lanesAvailable: () => this.lanes.available,
       },
       // A plan's heads group under its lead `plan-<id>`; a retried head gets a new idempotency key.
-      // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then hydra.defaultProvider.
+      // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then the plan's lead's own (a
+      // Codex-only user's lead never gets a Claude head for a role that names no agent), then hydra.defaultProvider.
       startHead: async (plan, job, dependsOn, inputs, start) => {
         const headDefaults = resolveHeadDefaults({ minutes: settings.get<number | undefined>('heads.defaultMinutes', undefined), maxTurns: settings.get<number | undefined>('heads.defaultMaxTurns', undefined), budgetUsd: settings.get<number | undefined>('heads.defaultBudgetUsd', undefined) });
-        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
+        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, plan.leadOrigin?.provider ?? defaultProvider(), start) as { job_id: string };
         return { jobId: result.job_id };
       },
       startLane: (plan, job, start) => this.lanes.startPlanLane(plan, job, start, defaultProvider()),
@@ -746,7 +747,7 @@ export class HydraController {
     const repeat = findPlanByIdempotencyKey(plans.store.list(), leadSessionId, input.idempotencyKey);
     if (repeat) return { plan: this.planLeadSummary(repeat), created: false };
     const defaultHeadBudgetUsd = this.host.settings.get<number>('heads.defaultBudgetUsd', 5);
-    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey }, defaultHeadBudgetUsd);
+    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey, ...(input.leadProvider ? { provider: input.leadProvider } : {}) }, defaultHeadBudgetUsd);
     await plans.store.save(plan);
     this.plansChanged();
     const needsApproval = this.host.settings.get<boolean>('plans.leadPlansNeedApproval', false);

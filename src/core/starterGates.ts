@@ -9,12 +9,16 @@ import path from 'node:path';
  * remembering "asked" per project, and the Settings row) is extension-side.
  */
 
-/** Whether package.json in `root` has a non-empty `scripts.test`, for "Add a test gate"'s label. */
+/**
+ * Whether package.json in `root` has a real `scripts.test`, for "Add a test gate"'s label: non-empty, and not npm init's
+ * placeholder (`echo "Error: no test specified" && exit 1`), which fails every run and so every head.
+ */
 export async function detectTestScript(root: string): Promise<boolean> {
   try {
     const raw = await readFile(path.join(root, 'package.json'), 'utf8');
     const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
-    return typeof parsed.scripts?.test === 'string' && parsed.scripts.test.trim().length > 0;
+    const test = parsed.scripts?.test;
+    return typeof test === 'string' && test.trim().length > 0 && !/no test specified/i.test(test);
   } catch { return false; }
 }
 

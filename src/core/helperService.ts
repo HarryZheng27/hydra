@@ -34,7 +34,7 @@ import type { PlanJobStatus } from './planRunner';
 
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
 
-export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string; run?: 'attended' | 'unattended'; budget?: PlanBudgetInput }
+export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string; run?: 'attended' | 'unattended'; budget?: PlanBudgetInput; leadProvider?: Provider }
 export type PlanLeadEdit = PlanAmendEdit;
 export type PlanLeadSkip = PlanAmendSkip;
 /** O5: retry a job that failed or was skipped, optionally with changes (docs/Heads.md, "Plans that adapt"). */
@@ -1262,6 +1262,7 @@ export class HelperService {
     const budget = args.run === 'unattended' ? this.parseBudget(args.budget) : undefined;
     const input: PlanLeadCreateInput = {
       title: args.title, ...(typeof args.brief === 'string' ? { brief: args.brief } : {}), jobs, idempotencyKey: args.idempotency_key,
+      ...(leadProvider ? { leadProvider } : {}),
       ...(args.run === 'unattended' ? { run: 'unattended' as const, budget } : {}),
     };
     const { plan, created } = await this.requirePlanBridge().create(input, leadSessionId);
