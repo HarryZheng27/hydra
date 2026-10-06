@@ -676,10 +676,10 @@ test('the first Delete asks in the app\'s own dialog, once: Delete is the defaul
 
 test('the context wheel shows how full the context is, and offers compacting only where it can', () => {
   const page = renderToStaticMarkup(createElement(ContextWheel, { used: 42_520, window: 1_000_000, onCompact: () => undefined }));
-  assert.ok(page.includes('Context: 43k of 1M (4%). Click to compact the conversation.'));
+  assert.ok(page.includes('title="4% context"') && page.includes('4% context (43k of 1M). Click to compact the conversation.'));
   assert.ok(!page.includes('disabled'));
   const quiet = renderToStaticMarkup(createElement(ContextWheel, {}));
-  assert.ok(quiet.includes('disabled') && quiet.includes('Context: nothing used yet'));
+  assert.ok(quiet.includes('disabled') && quiet.includes('title="0% context"'));
   assert.equal(claudeContextWindow('claude-haiku-4-5-20251001'), 200_000);
   assert.equal(claudeContextWindow('opus'), 1_000_000);
 });
