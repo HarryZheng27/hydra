@@ -12,6 +12,8 @@ export type ChatEvent =
   | { type: 'commands'; commands: Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }> }
   /** The app named the chat (Claude desktop's short session names). Shown, not logged. */
   | { type: 'renamed'; title: string }
+  /** Claude: the plan's weekly limit, the share used (0 to 1) and when it resets (the context wheel's tooltip). Shown, not logged. */
+  | { type: 'limits'; weekly: { used: number; resetsAt: string } }
   | { type: 'session'; providerSessionId: string; model?: string; permissionMode?: string; /** Claude: the slash commands its session offers, and which are skills. */ commands?: string[]; skills?: string[] }
   /** What the user sent. */
   | { type: 'user'; text: string; images?: number }

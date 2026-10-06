@@ -3,7 +3,7 @@ import { Icon } from './Icon';
 import { Picker } from './Picker';
 import { PlusMenu } from './PlusMenu';
 import { useSlashMenu, type SlashCommand } from './SlashMenu';
-import { ContextWheel } from './ContextWheel';
+import { ContextWheel, type WeeklyLimit } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
 import { claudeContextWindow, claudeDefaultModel, claudeLatest, claudeModelId, claudeModelOptions, claudeMore } from './claudeModels';
 import { AgentLogo } from './AgentLogo';
@@ -75,6 +75,8 @@ interface Props {
   onWhere?(where: 'local' | 'cloud'): void;
   /** How full the chat's context is: its latest turn's prompt, and the window when the CLI said it. */
   context?: { used: number; window?: number };
+  /** The plan's weekly limit, for the context wheel's tooltip (Claude only). */
+  weekly?: WeeklyLimit;
   /** The / menu's commands: what the chat's Claude Code session offered. */
   commands?: SlashCommand[];
 }
@@ -84,7 +86,7 @@ const whereOptions = [
   { value: 'cloud', label: 'Cloud', description: 'Claude Code runs on claude.ai; the first message starts it.' },
 ];
 
-export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context, commands = [] }: Props) {
+export function Composer({ record, running, onSend, onStop, onConfigure, models = [], defaults, sessionModel, onWhere, context, weekly, commands = [] }: Props) {
   const codex = record.provider === 'codex';
   const cloud = record.where === 'cloud';
   // What the chat really uses: its own choice, else the user's CLI settings, else what the CLI reported.
@@ -159,7 +161,7 @@ export function Composer({ record, running, onSend, onStop, onConfigure, models 
         {!cloud && <Picker label="Effort" value={effort} options={effortOptions} onChange={value => onConfigure({ effort: value })} placeholder="Effort" />}
         <span className="composer-agent" title={`This chat runs ${codex ? 'Codex' : 'Claude Code'}; a new chat can use the other.`}><AgentLogo provider={codex ? 'codex' : 'claude'} /></span>
         {/* The context wheel: a Claude chat compacts with Claude Code's own /compact; Codex compacts by itself. */}
-        {!cloud && <ContextWheel used={context?.used} window={context?.window ?? (codex ? undefined : claudeContextWindow(model))}
+        {!cloud && <ContextWheel used={context?.used} window={context?.window ?? (codex ? undefined : claudeContextWindow(model))} {...(!codex && weekly ? { weekly } : {})}
           {...(!codex && !running && context ? { onCompact: () => onSend('/compact') } : {})} />}
       </div>
     </div>

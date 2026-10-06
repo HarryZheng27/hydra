@@ -773,3 +773,9 @@ button.pr-ci:hover { background: var(--input-bg); }
 /* The whole app in Geist, as Claude desktop's in its Geist-based Anthropic Sans; Segoe UI if the file can't load. */
 body, button, input, textarea, select { font-family: "Geist", system-ui, "Segoe UI", sans-serif; }
 code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, monospace; }
+
+/* Claude desktop's tooltip (the context wheel's): a dark box above, right-aligned, after the pointer rests a moment. */
+.context-wheel-wrap { position: relative; display: inline-flex; }
+.hover-tip { position: absolute; bottom: calc(100% + 8px); right: -6px; z-index: 50; display: flex; flex-direction: column; gap: 2px; width: max-content; max-width: 320px; padding: 8px 12px; border-radius: 8px; background: #1F1F1E; color: #FAFAF9; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); pointer-events: none; text-align: left; white-space: nowrap; }
+.hover-tip-title { font-size: 14px; font-weight: 500; }
+.hover-tip-line { font-size: 13px; color: #B5B5B0; }
