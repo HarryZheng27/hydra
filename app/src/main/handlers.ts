@@ -5,9 +5,11 @@ import { repoUrlProblem } from './clone';
 import type { ChatManager } from './chats';
 import type { ThemeSetting } from '../shared/theme';
 import type { Handlers } from './ipc';
-import { addProject, projectFor, removeProject, setCliPath, trustProject, type JsonStore } from './settings';
+import { addProject, cleanDisplayName, projectFor, removeProject, setCliPath, trustProject, type JsonStore } from './settings';
 
 export interface HandlerDeps {
+  /** Windows' full name for the signed-in account (Get-LocalUser), for the sidebar; undefined when it has none. */
+  fullName?(): Promise<string | undefined>;
   /** A chat's PR bar: gh's view of a pull request (pullRequests.ts). */
   pullRequest?(url: string): Promise<import('../shared/ipc').PullRequestInfo>;
   info: { name: string; version: string; electron: string; platform: string; user?: string };
@@ -91,7 +93,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   const requireHydra = () => { if (!deps.hydra) throw new Error('Hydra isn\'t available here.'); return deps.hydra; };
   const requireBrowser = () => { if (!deps.browser) throw new Error('The browser isn\'t available here.'); return deps.browser; };
   return {
-    'app.info': () => deps.info,
+    // The account's full name from Windows ("Nico D"), once asked; the folder name ("ndunl") until then or without one.
+    'app.info': async () => { const full = await deps.fullName?.().catch(() => undefined); return full ? { ...deps.info, user: full } : deps.info; },
     'app.problems': async () => {
       await Promise.all([deps.settings.load(), deps.state.load()]);
       return [deps.settings.problem, deps.state.problem].filter((problem): problem is string => !!problem);
@@ -101,6 +104,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const next = await deps.settings.update(current => ({ ...current, theme }));
       deps.applyTheme(next.theme);
       return next;
+    },
+    'settings.setDisplayName': async ({ name }) => {
+      const clean = cleanDisplayName(name);
+      if (name.trim() && !clean) throw new Error('A name is one line of at most 60 characters.');
+      return deps.settings.update(current => { const { displayName: _old, ...rest } = current; return clean ? { ...rest, displayName: clean } : rest; });
     },
     'settings.pickCliPath': async ({ provider }) => {
       const file = await deps.pickExecutable(provider);

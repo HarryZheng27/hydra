@@ -10,6 +10,7 @@ const api: HydraApi = {
   problems: () => call('app.problems', null),
   getSettings: () => call('settings.get', null),
   setTheme: theme => call('settings.setTheme', { theme }),
+  setDisplayName: name => call('settings.setDisplayName', { name }),
   pickCliPath: provider => call('settings.pickCliPath', { provider }),
   clearCliPath: provider => call('settings.clearCliPath', { provider }),
   getState: () => call('state.get', null),

@@ -787,6 +787,9 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .composer .round.send:not(:disabled), .home-prompt .round.send:not(:disabled) { color: var(--fg); }
 .composer .round.send:disabled, .home-prompt .round.send:disabled { color: var(--muted); opacity: .55; }
 
+/* Settings' text field (the display name). */
+.setting-input { width: 240px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--input-fg); font: inherit; font-size: 14px; }
+.setting-input:focus { outline: none; border-color: var(--link); }
 /* Claude desktop's terminal panel, beside the chat: a card with tabs (Terminal 1, the shell's name on the open one),
    + for another, then maximize and close; the shell fills the rest. Maximized, it takes the chat's place. */
 .shell-panel { flex: 0 0 52%; min-width: 380px; display: flex; flex-direction: column; margin: 8px 8px 8px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--input-bg); overflow: hidden; }

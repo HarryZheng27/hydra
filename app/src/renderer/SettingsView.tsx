@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Connectors } from './Connectors';
 import { Updates } from './Updates';
@@ -18,15 +19,26 @@ interface Props {
   settings: AppSettings;
   info?: AppInfo;
   onTheme(theme: ThemeSetting): void;
+  onDisplayName(name: string): void;
   onPickCli(provider: CliProvider): void;
   onClearCli(provider: CliProvider): void;
   setup: ReactNode;
 }
 
-export function SettingsView({ settings, info, onTheme, onPickCli, onClearCli, setup }: Props) {
+export function SettingsView({ settings, info, onTheme, onDisplayName, onPickCli, onClearCli, setup }: Props) {
+  const [name, setName] = useState(settings.displayName ?? '');
+  useEffect(() => { setName(settings.displayName ?? ''); }, [settings.displayName]);
+  const saveName = () => { if (name.trim() !== (settings.displayName ?? '')) onDisplayName(name); };
   return (
     <section className="settings">
       <h1>Settings</h1>
+      <h2>You</h2>
+      <div className="setting">
+        <label className="setting-label" htmlFor="display-name">Display name</label>
+        <input id="display-name" className="setting-input" value={name} maxLength={60} spellCheck={false} placeholder={info?.user ?? 'Your name'}
+          onChange={event => setName(event.target.value)} onBlur={saveName} onKeyDown={event => { if (event.key === 'Enter') { event.currentTarget.blur(); } if (event.key === 'Escape') { setName(settings.displayName ?? ''); event.currentTarget.blur(); } }} />
+      </div>
+      <p className="hint">Shown at the bottom of the sidebar, on this computer only. Leave it empty to use your Windows account's name{info?.user ? ` (${info.user})` : ''}.</p>
       <h2>Appearance</h2>
       <div className="setting">
         <div className="setting-label" id="theme-label">Theme</div>
