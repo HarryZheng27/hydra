@@ -11,6 +11,7 @@ import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
 import { defaultMaxAttempts, evidenceStatus, finalJobStates, type JobReply, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
 import { carryOver, integrationAuthors, integrationGates, withGateWorktree, type IntegrationLeadView } from './integration';
+import { detectTestScript } from './starterGates';
 import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
 import { headWorkingGuidance, parsePackageTestScript, repositoryListing } from './headBrief';
@@ -1225,6 +1226,24 @@ export class HelperService {
     if (value.length > max) throw new Error(`At most ${max} jobs at once.`);
     return value.map(job => this.parsePlanLeadJob(job));
   }
+  /**
+   * A project with no `.hydra/gates.json` checks nothing, and hydra_plan_merge refuses its plans: say so to the lead
+   * with what to write, since the gates come from the lead's folder (never a head's), so the lead can add them.
+   */
+  private async gatesNote(): Promise<string | undefined> {
+    try {
+      const config = await (this.options.gates ?? loadGates)(this.options.leadFolder);
+      if (config.source !== 'none') return undefined;
+      const test = await detectTestScript(this.options.leadFolder);
+      return [
+        'This project has no gates (.hydra/gates.json doesn\'t exist), so nothing checks a job or the plan, and hydra_plan_merge will refuse to merge.',
+        test ? 'package.json has a test script: to gate with it, write .hydra/gates.json in the project folder as {"gates":[{"id":"test","type":"command","required":true,"command":["npm","test"],"timeoutSeconds":600}]}.'
+          : 'To gate it, write .hydra/gates.json in the project folder, for example {"gates":[{"id":"test","type":"command","required":true,"command":["<your test command>"]}]}.',
+        'Do this when the user asked for gates, or ask them first; {"gates":[]} records a deliberate choice of none. Heads already running keep the gates they started with; for jobs already landed, hydra_plan_integrate runs the plan\'s gate again on its branch.',
+      ].join(' ');
+    } catch { return undefined; }
+  }
+
   /** hydra_plan_create: a plan of head jobs, run under this same lead. Repeats return the existing plan. */
   private async planCreate(args: Record<string, unknown>, leadSessionId: string) {
     if (typeof args.title !== 'string') throw new Error('title must be text.');
@@ -1238,8 +1257,10 @@ export class HelperService {
       ...(args.run === 'unattended' ? { run: 'unattended' as const, budget } : {}),
     };
     const { plan, created } = await this.requirePlanBridge().create(input, leadSessionId);
+    const gatesNote = await this.gatesNote();
     return {
       ...this.planView(plan), created,
+      ...(gatesNote ? { gates_note: gatesNote } : {}),
       ...(plan.state === 'draft' ? { note: 'This plan is waiting for the user\'s OK to run it, from the Agents canvas.' } : {}),
     };
   }
@@ -1248,7 +1269,8 @@ export class HelperService {
     const id = this.planId(args.plan_id);
     const maxWaitS = Math.max(1, Math.min(3000, typeof args.max_wait_s === 'number' ? args.max_wait_s : 1800));
     const plan = await this.requirePlanBridge().wait(id, leadSessionId, maxWaitS, signal);
-    return this.planView(plan);
+    const gatesNote = await this.gatesNote();
+    return { ...this.planView(plan), ...(gatesNote ? { gates_note: gatesNote } : {}) };
   }
   /** hydra_plan_amend: add, edit or skip jobs that haven't started. */
   private async planAmend(args: Record<string, unknown>, leadSessionId: string) {

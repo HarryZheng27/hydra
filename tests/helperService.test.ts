@@ -900,7 +900,8 @@ function fakePlanBridge() {
 
 test('hydra_plan_create parses jobs, delegates to the bridge with the calling session, and shapes the result', async () => {
   const { bridge, calls } = fakePlanBridge();
-  const f = await fixture({ script: async () => {}, plans: bridge });
+  // A deliberate choice of no gates: nothing to tell the lead about them.
+  const f = await fixture({ script: async () => {}, plans: bridge, gates: { gates: [] } });
   try {
     const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
     const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
@@ -1589,5 +1590,25 @@ test('a head whose process exits while it waits for an answer is failed, and its
     assert.equal(job.state, 'failed'); assert.match(job.reason ?? '', /exited \(code 1\)/);
     assert.equal(job.replies.length, 0, 'no automatic answer for a head that is gone');
     assert.ok(!job.history.some(event => event.from === 'blocked' && event.to === 'running'), JSON.stringify(job.history));
+  } finally { await f.close(); }
+});
+
+test('a plan in a project with no gates tells the lead so, and what .hydra/gates.json to write (npm test when package.json has one)', async () => {
+  const { bridge } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge });
+  try {
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345' });
+    const call = (tool: string, args: Record<string, unknown> = {}) => callHelperEndpoint(f.endpoint.port, chat, tool, args);
+    const plain = await call('hydra_plan_create', { title: 'A', jobs: [{ key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/'] }], idempotency_key: 'k-plain' });
+    assert.ok(String((plain.result as any).gates_note).includes("no gates (.hydra/gates.json doesn't exist)"));
+    assert.ok(String((plain.result as any).gates_note).includes('hydra_plan_merge will refuse'));
+    assert.match(String((plain.result as any).gates_note), /<your test command>/);
+    await writeFile(path.join(f.repo, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
+    const npm = await call('hydra_plan_create', { title: 'B', jobs: [{ key: 'b', title: 'B', brief: 'Do b.', write_scope: ['src/'] }], idempotency_key: 'k-npm' });
+    assert.ok(String((npm.result as any).gates_note).includes('"command":["npm","test"]'));
+    await mkdir(path.join(f.repo, '.hydra'), { recursive: true });
+    await writeFile(path.join(f.repo, '.hydra', 'gates.json'), JSON.stringify({ gates: [{ id: 'test', type: 'command', command: ['npm', 'test'] }] }));
+    const gated = await call('hydra_plan_create', { title: 'C', jobs: [{ key: 'c', title: 'C', brief: 'Do c.', write_scope: ['src/'] }], idempotency_key: 'k-gated' });
+    assert.equal((gated.result as any).gates_note, undefined);
   } finally { await f.close(); }
 });

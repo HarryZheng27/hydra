@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveCommand } from './gates/command';
 import { bashQuote, confinedEnvironment, envValue, guardScript, insideScript, treeScript, wrapperScript, type HeadShell } from './confine';
@@ -100,6 +100,25 @@ export interface CommandSandbox {
   wrap(command: { executable: string; args: string[]; env?: Record<string, string> }, worktree: string, temp: string): Promise<WrappedCommand | undefined>;
 }
 
+/**
+ * Why Codex's sandbox couldn't start, in words a person can act on, from Codex's own setup files: its last setup error
+ * (`.sandbox/setup_error.json`) and its newest sandbox log. Only one cause is named today, the one seen on Nico's machine:
+ * the deny-read ACL state file left empty (an interrupted write), which fails every elevated sandbox from then on.
+ * Undefined when the files say nothing Hydra recognises. Reads only; never changes Codex's files.
+ */
+export async function codexSandboxHint(codexHome: string): Promise<string | undefined> {
+  const folder = path.join(codexHome, '.sandbox');
+  const setup = await readFile(path.join(folder, 'setup_error.json'), 'utf8').catch(() => '');
+  if (!/apply deny-read ACLs/.test(setup)) return undefined;
+  const logs = (await readdir(folder).catch(() => [] as string[])).filter(name => /^sandbox\.\d{4}-\d{2}-\d{2}\.log$/.test(name)).sort();
+  const newest = logs.length ? await readFile(path.join(folder, logs[logs.length - 1]!), 'utf8').catch(() => '') : '';
+  const state = path.join(folder, 'deny_read_acl_state.json');
+  if (/parse deny-read ACL state[^\n]*\n[^\n]*EOF while parsing/.test(newest.slice(-20_000))) {
+    return `Codex's sandbox can't start because its file ${state} is empty or damaged. Rename that file (Codex makes a new one), then check Hydra's sandbox again; nothing else in Codex needs to change.`;
+  }
+  return undefined;
+}
+
 export interface HeadSandboxOptions {
   /** Where the wrapper scripts and the check's folders go: Hydra's own storage, never a worktree. */
   folder: string;
@@ -110,6 +129,8 @@ export interface HeadSandboxOptions {
   log?: (line: string) => void;
   /** Test seam: the check's two runs. */
   run?: typeof runOnce;
+  /** Codex's own folder (CODEX_HOME, else ~/.codex), read for why its sandbox failed. */
+  codexHome?: string;
   // ---- 5.2: the audit log ----
   /** Without it, a failed sandbox self-test is only logged, not recorded in the audit log. */
   audit?: (event: AuditEvent) => void;
@@ -198,7 +219,8 @@ export class HeadSandbox implements CommandSandbox {
       const wrote = await readFile(path.win32.join(work, 'inside.txt'), 'utf8').catch(() => '');
       if (inside.code !== 0 || !inside.stdout.includes('hydra-check-ran') || wrote !== 'hydra-inside') {
         const detail = (inside.stderr.trim().split(/\r?\n/).find(Boolean) ?? '').slice(0, 200);
-        return `Codex's sandbox didn't run a test command (exit ${inside.code ?? 'none'}${detail ? `: ${detail}` : ''})`;
+        const hint = await codexSandboxHint(this.options.codexHome ?? (envValue(this.env(), 'CODEX_HOME', 'win32') || path.win32.join(envValue(this.env(), 'USERPROFILE', 'win32') ?? '', '.codex'))).catch(() => undefined);
+        return hint ?? `Codex's sandbox didn't run a test command (exit ${inside.code ?? 'none'}${detail ? `: ${detail}` : ''})`;
       }
       if (await exists(path.win32.join(outside, 'escape.txt'))) return 'Codex\'s sandbox let a test command write outside its folder';
       // Hydra's bridge (hydra_done) starts through the wrapper too, via the `bash` on the head's PATH.
