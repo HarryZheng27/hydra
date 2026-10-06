@@ -191,3 +191,21 @@ test('Run plan: a small chained plan starts one head with every job\'s brief and
     assert.ok(wide.logs.some(line => line.startsWith('[plans] Plan Discounts runs one head per job: 5 jobs in a dependency chain of 2')), wide.logs.join('\n'));
   } finally { await wide.close(); }
 });
+
+test('a plan job can name its head\'s model: it reaches the head as hydra_start_head\'s model, a bad name is refused, and one head needs one model', () => {
+  const lead: PlanLeadJobInput = { key: 'cheap', title: 'Cheap', brief: 'Do it.', write_scope: ['src/a.js'], model: 'haiku' };
+  const made = planFromLeadInput({ title: 'Models', jobs: [lead] }, { leadSessionId: 'abcdef012345', idempotencyKey: 'k' });
+  assert.equal(made.jobs[0]!.model, 'haiku');
+  const input = planHeadInput(made, made.jobs[0]!, []);
+  assert.equal(input.model, 'haiku');
+  assert.equal(parseJobInput(input).model, 'haiku', 'the head is started with it');
+  assert.equal(planHeadInput(made, { ...made.jobs[0]!, model: undefined }, []).model, undefined, 'no model: the CLI\'s default, as before');
+  for (const bad of ['--dangerously-skip-permissions', 'has space', '', 'x'.repeat(81)]) {
+    assert.throws(() => planFromLeadInput({ title: 'Models', jobs: [{ ...lead, model: bad }] }, { leadSessionId: 'abcdef012345', idempotencyKey: 'k' }), /names its model/, bad);
+  }
+  assert.throws(() => validatePlan({ ...made, jobs: [{ ...made.jobs[0]!, model: 7 as unknown as string }] }), /names its model/);
+  const chain = (b: Partial<PlanJob>) => [job('a', { model: 'haiku' }), job('b', { dependsOn: ['a'], ...b })];
+  assert.equal(singleHeadDecision(plan(chain({ model: 'sonnet' }))).reason, 'its jobs use different models');
+  assert.equal(singleHeadDecision(plan(chain({ model: 'haiku' }))).single, true);
+  assert.equal(singleHeadPlan(plan(chain({ model: 'haiku' })), 'small').jobs.find(item => item.key === singleHeadKey)?.model, 'haiku', 'the one head runs the model its jobs share');
+});

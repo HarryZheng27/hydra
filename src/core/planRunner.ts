@@ -248,7 +248,7 @@ export const planHeadKey = (plan: Pick<Plan, 'id'>, job: Pick<PlanJob, 'key' | '
  * What a plan's head job starts with (`hydra_start_head`'s input). A job with no write scope, such as
  * one added by hand, may change the whole repository: `"."` (an empty entry is refused).
  */
-export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> & Partial<Pick<Plan, 'brief' | 'singleHead'>>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[], headDefaults?: JobLimits): Record<string, unknown> {
+export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> & Partial<Pick<Plan, 'brief' | 'singleHead'>>, job: Pick<PlanJob, 'key' | 'attempt' | 'title' | 'brief' | 'writeScope' | 'provider' | 'model' | 'role' | 'rigor' | 'conflict'>, dependsOn: string[], headDefaults?: JobLimits): Record<string, unknown> {
   // A plan run as one head (src/core/planShape.ts): its one job's head gets the plan and every job's own brief,
   // and, given your per-head defaults, as much time, turns and budget as its jobs would have had together.
   const single = plan.singleHead && job.key === singleHeadKey ? plan.singleHead : undefined;
@@ -257,7 +257,7 @@ export function planHeadInput(plan: Pick<Plan, 'id' | 'title' | 'integration'> &
   const brief = plan.integration && job.conflict ? `${own}\n\n${conflictSection(job.conflict, plan.integration.branch)}` : own;
   return {
     title: job.title, brief, write_scope: job.writeScope?.length ? job.writeScope : ['.'],
-    ...(job.provider ? { provider: job.provider } : {}), ...(job.role ? { role: job.role } : {}), idempotency_key: planHeadKey(plan, job),
+    ...(job.provider ? { provider: job.provider } : {}), ...(job.model ? { model: job.model } : {}), ...(job.role ? { role: job.role } : {}), idempotency_key: planHeadKey(plan, job),
     // O6: rigor (docs/Heads.md, "Rigor") — hydra_start_head's own schema has no such property, so
     // only a plan job ever sets it. A plan saved before rigor existed has none: HelperService then
     // adds nothing beyond the project's own gates, exactly as it always has.

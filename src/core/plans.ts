@@ -56,8 +56,13 @@ export interface PlanJobResult {
 /** A job that won't finish. */
 export interface PlanJobOutcome { state: 'failed' | 'cancelled' | 'skipped'; reason: string; at: string }
 
+/** A job's model name, as the CLI takes it ("haiku", "sonnet", "gpt-6-luna", "claude-sonnet-5"): plain, short, never an option. */
+export const planJobModelPattern = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,79}$/;
+
 export interface PlanJob {
   key: string; title: string; brief: string; provider?: Provider;
+  /** The model its head runs (the CLI's own name for it); missing means the CLI's default, as before. */
+  model?: string;
   dependsOn: string[]; writeScope?: string[];
   /**
    * G7 (docs/internal/hydra-app/G7-cloud.md): 'cloud' asks for a Codex cloud head; missing means local, as in every
@@ -565,6 +570,7 @@ export function validatePlanJobs(jobs: readonly PlanJob[]): void {
     // A lane job's brief has the same limit as a head's: the lane reads the whole brief from a file (decision 2).
     if (!trimmed(job.brief) || job.brief.length > planJobBriefMax) throw new Error(`Job "${job.key}" brief must be 1-${planJobBriefMax} characters.`);
     if (job.provider !== undefined && job.provider !== 'claude' && job.provider !== 'codex') throw new Error(`Job "${job.key}" has an unknown provider.`);
+    if (job.model !== undefined && (typeof job.model !== 'string' || !planJobModelPattern.test(job.model))) throw new Error(`Job "${job.key}" names its model as the CLI does, like "haiku" or "gpt-6-luna".`);
     if (job.role !== undefined && (typeof job.role !== 'string' || !planJobRolePattern.test(job.role))) throw new Error(`Job "${job.key}" names its role as "pack/role", like "coding/builder".`);
     if (job.rigor !== undefined && job.rigor !== 'quick' && job.rigor !== 'standard' && job.rigor !== 'strict') throw new Error(`Job "${job.key}" has an unknown rigor.`);
     if (job.where !== undefined) validateJobWhere(job);
@@ -769,7 +775,7 @@ export function createPlan(input: { title: string; brief?: string; state?: PlanS
 
 /** hydra_plan_create's job shape: the same fields hydra_start_head takes, keyed so dependencies name each other. */
 export interface PlanLeadJobInput {
-  key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; role?: string; rigor?: PlanRigor;
+  key: string; title: string; brief: string; write_scope: string[]; depends_on?: string[]; provider?: Provider; model?: string; role?: string; rigor?: PlanRigor;
   where?: 'local' | 'cloud';
 }
 /** O7: hydra_plan_create's own shape for a budget (snake_case, at the MCP boundary). */
@@ -793,6 +799,7 @@ export function planFromLeadInput(input: PlanCreateInput, leadOrigin: { leadSess
       dependsOn: Array.isArray(job.depends_on) ? job.depends_on : [],
       writeScope: job.write_scope, rigor: job.rigor ?? 'standard',
       ...(job.provider !== undefined ? { provider: job.provider } : {}),
+      ...(job.model !== undefined ? { model: job.model } : {}),
       ...(job.role !== undefined ? { role: job.role } : {}),
       ...leadJobWhere(job),
     };
