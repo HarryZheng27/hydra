@@ -28,7 +28,9 @@ export const terminalTools: readonly TerminalTool[] = [
     inputSchema: { type: 'object', properties: { tab_id: { type: 'string', maxLength: 64 } }, required: ['tab_id'], additionalProperties: false } },
 ];
 
-const forbiddenCharacters = /[$`|;&><(){}]/;
+const forbiddenCharacters = /[$`|;&><(){}@%]/;
+// A program that takes a script as a hidden argument, so the line wouldn't be what it seems.
+const hiddenScript = /(?:^|\s)(?:-e|-ec|-enc|-encodedcommand|iex|invoke-expression)(?=\s|$)/i;
 // Control characters, line and paragraph separators, and invisible formatting characters.
 const invisible = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/;
 
@@ -36,9 +38,11 @@ const invisible = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u
 export function commandProblem(command: unknown): string | undefined {
   if (typeof command !== 'string' || !command.trim()) return 'run_in_terminal needs a command.';
   if (command.length > MAX_COMMAND) return `That command is longer than ${MAX_COMMAND} characters.`;
+  if (!/^[\x20-\x7e]+$/.test(command)) return 'run_in_terminal takes plain ASCII text on one line: no line breaks, control or non-ASCII characters. Use your Bash tool for anything else.';
   if (invisible.test(command)) return 'run_in_terminal takes exactly one line: no line breaks or control characters. Use your Bash tool for scripts.';
   const found = forbiddenCharacters.exec(command);
-  if (found) return `run_in_terminal takes one literal command line, and "${found[0]}" is a shell operator or substitution (not allowed: $ \` | ; & > < ( ) { } && ||). Use your Bash tool for that.`;
+  if (found) return `run_in_terminal takes one literal command line, and "${found[0]}" is a shell operator or substitution (not allowed: $ \` | ; & > < ( ) { } @ % && ||). Use your Bash tool for that.`;
+  if (hiddenScript.test(command)) return "run_in_terminal won't pass an encoded or evaluated script (-EncodedCommand, iex): the user couldn't see what it does. Use your Bash tool.";
   return undefined;
 }
 

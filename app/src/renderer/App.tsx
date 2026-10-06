@@ -89,7 +89,8 @@ export function App() {
     // A shell still starting takes the command too, so two quick clicks don't open two shells.
     const starting = startingShell.current[chatId];
     if (starting) { void starting.then(type); return; }
-    const mine = shellTabs[chatId] ?? [];
+    // Only into a shell the user opened: never into a tab Claude started (a dev server, a sign-in prompt).
+    const mine = (shellTabs[chatId] ?? []).filter(tab => tab.startedBy === 'user');
     const live = mine.find(tab => tab.id === shellActive[chatId] && !tab.ended) ?? mine.filter(tab => !tab.ended).at(-1);
     if (live) {
       setShellActive(current => ({ ...current, [chatId]: live.id }));

@@ -9,14 +9,14 @@ declare const HYDRA_VERSION: string;
 type Message = { jsonrpc?: string; id?: string | number; method?: string; params?: Record<string, unknown> };
 
 const port = Number(process.env.HYDRA_TERMINAL_PORT);
-const token = process.env.HYDRA_TERMINAL_TOKEN ?? '';
+const bootstrap = process.env.HYDRA_TERMINAL_TOKEN ?? '';
+// The file's token is traded once for a session token that lives only in this process; the file is deleted by then.
+let session: Promise<string> | undefined;
 const text = (value: string, isError = false) => ({ content: [{ type: 'text', text: value }], ...(isError ? { isError: true } : {}) });
 
-function forward(tool: string, args: unknown, signal: AbortSignal): Promise<{ ok: boolean; result?: string; error?: string }> {
+function post(path: string, token: string, body: string, signal?: AbortSignal): Promise<{ ok: boolean; result?: string; error?: string }> {
   return new Promise((resolve, reject) => {
-    if (!Number.isInteger(port) || port <= 0 || !token) { resolve({ ok: false, error: 'This chat was started without a terminal connection.' }); return; }
-    const body = JSON.stringify({ tool, arguments: args });
-    const request = http.request({ host: '127.0.0.1', port, path: '/call', method: 'POST', signal, headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: `Bearer ${token}` } }, response => {
+    const request = http.request({ host: '127.0.0.1', port, path, method: 'POST', ...(signal ? { signal } : {}), headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), authorization: `Bearer ${token}` } }, response => {
       const chunks: Buffer[] = [];
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
       response.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { resolve({ ok: false, error: 'Hydra answered with something unreadable.' }); } });
@@ -24,6 +24,14 @@ function forward(tool: string, args: unknown, signal: AbortSignal): Promise<{ ok
     request.on('error', reject);
     request.end(body);
   });
+}
+
+async function forward(tool: string, args: unknown, signal: AbortSignal): Promise<{ ok: boolean; result?: string; error?: string }> {
+  if (!Number.isInteger(port) || port <= 0 || !bootstrap) return { ok: false, error: 'This chat was started without a terminal connection.' };
+  session ??= post('/exchange', bootstrap, '{}').then(reply => { if (!reply.ok || !reply.result) throw new Error('Hydra no longer accepts this connection. Send the chat another message to restart it.'); return reply.result; });
+  let token: string;
+  try { token = await session; } catch (error) { session = undefined; return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+  return post('/call', token, JSON.stringify({ tool, arguments: args }), signal);
 }
 
 const inflight = new Map<string | number, AbortController>();

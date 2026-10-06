@@ -46,6 +46,8 @@ export class AgentTerminal {
   private port = 0;
   /** sha256 of each live token, to the chat it was minted for (resolved at call time: a warmed chat has no id yet). */
   private readonly tokens = new Map<string, () => string | undefined>();
+  /** sha256 of each file token not yet traded for a session token: good for one exchange, and only that. */
+  private readonly bootstraps = new Map<string, { chat: () => string | undefined; file: string; session?: string }>();
 
   constructor(private readonly deps: AgentTerminalDeps) {}
 
@@ -73,8 +75,9 @@ export class AgentTerminal {
     const config = { mcpServers: { [terminalServerName]: { command: this.deps.executable, args: [this.deps.script], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_TERMINAL_PORT: String(this.port), HYDRA_TERMINAL_TOKEN: token } } } };
     writeFileSync(file, JSON.stringify(config), { flag: 'wx', mode: 0o600 });
     const key = sha256(token);
-    this.tokens.set(key, chat);
-    return { args: ['--mcp-config', file], release: () => { this.tokens.delete(key); rmSync(file, { force: true }); } };
+    const entry: { chat: () => string | undefined; file: string; session?: string } = { chat, file };
+    this.bootstraps.set(key, entry);
+    return { args: ['--mcp-config', file], release: () => { this.bootstraps.delete(key); if (entry.session) this.tokens.delete(entry.session); rmSync(file, { force: true }); } };
   }
 
   /** The port the endpoint listens on (127.0.0.1). */
@@ -83,6 +86,7 @@ export class AgentTerminal {
   /** On quit: no token works and no config file is left. */
   stop(): void {
     this.tokens.clear();
+    this.bootstraps.clear();
     try { this.server?.close(); this.server?.closeAllConnections(); } catch { /* already closed */ }
     this.server = undefined;
     try { for (const name of readdirSync(this.deps.dir)) if (name.endsWith('.json')) rmSync(path.join(this.deps.dir, name), { force: true }); } catch { /* the folder is gone */ }
@@ -97,6 +101,19 @@ export class AgentTerminal {
     // Only the local server script calls this: a page in a browser (DNS rebinding, a cross-site POST) has the wrong Host or no token.
     if (request.headers.host !== `127.0.0.1:${this.port}`) { this.reply(response, 403, { ok: false, error: 'Refused.' }); return; }
     const auth = /^Bearer ([0-9a-f]{64})$/.exec(request.headers.authorization ?? '');
+    // The file's token is good for one trade: the server process swaps it for a session token it keeps only in memory, and the file goes.
+    if (request.method === 'POST' && request.url === '/exchange') {
+      const key = auth ? sha256(auth[1]!) : undefined;
+      const entry = key ? this.bootstraps.get(key) : undefined;
+      if (!key || !entry) { this.reply(response, 401, { ok: false, error: 'Refused.' }); return; }
+      this.bootstraps.delete(key);
+      const session = randomBytes(32).toString('hex'), sessionKey = sha256(session);
+      entry.session = sessionKey;
+      this.tokens.set(sessionKey, entry.chat);
+      rmSync(entry.file, { force: true });
+      this.reply(response, 200, { ok: true, result: session });
+      return;
+    }
     const chat = auth ? this.tokens.get(sha256(auth[1]!)) : undefined;
     if (request.method !== 'POST' || request.url !== '/call' || !chat) { this.reply(response, 401, { ok: false, error: 'Refused.' }); return; }
     const chunks: Buffer[] = [];

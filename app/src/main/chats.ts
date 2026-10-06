@@ -245,7 +245,8 @@ export class ChatManager {
       if (grant && isWindowsShim(executable) && grant.args.some(arg => cmdUnsafe.test(arg))) { grant.release(); grant = undefined; }
       if (!grant) return this.deps.launch(executable, args, cwd, handlers);
       const mine = grant;
-      const process = this.deps.launch(executable, [...args, ...mine.args], cwd, { ...handlers, exit: code => { mine.release(); handlers.exit(code); }, error: error => { mine.release(); handlers.error(error); } });
+      let process: ReturnType<Launch>;
+      try { process = this.deps.launch(executable, [...args, ...mine.args], cwd, { ...handlers, exit: code => { mine.release(); handlers.exit(code); }, error: error => { mine.release(); handlers.error(error); } }); } catch (error) { mine.release(); throw error; }
       return { write: line => process.write(line), kill: () => { mine.release(); process.kill(); } };
     };
   }

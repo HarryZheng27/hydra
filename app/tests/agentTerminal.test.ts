@@ -18,15 +18,21 @@ async function setup() {
   const tabs = new ShellTabs({ terminals, shell: 'powershell.exe', folder: async chatId => path.join(dir, chatId), push: message => pushed.push(message) });
   const server = new AgentTerminal({ tabs, dir: path.join(dir, 'grants'), script: 'hydra-terminal-mcp.cjs', executable: 'hydra.exe', security: { restrict: async folder => { fs.mkdirSync(folder, { recursive: true }); }, problem: async () => undefined } });
   await server.start();
-  const grantFor = (chat: string | undefined) => {
+  /** The grant's file token (bootstrap); unless `raw`, traded as the stdio server does, so `token` is the session token and the file is gone. */
+  const grantFor = async (chat: string | undefined, raw = false) => {
     const grant = server.grant(() => chat)!;
     const file = grant.args[grant.args.indexOf('--mcp-config') + 1]!;
     const config = JSON.parse(fs.readFileSync(file, 'utf8')) as { mcpServers: Record<string, { env: Record<string, string> }> };
-    return { grant, file, token: config.mcpServers['hydra-terminal']!.env.HYDRA_TERMINAL_TOKEN!, config };
+    const bootstrap = config.mcpServers['hydra-terminal']!.env.HYDRA_TERMINAL_TOKEN!;
+    if (raw) return { grant, file, token: bootstrap, bootstrap, config };
+    const traded = await exchange(bootstrap);
+    return { grant, file, token: traded.body.result!, bootstrap, config };
   };
-  const call = (token: string, tool: string, args: unknown = {}, headers: Record<string, string> = {}) => new Promise<{ status: number; body: { ok: boolean; result?: string; error?: string } }>((resolve, reject) => {
-    const body = JSON.stringify({ tool, arguments: args });
-    const request = http.request({ host: '127.0.0.1', port: server.address, path: '/call', method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers } }, response => {
+  const exchange = (token: string) => post('/exchange', token, {});
+  const call = (token: string, tool: string, args: unknown = {}, headers: Record<string, string> = {}) => post('/call', token, { tool, arguments: args }, headers);
+  const post = (route: string, token: string, payload: unknown, headers: Record<string, string> = {}) => new Promise<{ status: number; body: { ok: boolean; result?: string; error?: string } }>((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const request = http.request({ host: '127.0.0.1', port: server.address, path: route, method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers } }, response => {
       const chunks: Buffer[] = [];
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
       response.on('end', () => resolve({ status: response.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') }));
@@ -35,7 +41,7 @@ async function setup() {
     request.end(body);
   });
   const finish = () => { server.stop(); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); };
-  return { dir, tabs, server, typed, closed, pushed, grantFor, call, finish };
+  return { dir, tabs, server, typed, closed, pushed, grantFor, call, exchange, finish };
 }
 
 const chatA = 'a0000000-0000-4000-8000-00000000000a', chatB = 'b0000000-0000-4000-8000-00000000000b';
@@ -43,7 +49,7 @@ const chatA = 'a0000000-0000-4000-8000-00000000000a', chatB = 'b0000000-0000-400
 test('a chat\'s terminal token reaches only that chat\'s own tabs', async () => {
   const s = await setup();
   try {
-    const a = s.grantFor(chatA), b = s.grantFor(chatB);
+    const a = await s.grantFor(chatA), b = await s.grantFor(chatB);
     assert.match(a.token, /^[0-9a-f]{64}$/);
     assert.notEqual(a.token, b.token);
     const ranA = await s.call(a.token, 'run_in_terminal', { command: 'npm run dev', title: 'dev' });
@@ -72,18 +78,18 @@ test('a chat\'s terminal token reaches only that chat\'s own tabs', async () => 
     b.grant.release();
     assert.equal((await s.call(b.token, 'list_terminal_tabs')).status, 401);
     // A chat that is warming (no id yet) can't use them.
-    const warming = s.grantFor(undefined);
+    const warming = await s.grantFor(undefined);
     assert.match((await s.call(warming.token, 'list_terminal_tabs')).body.error!, /isn't ready/);
   } finally { s.finish(); }
 });
 
 test('run_in_terminal types one literal command line and opens its own tab, and refuses shell operators', async () => {
   for (const ok of ['npm run dev', 'gh auth login', 'npm run dev -- --port 5173', 'python -m http.server 8000', 'git status']) assert.equal(commandProblem(ok), undefined, ok);
-  for (const bad of ['a $x', 'a `b`', 'a | b', 'a ; b', 'a & b', 'a > f', 'a < f', 'a (b)', 'a ( b', 'a ) b', 'a { b', 'a } b', 'a && b', 'a || b', 'a\nb', 'a\rb', 'a\u0000b', 'a\u2028b', '', '   ', 'x'.repeat(2001)]) assert.notEqual(commandProblem(bad), undefined, JSON.stringify(bad));
+  for (const bad of ['a $x', 'a `b`', 'a | b', 'a ; b', 'a & b', 'a > f', 'a < f', 'a (b)', 'a ( b', 'a ) b', 'a { b', 'a } b', 'a && b', 'a || b', 'a\nb', 'a\rb', 'a\u0000b', 'a\u2028b', 'a \uff04x', 'echo @env:PATH', 'echo %PATH%', 'powershell -EncodedCommand AAAA', 'powershell -enc AAAA', 'iex foo', 'echo caf\u00e9', '', '   ', 'x'.repeat(2001)]) assert.notEqual(commandProblem(bad), undefined, JSON.stringify(bad));
   assert.match(commandProblem('a | b')!, /Bash tool/);
   const s = await setup();
   try {
-    const { token } = s.grantFor(chatA);
+    const { token } = await s.grantFor(chatA);
     const refused = await s.call(token, 'run_in_terminal', { command: 'npm run dev && rm -rf x' });
     assert.equal(refused.body.ok, false);
     assert.match(refused.body.error!, /Bash tool/);
@@ -99,17 +105,17 @@ test('run_in_terminal types one literal command line and opens its own tab, and 
     // Six agent tabs at most per chat.
     for (let i = 1; i < 6; i++) assert.equal((await s.call(token, 'run_in_terminal', { command: `npm run dev${i}` })).body.ok, true);
     assert.match((await s.call(token, 'run_in_terminal', { command: 'npm run more' })).body.error!, /already has 6/);
-    assert.equal((await s.call(grantOther(s), 'run_in_terminal', { command: 'npm run dev' })).body.ok, true, 'another chat has its own six');
+    assert.equal((await s.call(await grantOther(s), 'run_in_terminal', { command: 'npm run dev' })).body.ok, true, 'another chat has its own six');
   } finally { s.finish(); }
 });
 
-function grantOther(s: Awaited<ReturnType<typeof setup>>): string { return s.grantFor(chatB).token; }
+async function grantOther(s: Awaited<ReturnType<typeof setup>>): Promise<string> { return (await s.grantFor(chatB)).token; }
 
 test('stop_terminal_tab ends only a tab the agent started, and nothing lets the agent type into a user\'s tab', async () => {
   const s = await setup();
   try {
     const userTab = await s.tabs.openForUser(chatA);
-    const { token } = s.grantFor(chatA);
+    const { token } = await s.grantFor(chatA);
     const refused = await s.call(token, 'stop_terminal_tab', { tab_id: userTab });
     assert.equal(refused.body.ok, false);
     assert.match(refused.body.error!, /user's own/);
@@ -132,7 +138,7 @@ test('stop_terminal_tab ends only a tab the agent started, and nothing lets the 
 test('read_terminal caps its lines and wait, strips terminal escapes, and marks the text untrusted', async () => {
   const s = await setup();
   try {
-    const { token } = s.grantFor(chatA);
+    const { token } = await s.grantFor(chatA);
     const tab = (JSON.parse((await s.call(token, 'run_in_terminal', { command: 'npm run dev' })).body.result!) as { tab_id: string }).tab_id;
     s.tabs.feed({ id: tab, data: '\u001b[32mgreen\u001b[0m \u001b]0;title\u0007text\r\nProgress 10%\rProgress 100%\r\n' });
     s.tabs.feed({ id: tab, data: Array.from({ length: 1500 }, (_, i) => `line ${i}`).join('\r\n') + '\r\n' });
@@ -159,7 +165,7 @@ test('read_terminal caps its lines and wait, strips terminal escapes, and marks 
 test('read_terminal waits for new output, then returns', async () => {
   const s = await setup();
   try {
-    const { token } = s.grantFor(chatA);
+    const { token } = await s.grantFor(chatA);
     const tab = (JSON.parse((await s.call(token, 'run_in_terminal', { command: 'gh auth login' })).body.result!) as { tab_id: string }).tab_id;
     const reading = s.call(token, 'read_terminal', { tab_id: tab, wait_for_output_ms: 5000 });
     setTimeout(() => s.tabs.feed({ id: tab, data: 'Open https://github.com/login/device\r\n' }), 50);
@@ -174,14 +180,21 @@ test('read_terminal waits for new output, then returns', async () => {
 test('the terminal config file holds the chat\'s token in the owner-only folder and is gone with the endpoint', async () => {
   const s = await setup();
   try {
-    const one = s.grantFor(chatA);
+    const one = await s.grantFor(chatA, true);
     assert.equal(path.dirname(one.file), path.join(s.dir, 'grants'));
     const entry = one.config.mcpServers['hydra-terminal']!;
     assert.equal(entry.env.ELECTRON_RUN_AS_NODE, '1');
     assert.equal(entry.env.HYDRA_TERMINAL_PORT, String(s.server.address));
+    // The file's token isn't a call token: it is good for one exchange, which also deletes the file.
+    assert.equal((await s.call(one.bootstrap, 'list_terminal_tabs')).status, 401);
+    const traded = await s.exchange(one.bootstrap);
+    assert.equal(traded.body.ok, true);
+    assert.equal(fs.existsSync(one.file), false, 'the token is off the disk once the server has it');
+    assert.equal((await s.exchange(one.bootstrap)).status, 401, 'a second trade is refused');
+    assert.equal((await s.call(traded.body.result!, 'list_terminal_tabs')).body.ok, true);
     one.grant.release();
-    assert.equal(fs.existsSync(one.file), false);
-    const two = s.grantFor(chatA);
+    assert.equal((await s.call(traded.body.result!, 'list_terminal_tabs')).status, 401, 'the session token ends with the process');
+    const two = await s.grantFor(chatA, true);
     s.server.stop();
     assert.equal(fs.existsSync(two.file), false, 'quitting leaves no config file');
     assert.equal(s.server.grant(() => chatA), undefined, 'a stopped endpoint grants nothing');
