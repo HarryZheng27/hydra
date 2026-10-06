@@ -70,5 +70,14 @@ The plan setting is in, before the runner. A job's `where` (`"local"` by default
 - Old plans validate unchanged.
 - Left for when the Codex half of S3 has run: the runner (start, poll with a time limit, apply the diff at the job's base, then the local gates and review), then lifting the Codex refusal, the canvas job editor's field, and the canvas's cloud state and link.
 
-### Codex (waiting)
-Nico's ChatGPT workspace has no Codex cloud environment yet: `codex cloud exec --env hydra-cloud-sandbox …` answers "no cloud environments are available for this workspace", and `codex cloud list --json` is empty. The Codex half of S3 runs once an environment exists for `ndunl075/hydra-cloud-sandbox` (chatgpt.com/codex → Settings → Environments → Create environment).
+### Codex (blocked on Codex itself, 2026-10-06)
+Nico published a Codex cloud environment for `ndunl075/hydra-cloud-sandbox` and ran a cloud task from the Codex app ("Add README cloud test line": it ran in the cloud, edited README.md and passed `npm test`). Codex 0.160.0's command line still can't see either:
+- `codex cloud exec --env hydra-cloud-sandbox "<task>"` answers "Error: no cloud environments are available for this workspace", and exits 0 even so.
+- `codex cloud list --json` returns `{"tasks": [], "cursor": null}` while that task runs.
+- Same account, one plan; Codex is signed in with ChatGPT. Not a workspace mix-up.
+
+**Cause:** a known Codex bug, [openai/codex#50182](https://github.com/openai/codex/issues/50182) (open, reported on 0.160.0). `codex cloud` reads the legacy environment list (`/backend-api/wham/environments`), but environments made in the app or Settings now live in a new catalog (`/api/codex-cloud/v1/environment-configs`). Passing an explicit environment id fails the same way. There is no scriptable way to reach the new catalog yet; [openai/codex#24777](https://github.com/openai/codex/issues/24777) asks for one.
+
+**So:** Hydra can't drive Codex cloud until Codex's own CLI can. Plan jobs with `where: "cloud"` stay refused for Codex ("this version can't run them yet"), and Claude cloud chats are unaffected. Budget used: 1 of the 10 Codex cloud tasks (Nico's test from the app); none by Hydra.
+
+**To resume:** after a Codex update, run `codex cloud list --json` and `codex cloud exec --env <id> "<task>"` in a clone of the sandbox. Once they see the environment and its tasks, run the Codex half of S3 (exec, status, diff, apply, list, with any JSON), then milestone 3's runner and the acceptance checks above.
