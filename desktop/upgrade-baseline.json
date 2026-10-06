@@ -1,8 +1,8 @@
 {
   "source": "release",
-  "version": "0.24.2",
-  "tag": "v0.24.2",
-  "headSha": "af4c9a886ec294afedcf52f076300ff197e5f985",
+  "version": "0.27.1",
+  "tag": "v0.27.1",
+  "headSha": "bc9cb344c564550cfd13fafedacc71d7e02bf524",
   "assetName": "HydraSetup.exe",
-  "installerSha256": "D06653FEE8549F94B0A722D0D80EC3B4D37D252E071F34D857C5E0EEF103FA06"
+  "installerSha256": "C2BBA5FF21E738686EF9AAB2B2FEB6C5D4BA27A683A58ECA4C882D4BB36F35CA"
 }
