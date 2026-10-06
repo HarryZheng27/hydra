@@ -161,7 +161,7 @@ details.tool summary, details.thinking summary { cursor: pointer; display: flex;
 .card-detail, .option-detail { color: var(--muted); }
 .card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .cloud-card .hint { margin: 0; }
-.cloud-hint, .cloud-done { font-size: 12px; padding: 0 2px; }
+.cloud-hint, .cloud-done, .mode-note { font-size: 12px; padding: 0 2px; }
 .cloud-done { margin: 8px 16px; }
 .card-actions.column { flex-direction: column; align-items: stretch; }
 .card-actions button:not(.primary) { padding: 4px 12px; border-radius: var(--radius); border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); }
@@ -756,6 +756,11 @@ button.pr-ci:hover { background: var(--input-bg); }
 .pr-checks li[role=menuitem] { cursor: default; gap: 8px; }
 .pr-checks li .hint { margin-left: auto; font-size: 12px; }
 .pr-checks-empty { padding: 6px 10px; font-size: 13px; color: var(--muted); list-style: none; }
+.branch-bar .pr-main { cursor: default; }
+.branch-icon { color: var(--muted); }
+.branch-create { cursor: pointer; border-color: transparent; background: var(--button-bg); color: var(--button-fg); }
+.branch-create:hover:not(:disabled) { background: var(--button-hover); }
+.branch-create:disabled { opacity: .5; cursor: default; }
 .pr-more { align-self: flex-start; padding: 2px 4px; font-size: 13px; color: var(--fg); }
 .pr-more:hover { text-decoration: underline; }
 

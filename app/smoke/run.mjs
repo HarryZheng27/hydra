@@ -125,7 +125,7 @@ try {
     assert.ok(!fs.existsSync(path.join(appData, 'Hydra')), 'something was written to the IDE\'s %APPDATA%\\Hydra');
   });
   check('the preload exposes only the typed API, and the renderer has no Node', () => {
-    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'setDisplayName', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'updateStatus', 'checkForUpdates', 'setAutomaticUpdates', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'prepareChat', 'openChat', 'sendMessage', 'openTerminal', 'setChatWhere', 'continueCloud', 'terminalWrite', 'terminalResize', 'terminalClose', 'terminalShell', 'claudeCommands', 'pullRequest', 'browserOpen', 'browserNavigate', 'browserBounds', 'browserBack', 'browserForward', 'browserReload', 'browserClose', 'reviewDiff', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'renameChat', 'archiveChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'agentsMessage', 'hydraControl', 'hydraReply', 'onHydraHost', 'onHydraUi', 'onHydraTree', 'onBrowser', 'onTerminal', 'onChatEvents']);
+    assert.deepEqual(a.hydraKeys, ['appInfo', 'problems', 'getSettings', 'setTheme', 'setDisplayName', 'pickCliPath', 'clearCliPath', 'getState', 'setSidebarOpen', 'updateStatus', 'checkForUpdates', 'setAutomaticUpdates', 'pickProject', 'cloneRepo', 'removeProject', 'checkSetup', 'signIn', 'trustProject', 'listChats', 'createChat', 'prepareChat', 'openChat', 'sendMessage', 'openTerminal', 'setChatWhere', 'continueCloud', 'terminalWrite', 'terminalResize', 'terminalClose', 'terminalShell', 'claudeCommands', 'pullRequest', 'browserOpen', 'browserNavigate', 'browserBounds', 'browserBack', 'browserForward', 'browserReload', 'browserClose', 'reviewDiff', 'branchSummary', 'openReviewFile', 'terminalClosed', 'answer', 'stopChat', 'configureChat', 'removeChat', 'renameChat', 'archiveChat', 'hydraConnections', 'connectHydra', 'disconnectHydra', 'hydraTree', 'agentsMessage', 'hydraControl', 'hydraReply', 'onHydraHost', 'onHydraUi', 'onHydraTree', 'onBrowser', 'onTerminal', 'onChatEvents']);
     assert.equal(a.appInfo.name, 'Hydra');
     assert.equal(a.nodeInRenderer, 'undefined/undefined');
   });
@@ -337,6 +337,7 @@ try {
     assert.match(a.trustPrompts[0], /^Trust Project One\?/);
     assert.match(a.trustPrompts[0], /hooks, MCP servers and commands will run/);
     assert.match(a.chat.firstCard, /Allow Bash\?/);
+    assert.ok(a.chat.branchBar && a.chat.branchBar.branch && a.chat.branchBar.createPr === false, `the branch bar shows the folder's branch, without Create PR on it: ${JSON.stringify(a.chat.branchBar)}`);
     assert.deepEqual(a.chat.outcomes, ['Allowed', 'Denied']);
     assert.deepEqual(a.chat.turnEnds, ['success', 'success', 'interrupted']);
     assert.ok(a.chat.tools.includes('Bash'));

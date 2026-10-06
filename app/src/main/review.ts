@@ -4,6 +4,7 @@ import path from 'node:path';
 import { gitRun, readOnlyGitTimeoutMs } from '../../../src/core/git';
 import { cmdUnsafe, isWindowsShim, processLaunch } from '../../../src/core/process';
 import { findProvider } from '../../../src/core/providers';
+import type { BranchSummary } from '../shared/ipc';
 
 /**
  * The review pane (G4 milestone 5): the chat folder's working tree against HEAD, read-only. Every git call only reads,
@@ -174,4 +175,52 @@ export async function openInEditor(cwd: string, relative: string, reveal: (file:
   }
   reveal(full);
   return 'folder';
+}
+
+/** `owner/name` of a GitHub origin URL (https or ssh), else undefined. */
+export function githubRepoName(remote: string): string | undefined {
+  const match = /github\.com[:/]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(remote.trim());
+  return match ? match[2] : undefined;
+}
+
+/**
+ * The folder's branch and what it changed against the repository's default branch (the merge base with origin's HEAD,
+ * else main or master), counted from the committed, staged and edited tracked files plus the untracked files' names.
+ * Undefined outside a git work tree or with HEAD detached. Read-only, with the review's own hardening.
+ */
+export async function branchSummary(cwd: string): Promise<BranchSummary | undefined> {
+  const { folder, entries, error } = await listChanges(cwd);
+  if (error) return undefined;
+  const branch = (await run(folder, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).stdout.trim();
+  if (!branch) return undefined;
+  const overrides = await filterOverrides(folder);
+  if (!overrides) return undefined;
+  const hasHead = (await run(folder, ['rev-parse', '--verify', '--quiet', 'HEAD'])).code === 0;
+  const remote = (await run(folder, ['config', '--get', 'remote.origin.url'])).stdout.trim();
+  const named = (await run(folder, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'])).stdout.trim();
+  let base: string | undefined;
+  for (const candidate of [named, 'origin/main', 'origin/master', 'main', 'master']) {
+    if (candidate && (await run(folder, ['rev-parse', '--verify', '--quiet', `${candidate}^{commit}`])).code === 0) { base = candidate; break; }
+  }
+  const onBase = !base || branch === base || base === `origin/${branch}`;
+  const mergeBase = hasHead && base && !onBase ? (await run(folder, ['merge-base', 'HEAD', base])).stdout.trim() : '';
+  let additions = 0, deletions = 0;
+  const files = new Set(entries.map(entry => entry.path));
+  if (hasHead) {
+    const counted = await run(folder, [...overrides, 'diff', mergeBase || 'HEAD', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--ignore-submodules', '--', '.']);
+    if (counted.code === 0) {
+      for (const record of counted.stdout.split('\u0000').filter(Boolean)) {
+        const [added, removed, ...name] = record.split('\t');
+        if (/^\d+$/.test(added ?? '')) additions += Number(added);
+        if (/^\d+$/.test(removed ?? '')) deletions += Number(removed);
+        if (name.length) files.add(name.join('\t'));
+      }
+    }
+  }
+  const ahead = mergeBase ? Number((await run(folder, ['rev-list', '--count', `${mergeBase}..HEAD`])).stdout.trim()) || 0 : 0;
+  return {
+    repo: githubRepoName(remote) ?? path.basename(folder), branch, ...(base ? { base } : {}),
+    additions, deletions, files: files.size,
+    canCreatePr: !!remote && !onBase && hasHead && (ahead > 0 || additions + deletions > 0 || entries.length > 0),
+  };
 }
