@@ -31,6 +31,8 @@ await Promise.all([
   // cleanup of this install's Claude Code and Codex entries (app/installer/hydra-app-uninstall.iss).
   ...[['hydraMcp.ts', 'hydra-mcp.cjs'], ['hydraCli.ts', 'hydra-cli.cjs'], ['hydraLimitHook.ts', 'hydra-limit-hook.cjs'], ['uninstall.ts', 'hydra-uninstall.cjs']].map(([entry, out]) =>
     build({ entryPoints: [path.join(here, '..', 'src', entry)], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: path.join(dist, out), define: hydraDefine, logLevel: 'warning' })),
+  // One Claude chat's terminal tools (src/main/agentTerminal.ts gives each chat process its own run of this server).
+  build({ entryPoints: [path.join(here, 'src/mcp/terminalMcp.ts')], bundle: true, platform: 'node', format: 'cjs', target: 'node20', outfile: path.join(dist, 'hydra-terminal-mcp.cjs'), define: hydraDefine, logLevel: 'warning' }),
   build({ entryPoints: { 'editor.worker': path.join(here, 'src/renderer/editor.worker.ts') }, bundle: true, platform: 'browser', format: 'iife', target: 'chrome140', outdir: path.join(dist, 'renderer'), minify: true, logLevel: 'warning' }),
 ]);
 for (const file of ['index.html', 'styles.css']) await copyFile(path.join(here, 'src/renderer', file), path.join(dist, 'renderer', file));

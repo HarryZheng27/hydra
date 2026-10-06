@@ -1,12 +1,11 @@
 import { Icon } from './Icon';
 import { TerminalPane } from './TerminalPane';
-
-export interface ShellTab { id: string; n: number; ended?: boolean }
+import type { ShellTabInfo } from '../shared/ipc';
 
 interface Props {
   /** The chat this panel belongs to: selected text attaches to its composer. */
   chatId: string;
-  tabs: ShellTab[];
+  tabs: ShellTabInfo[];
   active?: string;
   maximized: boolean;
   onSelect(id: string): void;
@@ -29,8 +28,8 @@ export function TerminalPanel({ chatId, tabs, active, maximized, onSelect, onAdd
         <div className="shell-tabs" role="tablist">
           {tabs.map(tab => (
             <div key={tab.id} className={`shell-tab ${tab.id === current?.id ? 'active' : ''}`} role="tab" aria-selected={tab.id === current?.id}>
-              <button className="shell-tab-name" onClick={() => onSelect(tab.id)}>Terminal {tab.n}{tab.id === current?.id && <span className="shell-kind">{tab.ended ? 'ended' : 'powershell'}</span>}</button>
-              <button className="shell-tab-close" onClick={() => onCloseTab(tab.id)} aria-label={`Close Terminal ${tab.n}`} title="Close"><Icon name="close" /></button>
+              <button className="shell-tab-name" onClick={() => onSelect(tab.id)}>{tab.startedBy === 'agent' ? tab.title : `Terminal ${tab.n}`}{tab.startedBy === 'agent' && <span className="shell-claude" title="Started by Claude">Claude</span>}{tab.id === current?.id && <span className="shell-kind">{tab.ended ? 'ended' : 'powershell'}</span>}</button>
+              <button className="shell-tab-close" onClick={() => onCloseTab(tab.id)} aria-label={`Close ${tab.startedBy === 'agent' ? tab.title : `Terminal ${tab.n}`}`} title="Close"><Icon name="close" /></button>
             </div>
           ))}
           <button className="icon-button small shell-add" onClick={onAdd} aria-label="New terminal" title="New terminal"><Icon name="plus" /></button>

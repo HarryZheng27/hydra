@@ -812,6 +812,7 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .shell-tab:hover { color: var(--fg); }
 .shell-tab.active { background: var(--hover); color: var(--fg); }
 .shell-tab-name { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.shell-claude { padding: 0 6px; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11px; line-height: 16px; }
 .shell-kind { color: var(--muted); max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
 .shell-tab-close { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--muted); }
 .shell-tab-close:hover { background: var(--hover); color: var(--fg); }
