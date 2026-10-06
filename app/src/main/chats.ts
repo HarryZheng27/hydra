@@ -58,6 +58,12 @@ export interface ChatManagerDeps {
 }
 
 /**
+ * What a Claude chat is told about the window it answers in: a shell block gets a Run button (markdown.tsx) that types
+ * it into the chat's terminal panel. Plain words only: on Windows it passes through the CLI's cmd launcher (cmdUnsafe).
+ */
+export const runButtonNote = 'You are answering in the Hydra app. When you give the user a shell command to run, put it in its own fenced code block tagged bash: one command per block, no leading prompt sign, no output in the block. Hydra shows a Run button on that block, which types the command into the terminal panel beside the chat, a PowerShell of the user in this folder. Use it for commands you should not or cannot run yourself, for example ones your permission mode blocks; then ask the user to say done, and check the result.';
+
+/**
  * What the user's own CLI settings choose when a chat doesn't: model, effort and mode, so the composer shows real values
  * rather than "default". Only these keys are read; nothing else in the file is kept.
  */
@@ -208,7 +214,7 @@ export class ChatManager {
     const options: ChatOptions = {
       provider: input.provider, cwd: input.cwd, executable,
       ...(input.model ? { model: input.model } : {}), ...(input.effort ? { effort: input.effort } : {}),
-      ...(input.provider === 'claude' ? { permissionMode: input.permissionMode ?? 'auto', sessionId } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
+      ...(input.provider === 'claude' ? { permissionMode: input.permissionMode ?? 'auto', sessionId, extraArgs: ['--append-system-prompt', runButtonNote] } : { sandbox: input.sandbox ?? 'read-only', approvals: input.approvals ?? 'settings' }),
     };
     const spare: NonNullable<ChatManager['spare']> = { key, ...(sessionId ? { sessionId } : {}), buffered: [], session: undefined as unknown as ChatSession };
     // Until a chat takes it, what the process says (its / commands) waits here; then it goes to that chat.
@@ -328,6 +334,7 @@ export class ChatManager {
       ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}), ...(record.sandbox ? { sandbox: record.sandbox } : {}), ...(record.approvals ? { approvals: record.approvals } : {}),
       // A Claude chat's id is chosen at creation; it is resumed once the CLI has started it.
       ...(started && record.providerSessionId ? { resume: record.providerSessionId } : record.provider === 'claude' ? { sessionId: record.providerSessionId } : {}),
+      ...(record.provider === 'claude' ? { extraArgs: ['--append-system-prompt', runButtonNote] } : {}),
     };
     if (this.closing) throw new Error('Hydra is quitting.');
     // The folder may have stopped being trusted while this was starting.
