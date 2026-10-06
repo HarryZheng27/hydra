@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createHandlers } from '../src/main/handlers';
 import { replaceAtomic } from '../../src/core/atomicFile';
-import { addProject, createSettingsStore, createStateStore, defaultSettings, defaultState, isAbsolutePath, JsonStore, parseSettings, parseState, SETTINGS_FILE } from '../src/main/settings';
+import { addProject, cleanDisplayName, createSettingsStore, createStateStore, defaultSettings, defaultState, isAbsolutePath, JsonStore, parseSettings, parseState, SETTINGS_FILE } from '../src/main/settings';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-settings-'));
 const absolute = path.resolve(os.tmpdir(), 'tools', 'claude.exe');
@@ -216,4 +216,15 @@ test('after a failed write the next one starts from the last saved value', async
     assert.equal(next.sidebarOpen, true, 'the failed change was not kept');
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).sidebarOpen, true);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a display name is one trimmed line of at most 60 characters; the settings file keeps only such a name', () => {
+  assert.equal(cleanDisplayName('  Nico   D  '), 'Nico D');
+  assert.equal(cleanDisplayName('Ni\u0007co'), 'Nico');
+  assert.equal(cleanDisplayName(''), undefined);
+  assert.equal(cleanDisplayName('x'.repeat(61)), undefined);
+  assert.equal(cleanDisplayName(7), undefined);
+  assert.deepEqual(parseSettings({ version: 1, theme: 'dark', cliPaths: {}, displayName: 'Nico' }), { version: 1, theme: 'dark', cliPaths: {}, displayName: 'Nico' });
+  assert.equal(parseSettings({ version: 1, theme: 'dark', cliPaths: {}, displayName: '' }), undefined);
+  assert.equal(parseSettings({ version: 1, theme: 'dark', cliPaths: {}, displayName: 3 }), undefined);
 });
