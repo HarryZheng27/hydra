@@ -509,6 +509,11 @@ export function headShellSentence(shell: HeadShell | undefined): string {
   return `Head shells are off: ${shell.reason}.`;
 }
 
+/** The window's one warning when a Claude head starts without a shell: what it can't do, and why. */
+export function headShellOffNotice(reason: string): string {
+  return `A Claude Code head started without a shell, so it can't run tests or builds itself (Hydra's gates still run them): ${reason}.`;
+}
+
 /** A word for bash, in single quotes. */
 export const bashQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
 

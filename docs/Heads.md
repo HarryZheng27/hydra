@@ -47,7 +47,7 @@ Connecting adds Hydra as a user-level tool server named `hydra`. That's per user
 
 | Action | What it does |
 | --- | --- |
-| `hydra_start_head` | Start a head, given `title`, `brief`, `write_scope` (repository paths it may change), `idempotency_key`, and optionally `provider`, `model`, `depends_on` and `limits`. Returns a job id at once. A repeated key returns the same job instead of starting another. |
+| `hydra_start_head` | Start a head, given `title`, `brief`, `write_scope` (repository paths it may change), `idempotency_key`, and optionally `provider`, `model`, `depends_on` and `limits`. Without `provider`, the head runs on its role's agent, else the lead's own (a Codex chat starts Codex heads), else **hydra.defaultProvider**, else Claude Code; a plan job without one does the same. Returns a job id at once. A repeated key returns the same job instead of starting another. |
 | `hydra_wait_for_heads` | Wait until the heads finish or ask a question, then return their results. It keeps the lead's turn open; Claude and Codex both resume by themselves when it returns. `max_wait_s` defaults to 1800. |
 | `hydra_get_head` / `hydra_list_heads` | State, summary, branch, commit, changed files and check results. |
 | `hydra_reply_to_head` | Answer a head that asked a question. |
@@ -180,12 +180,13 @@ No agent grades its own work. When a head calls `hydra_done`, its changes pass t
 **The three kinds:**
 - **command:** runs in the head's worktree and must exit 0.
 - **screenshots:** Hydra starts your app on a free port (it replaces `{port}` and sets `PORT`), then captures each width in a headless Edge or Chrome. The gate fails on a page that never gets ready, HTTP errors, console errors or an empty page.
-- **review:** a second agent reviews the brief and the diff read-only. By default it's the other agent: Codex reviews Claude's work, and the other way round. Only blocker or major findings fail it.
+- **review:** a second agent reviews the brief and the diff read-only. By default (`"reviewer": "other"`) it's the other agent: Codex reviews Claude's work, and the other way round. Only blocker or major findings fail it.
+  - **Same-agent review:** when the other agent can't run (not installed, or at its usage limit), a fresh read-only session of the author's own agent reviews instead. That still counts, pass or fail, but it isn't independent, so the gate's summary starts "Same-agent review: Codex isn't available…" and the head's status reads **Passed required gates (same-agent review)** (the same on a lane, a plan's integration gate, View evidence and Open PR's Checks section). With only one agent installed, every review is this kind. `hydra_get_head` marks the gate `same_agent_review`.
 
 **How results are handled:**
 - **Order:** gates run as command, then screenshots, then review. Once a required gate fails, the rest are skipped.
 - **Not blocking:** `required: false` gates are reported but never block.
-- **Not run:** a reviewer or browser that can't run (not installed, rate-limited, timed out) marks its gate **not run**. That never fails the head. A reviewer that crashed (Codex exiting with code 1, say) or replied with something Hydra couldn't read is tried once more first, and the gate's summary says so; a timeout or a usage limit isn't retried.
+- **Not run:** a browser that can't run, a review that times out or hits a usage limit, or a reviewer that can't run at all marks its gate **not run**: a fixed reviewer (`"same"`, `"claude"` or `"codex"`) that isn't available, or `"other"` when neither agent is. That never fails the head. A reviewer that crashed (Codex exiting with code 1, say) or replied with something Hydra couldn't read is tried once more first, and the gate's summary says so; a timeout or a usage limit isn't retried.
 - **Failures:** they go back to the head with the output and findings, up to `maxAttempts`.
 
 **Seeing the results:** gate chips (**✓ unit · ✓ ui · ✗ review**) sit on the head's card. **View evidence** in its menu opens the output, findings (linked to file:line) and screenshots.
@@ -204,7 +205,7 @@ No agent grades its own work. When a head calls `hydra_done`, its changes pass t
 
 It's stored with the commit it describes, on the head's result, the lane's last gates record and merge, and the plan job's result. Results from before this change carry no status and are never relabelled. A lane whose HEAD has moved past its recorded commit shows "Checks are for an older commit" instead of a made-up one. The same label appears on the canvas node, the lane tile, the plan view, the Agents tree and View evidence's first line, and Open PR adds a short "### Checks" section (the status, each gate's ✓/✗/– result and the commit) to the pull request body through GitHub's compare page `body` parameter.
 
-**Starter gates:** a project with no `.hydra/gates.json` at all gets offered a deliberate choice once — from the first head that finishes, or the first lane merge, in it — between "Add a test gate" (`npm test`, detected from `package.json`'s `test` script), "No gates for this project" (writes `{"gates": []}`, so the project reads as a deliberate choice rather than unconfigured), and "Not now". The same choice is in **Settings → Gates → Starter gates**, any time.
+**Starter gates:** a project with no `.hydra/gates.json` at all gets offered a deliberate choice once — from the first head that finishes, or the first lane merge, in it — between "Add a test gate (npm test)" (offered only when `package.json` has a `test` script; without one, "Set up gates in Settings" opens **Settings → Gates** instead, rather than writing a gate that would fail every head), "No gates for this project" (writes `{"gates": []}`, so the project reads as a deliberate choice rather than unconfigured), and "Not now". The same choice is in **Settings → Gates → Starter gates**, any time.
 
 **What a head starts from:**
 - **Dependencies:** a head with `depends_on` starts from the finished work of the heads it waited on, merged into one commit when there are several. Its brief includes their summaries. If they conflict, it fails before starting and names the files.
@@ -490,7 +491,7 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for what Hydra protects, from whom, its b
   - On other platforms this check isn't implemented yet, and lead connections are accepted.
 - **Confined heads** (`src/core/confine.ts`):
   - A Claude head gets its own settings file: reads outside its worktree are blocked, whatever the spelling, and Read and Edit are denied on Hydra's data, the other worktrees, the lead's `.hydra` and `.git`, and `~/.ssh`, `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.codex`, `~/.claude` and the like. Its role's pack copy stays readable.
-  - Its Bash runs through Hydra's wrapper in Codex's Windows sandbox: only its worktree and its own TEMP are writable. Hydra checks the sandbox once per window; if the check fails, heads have no shell, say why, and Settings → Heads shows the reason. PowerShell is never given.
+  - Its Bash runs through Hydra's wrapper in Codex's Windows sandbox: only its worktree and its own TEMP are writable. Hydra checks the sandbox once per window; if the check fails, heads have no shell, say why, and Settings → Heads shows the reason. The first head that starts without a shell also brings up a warning, once per window, with **Open Settings**. Without Codex installed (a Claude Code-only setup) this is always the case on Windows: Claude Code heads edit code and the gates run your tests, but the heads can't run commands themselves. PowerShell is never given.
   - Heads and gate commands get a trimmed environment: system, locale, proxy and toolchain variables, the provider's own sign-in, and a role's variables. Other keys and tokens stay out.
   - A Codex head keeps `workspace-write`, with its own TEMP. Its reads aren't limited.
 - **A head's gate commands** and its screenshots gate's app run in the same sandbox, with the network on, when the check passed. A lane's gates run as before.

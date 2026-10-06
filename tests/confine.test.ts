@@ -10,7 +10,7 @@ import { HelperEndpoint, callHelperEndpoint } from '../src/core/helperEndpoint';
 import { HelperService, commitAll, helperPrompt } from '../src/core/helperService';
 import { claudeHelperArguments, codexHelperArguments, type HelperRun, type HelperRunSpec } from '../src/core/helperRunner';
 import {
-  bashQuote, claudeHeadTools, codexCarry, codexIsolationArguments, confinedEnvironment, guardScript, headEnvironment, headSettings, headShellSentence, homeFolders, insideScript, laneSettings,
+  bashQuote, claudeHeadTools, codexCarry, codexIsolationArguments, confinedEnvironment, guardScript, headEnvironment, headSettings, headShellOffNotice, headShellSentence, homeFolders, insideScript, laneSettings,
   rulePath, ruleCovers, sandboxEnvironmentPolicy, sandboxProfile, sandboxProfileToml, secretTargets, settingsProblems, storageReadDeny, treeScript, userPluginIds, wrapperScript, type HeadShell, type StorageListing,
 } from '../src/core/confine';
 import { userClaudePlugins } from '../src/core/confineFiles';
@@ -403,6 +403,7 @@ test('the check: unconfined off Windows; off without Codex; off when a test writ
   assert.equal(headShellSentence(await none.shell()), 'Head shells are off: Codex isn\'t installed, and a head\'s shell runs in its Windows sandbox.');
   assert.equal(headShellSentence({ kind: 'sandboxed', wrapper: 'w', gitBin: 'g' }), 'Head shells run in Codex\'s Windows sandbox.');
   assert.equal(headShellSentence(undefined), 'Head shells are checked when the first head starts.');
+  assert.equal(headShellOffNotice('Codex isn\'t installed, and a head\'s shell runs in its Windows sandbox'), 'A Claude Code head started without a shell, so it can\'t run tests or builds itself (Hydra\'s gates still run them): Codex isn\'t installed, and a head\'s shell runs in its Windows sandbox.');
   const git = process.platform === 'win32' ? await findGitBash(process.env) : undefined;
   if (!git) { t.skip('the rest needs Git Bash, which is only on Windows here'); return; }
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-check-'));
@@ -503,11 +504,12 @@ test('a Claude head starts confined: its settings file on disk (0600, valid, the
   const runs: { spec: HelperRunSpec; settings?: unknown; mode?: number; tempExists: boolean }[] = [];
   const sandboxed: HeadShell = { kind: 'sandboxed', wrapper: path.join(root, 'sandbox', 'hydra-shell.sh'), gitBin: path.join(root, 'git', 'bin') };
   let shell: HeadShell = sandboxed;
+  const shellOff: string[] = [];
   service = new HelperService({
     store, endpoint, leadFolder: repo, leadKey: 'window', worktreeRoot: () => path.join(root, 'worktrees'),
     executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'storage', 'logs'), hydraStorage: path.join(root, 'storage'), maxConcurrent: () => 2, watchdogMs: 20,
-    sandbox: { shell: async () => shell, wrap: async () => undefined },
+    sandbox: { shell: async () => shell, wrap: async () => undefined }, shellOff: reason => shellOff.push(reason),
     startRun: spec => {
       const entry: (typeof runs)[number] = { spec, tempExists: false };
       runs.push(entry);
@@ -559,6 +561,7 @@ test('a Claude head starts confined: its settings file on disk (0600, valid, the
     assert.match(two!.spec.prompt, /Your shell is off: Codex's Windows sandbox isn't available \(Git Bash wasn't found\)\. Hydra's gates run the tests\./);
     assert.equal(waited.heads[0].summary, 'Done.');
     assert.equal((await call('hydra_get_head', { job_id: second })).result.note, 'This head had no shell: Git Bash wasn\'t found.', 'said in its result');
+    assert.deepEqual(shellOff, ['Git Bash wasn\'t found'], 'and told to the window, for the Claude head only');
     for (const run of [one, two]) assert.match(run!.spec.prompt, /Hydra commits your changes for you, so don't commit yourself/);
     // The Codex head: no settings file, its own TEMP, no secrets.
     assert.equal(three!.spec.provider, 'codex'); assert.equal(three!.spec.confine.settingsFile, undefined);

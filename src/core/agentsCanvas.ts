@@ -408,7 +408,9 @@ const evidenceLabels: Readonly<Record<EvidenceStatus, string>> = {
   'none-chosen': 'No gates (project choice)',
   override: 'Human override',
 };
-export const evidenceLabel = (status: EvidenceStatus): string => evidenceLabels[status];
+/** With the checks: a passed review the author's own agent did says so (jobs.ts's sameAgentReviewed). */
+export const evidenceLabel = (status: EvidenceStatus, checks?: readonly { passed: boolean; sameAgentReview?: boolean }[]): string =>
+  `${evidenceLabels[status]}${(status === 'passed' || status === 'partial') && checks?.some(check => check.sameAgentReview && check.passed) ? ' (same-agent review)' : ''}`;
 
 /**
  * O3 (docs/Heads.md, "Landing a plan together"): a plan's integration branch as its header on the canvas
@@ -431,7 +433,7 @@ export function integrationCanvasView(plan: Pick<Plan, 'integration'>): CanvasIn
     : gate.tip !== tip ? 'Integration gate out of date (more work landed since)'
     : gate.error ? `Integration gate couldn't run: ${gate.error}`
     : gate.failed ? 'Integration gate failed'
-    : gate.status ? evidenceLabel(gate.status) : 'Integration gate not run';
+    : gate.status ? evidenceLabel(gate.status, gate.checks) : 'Integration gate not run';
   const merged = integration.merged && integration.merged.tip === tip ? (integration.merged.via === 'pr' ? 'Pushed for a pull request' : `Merged into ${integration.merged.into ?? 'its branch'}`) : undefined;
   const settled = !integration.error && !landing && tip !== integration.base && !gate?.running && !merged;
   const overridden = integration.override?.tip === tip;

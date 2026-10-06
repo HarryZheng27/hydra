@@ -92,7 +92,7 @@ function statusLine(subject: EvidenceSubject): string | undefined {
   if (!subject.status) return undefined;
   const at = subject.commit ? ` (${subject.commit.slice(0, 7)})` : '';
   const stale = subject.stale ? ' — Checks are for an older commit.' : '';
-  return `**${evidenceLabel(subject.status)}${at}**${stale}`;
+  return `**${evidenceLabel(subject.status, subject.results)}${at}**${stale}`;
 }
 
 /** The whole document: a heading, Step A's status line, then one section per gate, in the order the gates ran. */

@@ -8,8 +8,10 @@ import { createWorktree } from '../src/core/worktrees';
 import { laneBranch, laneFolder, newLaneId, type Lane } from '../src/core/lanes';
 import { LaneSync } from '../src/core/laneSync';
 import { checksSection, githubCompareUrl, maxCompareUrlChars } from '../src/core/laneFinish';
-import { evidenceLabel, evidenceStatus, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
-import { detectTestScript, noGatesFile, starterTestGatesFile } from '../src/core/starterGates';
+import { evidenceLabel, evidenceStatus, gatesConfigured, toHeadCheckView, type JobCheckResult } from '../src/core/jobs';
+import { evidenceLabel as canvasEvidenceLabel, integrationCanvasView } from '../src/core/agentsCanvas';
+import { integrationGateLabel } from '../src/core/integration';
+import { detectTestScript, noGatesFile, starterGateActions, starterTestGatesFile } from '../src/core/starterGates';
 
 /**
  * Step A: truthful gate status for every job. Covers the pure
@@ -59,6 +61,22 @@ test('evidenceLabel: one plain-English label per status', () => {
   assert.equal(evidenceLabel('none'), 'No gates configured');
   assert.equal(evidenceLabel('none-chosen'), 'No gates (project choice)');
   assert.equal(evidenceLabel('override'), 'Human override');
+});
+
+test('a review the author\'s own agent did (the other wasn\'t installed) passes the same, but every label says it wasn\'t independent', () => {
+  const sameAgent = [check({ id: 'unit' }), check({ id: 'review', kind: 'review', state: 'passed', reviewer: 'claude', sameAgentReview: true })];
+  assert.equal(evidenceStatus({ checks: sameAgent, configured: 'file' }), 'passed', 'pass/fail is unchanged');
+  assert.equal(evidenceLabel('passed', sameAgent), 'Passed required gates (same-agent review)');
+  assert.equal(evidenceLabel('partial', sameAgent), 'Some gates not run (same-agent review)');
+  assert.equal(evidenceLabel('passed', [check()]), 'Passed required gates', 'an independent review, or none, says nothing more');
+  assert.equal(evidenceLabel('passed', [check({ kind: 'review', state: 'failed', passed: false, sameAgentReview: true, required: false })]), 'Passed required gates', 'only a passed same-agent review is the caveat');
+  assert.equal(evidenceLabel('override', sameAgent), 'Human override');
+  assert.equal(toHeadCheckView(sameAgent[1]!).sameAgentReview, true, 'the views carry it');
+  assert.equal(canvasEvidenceLabel('passed', sameAgent.map(toHeadCheckView)), evidenceLabel('passed', sameAgent), 'the canvas\'s copy agrees');
+  const gate = { tip: 'a'.repeat(40), at: '2026-01-01T00:00:00.000Z', status: 'passed' as const, checks: sameAgent };
+  assert.equal(integrationGateLabel(gate, gate.tip), 'Passed required gates (same-agent review)');
+  const integration = { branch: 'hydra/plan', base: 'b'.repeat(40), tip: gate.tip, queue: [], gate } as any;
+  assert.equal(integrationCanvasView({ integration })!.label, 'Passed required gates (same-agent review)');
 });
 
 // ---- Lane staleness against a real git repository (tests/laneGit.test.ts's fixture pattern) ----
@@ -145,6 +163,11 @@ test('the compare URL carries the checks body under GitHub\'s body parameter, an
 test('starterTestGatesFile writes one required npm test command gate', () => {
   const parsed = JSON.parse(starterTestGatesFile());
   assert.deepEqual(parsed.gates, [{ id: 'test', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 }]);
+});
+
+test('the starter-gates offer adds an npm test gate only when package.json has a test script, and otherwise opens Settings', () => {
+  assert.deepEqual(starterGateActions(true), ['Add a test gate (npm test)', 'No gates for this project', 'Not now']);
+  assert.deepEqual(starterGateActions(false), ['Set up gates in Settings', 'No gates for this project', 'Not now']);
 });
 
 test('noGatesFile writes a deliberately empty gates list', () => {

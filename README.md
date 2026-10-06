@@ -66,6 +66,8 @@ The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **M
 
 - [Git](https://git-scm.com/).
 - The [Claude Code](https://code.claude.com/docs/en/setup) and/or [Codex](https://developers.openai.com/codex/cli) CLI, installed and **signed in** with your own account. Hydra runs your CLIs as they are: it never asks for an API key, and never reads or copies their credentials.
+- **Claude Code only?** A Claude Code head's shell (running tests and builds) uses Codex's Windows sandbox, so on Windows it needs the Codex CLI installed too. Without Codex, Claude Code heads still edit code and Hydra's gates still run your tests, but the heads can't run commands themselves; Hydra warns you the first time one starts that way.
+- **One agent only?** A head's review gate is done by the other agent. With only one installed, the same agent reviews its own work, and the head's status says so.
 
 ## A short tour
 
@@ -73,7 +75,7 @@ The installer isn't code-signed yet, so Windows SmartScreen may warn: choose **M
 2. **Open a git repository** (File → Open Folder) and trust it.
 3. **Give the lead a task** in the Claude Code or Codex chat, one with independent parts. It starts heads, or a plan, when that's worth it.
 4. **Watch them in the Agent Manager.** Press **Alt+Shift+A**, or use the **Agent Manager / Editor** switch in the title bar. Each head shows what it's doing, its gate results and one plain status: *Passed required gates*, *Some gates not run*, *No gates configured* or *Human override*.
-5. **Review and merge.** The lead reviews each head's work and merges it. A plan offers **Merge plan** or **Open PR** only once its combined work has passed. The first time, Hydra offers a starter test gate for your project.
+5. **Review and merge.** The lead reviews each head's work and merges it. A plan offers **Merge plan** or **Open PR** only once its combined work has passed. The first time, Hydra offers a starter test gate for your project (when `package.json` has a `test` script; otherwise it points you to **Settings → Gates**).
 
 New to it? **Hydra: Learn Heads, Lanes, Plans and Gates** opens a short walkthrough.
 

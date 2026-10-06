@@ -73,11 +73,13 @@ export function reviewerSettings(plugins: readonly string[]): { disableAllHooks:
 }
 
 export type ReviewerAvailability = { ok: true; executable: string } | { ok: false; reason: string };
-export type ReviewerPick = { provider: Provider; executable: string; note?: string } | { notRun: string };
+/** `sameAgent`: the author's own agent reviewed (the other couldn't, or both wrote it), so the review isn't independent. */
+export type ReviewerPick = { provider: Provider; executable: string; note?: string; sameAgent?: true } | { notRun: string };
 
 /**
  * Who reviews. "other" falls back to a fresh read-only session of the same
- * agent when the other one isn't installed or is at its limit, and says so.
+ * agent when the other one isn't installed or is at its limit, and says so: its note starts "Same-agent
+ * review", and the gate's result is marked sameAgentReview, so a pass never reads as independent.
  * "same", "claude" and "codex" are fixed: if that one can't run, nobody does.
  *
  * O6: `priorAuthors` names providers this job ran under before `author` (a
@@ -91,11 +93,11 @@ export async function chooseReviewer(choice: ReviewerChoice, author: Provider, a
   const wanted = choice === 'other' ? (bothWrote ? author : other(author)) : choice === 'same' ? author : choice;
   const handoffCaveat = `Codex and Claude Code both worked on this change (a usage-limit handoff), so no review of it is independent; ${providerName(wanted)} reviewed anyway`;
   const first = await available(wanted);
-  if (first.ok) return { provider: wanted, executable: first.executable, ...(bothWrote ? { note: handoffCaveat } : {}) };
+  if (first.ok) return { provider: wanted, executable: first.executable, ...(bothWrote ? { note: handoffCaveat, sameAgent: true as const } : {}) };
   if (choice !== 'other') return { notRun: `${first.reason}, so nobody reviewed this.` };
   if (bothWrote) return { notRun: `${first.reason}, and it's the only agent that worked on this change, so nobody reviewed this.` };
   const fallback = await available(author);
-  if (fallback.ok) return { provider: author, executable: fallback.executable, note: `${first.reason}, so a fresh read-only ${providerName(author)} session reviewed this instead` };
+  if (fallback.ok) return { provider: author, executable: fallback.executable, note: `Same-agent review: ${first.reason}, so a fresh read-only ${providerName(author)} session reviewed this instead`, sameAgent: true };
   return { notRun: `${first.reason}, and ${fallback.reason}, so nobody reviewed this.` };
 }
 
@@ -318,7 +320,7 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
       result: {
         id: gate.id, kind: 'review', required: gate.required, state: failed ? 'failed' : 'passed', passed: !failed,
         exitCode: output.exitCode, durationMs: elapsed(), outputTail: clip(verdict.findings.map(formatFinding).join('\n'), 2000),
-        evidence, findings: verdict.findings, summary, reviewer: pick.provider,
+        evidence, findings: verdict.findings, summary, reviewer: pick.provider, ...(pick.sameAgent ? { sameAgentReview: true as const } : {}),
       },
     };
   };

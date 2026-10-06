@@ -19,14 +19,14 @@ import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaud
 import { claudeSupportsLimitHook, limitHookGroup, limitHookState, limitHookReachesThisHydra, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
-import { headShellSentence } from '../core/confine';
+import { headShellOffNotice, headShellSentence } from '../core/confine';
 import { claudeForRegistration as claudeFor } from './claudeExecutable';
 import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
 import { codexLaneFanout } from '../core/limitEvents';
 import { ClaudeChatLimits, CodexChatLimits, type QuotaSource } from './chatLimits';
 import { registerLimitOffer } from './limitOffer';
 import { loadGates } from '../core/gates';
-import { detectTestScript, noGatesFile, starterTestGatesFile } from '../core/starterGates';
+import { detectTestScript, noGatesFile, starterGateActions, starterGateChoices, starterTestGatesFile } from '../core/starterGates';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from '../core/windowClose';
 import type { PackService } from '../core/packs/service';
 import { Emitter } from './emitter';
@@ -160,6 +160,8 @@ export class HydraController {
   roles: SnapshotRole[] = [];
   /** hydra.newPlan on a panel that is still loading: shown once its webview says it is ready. */
   private pendingNewPlan = false;
+  /** Step 2: a head started with its shell off, and the window said so (once per window). */
+  private shellOffShown = false;
   private snapshotGeneration = 0;
   private publishTimer: ReturnType<typeof setTimeout> | undefined;
   private dismissedTrayIds = new Set<string>();
@@ -1035,6 +1037,13 @@ export class HydraController {
       gates: this.packs.gates, roles: this.packs,
       // ---- Step 2: confining heads ----
       sandbox: this.headSandbox, hydraStorage: this.host.paths.storage,
+      defaultProvider: () => this.host.settings.get<string>('defaultProvider', 'claude') === 'codex' ? 'codex' : 'claude',
+      // A head without a shell can't run tests or builds: said once per window, not only in its result.
+      shellOff: reason => {
+        if (this.shellOffShown) return;
+        this.shellOffShown = true;
+        void this.host.notify('warning', headShellOffNotice(reason), 'Open Settings').then(pick => { if (pick) this.ide.showSettings('heads'); }, () => undefined);
+      },
       // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
       tempDirectory: path.join(this.host.paths.storage, 't'),
       // ---- Stop all (5.3) ----
@@ -1175,14 +1184,16 @@ export class HydraController {
       if (asked.has(folder)) return;
       await this.host.state.update(key, [...asked, folder]);
       const hasTest = await detectTestScript(folder);
-      const pick = await this.host.notify('info', 
-        'This project has no gates yet: nothing independently checks a head\'s work before it\'s accepted, or a lane before it merges.',
-        hasTest ? 'Add a test gate (npm test)' : 'Add a test gate', 'No gates for this project', 'Not now',
+      // Without a test script, an npm test gate would fail every head: the offer opens Settings → Gates instead.
+      const pick = await this.host.notify('info',
+        `This project has no gates yet: nothing independently checks a head's work before it's accepted, or a lane before it merges.${hasTest ? '' : ' Its package.json has no "test" script, so set up a gate in Settings.'}`,
+        ...starterGateActions(hasTest),
       );
-      if (!pick || pick === 'Not now') return;
+      if (!pick || pick === starterGateChoices.later) return;
+      if (pick === starterGateChoices.settings) { this.ide.showSettings('gates'); return; }
       const file = path.join(folder, '.hydra', 'gates.json');
       await mkdir(path.dirname(file), { recursive: true });
-      await writeFile(file, pick.startsWith('Add a test gate') ? starterTestGatesFile() : noGatesFile(), 'utf8');
+      await writeFile(file, pick === starterGateChoices.test ? starterTestGatesFile() : noGatesFile(), 'utf8');
       await this.ide.refreshSettingsPages(['gates']).catch(() => undefined);
     } catch { /* gates aren't available in this window; say nothing, and never block acceptance or the merge */ }
   }

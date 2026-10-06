@@ -26,6 +26,14 @@ export async function detectTestScript(root: string): Promise<boolean> {
 export function starterTestGatesFile(): string {
   return `${JSON.stringify({ gates: [{ id: 'test', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 }] }, null, 2)}\n`;
 }
+/**
+ * The starter-gates offer's buttons. "Add a test gate (npm test)" only when package.json has a test
+ * script: without one an `npm test` gate would fail every head, so the offer opens Settings → Gates instead.
+ */
+export const starterGateChoices = { test: 'Add a test gate (npm test)', settings: 'Set up gates in Settings', none: 'No gates for this project', later: 'Not now' } as const;
+export function starterGateActions(hasTestScript: boolean): string[] {
+  return [hasTestScript ? starterGateChoices.test : starterGateChoices.settings, starterGateChoices.none, starterGateChoices.later];
+}
 /** `.hydra/gates.json` for "No gates for this project": a deliberate empty list (Step A's `none-chosen`, not `none`). */
 export function noGatesFile(): string {
   return `${JSON.stringify({ gates: [] }, null, 2)}\n`;

@@ -2,6 +2,13 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **A warning when heads have no shell.** On Windows a Claude Code head's shell needs Codex installed for its sandbox. The first head that starts without one now brings up a warning, once per window, with **Open Settings**, instead of only a note in the head's result. The README says so under Requirements.
+- **The starter test gate needs a test script.** "Add a test gate (npm test)" is only offered when `package.json` has a `test` script; otherwise the offer opens **Settings → Gates** instead of writing a gate that would fail every head.
+- **Heads run on your agent by default.** A head or plan job that names no provider runs on its lead's own agent, else **hydra.defaultProvider**, else Claude Code, so a Codex-only setup no longer starts Claude heads.
+- **Same-agent reviews say so.** When the other agent can't review (it isn't installed, or is at its usage limit), the author's own agent still reviews, and the gate and status now read "Same-agent review…" and **Passed required gates (same-agent review)** rather than looking independent. Pass and fail are unchanged.
+
 ## 0.28.0 (2026-10-07)
 
 **The Hydra app.** This release carries a second installer, `HydraAppSetup.exe`, beside `HydraSetup.exe`: Hydra, a desktop app built around the chat, in the style of Claude desktop. It's a new product, so it's worth reading the [app guide](docs/App.md) first.
