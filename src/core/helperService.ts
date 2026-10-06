@@ -26,7 +26,7 @@ import { continuedHistoryReason } from './limitOffer';
 import type { StopSwitch } from './stopSwitch';
 import type { AuditEvent } from './audit';
 import { closeDelayMs, closeRefusal, closeWindowTool, isBusy, type WindowActivity } from './windowClose';
-import { boardBodyMax, boardTopicMax, writeScopeOverlap, type BoardFrom, type BoardPost, type PlanAmendment } from './plans';
+import { boardBodyMax, boardTopicMax, planJobModelPattern, writeScopeOverlap, type BoardFrom, type BoardPost, type PlanAmendment } from './plans';
 import { HeadSync, headSyncIntervalMs, type HeadConflict, type IntegrationConflict } from './headSync';
 export type { HeadConflict, IntegrationConflict } from './headSync';
 import type { PlanAmendEdit, PlanAmendRetry, PlanAmendSkip, PlanBudget, PlanBudgetInput, PlanLeadJobInput, PlanState } from './plans';
@@ -1204,7 +1204,7 @@ export class HelperService {
     };
   }
   private parsePlanLeadJob(value: unknown): PlanLeadJobInput {
-    const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; role?: unknown; rigor?: unknown } | undefined;
+    const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; model?: unknown; role?: unknown; rigor?: unknown } | undefined;
     if (!job || typeof job !== 'object') throw new Error('Each job must be an object.');
     if (typeof job.key !== 'string') throw new Error('Each job needs a key.');
     if (typeof job.title !== 'string') throw new Error(`Job "${job.key}" needs a title.`);
@@ -1212,12 +1212,13 @@ export class HelperService {
     if (!Array.isArray(job.write_scope) || job.write_scope.some(path => typeof path !== 'string')) throw new Error(`Job "${job.key}" needs a write_scope of paths.`);
     if (job.depends_on !== undefined && (!Array.isArray(job.depends_on) || job.depends_on.some(key => typeof key !== 'string'))) throw new Error(`Job "${job.key}" has an invalid depends_on.`);
     if (job.provider !== undefined && job.provider !== 'claude' && job.provider !== 'codex') throw new Error(`Job "${job.key}" has an unknown provider.`);
+    if (job.model !== undefined && (typeof job.model !== 'string' || !planJobModelPattern.test(job.model))) throw new Error(`Job "${job.key}" names its model as the CLI does, like "haiku" or "gpt-6-luna".`);
     if (job.role !== undefined && typeof job.role !== 'string') throw new Error(`Job "${job.key}" has an invalid role.`);
     const rigor = this.parseRigor(job.rigor, job.key);
     return {
       key: job.key, title: job.title, brief: job.brief, write_scope: job.write_scope as string[],
       ...(job.depends_on ? { depends_on: job.depends_on as string[] } : {}),
-      ...(job.provider ? { provider: job.provider as Provider } : {}), ...(job.role ? { role: job.role as string } : {}),
+      ...(job.provider ? { provider: job.provider as Provider } : {}), ...(job.model ? { model: job.model as string } : {}), ...(job.role ? { role: job.role as string } : {}),
       ...(rigor ? { rigor } : {}),
     };
   }
