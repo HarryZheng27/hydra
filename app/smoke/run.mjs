@@ -244,7 +244,10 @@ try {
     // Claude: the first run, the resume, and the chat that starts a head (G5). Codex: the first run and the resume, plus
     // one more when the app-server started as the chat opened was replaced as the chat switched to Ask me before its
     // first message.
-    assert.equal(chats.filter(call => call.startsWith('claude -p ')).length, 3, all.join(', '));
+    // Plus, at most once, the home screen's early start of the picked agent (chats.prepare), when the smoke rests on
+    // the home screen long enough for it: a fresh session id, ended unused when the smoke opens a chat instead.
+    const claudeRuns = chats.filter(call => call.startsWith('claude -p ')).length;
+    assert.ok(claudeRuns === 3 || claudeRuns === 4, all.join(', '));
     const codexServers = chats.filter(call => call.startsWith('codex app-server')).length;
     assert.ok(codexServers === 2 || codexServers === 3, all.join(', '));
     const calls = all.filter(call => !isChat(call));
@@ -299,6 +302,7 @@ try {
     assert.deepEqual(agents.mergedFiles, ['one.txt', 'three.txt', 'two.txt'], 'the plan\'s three files are merged (the lone head\'s stays on its branch)');
     assert.match(agents.planStatus, /passed/i, 'Merge plan shows once the integration gate passed');
     assert.match(agents.planStatusAfter, /merged/i);
+    assert.ok(agents.canvasSize && agents.canvasSize.height >= 200 && agents.canvasSize.width >= 300, `the canvas fills the Agents view: ${JSON.stringify(agents.canvasSize)}`);
     assert.match(agents.mergedLog ?? '', /plan|Smoke plan/i);
   });
   check('a lane runs its CLI in a real terminal in its own worktree; the audit log, Stop all and Resume work from the Agents view', () => {

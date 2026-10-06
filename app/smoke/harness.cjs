@@ -291,6 +291,9 @@ if (role === 'resume') {
       report.agents.mergedFiles = (() => { try { return fs.readdirSync(path.join(arg('folder'), 'smoke')).sort(); } catch { return []; } })();
       await until(`/merged/i.test(document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? '')`, 'the canvas to show the plan merged', 15000).catch(() => undefined);
       report.agents.planStatusAfter = await ui(`document.querySelector('.ide-agents .canvas-plan-integration .canvas-plan-status')?.textContent ?? ''`);
+      // The canvas fills the view (it once had no height, so only its toolbar showed); --smoke-shots saves a picture of it.
+      report.agents.canvasSize = await ui(`(() => { const box = document.querySelector('.ide-agents .canvas-viewport')?.getBoundingClientRect(); return box ? { width: Math.round(box.width), height: Math.round(box.height) } : null; })()`);
+      if (arg('shots')) fs.writeFileSync(path.join(arg('shots'), 'agents.png'), (await wc.capturePage()).toPNG());
 
       // G5 milestone 4: a lane, a real terminal (node-pty and xterm) over the CLI in its own worktree. The stand-in
       // CLI answers nothing interactive and exits, so the lane starts, runs it, and shows it ended.

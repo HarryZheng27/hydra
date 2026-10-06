@@ -809,3 +809,63 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .shell-body { flex: 1; min-height: 0; padding: 4px 10px 8px; }
 .shell-body .terminal-pane { height: 100%; }
 .head-menu li.disabled { opacity: .45; cursor: default; }
+
+/* The Agents view, as Claude desktop would draw it. The IDE's canvas (webview/) brings its own styles but not its
+   page's layout (webview/styles.css), so here: the body fills the view and the canvas fills the body (without this
+   the canvas had no height and only its toolbar showed); then quiet, rounded controls in the app's own type. */
+.ide-agents { --radius-m: 8px; font-size: 14px; }
+.ide-agents .agents-toolbar { flex: none; gap: 4px; height: 48px; padding: 0 12px 0 20px; border-bottom: 1px solid var(--border); }
+.ide-agents .agents-toolbar-title { font-size: 15px; font-weight: 600; }
+.ide-agents .agents-toolbar .link, .ide-agents .agents-toolbar .danger-link { height: 30px; padding: 0 10px; border-radius: var(--radius-m); color: var(--muted); text-decoration: none; font-size: 13px; }
+.ide-agents .agents-toolbar .link:hover, .ide-agents .agents-toolbar .danger-link:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.ide-agents .agents-toolbar .danger-link:not(:disabled) { color: var(--error); }
+.ide-agents .agents-toolbar .danger-link:disabled { opacity: .45; }
+.ide-agents .agents-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ide-agents .agents-view-switch { flex: none; display: flex; gap: 2px; width: max-content; margin: 12px 20px 0; padding: 3px; border-radius: 10px; background: var(--hover); }
+.ide-agents .agents-view-switch [role="tab"] { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 14px; border-radius: 7px; font-size: 13px; color: var(--muted); }
+.ide-agents .agents-view-switch [role="tab"].on { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, .08), 0 0 0 1px var(--border); }
+.ide-agents .agents-view-count { font-size: 12px; color: var(--muted); }
+.ide-agents .agents-view-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ide-agents .agents-view-pane[hidden] { display: none; }
+.ide-agents .agents-view-pane > * { flex: 1; min-height: 0; }
+/* The canvas: a white board with a soft dot grid, a light side list, rounded cards. */
+.ide-agents .agents-canvas { --canvas-dot: #00000014; height: auto; grid-template-columns: minmax(0, 1fr) 300px; margin: 12px 20px 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.ide-agents .canvas-toolbar { padding: 10px 14px; }
+.ide-agents .canvas-title strong { font-size: 14px; }
+.ide-agents .canvas-title span { font-size: 13px; }
+.ide-agents .canvas-button, .ide-agents .canvas-zoom button { height: 30px; padding: 0 12px; border-radius: var(--radius-m); font-size: 13px; }
+.ide-agents .canvas-zoom button { min-width: 32px; padding: 0 8px; }
+.ide-agents .canvas-zoom button:first-child { border-radius: var(--radius-m) 0 0 var(--radius-m); }
+.ide-agents .canvas-zoom button:last-child { border-radius: 0 var(--radius-m) var(--radius-m) 0; }
+.ide-agents .canvas-viewport { min-height: 240px; background: radial-gradient(var(--canvas-dot) 1px, transparent 1.2px) 0 0 / 20px 20px, var(--bg); }
+.ide-agents .canvas-node-card, .ide-agents .canvas-lead, .ide-agents .canvas-plan-lead { border-radius: 12px; background: var(--input-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 8px 24px -16px rgba(0, 0, 0, .25); }
+.ide-agents .canvas-node-title { font-size: 14px; }
+.ide-agents .canvas-node-detail, .ide-agents .canvas-plan-status { font-size: 13px; }
+.ide-agents .canvas-node-top, .ide-agents .canvas-node-foot { font-size: 12px; }
+.ide-agents .canvas-tray { gap: 6px; padding: 10px 14px; background: var(--bg); }
+.ide-agents .canvas-tray-label { font-size: 12px; }
+.ide-agents .canvas-chip { height: 28px; padding: 0 10px; border-radius: var(--radius-m); background: var(--input-bg); font-size: 13px; }
+.ide-agents .canvas-tray-clear { height: 28px; padding: 0 10px; border-radius: var(--radius-m); color: var(--muted); font-size: 13px; }
+.ide-agents .canvas-tray-clear:hover { background: var(--hover); color: var(--fg); }
+.ide-agents .canvas-list { background: var(--sidebar-bg); }
+.ide-agents .canvas-list-head { padding: 10px 14px; }
+.ide-agents .canvas-list-head strong { font-size: 14px; }
+.ide-agents .canvas-filter { padding: 2px; border-radius: 8px; background: var(--hover); }
+.ide-agents .canvas-filter button { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; }
+.ide-agents .canvas-filter button.on { background: var(--bg); box-shadow: 0 0 0 1px var(--border); }
+.ide-agents .canvas-row { border-radius: var(--radius-m); }
+.ide-agents .canvas-row-copy b { font-size: 13.5px; }
+.ide-agents .canvas-row-copy span, .ide-agents .canvas-list-empty { font-size: 12.5px; }
+.ide-agents .canvas-plan-actions button, .ide-agents .canvas-newplan button, .ide-agents .canvas-job-popover button { height: 28px; border-radius: var(--radius-m); font-size: 12.5px; }
+.ide-agents .canvas-plan-actions button.primary, .ide-agents .canvas-newplan button.primary, .ide-agents .canvas-job-popover button.primary { border-color: transparent; background: var(--button-bg); color: var(--button-fg); }
+.ide-agents .canvas-newplan input, .ide-agents .canvas-newplan textarea, .ide-agents .canvas-job-popover input, .ide-agents .canvas-job-popover textarea, .ide-agents .canvas-job-popover select { border-radius: var(--radius-m); font-size: 13.5px; }
+.ide-agents .canvas-menu { border-radius: 10px; background: var(--input-bg); box-shadow: 0 8px 28px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .06); }
+.ide-agents .canvas-menu button { border-radius: 6px; font-size: 13px; }
+.ide-agents .canvas-menu button:hover, .ide-agents .canvas-menu button:focus-visible { background: var(--hover); }
+/* The canvas toolbar never wraps a button's words; on a narrow window the controls drop to a second row instead,
+   and the side list narrows. */
+.ide-agents .canvas-toolbar { flex-wrap: wrap; row-gap: 8px; }
+.ide-agents .canvas-title, .ide-agents .canvas-title span, .ide-agents .canvas-button, .ide-agents .canvas-zoom button { white-space: nowrap; }
+.ide-agents .canvas-controls { flex-wrap: wrap; gap: 6px; }
+.ide-agents .canvas-zoom { flex: none; }
+@media (max-width: 1280px) { .ide-agents .agents-canvas { grid-template-columns: minmax(0, 1fr) 240px; } }
