@@ -50,7 +50,9 @@ export function TerminalPane({ id, ended = 'Claude Code', attach }: { id: string
     return () => { disposed = true; cleanup(); };
   }, [id, ended]);
   return (
-    <div className="terminal-pane" ref={host}>
+    // xterm owns the pane's box; the button sits beside it in a wrapper, so React never edits what xterm drew.
+    <div className="terminal-wrap">
+      <div className="terminal-pane" ref={host} />
       {attach && selection.trim() && <AttachButton chatId={attach.chatId} item={{ source: 'Terminal', label: `Terminal ${attach.n}`, tab: attach.tab, text: selection }} onDone={() => { termRef.current?.clearSelection(); setSelection(''); }} />}
     </div>
   );

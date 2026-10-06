@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { AgentTerminal } from '../src/main/agentTerminal';
-import { lastLines, OUTPUT_LIMIT, plainOutput, ShellTabs } from '../src/main/shellTabs';
+import { lastLines, SCROLLBACK, ShellTabs, TabScreen } from '../src/main/shellTabs';
 import { commandProblem, terminalTools } from '../src/shared/terminalTools';
 import type { TerminalTabsMessage } from '../src/shared/ipc';
 
@@ -132,6 +132,13 @@ test('stop_terminal_tab ends only a tab the agent started, and nothing lets the 
     // The user closing a tab (theirs or the agent's) removes it for the agent too.
     s.tabs.close(chatA, userTab);
     assert.deepEqual(JSON.parse((await s.call(token, 'list_terminal_tabs')).body.result!).map((tab: { tab_id: string }) => tab.tab_id), [agentTab]);
+    // Deleting the chat ends its shells and drops its tabs; another chat's are untouched.
+    const other = await s.tabs.openForUser(chatB);
+    const userTab2 = await s.tabs.openForUser(chatA);
+    s.tabs.dropChat(chatA);
+    assert.deepEqual(s.tabs.list(chatA), []);
+    assert.ok(s.closed.includes(userTab2) && !s.closed.includes(other));
+    assert.equal(s.tabs.list(chatB).length, 1);
   } finally { s.finish(); }
 });
 
@@ -151,14 +158,18 @@ test('read_terminal caps its lines and wait, strips terminal escapes, and marks 
     assert.equal((await s.call(token, 'read_terminal', { tab_id: tab, lines: 1001 })).body.ok, false, 'at most 1000 lines');
     assert.equal((await s.call(token, 'read_terminal', { tab_id: tab, wait_for_output_ms: 30_001 })).body.ok, false, 'at most 30 s of waiting');
     assert.equal((await s.call(token, 'read_terminal', { tab_id: tab, lines: 0 })).body.ok, false);
-    // Escapes and carriage-return redraws read as plain text.
-    assert.equal(plainOutput('\u001b[32mgreen\u001b[0m \u001b]0;title\u0007text\r\nProgress 10%\rProgress 100%\r\n'), 'green text\nProgress 100%\n');
-    assert.equal(plainOutput('a\u001b[2K\u001b[1Gb\u001b]8;;http://x\u001b\\link\u001b]8;;\u001b\\'), 'ablink');
+    // What the screen shows: escapes gone, a carriage-return redraw keeps what was written last, and a console repaint
+    // (cursor home, then the screen again) overwrites rather than repeating, as Windows' console does mid-command.
+    const screen = async (data: string) => { const copy = new TabScreen(40, 5); copy.write(data); const text = await copy.text(); copy.dispose(); return lastLines(text.replace(/ +$/gm, ''), 5); };
+    assert.equal(await screen('\u001b[32mgreen\u001b[0m \u001b]0;title\u0007text\r\nProgress 10%\rProgress 100%\r\n'), 'green text\nProgress 100%');
+    assert.equal(await screen('a\u001b[2K\u001b[1Gb\u001b]8;;http://x\u001b\\link\u001b]8;;\u001b\\'), 'blink');
+    assert.equal(await screen('Windows PowerShell\r\nReply 1\r\n\u001b[HWindows PowerShell\r\nReply 1\r\nReply 2\r\n'), 'Windows PowerShell\nReply 1\nReply 2');
     assert.equal(lastLines('a\nb\nc\n\n', 2), 'b\nc');
-    // Main keeps the last 256 KB, not more.
-    s.tabs.feed({ id: tab, data: 'x'.repeat(OUTPUT_LIMIT * 2) });
+    // Main keeps the screen and its scrollback, not more.
+    s.tabs.feed({ id: tab, data: Array.from({ length: SCROLLBACK * 2 }, (_, i) => `more ${i}`).join('\r\n') + '\r\n' });
     const big = (await s.call(token, 'read_terminal', { tab_id: tab, lines: 1000 })).body.result!;
-    assert.ok(big.length <= OUTPUT_LIMIT + 400);
+    assert.match(big, new RegExp(`more ${SCROLLBACK * 2 - 1}\\n\\[End`));
+    assert.doesNotMatch(big, /^more 0$/m);
   } finally { s.finish(); }
 });
 
