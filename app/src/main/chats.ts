@@ -9,6 +9,7 @@ import { cmdUnsafe, isWindowsShim } from '../../../src/core/process';
 import { ChatSession, type Launch, type SessionTimings } from '../../../src/core/chat/session';
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry, pullRequestUrlPattern } from '../../../src/core/chat/store';
 import { claudeCloudSessionIdPattern, type ClaudeCloudSession } from '../../../src/core/chat/cloud';
+import type { AgentTerminalGrant } from './agentTerminal';
 
 /**
  * The app's chats (G4): one ChatSession per open chat, its events written to the ChatStore and pushed to the window.
@@ -37,6 +38,11 @@ export interface ChatManagerDeps {
   /** A terminal inside the window (G7's Continue here): its id, for the window to show. */
   startTerminal?(executable: string, args: string[], cwd: string): string;
   timings?: SessionTimings;
+  /**
+   * Terminal tools for Claude chats (agentTerminal.ts): each Claude chat process is started with its own --mcp-config for
+   * them, deleted when it ends. Unset in tests and live checks, and when the endpoint couldn't start: no chat gets them then.
+   */
+  agentTerminal?: { grant(chat: () => string | undefined): AgentTerminalGrant | undefined };
   /** The user's own CLI config file's text (Claude's settings.json, Codex's config.toml), for the composer's defaults. */
   cliConfig?(provider: ChatProvider): Promise<string | undefined>;
   /** Start a Claude chat's CLI when the chat is opened, ahead of its next message (the app sets this; tests don't). */
@@ -61,7 +67,7 @@ export interface ChatManagerDeps {
  * What a Claude chat is told about the window it answers in: a shell block gets a Run button (markdown.tsx) that types
  * it into the chat's terminal panel. Plain words only: on Windows it passes through the CLI's cmd launcher (cmdUnsafe).
  */
-export const runButtonNote = 'You are answering in the Hydra app. When you give the user a shell command to run, put it in its own fenced code block tagged bash: one command per block, no leading prompt sign, no output in the block. Hydra shows a Run button on that block, which types the command into the terminal panel beside the chat, a PowerShell of the user in this folder. Use it for commands you should not or cannot run yourself, for example ones your permission mode blocks; then ask the user to say done, and check the result.';
+export const runButtonNote = 'You are answering in the Hydra app. When you give the user a shell command to run, put it in its own fenced code block tagged bash: one command per block, no leading prompt sign, no output in the block. Hydra shows a Run button on that block, which types the command into the terminal panel beside the chat, a PowerShell of the user in this folder. Use it for commands you should not or cannot run yourself, for example ones your permission mode blocks; then ask the user to say done, and check the result. For things that keep running or need the user, such as a dev server or a sign-in flow, you can use the run_in_terminal tool, which opens a new tab for you in that panel, and read_terminal to read it. Sign-in codes and secrets stay with the user: never type them or ask for them.';
 
 /**
  * What the user's own CLI settings choose when a chat doesn't: model, effort and mode, so the composer shows real values
@@ -218,10 +224,30 @@ export class ChatManager {
     };
     const spare: NonNullable<ChatManager['spare']> = { key, ...(sessionId ? { sessionId } : {}), buffered: [], session: undefined as unknown as ChatSession };
     // Until a chat takes it, what the process says (its / commands) waits here; then it goes to that chat.
-    spare.session = new ChatSession(this.adapter(input.provider), options, this.deps.launch, events => { if (spare.target) void this.persist(spare.target, events); else spare.buffered.push(events); }, this.deps.timings);
+    spare.session = new ChatSession(this.adapter(input.provider), options, input.provider === 'claude' ? this.launchFor(() => spare.target) : this.deps.launch, events => { if (spare.target) void this.persist(spare.target, events); else spare.buffered.push(events); }, this.deps.timings);
     if (this.warmed) { this.sessions.get(this.warmed)?.cool(); this.warmed = undefined; }
     this.spare = spare;
     spare.session.warm();
+  }
+
+  /**
+   * Starts a Claude chat's CLI with its terminal tools: a token minted for this process, passed in a config file that is
+   * deleted when the process exits or is killed. `chat` names the chat the token belongs to; a chat warmed on the home
+   * screen has none until it is adopted. Without a grant (the endpoint isn't up, or a .cmd launcher couldn't take the
+   * path safely) the process starts without the tools.
+   */
+  private launchFor(chat: () => string | undefined): Launch {
+    const grants = this.deps.agentTerminal;
+    if (!grants) return this.deps.launch;
+    return (executable, args, cwd, handlers) => {
+      let grant: AgentTerminalGrant | undefined;
+      try { grant = grants.grant(chat); } catch (error) { this.deps.log?.(`terminal tools unavailable: ${error instanceof Error ? error.message : String(error)}`); }
+      if (grant && isWindowsShim(executable) && grant.args.some(arg => cmdUnsafe.test(arg))) { grant.release(); grant = undefined; }
+      if (!grant) return this.deps.launch(executable, args, cwd, handlers);
+      const mine = grant;
+      const process = this.deps.launch(executable, [...args, ...mine.args], cwd, { ...handlers, exit: code => { mine.release(); handlers.exit(code); }, error: error => { mine.release(); handlers.error(error); } });
+      return { write: line => process.write(line), kill: () => { mine.release(); process.kill(); } };
+    };
   }
 
   private adapter(provider: ChatProvider): () => ChatAdapter {
@@ -342,7 +368,7 @@ export class ChatManager {
     // Quit or removal may have come during those awaits: nothing may start after either.
     if (this.closing) throw new Error('Hydra is quitting.');
     if (this.removed.has(id)) throw new Error('This chat was removed.');
-    const session = new ChatSession(this.adapter(record.provider), options, this.deps.launch, events => void this.persist(id, events), this.deps.timings);
+    const session = new ChatSession(this.adapter(record.provider), options, record.provider === 'claude' ? this.launchFor(() => id) : this.deps.launch, events => void this.persist(id, events), this.deps.timings);
     this.sessions.set(id, session);
     return session;
   }

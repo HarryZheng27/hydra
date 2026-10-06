@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { BROWSER, CHAT_EVENTS, TERMINAL, type BrowserState, type TerminalMessage, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraHostMessage, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
+import { BROWSER, CHAT_EVENTS, TERMINAL, TERMINAL_TABS, type BrowserState, type TerminalMessage, type TerminalTabsMessage, HYDRA_HOST, HYDRA_TREE, HYDRA_UI, IPC_TRANSPORT, type Channel, type ChatEventsMessage, type HydraApi, type HydraHostMessage, type HydraTreeMessage, type HydraUiMessage, type Payload, type Result } from '../shared/ipc';
 
 // The renderer gets these typed functions and nothing else: no ipcRenderer, no channel names, no Node.
 const call = <C extends Channel>(channel: C, payload: Payload<C>): Promise<Result<C>> =>
@@ -36,6 +36,7 @@ const api: HydraApi = {
   terminalResize: (id, cols, rows) => call('terminal.resize', { id, cols, rows }),
   terminalClose: id => call('terminal.close', { id }),
   terminalShell: chatId => call('terminal.shell', { chatId }),
+  terminalTabs: chatId => call('terminal.tabs', { chatId }),
   claudeCommands: projectId => call('chats.commands', { projectId }),
   pullRequest: url => call('chats.pullRequest', { url }),
   browserOpen: url => call('browser.open', url === undefined ? {} : { url }),
@@ -87,6 +88,11 @@ const api: HydraApi = {
     const handler = (_event: unknown, message: TerminalMessage) => listener(message);
     ipcRenderer.on(TERMINAL, handler);
     return () => { ipcRenderer.removeListener(TERMINAL, handler); };
+  },
+  onTerminalTabs: listener => {
+    const handler = (_event: unknown, message: TerminalTabsMessage) => listener(message);
+    ipcRenderer.on(TERMINAL_TABS, handler);
+    return () => { ipcRenderer.removeListener(TERMINAL_TABS, handler); };
   },
   onChatEvents: listener => {
     const handler = (_event: unknown, message: ChatEventsMessage) => listener(message);

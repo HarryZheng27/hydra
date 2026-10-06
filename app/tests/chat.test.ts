@@ -10,7 +10,7 @@ import type { Launch, ProcessHandlers } from '../../src/core/chat/session';
 import { ChatStore, type StoreSecurity } from '../../src/core/chat/store';
 import { ChatManager, opensPullRequest, checkImage, claudeDefaults, codexDefaults, runButtonNote, trustedProjects } from '../src/main/chats';
 import { cmdUnsafe } from '../../src/core/process';
-import { ClaudeAdapter } from '../../src/core/chat/claude';
+import { ClaudeAdapter, claudeArguments } from '../../src/core/chat/claude';
 import { parseCall } from '../src/shared/ipc';
 import { ChatPane } from '../src/renderer/ChatPane';
 import { foldEvents, mergePush } from '../src/renderer/chatModel';
@@ -857,4 +857,50 @@ test('a Claude chat chosen to run in Auto on Haiku shows a note under the prompt
   assert.match(page([{ type: 'session', providerSessionId: 's', model: 'claude-haiku-4-5', permissionMode: 'default' }, ...turn]), /Claude Code is running this chat in Manual mode, not Auto\. Auto isn&#x27;t available on Haiku\./);
   assert.ok(!page([{ type: 'session', providerSessionId: 's', model: 'claude-haiku-4-5', permissionMode: 'auto' }, ...turn]).includes('mode-note'));
   assert.ok(!page(turn).includes('mode-note'));
+});
+
+test('claudeArguments includes --mcp-config only for app Claude chats, and its file goes with the process', async () => {
+  // The core's own arguments never connect a terminal: only the app does, through the manager.
+  assert.ok(!claudeArguments({ provider: 'claude', cwd: '/', executable: 'claude', sessionId: '0f8fad5b-d9cb-469f-a165-70867728950e' }).includes('--mcp-config'));
+  const dir = scratch();
+  try {
+    const files: string[] = [], resolvers: Array<() => string | undefined> = [];
+    const agentTerminal = { grant: (chat: () => string | undefined) => {
+      const file = path.join(dir, `grant-${files.length}.json`);
+      fs.writeFileSync(file, '{}');
+      files.push(file); resolvers.push(chat);
+      return { args: ['--mcp-config', file], release: () => fs.rmSync(file, { force: true }) };
+    } };
+    const store = new ChatStore(path.join(dir, 'chats'), noAcl);
+    const { starts, launch } = fakeLaunch();
+    const manager = new ChatManager({ store, launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined, agentTerminal });
+    // A Claude chat: the config rides on the command line, names the chat it belongs to, and is deleted when the process exits.
+    const claude = await manager.create({ cwd: dir, provider: 'claude' });
+    await manager.send(claude.id, 'hello');
+    const args = starts[0]!.args;
+    assert.equal(args[args.indexOf('--mcp-config') + 1], files[0]);
+    assert.equal(args[args.indexOf('--append-system-prompt') + 1], runButtonNote, 'the Run button note is still there');
+    assert.equal(resolvers[0]!(), claude.id);
+    assert.ok(fs.existsSync(files[0]!));
+    starts[0]!.handlers.exit(0);
+    assert.equal(fs.existsSync(files[0]!), false, 'the config file is removed when the process ends');
+    // A later process of the same chat gets a new token and file; closing the chat (kill) removes it too.
+    await manager.send(claude.id, 'again');
+    assert.equal(files.length, 2);
+    assert.notEqual(files[1], files[0]);
+    // A Codex chat gets none, and neither does a manager the app didn't give the endpoint (tests, live checks).
+    const codex = await manager.create({ cwd: dir, provider: 'codex' });
+    await manager.send(codex.id, 'hello');
+    assert.equal(files.length, 2, 'no token was minted for Codex');
+    assert.ok(starts.slice(2).every(start => !start.args.includes('--mcp-config')));
+    manager.closeAll();
+    assert.equal(fs.existsSync(files[1]!), false, 'ending the process by kill removes it too');
+    const bare = fakeLaunch();
+    const plain = new ChatManager({ store, launch: bare.launch, executable: async () => 'claude.exe', trusted: async () => true, push: () => undefined });
+    const chat = await plain.create({ cwd: dir, provider: 'claude' });
+    await plain.send(chat.id, 'hello');
+    assert.ok(!bare.starts[0]!.args.includes('--mcp-config'));
+    plain.closeAll();
+    await store.flush();
+  } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); }
 });
