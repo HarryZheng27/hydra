@@ -786,3 +786,7 @@ code, pre, kbd, samp { font-family: "Geist Mono", "Cascadia Code", Consolas, mon
 .composer .round.send .icon path, .home-prompt .round.send .icon path { stroke-width: 1.8; }
 .composer .round.send:not(:disabled), .home-prompt .round.send:not(:disabled) { color: var(--fg); }
 .composer .round.send:disabled, .home-prompt .round.send:disabled { color: var(--muted); opacity: .55; }
+
+/* Settings' text field (the display name). */
+.setting-input { width: 240px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-bg); color: var(--input-fg); font: inherit; font-size: 14px; }
+.setting-input:focus { outline: none; border-color: var(--link); }

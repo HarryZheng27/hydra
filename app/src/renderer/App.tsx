@@ -347,7 +347,7 @@ export function App() {
               chats={chats}
               statuses={statuses}
               view={view}
-              user={info?.user}
+              user={settings?.displayName ?? info?.user}
               agents={signedIn}
               // New chat asks which agent: the project's page offers Claude Code and Codex (home when there's no project).
               onNewChat={() => setView(project ? { kind: 'project', id: project.id } : { kind: 'home' })}
@@ -374,7 +374,7 @@ export function App() {
           {mode === 'agents'
             ? (project?.trustedAt ? <AgentsView key={project.id} project={project} /> : <section className="empty"><h1>Agents</h1><p>{project ? 'Trust this project to run heads, plans and lanes in it: start a chat there.' : 'Open a project to see its heads, plans and lanes.'}</p></section>)
             : view.kind === 'settings' && settings
-            ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
+            ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onDisplayName={name => void run(window.hydra.setDisplayName(name), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
               ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []}
                   projectName={state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name}

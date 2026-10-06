@@ -203,6 +203,7 @@ export function start(): void {
     terminals,
     browser,
     pullRequest: pullRequests(),
+    fullName: windowsFullName,
     claudeCommands: async cwd => {
       const found = await findProvider('claude', (await settings.load()).cliPaths.claude).catch(() => undefined);
       return found?.available && found.executable ? claudeCommands(found.executable, cwd) : [];
@@ -242,6 +243,20 @@ export function start(): void {
     void hydra.sync((await state.load()).projects);
     updates.start();
   });
+}
+
+/**
+ * Windows' full name for this account ("Nico D", a Microsoft account's display name), for the sidebar's account row:
+ * PowerShell's Get-LocalUser, asked once, hidden, with a 10-second limit. Undefined when there is none.
+ */
+let fullNameAsked: Promise<string | undefined> | undefined;
+function windowsFullName(): Promise<string | undefined> {
+  if (process.platform !== 'win32') return Promise.resolve(undefined);
+  fullNameAsked ??= new Promise(resolve => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-LocalUser -Name $env:USERNAME -ErrorAction Stop).FullName'], { windowsHide: true, timeout: 10_000 }, (error, stdout) => {
+    const name = String(stdout ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+    resolve(!error && name && name.length <= 60 ? name : undefined);
+  }));
+  return fullNameAsked;
 }
 
 /** The Windows account's name for the sidebar's account row, or nothing if the OS won't say. */

@@ -83,7 +83,8 @@ export interface AppInfo { name: string; version: string; electron: string; plat
 /** In-app updates: `available` is false for a preview or development copy, with the reason. */
 export interface UpdateStatusView { available: boolean; reason?: string; automatic: boolean; busy: boolean; version: string }
 /** Preferences, in settings.json. CLI paths are machine-only: set from main's file picker, never from a project. */
-export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>> }
+/** `displayName`: the sidebar's name for the user, when they set one (else Windows' own full name for the account). */
+export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>>; displayName?: string }
 /** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
 export interface Project { id: string; path: string; name: string; trustedAt?: string }
 /** What the CLI says about the user's sign-in: only this, never who they are. */
@@ -117,6 +118,8 @@ export interface Channels {
   'app.problems': { payload: null; result: string[] };
   'settings.get': { payload: null; result: AppSettings };
   'settings.setTheme': { payload: { theme: ThemeSetting }; result: AppSettings };
+  /** The sidebar's name; empty goes back to Windows' full name for the account. */
+  'settings.setDisplayName': { payload: { name: string }; result: AppSettings };
   /** Main shows a file picker; the renderer never sends a path. */
   'settings.pickCliPath': { payload: { provider: CliProvider }; result: AppSettings };
   'settings.clearCliPath': { payload: { provider: CliProvider }; result: AppSettings };
@@ -250,6 +253,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'app.problems': isNull,
   'settings.get': isNull,
   'settings.setTheme': exactly<{ theme: ThemeSetting }>({ theme: oneOf('dark', 'light', 'system') }),
+  'settings.setDisplayName': exactly<{ name: string }>({ name: isText(200) }),
   'settings.pickCliPath': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'settings.clearCliPath': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'state.get': isNull,
@@ -327,6 +331,7 @@ export interface HydraApi {
   problems(): Promise<string[]>;
   getSettings(): Promise<AppSettings>;
   setTheme(theme: ThemeSetting): Promise<AppSettings>;
+  setDisplayName(name: string): Promise<AppSettings>;
   pickCliPath(provider: CliProvider): Promise<AppSettings>;
   clearCliPath(provider: CliProvider): Promise<AppSettings>;
   getState(): Promise<AppState>;
