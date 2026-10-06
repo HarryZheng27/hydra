@@ -341,9 +341,9 @@ export class ChatManager {
   /** Writes a chat's events to its log, keeps its index entry current, and pushes them to the window. */
   private async persist(id: string, given: ChatEvent[]): Promise<void> {
     // The / menu's command list comes on every start: the window gets it, the log doesn't (it would repeat each time).
-    const live = given.filter(event => event.type === 'commands');
-    if (live.length) { this.deps.log?.(`[chat] ${id}: ${live.reduce((sum, event) => sum + (event.type === 'commands' ? event.commands.length : 0), 0)} slash commands`); this.deps.push(id, live, -1); }
-    const events = given.filter(event => event.type !== 'commands');
+    const live = given.filter(event => event.type === 'commands' || event.type === 'limits');
+    if (live.length) { if (live.some(event => event.type === 'commands')) this.deps.log?.(`[chat] ${id}: ${live.reduce((sum, event) => sum + (event.type === 'commands' ? event.commands.length : 0), 0)} slash commands`); this.deps.push(id, live, -1); }
+    const events = given.filter(event => event.type !== 'commands' && event.type !== 'limits');
     if (!events.length) return;
     try {
       // Written first, then pushed with its position, so the window can merge it with a log it is reading.

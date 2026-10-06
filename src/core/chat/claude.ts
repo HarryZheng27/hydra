@@ -17,6 +17,14 @@ export function extraArguments(options: ChatOptions): string[] {
   return extra;
 }
 
+/** Claude Code's rate_limit_event: only the weekly window's share used and its reset, for the context wheel's tooltip. */
+export function limits(message: Record<string, unknown>): ChatEvent[] {
+  const week = ((message.rate_limit_info as { unifiedWindows?: { seven_day?: { utilization?: unknown; resetsAt?: unknown } } } | undefined)?.unifiedWindows)?.seven_day;
+  const used = week?.utilization, resets = week?.resetsAt;
+  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || used > 10 || typeof resets !== 'number' || !Number.isSafeInteger(resets) || resets <= 0) return [];
+  return [{ type: 'limits', weekly: { used: Math.min(1, used), resetsAt: new Date(resets * 1000).toISOString() } }];
+}
+
 export function claudeArguments(options: ChatOptions): string[] {
   const id = options.resume ?? options.sessionId;
   if (!id || !claudeSessionIdPattern.test(id)) throw new Error('A Claude chat needs a valid session id.');
@@ -135,6 +143,7 @@ export class ClaudeAdapter implements ChatAdapter {
       case 'assistant': return { events: this.assistant(message), replies: [] };
       case 'user': return { events: this.toolResults(message), replies: [] };
       case 'result': return { events: this.result(message), replies: [] };
+      case 'rate_limit_event': return { events: limits(message), replies: [] };
       case 'control_request': return this.controlRequest(message);
       case 'control_response': return { events: this.controlResponse(message), replies: [] };
       default: return { events: [], replies: [] };

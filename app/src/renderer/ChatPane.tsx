@@ -11,6 +11,7 @@ import { TerminalPane } from './TerminalPane';
 import { PrBars, chatPullRequests } from './PrBars';
 import { ToolSteps, runningTasks } from './ToolSteps';
 import type { SlashCommand } from './SlashMenu';
+import type { WeeklyLimit } from './ContextWheel';
 
 interface Props {
   record: ChatRecord;
@@ -40,6 +41,8 @@ interface Props {
   browserOpen?: boolean;
   /** The / menu's commands, from the chat's Claude Code process (with descriptions); else its session's names. */
   commands?: SlashCommand[];
+  /** The plan's weekly limit, for the context wheel's tooltip. */
+  weekly?: WeeklyLimit;
   /** A cloud chat continued here: its terminal inside the chat (G7). */
   terminalId?: string;
   /** The project's name, for the header's pill. */
@@ -206,7 +209,7 @@ function latestContext(events: ChatEvent[]): { used: number; window?: number } |
   return used === undefined ? undefined : { used, ...(window ? { window } : {}) };
 }
 
-export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands }: Props) {
+export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, onSend, onAnswer, onStop, onConfigure, onOpenTerminal, inTerminal = false, onTerminalClosed, onOpenSettings, onWhere, onContinueCloud, projectName, onArchive, onDelete, terminalId, onBrowser, browserOpen, commands, weekly }: Props) {
   // The header goes in the window's title bar, as Claude desktop's does (TitleBar's slot).
   const [slot, setSlot] = useState<Element | null>(null);
   useEffect(() => { setSlot(document.getElementById('titlebar-slot')); }, []);
@@ -299,7 +302,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       {!cloudStarted && onBrowser && <PrBars urls={pullRequests} onOpen={url => onBrowser(url)} />}
       {cloudStarted
         ? terminalId ? <div className="chat-terminal"><TerminalPane id={terminalId} /></div> : <p className="hint cloud-done">This chat runs on claude.ai. Open it there, or choose Continue here.</p>
-        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} commands={commands?.length ? commands : latestCommands(events)}
+        : <Composer record={record} running={view.running} onSend={onSend} onStop={onStop} onConfigure={onConfigure} models={latestModels(events)} defaults={defaults} sessionModel={latestSessionModel(events)} context={latestContext(events)} weekly={weekly} commands={commands?.length ? commands : latestCommands(events)}
             {...(record.provider === 'claude' && onWhere && !events.some(event => event.type === 'user') ? { onWhere } : {})} />}
     </section>
   );

@@ -3,9 +3,9 @@ import type { ChatImage, ChatModel, ClaudePermissionMode, CodexApprovals, Projec
 import { approvalModes, claudeEfforts, MAX_IMAGES, modeMenu, readImage, titleCase, type Attached } from './Composer';
 import { PlusMenu } from './PlusMenu';
 import { rememberCommands, useSlashMenu, type SlashCommand } from './SlashMenu';
-import { ContextWheel } from './ContextWheel';
+import { ContextWheel, type WeeklyLimit } from './ContextWheel';
 import { markSeen, seen } from './onceNotes';
-import { claudeDefaultModel, claudeModelOptions } from './claudeModels';
+import { claudeContextWindow, claudeDefaultModel, claudeModelOptions } from './claudeModels';
 import { Icon } from './Icon';
 import { Picker } from './Picker';
 import { AgentLogo } from './AgentLogo';
@@ -30,6 +30,8 @@ export interface StartRequest { project: Project; provider: 'claude' | 'codex'; 
 export interface KnownModels { claudeVersions: Record<string, string>; codex: ChatModel[]; claudeMode?: string; /** The / menu's commands, from any Claude chat started so far. */ claudeCommands?: SlashCommand[] }
 
 interface Props {
+  /** The plan's weekly limit, for the context wheel's tooltip. */
+  weekly?: WeeklyLimit;
   project?: Project;
   onPickFolder(): void;
   onClone(url: string): Promise<void>;
@@ -60,7 +62,7 @@ const whereOptions = [
  */
 const shownSessions = 3;
 
-function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; waiting: Waiting[]; knownModels: KnownModels; onOpenChat?(id: string): void; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
+function HomeStart({ projects, recents, waiting, knownModels, weekly, onOpenChat, onPickFolder, onClone, onStart }: { projects: Project[]; recents: Recent[]; waiting: Waiting[]; knownModels: KnownModels; weekly?: WeeklyLimit; onOpenChat?(id: string): void; onPickFolder(): void; onClone(url: string): Promise<void>; onStart(request: StartRequest): Promise<boolean> }) {
   const [allSessions, setAllSessions] = useState(false);
   // The project of the most recent chat, else the first one.
   const initial = projects.find(project => project.name === recents[0]?.project)?.id ?? projects[0]?.id;
@@ -210,7 +212,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
           <span className="composer-spacer" />
           {modelOptions.length > 0 && <Picker bare label="Model" value={shownModel} options={modelOptions} onChange={setModel} />}
           {effortOptions.length > 0 && <Picker bare label="Effort" value={shownEffort} options={effortOptions} onChange={setEffort} />}
-          <ContextWheel />
+          <ContextWheel window={provider === 'claude' ? claudeContextWindow(shownModel) : undefined} {...(provider === 'claude' && weekly ? { weekly } : {})} />
           <Picker bare artOnly numbered={false} label="Agent" title={provider === 'claude' ? 'Claude Code' : 'Codex'} value={provider} options={agentOptions} onChange={value => { setProvider(value === 'codex' ? 'codex' : 'claude'); setModel(undefined); setEffort(undefined); }} />
         </div>
         {cloud && !seen('cloud') && <p className="hint cloud-hint">Cloud: this message starts a Claude Code session on claude.ai with this folder's tracked files as they are, uncommitted edits included; untracked and ignored files stay here.</p>}
@@ -219,7 +221,7 @@ function HomeStart({ projects, recents, waiting, knownModels, onOpenChat, onPick
   );
 }
 
-export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart, waiting = [], knownModels = { claudeVersions: {}, codex: [] } }: Props) {
+export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents = [], onOpenChat, projects = [], onStart, waiting = [], knownModels = { claudeVersions: {}, codex: [] }, weekly }: Props) {
   const [cloning, setCloning] = useState(false);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -236,7 +238,7 @@ export function EmptyState({ project, onPickFolder, onClone, onNewChat, recents 
       </section>
     );
   }
-  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} waiting={waiting} knownModels={knownModels} onOpenChat={onOpenChat} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
+  if (projects.length && onStart) return <HomeStart projects={projects} recents={recents} waiting={waiting} knownModels={knownModels} weekly={weekly} onOpenChat={onOpenChat} onPickFolder={onPickFolder} onClone={onClone} onStart={onStart} />;
   const clone = async () => {
     if (!url.trim() || busy) return;
     setBusy(true);

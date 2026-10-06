@@ -15,6 +15,7 @@ import { HostLayer } from './HostLayer';
 import { Setup } from './Setup';
 import { Sidebar } from './Sidebar';
 import { TitleBar } from './TitleBar';
+import type { WeeklyLimit } from './ContextWheel';
 
 export type View = { kind: 'home' } | { kind: 'project'; id: string } | { kind: 'chat'; id: string } | { kind: 'settings' };
 
@@ -76,6 +77,10 @@ export function App() {
   const [terminals, setTerminals] = useState<Record<string, string>>({});
   useEffect(() => { watchTerminals(); }, []);
   // Each chat's dot in the sidebar (chatStatus.ts), from the events main pushes for every chat.
+  // The plan's weekly limit, as Claude Code last said (any chat); kept so home's wheel can show it too.
+  const [weekly, setWeekly] = useState<WeeklyLimit | undefined>(() => {
+    try { const raw = JSON.parse(localStorage.getItem('hydra.weeklyLimit.v1') ?? 'null') as { used?: unknown; resetsAt?: unknown } | null; return raw && typeof raw.used === 'number' && typeof raw.resetsAt === 'string' && Date.parse(raw.resetsAt) > Date.now() ? { used: raw.used, resetsAt: raw.resetsAt } : undefined; } catch { return undefined; }
+  });
   const [statuses, setStatuses] = useState<Record<string, ChatStatus>>(() => {
     try { const raw = JSON.parse(localStorage.getItem('hydra.unreadChats.v1') ?? '[]') as unknown; return Object.fromEntries((Array.isArray(raw) ? raw : []).filter((id): id is string => typeof id === 'string').map(id => [id, 'unread' as const])); } catch { return {}; }
   });
@@ -124,6 +129,8 @@ export function App() {
           rememberCommands(list);
         }
         const notice = events.find(event => event.type === 'error'); if (notice?.type === 'error') setError(notice.message);
+        const limit = events.find(event => event.type === 'limits');
+        if (limit?.type === 'limits') { setWeekly(limit.weekly); try { localStorage.setItem('hydra.weeklyLimit.v1', JSON.stringify(limit.weekly)); } catch { /* best effort */ } }
         const renamed = events.find(event => event.type === 'renamed');
         if (renamed?.type === 'renamed') setChats(list => list.map(c => (c.id === chatId ? { ...c, title: renamed.title } : c)));
         return;
@@ -377,6 +384,7 @@ export function App() {
                   onWhere={where => void run(window.hydra.setChatWhere(chat.id, where), record => setChats(list => list.map(c => (c.id === record.id ? record : c))))}
                   terminalId={terminals[chat.id]}
                   commands={commands[chat.id]}
+                  weekly={weekly}
                   onBrowser={toggleBrowser}
                   browserOpen={browserShown}
                   {...(terminals[chat.id] ? {} : { onContinueCloud: () => void run(window.hydra.continueCloud(chat.id), result => {
@@ -385,6 +393,7 @@ export function App() {
                   }) })} />
               : <EmptyState project={project} onPickFolder={pickProject} onClone={cloneRepo} onNewChat={(target, provider) => void newChat(target, provider)} recents={recents} onOpenChat={id => openChat(id)} projects={state?.projects ?? []} onStart={startChat}
                 knownModels={knownModels}
+                weekly={weekly}
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
         {browserShown && mode === 'chat' && <BrowserPanel state={browser} covered={!!deleting} onClose={() => { setBrowserShown(false); void window.hydra.browserClose(); }} />}

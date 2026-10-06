@@ -263,3 +263,11 @@ test('a /compact tells the chat how full the context is right after it', () => {
   assert.deepEqual(out.events, [{ type: 'usage', contextTokens: 1321 }]);
   assert.deepEqual(adapter.feed(JSON.stringify({ type: 'system', subtype: 'compact_boundary', compact_metadata: {} })).events, []);
 });
+
+test('Claude Code\'s rate limit event gives only the weekly share used and its reset, for the context wheel', () => {
+  const adapter = new ClaudeAdapter();
+  const out = adapter.feed(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour', unifiedWindows: { five_hour: { utilization: 0.02, resetsAt: 1791265800 }, seven_day: { utilization: 0.34, resetsAt: 1791633600 } } } }));
+  assert.deepEqual(out.events, [{ type: 'limits', weekly: { used: 0.34, resetsAt: new Date(1791633600 * 1000).toISOString() } }]);
+  assert.deepEqual(adapter.feed(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { seven_day: { utilization: 'x' } } } })).events, []);
+  assert.deepEqual(adapter.feed(JSON.stringify({ type: 'rate_limit_event' })).events, []);
+});

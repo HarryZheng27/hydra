@@ -19,7 +19,7 @@ import { EmptyState } from '../src/renderer/EmptyState';
 import { nextStatus } from '../src/renderer/chatStatus';
 import { ConfirmDelete, deleteConfirmed } from '../src/renderer/ConfirmDelete';
 import { claudeContextWindow, claudeModelId, claudeModelOptions } from '../src/renderer/claudeModels';
-import { ContextWheel } from '../src/renderer/ContextWheel';
+import { ContextWheel, contextLines } from '../src/renderer/ContextWheel';
 import { matchCommands } from '../src/renderer/SlashMenu';
 
 const scratch = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-chat-'));
@@ -676,10 +676,14 @@ test('the first Delete asks in the app\'s own dialog, once: Delete is the defaul
 
 test('the context wheel shows how full the context is, and offers compacting only where it can', () => {
   const page = renderToStaticMarkup(createElement(ContextWheel, { used: 42_520, window: 1_000_000, onCompact: () => undefined }));
-  assert.ok(page.includes('title="4% context"') && page.includes('4% context (43k of 1M). Click to compact the conversation.'));
+  assert.ok(page.includes('Context 42.5k / 1M (4%). Click to compact the conversation.'), page);
+  assert.ok(!page.includes('title='), "the tooltip is the app's own, shown after a moment, not the browser's");
+  assert.deepEqual(contextLines(361_300, 1_000_000, { used: 0.34, resetsAt: '2026-10-10T12:00:00Z' })[0], 'Context 361.3k / 1M (36%)');
+  assert.match(contextLines(361_300, 1_000_000, { used: 0.34, resetsAt: '2026-10-10T12:00:00Z' })[1] ?? '', /^Weekly · all models: 34% · Resets \w+ \d/);
+  assert.deepEqual(contextLines(undefined, 200_000), ['Context 0 / 200k (0%)', undefined]);
   assert.ok(!page.includes('disabled'));
   const quiet = renderToStaticMarkup(createElement(ContextWheel, {}));
-  assert.ok(quiet.includes('disabled') && quiet.includes('title="0% context"'));
+  assert.ok(quiet.includes('disabled') && quiet.includes('Context 0%'));
   assert.equal(claudeContextWindow('claude-haiku-4-5-20251001'), 200_000);
   assert.equal(claudeContextWindow('opus'), 1_000_000);
 });
