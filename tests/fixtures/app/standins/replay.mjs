@@ -41,15 +41,16 @@ const counterFile = path.join(state, 'process-count');
 const counter = () => Number(fs.existsSync(counterFile) ? fs.readFileSync(counterFile, 'utf8') : '0');
 /** Takes the next process's place in the fixture, and logs the start. */
 const claim = () => { const taken = counter(); fs.writeFileSync(counterFile, String(taken + 1)); fs.appendFileSync(path.join(state, 'calls.log'), `${JSON.stringify({ index: taken, args })}\n`); return taken; };
-// Claude's process takes its place as it starts. Codex's waits until the host starts or resumes a thread: the app may
-// start an app-server and replace it before that (a chat switching to "Ask me" first), and a server replaced before
-// its first thread must not use up a place, or the next one would replay the wrong part. Until then it answers the
-// opening (initialize), which every Codex part shares, from the part it would take.
+// A process takes its place in the fixture only when the host starts work in it: Codex's at its first thread, Claude's
+// at its first user message. The app starts processes ahead of a message (a chat opening, the home screen's pick) and
+// may end or replace one before any arrives; such a process must not use up a place, or the next one would replay the
+// wrong part. Until then it answers the opening (initialize), which every part shares, from the part it would take.
 const appServer = args[0] === 'app-server';
+const startsWork = message => (appServer ? /^thread\//.test(message?.method ?? '') : message?.type === 'user');
 // Every start is logged (starts.log), claimed or not, so an extra launch is never hidden.
 fs.appendFileSync(path.join(state, 'starts.log'), `${JSON.stringify({ args })}\n`);
-let index = appServer ? counter() : claim();
-let claimed = !appServer;
+let index = counter();
+let claimed = false;
 const seen = []; // the kinds of the host's lines matched so far, for a jump to a later part to check
 
 const records = fs.readFileSync(fixture, 'utf8').split(/\r?\n/).filter(Boolean).slice(1).map(line => JSON.parse(line));
@@ -174,14 +175,14 @@ for (let at = 0; at < part.length; at++) {
       if (line === undefined) process.exit(0);
       actual = parse(line);
     }
-    if (!claimed && /^thread\//.test(actual?.method ?? '')) {
+    if (!claimed && startsWork(actual)) {
       // Now this server is the chat's: it takes its place, which may be a later part than the one it opened with.
       claimed = true;
       const taken = claim();
       if (taken !== index) {
         index = taken; part = parts[index];
         if (!part) { process.stderr.write(`replay: ${path.basename(fixture)} has no process ${index + 1}\n`); process.exit(2); }
-        at = part.findIndex(candidate => candidate.dir === 'send' && /^thread\//.test(parse(candidate.line)?.method ?? ''));
+        at = part.findIndex(candidate => candidate.dir === 'send' && startsWork(parse(candidate.line)));
         if (at < 0) fail(`process ${index + 1} of ${path.basename(fixture)} starts no thread`);
         // Its opening was answered from the part it would have taken: the host must have sent what this part's
         // opening expects (requests the app may leave out aside), or a difference would pass unseen.
