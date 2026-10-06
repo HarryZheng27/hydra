@@ -4,6 +4,8 @@ import { TerminalPane } from './TerminalPane';
 export interface ShellTab { id: string; n: number; ended?: boolean }
 
 interface Props {
+  /** The chat this panel belongs to: selected text attaches to its composer. */
+  chatId: string;
   tabs: ShellTab[];
   active?: string;
   maximized: boolean;
@@ -19,7 +21,7 @@ interface Props {
  * and on the right maximize and close. Each tab is a PowerShell in the chat's folder, inside the window; closing the
  * panel keeps them running, closing a tab ends its shell.
  */
-export function TerminalPanel({ tabs, active, maximized, onSelect, onAdd, onCloseTab, onMaximize, onClose }: Props) {
+export function TerminalPanel({ chatId, tabs, active, maximized, onSelect, onAdd, onCloseTab, onMaximize, onClose }: Props) {
   const current = tabs.find(tab => tab.id === active) ?? tabs[tabs.length - 1];
   return (
     <aside className="shell-panel" aria-label="Terminal">
@@ -36,7 +38,7 @@ export function TerminalPanel({ tabs, active, maximized, onSelect, onAdd, onClos
         <button className="icon-button small" onClick={onMaximize} aria-pressed={maximized} aria-label={maximized ? 'Restore the terminal' : 'Maximize the terminal'} title={maximized ? 'Restore' : 'Maximize'}><Icon name={maximized ? 'restore' : 'maximize'} /></button>
         <button className="icon-button small" onClick={onClose} aria-label="Hide the terminal" title="Hide (the shells keep running)"><Icon name="close" /></button>
       </div>
-      <div className="shell-body">{current ? <TerminalPane key={current.id} id={current.id} ended="The shell" /> : <p className="hint">Starting a terminal…</p>}</div>
+      <div className="shell-body">{current ? <TerminalPane key={current.id} id={current.id} ended="The shell" attach={{ chatId, tab: tabs.indexOf(current), n: current.n }} /> : <p className="hint">Starting a terminal…</p>}</div>
     </aside>
   );
 }

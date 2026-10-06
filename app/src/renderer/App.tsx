@@ -465,7 +465,7 @@ export function App() {
                 waiting={chats.filter(chat => !chat.archivedAt && (statuses[chat.id] === 'needs' || statuses[chat.id] === 'unread')).map(chat => ({ id: chat.id, title: chat.title, provider: chat.provider, updatedAt: chat.updatedAt, project: state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name, status: statuses[chat.id] as 'needs' | 'unread' }))} />}
         </main>
         {shellShown && mode === 'chat' && view.kind === 'chat' && (
-          <TerminalPanel tabs={shells[view.id]?.tabs ?? []} active={shells[view.id]?.active} maximized={shellMax}
+          <TerminalPanel chatId={view.id} tabs={shells[view.id]?.tabs ?? []} active={shells[view.id]?.active} maximized={shellMax}
             onSelect={id => setShells(current => ({ ...current, [view.id]: { ...current[view.id]!, active: id } }))}
             onAdd={() => addShell(view.id)} onCloseTab={id => closeShell(view.id, id)}
             onMaximize={() => setShellMax(value => !value)} onClose={() => { setShellShown(false); setShellMax(false); }} />

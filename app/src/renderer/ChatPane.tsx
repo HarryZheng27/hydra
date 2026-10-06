@@ -11,6 +11,8 @@ import { TerminalPane } from './TerminalPane';
 import { PrBars, chatPullRequests } from './PrBars';
 import { BranchBar, createPrPrompt } from './BranchBar';
 import { ToolSteps, runningTasks } from './ToolSteps';
+import { AttachButton } from './AttachButton';
+import { chipLabel, parseAttachments, type ParsedAttachment } from './attachments';
 import type { SlashCommand } from './SlashMenu';
 import type { WeeklyLimit } from './ContextWheel';
 
@@ -79,6 +81,28 @@ function groupSteps(items: readonly ChatItem[], hydra?: HydraView): Unit[] {
     } else units.push(item);
   }
   return units;
+}
+
+/** The attach blocks a sent message started with, as chips that open to show the quoted text. */
+export function AttachChips({ items }: { items: ParsedAttachment[] }) {
+  return (
+    <div className="attach-chips">
+      {items.map((item, index) => (
+        <details key={index} className="attach-chip">
+          <summary>{chipLabel(item)}</summary>
+          <pre className="attach-quote">{item.text}</pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+/** A user's message: its attach blocks as chips above the bubble, the rest as the bubble. */
+export function UserMessage({ text, images }: { text: string; images?: number }) {
+  const { attachments, rest } = parseAttachments(text);
+  const bubble = <div className="bubble">{rest}{images ? <span className="chip">{images} image{images > 1 ? 's' : ''}</span> : null}</div>;
+  if (!attachments.length) return <div className="msg user">{bubble}</div>;
+  return <div className="msg user attached"><div className="user-stack"><AttachChips items={attachments} />{(rest.trim() || images) ? bubble : null}</div></div>;
 }
 
 /** An approval card. It is drawn only for an `approval` event, which only the CLI's structured request produces. */
@@ -244,6 +268,26 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
   const pullRequests = useMemo(() => chatPullRequests(events, record.pr?.url), [events, record.pr?.url]);
   const tasks = useMemo(() => runningTasks(events, settledBefore), [events, settledBefore]);
   const end = useRef<HTMLDivElement>(null);
+  // Text selected inside one message, offered as "Attach as context" just above it.
+  const [quote, setQuote] = useState<{ text: string; left: number; top: number }>();
+  const pickQuote = () => {
+    const selection = window.getSelection();
+    const text = selection && !selection.isCollapsed ? selection.toString() : '';
+    if (!selection || !text.trim()) { setQuote(undefined); return; }
+    const message = (node: Node | null) => (node instanceof Element ? node : node?.parentElement)?.closest('.msg.assistant, .msg.user');
+    const from = message(selection.anchorNode);
+    if (!from || from !== message(selection.focusNode)) { setQuote(undefined); return; }
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    setQuote({ text, left: Math.max(8, rect.left), top: Math.max(8, rect.top - 34) });
+  };
+  useEffect(() => {
+    if (!quote) return undefined;
+    const collapsed = () => { if (window.getSelection()?.isCollapsed) setQuote(undefined); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setQuote(undefined); };
+    document.addEventListener('selectionchange', collapsed);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('selectionchange', collapsed); document.removeEventListener('keydown', escape); };
+  }, [quote]);
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [events.length]);
   return (
     <section className="chat" aria-label={record.title}>
@@ -273,11 +317,11 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
       {hydra?.error && <div className="banner hydra-banner" role="status">{hydra.error}</div>}
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
       {reviewing && <ReviewPane chatId={record.id} />}
-      <div className="transcript" role="log" aria-live="polite" hidden={reviewing}>
+      <div className="transcript" role="log" aria-live="polite" hidden={reviewing} onMouseUp={pickQuote} onScroll={() => setQuote(undefined)}>
         {groupSteps(view.items, hydra).map(item => {
           switch (item.kind) {
             case 'steps': return <ToolSteps key={item.key} tools={item.tools} />;
-            case 'user': return <div key={item.key} className="msg user"><div className="bubble">{item.text}{item.images ? <span className="chip">{item.images} image{item.images > 1 ? 's' : ''}</span> : null}</div></div>;
+            case 'user': return <UserMessage key={item.key} text={item.text} {...(item.images ? { images: item.images } : {})} />;
             case 'text': return <div key={item.key} className="msg assistant"><Markdown text={item.text} {...(onRun ? { onRun } : {})} /></div>;
             case 'thinking': return <details key={item.key} className="thinking"><summary>Thinking</summary><div className="thinking-text">{item.text}</div></details>;
             case 'tool': return hydraCard(item, hydra);
@@ -309,6 +353,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
         {tasks > 0 && <div className="running-tasks" role="status">{tasks} running task{tasks > 1 ? 's' : ''}</div>}
         <div ref={end} />
       </div>
+      {quote && <AttachButton chatId={record.id} item={{ source: 'Chat', label: 'Quote', text: quote.text }} style={{ position: 'fixed', left: quote.left, top: quote.top }} onDone={() => { window.getSelection()?.removeAllRanges(); setQuote(undefined); }} />}
       {!cloudStarted && onBrowser && <PrBars urls={pullRequests} onOpen={url => onBrowser(url)} />}
       {!cloudStarted && record.where !== 'cloud' && pullRequests.length === 0 && <BranchBar chatId={record.id} running={view.running} onCreatePr={summary => onSend(createPrPrompt(summary))} />}
       {cloudStarted
