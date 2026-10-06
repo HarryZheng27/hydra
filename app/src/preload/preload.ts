@@ -46,6 +46,7 @@ const api: HydraApi = {
   browserReload: () => call('browser.reload', null),
   browserClose: () => call('browser.close', null),
   reviewDiff: id => call('review.diff', { id }),
+  branchSummary: id => call('review.branch', { id }),
   openReviewFile: (id, path) => call('review.open', { id, path }),
   terminalClosed: id => call('chats.terminalClosed', { id }),
   answer: (id, requestId, answer) => call('chats.answer', { id, requestId, answer }),

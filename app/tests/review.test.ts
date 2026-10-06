@@ -7,7 +7,8 @@ import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createHandlers } from '../src/main/handlers';
-import { MAX_REVIEW_BYTES, changedPaths, openInEditor, workingTreeDiff } from '../src/main/review';
+import { MAX_REVIEW_BYTES, branchSummary, changedPaths, githubRepoName, openInEditor, workingTreeDiff } from '../src/main/review';
+import { createPrPrompt } from '../src/renderer/BranchBar';
 import { ChatPane } from '../src/renderer/ChatPane';
 
 /** PATH with git and node but no editor, so Open in editor finds only what a test puts there. */
@@ -204,7 +205,7 @@ test('Open in editor takes only a file the current diff lists', async () => {
     pickFolder: async () => undefined, pickExecutable: async () => undefined, applyTheme: () => undefined,
     checkSetup: async () => { throw new Error('unused'); }, signIn: async () => ({ signedIn: false }), confirmTrust: async () => false,
     chats: { reviewFolder: async () => 'C:\\repo' } as never,
-    review: { diff: async () => { throw new Error('the check lists names only'); }, changed: async () => ['src/a.ts'], open: async (_cwd, file) => { opened.push(file); return 'folder'; } },
+    review: { diff: async () => { throw new Error('the check lists names only'); }, branch: async () => undefined, changed: async () => ['src/a.ts'], open: async (_cwd, file) => { opened.push(file); return 'folder'; } },
   });
   const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
   assert.deepEqual(await handlers['review.open']({ id, path: 'src/a.ts' }), { opened: 'folder' });
@@ -223,4 +224,49 @@ test('errors say what to do next: a missing CLI leads to Your agents, and a usag
   }));
   assert.match(page, /Open Your agents/);
   assert.match(page, /Codex has reached your plan&#x27;s usage limit/);
+});
+
+test('the branch bar counts a feature branch against the default branch, and offers Create PR only where a PR makes sense', async () => {
+  const { dir, git } = repo();
+  try {
+    git('checkout', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(dir, 'a.ts'), 'one\ntwo\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'first');
+    // On the default branch: no base to compare with, and nothing to open a pull request from.
+    const onMain = await branchSummary(dir);
+    assert.equal(onMain?.branch, 'main');
+    assert.equal(onMain?.canCreatePr, false);
+    assert.equal(onMain?.additions, 0);
+    git('checkout', '-q', '-b', 'feature');
+    fs.writeFileSync(path.join(dir, 'a.ts'), 'one\ntwo\nthree\nfour\n');
+    git('commit', '-q', '-am', 'more');
+    fs.writeFileSync(path.join(dir, 'a.ts'), 'one\nthree\nfour\n'); // one line removed, uncommitted
+    fs.writeFileSync(path.join(dir, 'new.txt'), 'hi\n');
+    // No remote yet: the lines are counted (committed and uncommitted, against main), but there is nowhere to push.
+    const local = await branchSummary(dir);
+    assert.deepEqual({ branch: local?.branch, base: local?.base, additions: local?.additions, deletions: local?.deletions, files: local?.files, canCreatePr: local?.canCreatePr },
+      { branch: 'feature', base: 'main', additions: 2, deletions: 1, files: 2, canCreatePr: false });
+    git('remote', 'add', 'origin', 'https://github.com/someone/shop.git');
+    const withRemote = await branchSummary(dir);
+    assert.equal(withRemote?.repo, 'shop');
+    assert.equal(withRemote?.canCreatePr, true);
+    assert.match(createPrPrompt(withRemote!), /branch feature against main.*gh pr create/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the branch bar is absent outside git and with a detached HEAD, and names a GitHub repository from either URL form', async () => {
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'hydra-app-branch-'));
+  const { dir, git } = repo();
+  try {
+    assert.equal(await branchSummary(plain), undefined);
+    fs.writeFileSync(path.join(dir, 'a.ts'), 'one\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'first');
+    git('checkout', '-q', '--detach');
+    assert.equal(await branchSummary(dir), undefined);
+    assert.equal(githubRepoName('https://github.com/ndunl075/hydra.git'), 'hydra');
+    assert.equal(githubRepoName('git@github.com:ndunl075/hydra-cloud-sandbox.git'), 'hydra-cloud-sandbox');
+    assert.equal(githubRepoName('https://example.com/x/y.git'), undefined);
+  } finally { fs.rmSync(plain, { recursive: true, force: true }); fs.rmSync(dir, { recursive: true, force: true }); }
 });

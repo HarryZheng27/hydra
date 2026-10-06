@@ -18,7 +18,7 @@ import { claudeTitle } from './chatTitles';
 import { ChatManager } from './chats';
 import { cloudChats } from './cloud';
 import { consoleLaunch, consoleScript, openConsole } from './console';
-import { changedPaths, openInEditor, workingTreeDiff } from './review';
+import { branchSummary, changedPaths, openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
 import { onboardingReport, signIn, stopSignIns } from './onboarding';
 import { cloneRepo } from './clone';
@@ -225,7 +225,7 @@ export function start(): void {
     hydra: { connections: () => hydra.connections(), connect: provider => hydra.connect(provider), disconnect: provider => hydra.disconnect(provider), tree: () => hydra.tree(), agents: (project, message) => hydra.agents(project, message), reply: (requestId, value) => hostUi.reply(requestId, value), control: (project, action) => hydra.control(project, action) },
     projectOpened: cwd => { void state.load().then(loaded => { const project = loaded.projects.find(candidate => samePath(candidate.path, cwd)); if (project) return hydra.open(project); return undefined; }).catch(() => undefined); },
     chats,
-    review: { diff: workingTreeDiff, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
+    review: { diff: workingTreeDiff, branch: branchSummary, changed: changedPaths, open: (cwd, file) => openInEditor(cwd, file, full => shell.showItemInFolder(full)) },
   });
 
   app.on('window-all-closed', () => app.quit());
