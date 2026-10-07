@@ -4,6 +4,7 @@ import { runCheckCommand } from '../checkCommand';
 import { terminateProcessTree } from '../process';
 import { gateBlocks, gateKind, gateState, type JobCheckResult } from '../jobs';
 import { loadGates, type Gate, type GatesConfig } from './config';
+import { editedTests } from '../editedTests';
 import { cdpBrowser } from './browser';
 import { runCommandGate } from './command';
 import { defaultRunReviewer, formatFinding, runReviewGate } from './review';
@@ -50,13 +51,15 @@ export async function runGateList(gates: readonly Gate[], worktree: string, base
   if (!gates.length) return results;
   await mkdir(context.logDirectory, { recursive: true });
   let blocker: JobCheckResult | undefined;
+  // Edited tests are evidence: a review gate is told which existing tests the change touched (read as the review reads the diff, base..HEAD).
+  const edited = gates.some(gate => gate.type === 'review') ? await editedTests(worktree, baseCommit, { to: 'HEAD', ...context.testPatterns ? { patterns: context.testPatterns } : {}, ...context.gitEnvironment ? { environment: context.gitEnvironment } : {} }) : undefined;
   // A pack's gate says so on its result, for "From the Coding pack" (docs/internal/Packs_Plan.md).
   const fromPack = (gate: Gate, result: JobCheckResult): JobCheckResult => gate.pack ? { ...result, pack: gate.pack, ...(gate.packTitle ? { packTitle: gate.packTitle } : {}) } : result;
   for (const gate of gateOrder(gates)) {
     if (context.signal?.aborted) { results.push(fromPack(gate, notRun(gate, 'Stopped before it ran.'))); continue; }
     if (blocker) { results.push(fromPack(gate, notRun(gate, `Skipped: ${blocker.id} failed first.`))); continue; }
     context.onProgress?.({ done: [...results], running: gate.id });
-    const run = { ...context, worktree, baseCommit, runtime, earlier: [...results] };
+    const run = { ...context, worktree, baseCommit, runtime, earlier: [...results], ...edited?.length ? { editedTests: edited } : {} };
     let result: JobCheckResult;
     try {
       result = gate.type === 'command' ? await runCommandGate(gate, run)
@@ -107,7 +110,7 @@ export async function runGates(folder: string, worktree: string, baseCommit: str
   const canonical = async (value: string) => { const resolved = await realpath(value).catch(() => path.resolve(value)); return process.platform === 'win32' ? resolved.toLowerCase() : resolved; };
   if (await canonical(folder) === await canonical(worktree)) throw new Error('Gates run in a worktree, never in the main checkout.');
   const config = await loader(folder);
-  const results = [...await runGateList(config.gates, worktree, baseCommit, context), ...config.notRun ?? []];
+  const results = [...await runGateList(config.gates, worktree, baseCommit, config.tests && !context.testPatterns ? { ...context, testPatterns: config.tests } : context), ...config.notRun ?? []];
   return { source: config.source, lanes: config.lanes, ...(config.maxAttempts !== undefined ? { maxAttempts: config.maxAttempts } : {}), results, failed: results.filter(gateBlocks) };
 }
 

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { ChangeSide, Disposable, Host } from './host';
+import { editedTestsNote } from '../core/editedTests';
 import { git, gitMetaChanges, gitMetaFingerprint } from '../core/git';
 import { findProvider } from '../core/providers';
 import { claudeStatus, codexStatus, providerPaths, type HelperServerSpec } from '../core/helperRegistration';
@@ -203,11 +204,12 @@ export class LanesController implements Disposable {
   exists(id: string): boolean { return !!this.service?.exists(id); }
   laneName(id: string): string | undefined { return this.service?.name(id); }
   /** For View evidence (docs/internal/Gates_Plan.md): the lane's last gates run, or undefined when none has run yet. */
-  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean } | undefined {
+  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean; notes?: string[] } | undefined {
     const lane = this.service?.get(id);
-    if (!lane?.lastGates?.results.length) return undefined;
+    if (!lane?.lastGates?.results.length && !lane?.lastGates?.editedTests?.length) return undefined;
+    const note = editedTestsNote(lane.lastGates.editedTests);
     const stale = this.viewOf(id)?.gatesStale;
-    return { title: lane.name, worktree: lane.worktree, results: lane.lastGates.results, ...(lane.lastGates.status ? { status: lane.lastGates.status, commit: lane.lastGates.commit, stale } : {}) };
+    return { title: lane.name, worktree: lane.worktree, results: lane.lastGates.results, ...(note ? { notes: [note] } : {}), ...(lane.lastGates.status ? { status: lane.lastGates.status, commit: lane.lastGates.commit, stale } : {}) };
   }
   /** Where this window's lane gate runs keep their logs and screenshots, for the evidence document's path check. */
   laneGatesLogRoot(): string | undefined { return this.storageDirectory ? path.join(this.storageDirectory, 'lanes', 'gates') : undefined; }

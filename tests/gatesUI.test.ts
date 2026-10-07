@@ -271,3 +271,20 @@ test('LaneService: "Send to lane" writes to the terminal without a trailing carr
     assert.match(written, /These gates failed/);
   } finally { await close(); }
 });
+
+test('LaneService.runGates: records the existing tests the lane changed, not new ones, and fails nothing', async () => {
+  const { repo, root, close } = await laneRepo();
+  try {
+    await writeFile(path.join(repo, 'a.test.ts'), '1\n');
+    await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'a test']);
+    await mkdir(path.join(repo, '.hydra'), { recursive: true });
+    await writeFile(path.join(repo, '.hydra', 'gates.json'), JSON.stringify({ lanes: 'onMerge', gates: [{ id: 'unit', type: 'command', command: ['unit'], required: true }] }));
+    const { service } = await makeLaneService(repo, root, fakeGatesRuntime(async () => ({ exitCode: 0 })));
+    const lane = await service.create({ name: 'Lane 1', provider: 'claude' });
+    await writeFile(path.join(lane.worktree, 'a.test.ts'), 'skipped\n');
+    await writeFile(path.join(lane.worktree, 'b.test.ts'), 'new\n');
+    const outcome = await service.runGates(lane.id);
+    assert.deepEqual(outcome.failed, [], 'a flag, not a gate');
+    assert.deepEqual(service.get(lane.id)?.lastGates?.editedTests, ['a.test.ts']);
+  } finally { await close(); }
+});

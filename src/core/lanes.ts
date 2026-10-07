@@ -85,6 +85,8 @@ export interface LaneGatesRecord {
    * on a plain gates run that failed and wasn't overridden — that isn't an accepted result yet.
    */
   status?: EvidenceStatus;
+  /** Existing test files the lane changed or deleted since its base (editedTests.ts): a flag shown with the evidence, never a gate. */
+  editedTests?: string[];
 }
 
 /**
@@ -288,7 +290,9 @@ function validateLastGates(value: unknown, where: string): LaneGatesRecord | und
   if (record.config !== undefined && (typeof record.config !== 'string' || !/^[a-f0-9]{16,64}$/.test(record.config))) throw new Error(`${where} has an invalid gates fingerprint.`);
   const statuses: readonly EvidenceStatus[] = ['passed', 'partial', 'none', 'none-chosen', 'override'];
   if (record.status !== undefined && !statuses.includes(record.status)) throw new Error(`${where} has an invalid evidence status.`);
-  return { source: record.source, at: record.at, results: record.results as JobCheckResult[], ...(record.commit ? { commit: record.commit } : {}), ...(record.config ? { config: record.config } : {}), ...(record.status ? { status: record.status } : {}) };
+  const edited = record.editedTests;
+  if (edited !== undefined && (!Array.isArray(edited) || edited.length > 500 || edited.some(file => typeof file !== 'string' || !file || file.length > 1000))) throw new Error(`${where} has an invalid edited tests list.`);
+  return { source: record.source, at: record.at, results: record.results as JobCheckResult[], ...(edited?.length ? { editedTests: edited } : {}), ...(record.commit ? { commit: record.commit } : {}), ...(record.config ? { config: record.config } : {}), ...(record.status ? { status: record.status } : {}) };
 }
 
 /** `lane.switches`, field by field; kept short (the newest `maxLaneSwitches`), never guessed at. */

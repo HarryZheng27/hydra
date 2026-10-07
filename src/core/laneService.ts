@@ -16,6 +16,7 @@ import { otherProvider } from './limitEvents';
 import { buildHandoff, defaultHandoffDeps, type HandoffDeps } from './limitHandoff';
 import { freshDirectory, loadGates, runGates as runGatesCore, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type GatesOutcome } from './gates';
 import { LanePreviews, loadPreviewConfig, previewConfigFromGates, type PreviewConfig, type PreviewEntry } from './lanePreview';
+import { editedTests } from './editedTests';
 import { evidenceStatus, gateBlocks, gatesConfigured, type JobCheckResult } from './jobs';
 import type { HelperServerSpec } from './helperRegistration';
 import type { LimitEvent } from './limitEvents';
@@ -566,7 +567,8 @@ export class LaneService {
       // Step A: a plain gates run has no override, so a failed required gate leaves status undefined
       // (this run alone never accepts the work) until Merge anyway / Mark done anyway records one.
       const status = evidenceStatus({ checks: outcome.results, configured: gatesConfigured(outcome.source, outcome.results.length) });
-      await this.options.store.update(lane.id, { lastGates: { source: outcome.source, at: this.now().toISOString(), results: outcome.results, ...(commit ? { commit } : {}), ...(config ? { config: gatesFingerprint(config) } : {}), ...(status ? { status } : {}) } });
+      const edited = await editedTests(lane.worktree, base, { ...config?.tests ? { patterns: config.tests } : {} });
+      await this.options.store.update(lane.id, { lastGates: { source: outcome.source, at: this.now().toISOString(), results: outcome.results, ...(edited?.length ? { editedTests: edited } : {}), ...(commit ? { commit } : {}), ...(config ? { config: gatesFingerprint(config) } : {}), ...(status ? { status } : {}) } });
       this.changed();
       return outcome;
     } finally {
@@ -596,7 +598,7 @@ export class LaneService {
   async recordGatesOverride(id: unknown, commit: string): Promise<void> {
     const lane = this.openLane(id);
     const results = lane.lastGates?.results ?? [];
-    await this.options.store.update(lane.id, { lastGates: { source: lane.lastGates?.source ?? 'none', at: this.now().toISOString(), results, commit, status: 'override', ...(lane.lastGates?.config ? { config: lane.lastGates.config } : {}) } });
+    await this.options.store.update(lane.id, { lastGates: { source: lane.lastGates?.source ?? 'none', at: this.now().toISOString(), results, commit, status: 'override', ...(lane.lastGates?.config ? { config: lane.lastGates.config } : {}), ...(lane.lastGates?.editedTests ? { editedTests: lane.lastGates.editedTests } : {}) } });
     this.changed();
   }
   /**
@@ -606,7 +608,10 @@ export class LaneService {
    */
   async recordNoGates(id: unknown, commit: string, status: 'none' | 'none-chosen'): Promise<void> {
     const lane = this.openLane(id);
-    await this.options.store.update(lane.id, { lastGates: { source: 'none', at: this.now().toISOString(), results: [], commit, status } });
+    // Even with no gates, Merge still says which existing tests the lane edited (Needs_You_Plan.md, Phase 3).
+    const config = await (this.options.gates ?? loadGates)(lane.repository).catch(() => undefined);
+    const edited = await editedTests(lane.worktree, await laneDiffBase(lane, commit).catch(() => commit), { to: commit, ...config?.tests ? { patterns: config.tests } : {} });
+    await this.options.store.update(lane.id, { lastGates: { source: 'none', at: this.now().toISOString(), results: [], commit, status, ...(edited?.length ? { editedTests: edited } : {}) } });
     this.changed();
   }
 
