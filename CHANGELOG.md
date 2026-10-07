@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **A headline on every head's report, and options on its questions.** `hydra_done` now needs a one-sentence `headline` (110 characters at most; a longer or missing one is refused with the reason and costs no attempt), shown on the canvas card, in `hydra_get_head` and `hydra_list_heads`, in the app's head card and for each job in a plan report. `hydra_stuck` can offer one to four `options` with exactly one `recommended`: **Answer question…** shows them as numbered choices, a lead answers with `hydra_reply_to_head`'s `option`, and when nobody answers in time (or the plan is unattended) Hydra goes with the recommended one and records which in the audit log, `auto_answered` and the plan's report.
+
 ## 0.29.0 (2026-10-07)
 
 - **The app shows what a turn changed.** After a turn that edited files, the chat has a card like Claude desktop's: **Edited N files** with the lines added and removed, a row per file that opens that file's diff for the turn, and **Undo**, which puts the files back as they were before the turn, leaving alone any you've edited since. The agent is told about an undo with your next message. Hydra keeps its snapshots in a private repository under its own data, never in your folder, and deletes them with the chat.

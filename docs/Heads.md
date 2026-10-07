@@ -50,15 +50,15 @@ Connecting adds Hydra as a user-level tool server named `hydra`. That's per user
 | `hydra_start_head` | Start a head, given `title`, `brief`, `write_scope` (repository paths it may change), `idempotency_key`, and optionally `provider`, `model`, `depends_on` and `limits`. Without `provider`, the head runs on its role's agent, else the lead's own (a Codex chat starts Codex heads), else **hydra.defaultProvider**, else Claude Code; a plan job without one does the same. Returns a job id at once. A repeated key returns the same job instead of starting another. |
 | `hydra_wait_for_heads` | Wait until the heads finish or ask a question, then return their results. It keeps the lead's turn open; Claude and Codex both resume by themselves when it returns. `max_wait_s` defaults to 1800. |
 | `hydra_get_head` / `hydra_list_heads` | State, summary, branch, commit, changed files and check results. |
-| `hydra_reply_to_head` | Answer a head that asked a question. |
+| `hydra_reply_to_head` | Answer a head that asked a question, with a `message` or, if it offered options, `option: n` (counting from 1). |
 | `hydra_cancel_head` | Stop a head. Its branch is kept. |
 
 **A head:**
 
 | Action | What it does |
 | --- | --- |
-| `hydra_done` | Report the work finished. Hydra commits anything left uncommitted, refuses changes outside the write scope, and runs the checks, all inside the call. If something fails, the head is told what to fix, with up to 3 attempts. |
-| `hydra_stuck` | Ask the lead one question. The call waits, and the lead's answer comes back as its result. If nobody answers, Hydra answers instead: at once in an unattended plan, after 20 minutes otherwise (see [When nobody answers](#when-nobody-answers)). |
+| `hydra_done` | Report the work finished, with a required `headline` (one plain sentence of at most 110 characters saying what happened and what, if anything, is left to decide; a missing or longer one is refused with the reason, and no attempt is spent) and a `summary` for the detail. Hydra commits anything left uncommitted, refuses changes outside the write scope, and runs the checks, all inside the call. If something fails, the head is told what to fix, with up to 3 attempts. |
+| `hydra_stuck` | Ask the lead one question, optionally with `options`: one to four choices of at most 110 characters, exactly one marked `recommended`, each something the head could act on without asking again. The call waits, and the lead's answer comes back as its result. If nobody answers, Hydra answers instead: at once in an unattended plan, after 20 minutes otherwise (see [When nobody answers](#when-nobody-answers)). |
 | `hydra_progress` | A short note for the dashboard. |
 
 **A head's first message** is the brief plus, so it doesn't spend its first turns rediscovering the project: its worktree, branch and base commit, the paths it may change, and what the heads or jobs it depends on did. It also gets a **Repository** section — the base commit's tracked files, one per line (an unusual name with a control character, a backslash or a quote in it is shown quoted, never raw), or, past ~200 paths or ~6000 characters, collapsed to top-level directories with a file count each (capped at 60 directory lines) — and the project's gate commands from `.hydra/gates.json`, stated as "Hydra runs these gates after you call hydra_done." With no command gate, `package.json`'s own `test` script gets its own honest line instead — Hydra doesn't run it, so the head is told to run it itself before `hydra_done`, and isn't told to "run only what your change touches" (nothing else would test the rest). A few lines of working guidance come with it, worded for what this particular head has: Claude heads are told to prefer Read, Grep or Glob over `cat`/`ls`/`find`, that their shell already starts in the worktree (so no `cd`), which command shapes Claude Code denies them (see "Limits and permissions"), to pipe output to `tail`/`grep`/`head` rather than save it to a file, and to rerun a denied command in a simpler shape instead of giving up on the shell; Codex heads, which have no such tools, only hear to batch shell commands, since each one starts slowly here; a Claude head with no shell at all hears to use Read, Grep or Glob instead, since there's nothing to batch. A generous timeout for a slow test command, rather than retrying it after it times out, always applies. None of it is file contents, and the whole addition is capped, so it can't grow the brief open-ended.
@@ -81,11 +81,18 @@ any unfinished state → failed or cancelled
 - **Never blocked for good:** a blocked head goes back to running when its question is answered, including when Hydra answers it itself. See [When nobody answers](#when-nobody-answers).
 - **Silent heads:** a running head whose stream goes silent mid-turn is recorded, nudged, and then failed. See [A silent head](#a-silent-head).
 
+### Headlines and options
+
+A head's `headline` is shown on its own: on the canvas card once it is done, in `hydra_list_heads` and `hydra_get_head`, in the app's head card, and above each job's summary in a plan's report. Its `summary` stays the detail.
+
+A question's `options` show on the canvas under **Answer question…** as numbered choices (the recommended one marked), picked with the keys 1 to 4 in the app, with a way to write your own answer. The lead gets them as `options` in `hydra_wait_for_heads`, `hydra_get_head` and `hydra_list_heads` while the head is blocked, and answers with `hydra_reply_to_head` and `option`. Options that aren't one to four short choices with exactly one recommended are refused with the reason, and the head keeps working.
+
 ### When nobody answers
 
 `hydra_stuck` blocks the head until someone answers: the lead with `hydra_reply_to_head`, or you with **Answer question…** on the canvas. Both work as before. When nobody does, the head doesn't stay blocked:
 
 - **In an unattended plan,** nobody is watching, so Hydra answers at once: "Nobody is watching this plan, so no one will answer. Decide within your scope and brief. If something outside your write scope needs changing, finish your own part and describe what needs changing in hydra_done's summary. Then call hydra_done." The head never waits.
+- **If the head offered options,** either of those answers is instead "Go with your recommended option: …" naming the one it marked, so the head's own preference decides rather than a guess. The reply, the audit entry, `auto_answered` and the plan's report all name the exact choice. Without options, behaviour is as described here.
 - **Otherwise,** the question waits 20 minutes. If no answer comes by then, or the head's own call ends first (its MCP call timeout, or its CLI cancels the call), the head goes back to **running** with the same kind of answer ("No answer came within 20m, so carry on without one…"), and `hydra_done` is accepted again.
 
 Back to running, rather than failed, because the head is still alive and its work is still in its worktree. It can usually decide within its brief, and its gates still check the result. Before this, a head whose call timed out stayed **blocked**: every `hydra_done` it sent was refused ("can't report done while it is blocked"), and it burned its whole 30-minute work clock doing nothing.
