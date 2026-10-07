@@ -128,7 +128,7 @@ export function parseMessage(value: unknown): ClientMessage {
   }
   if (type === 'helperStopAll') return { type };
   if (type === 'needsYouPutOff' || type === 'needsYouUndo') {
-    const key = string('key', 400); if (!/^[a-z-]+:[^s]{1,200}$/.test(key)) throw new Error('Invalid key.');
+    const key = string('key', 400); if (!/^[a-z-]+:[^\s]{1,200}$/.test(key)) throw new Error('Invalid key.');
     if (type === 'needsYouUndo') return { type, key };
     const until = message.until;
     if (typeof until !== 'number' || !Number.isFinite(until) || until <= Date.now() || until > Date.now() + 30 * 24 * 60 * 60_000 + 60_000) throw new Error('Invalid put-off time.');

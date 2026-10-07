@@ -24,7 +24,7 @@ import { headShellOffNotice, headShellSentence } from '../core/confine';
 import { claudeForRegistration as claudeFor } from './claudeExecutable';
 import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
 import { deriveNeedsYou, type FinishedHeadFact, type HeadFact, type LaneFact, type LimitOfferFact, type NeedsYouFacts, type NeedsYouItem, type PlanFact } from '../core/needsYou';
-import { putOffStorageKey, PutOffs } from '../core/needsYouList';
+import { putOffKey, putOffStorageKey, PutOffs } from '../core/needsYouList';
 import { finishedLingerMs, integrationCanvasView, trayWindowMs } from '../core/agentsCanvas';
 import { codexLaneFanout } from '../core/limitEvents';
 import { AttentionWatcher } from '../core/attentionWatcher';
@@ -201,6 +201,7 @@ export class HydraController {
   private needsYouTimer?: ReturnType<typeof setTimeout>;
   private needsYouWake?: ReturnType<typeof setTimeout>;
   private needsYouSent = '';
+  private needsYouPoll?: ReturnType<typeof setInterval>;
   /** This controller's heads' processes (none before its heads start), for a program that runs several controllers. */
   helperProcessIds(): ReadonlySet<number> { return this.helpers?.service.helperProcessIds() ?? new Set<number>(); }
   /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
@@ -728,7 +729,10 @@ export class HydraController {
   }
   /** This project's Needs you items that aren't put off, in order, for the Needs you tab (the app adds its chats). */
   needsYouItems(project: { id: string; name: string } = { id: this.leadKey, name: '' }, now = Date.now()): NeedsYouItem[] {
-    return this.putOffs.visible(deriveNeedsYou([{ projectId: project.id, projectName: project.name, ...this.needsYouFacts(now) }], now), now);
+    return this.putOffs.visible(this.allNeedsYou(project, now), now);
+  }
+  private allNeedsYou(project: { id: string; name: string }, now: number): NeedsYouItem[] {
+    return deriveNeedsYou([{ projectId: project.id, projectName: project.name, ...this.needsYouFacts(now) }], now);
   }
   /** Sends the Needs you list to the view and the count to the status bar, once things have settled. Cheap to call on any change. */
   needsYouSoon(): void {
@@ -738,7 +742,12 @@ export class HydraController {
   }
   private pushNeedsYou(): void {
     const now = Date.now();
-    this.putOffs.prune(now);
+    // Time and lead waiting change the list with no event of their own (a head leaves the canvas, a limit resets, a lead stops waiting): look again every so often.
+    this.needsYouPoll ??= setInterval(() => this.needsYouSoon(), 30_000);
+    this.needsYouPoll.unref?.();
+    // A put-off is for the thing it was set on: once that item is gone (answered, merged), a new one with the same key isn't hidden by it.
+    if (this.helpers) this.putOffs.prune(now, new Set(this.allNeedsYou({ id: this.leadKey, name: '' }, now).map(putOffKey)));
+    else this.putOffs.prune(now);
     const items = this.needsYouItems(undefined, now);
     // A put-off that ends, or a limit that resets, changes the list with nothing else happening: wake for it.
     if (this.needsYouWake) clearTimeout(this.needsYouWake);
@@ -1561,7 +1570,8 @@ export class HydraController {
     this.planRunner?.dispose(); this.planRunner = undefined;
     if (this.needsYouTimer) clearTimeout(this.needsYouTimer);
     if (this.needsYouWake) clearTimeout(this.needsYouWake);
-    this.needsYouTimer = this.needsYouWake = undefined;
+    if (this.needsYouPoll) clearInterval(this.needsYouPoll);
+    this.needsYouTimer = this.needsYouWake = this.needsYouPoll = undefined;
     const plans = this.plans; this.plans = undefined;
     for (const controller of plans?.planning.values() ?? []) controller.abort();
     const helpers = this.helpers; this.helpers = undefined;

@@ -173,6 +173,8 @@ test('the messages the list adds are checked like every other from the view', ()
   assert.throws(() => parseMessage({ type: 'needsYouPutOff', key: 'lane-waiting:x', until: Date.now() - 1 }));
   assert.throws(() => parseMessage({ type: 'needsYouPutOff', key: 'lane-waiting:x', until: Date.now() + 365 * 24 * 60 * minute }));
   assert.throws(() => parseMessage({ type: 'needsYouPutOff', key: 'bad key', until }));
+  assert.throws(() => parseMessage({ type: 'needsYouPutOff', key: 'lane-waiting:a	b', until }));
+  assert.equal(parseMessage({ type: 'needsYouUndo', key: 'limit-offer:claude:2026-10-07T12:00:00.000Z' }).type, 'needsYouUndo');
   assert.deepEqual(parseMessage({ type: 'needsYouUndo', key: `lane-waiting:${LANE}` }), { type: 'needsYouUndo', key: `lane-waiting:${LANE}` });
 });
 

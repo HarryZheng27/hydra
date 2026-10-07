@@ -59,10 +59,11 @@ export function AgentsView({ project, needsYou, target, onPutOff, onUndo, onOpen
   }, [project.id]);
   // The Needs you tab opens by default when it has items, until a view is picked (here or by the controller).
   const picked = useRef(false);
+  const mountedAt = useRef(Date.now());
   const changeView = (next: AgentsViewName, focus?: string) => { picked.current = true; setView(next); send({ type: 'view', view: next, ...(focus ? { focus } : {}) }); };
   useEffect(() => { if (needsYou.length && !picked.current) { picked.current = true; setView('needs'); } }, [needsYou.length]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (target) changeView(target.view); }, [target?.at]);
+  useEffect(() => { if (target && target.at >= mountedAt.current - 2000) changeView(target.view); }, [target?.at]);
 
   useEffect(() => {
     // A different project: its own state from scratch, then its controller's snapshot.
