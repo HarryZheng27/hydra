@@ -722,7 +722,7 @@ export class HelperService {
       try { gates = await timeStep('gates', () => (this.options.gates ?? loadGates)(this.options.leadFolder)); }
       catch (error) { return { accepted: false, message: `Hydra can't check your work: ${error instanceof Error ? error.message : String(error)} That isn't your fault. Call hydra_stuck and ask the lead to fix it, then call hydra_done again.` }; }
       // 1.6's tamper note, and Step 2's reason a Claude head had no shell (design 7: said in the head's result).
-      note = [await timeStep('tamper', () => this.tamperNote(job)), await timeStep('tests', async () => editedTestsNote(await editedTests(worktree, base, { to: commit, ...gates.tests ? { patterns: gates.tests } : {}, environment: pinned }))), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
+      note = [await timeStep('tamper', async () => [await this.tamperNote(job), editedTestsNote(await editedTests(worktree, base, { to: commit, ...gates.tests ? { patterns: gates.tests } : {}, environment: pinned }))].filter(Boolean).join(' ') || undefined), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
       changedFiles = (await timeStep('diff', () => git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'], pinned, readOnlyGitTimeoutMs))).split('\0').filter(Boolean);
       outside = changedFiles.filter(file => !inScope(file, job.writeScope));
       await this.options.store.transition(jobId, 'checking');
