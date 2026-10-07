@@ -521,7 +521,7 @@ test('a Claude head starts confined: its settings file on disk (0600, valid, the
         if (spec.confine.settingsFile) { entry.settings = JSON.parse(await readFile(spec.confine.settingsFile, 'utf8')); entry.mode = (await stat(spec.confine.settingsFile)).mode; }
         entry.tempExists = await access(spec.confine.env.TEMP!).then(() => true, () => false);
         await writeFile(path.join(spec.worktree, 'src', `${spec.prompt.includes('Job second') ? 'b' : 'c'}.ts`), 'x\n');
-        await callHelperEndpoint(Number(spec.bridge.env.HYDRA_HELPER_PORT), spec.bridge.env.HYDRA_HELPER_TOKEN!, 'hydra_done', { summary: 'Done.' });
+        await callHelperEndpoint(Number(spec.bridge.env.HYDRA_HELPER_PORT), spec.bridge.env.HYDRA_HELPER_TOKEN!, 'hydra_done', { headline: 'Done.', summary: 'Done.' });
         exit(0);
       })(), 0);
       return run;

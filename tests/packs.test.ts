@@ -597,7 +597,7 @@ async function headDone(repo: string, root: string, gates: HelperServiceOptions[
     startRun: spec => {
       setTimeout(() => void (async () => {
         await writeFile(path.join(spec.worktree, 'src', 'b.ts'), 'export const b = 2;\n');
-        resolveDone(await service.handle({ role: 'helper', leadKey: 'window', jobId: service.list()[0]!.id }, 'hydra_done', { summary: 'Added b.ts' }, signal));
+        resolveDone(await service.handle({ role: 'helper', leadKey: 'window', jobId: service.list()[0]!.id }, 'hydra_done', { headline: 'Done.', summary: 'Added b.ts' }, signal));
       })().catch(resolveDone), 0);
       return { onTurnEnd: () => undefined, exited: new Promise(() => undefined), send: async () => true, stop: async () => undefined };
     },

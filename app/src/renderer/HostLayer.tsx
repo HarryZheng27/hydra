@@ -79,7 +79,11 @@ function PickDialog({ ask, onAnswer }: { ask: Extract<Ask, { kind: 'pick' }>; on
   return <div className="host-ask" role="dialog" aria-modal="true" aria-label={ask.title || 'Pick'}>
     {ask.title && <h2>{ask.title}</h2>}
     <input autoFocus type="search" placeholder={ask.placeHolder || 'Filter'} value={filter} onChange={event => setFilter(event.target.value)}
-      onKeyDown={event => { if (event.key === 'Enter' && !ask.many && shown.length === 1) onAnswer(shown[0]!.index); }} />
+      onKeyDown={event => {
+        if (event.key === 'Enter' && !ask.many && shown.length === 1) onAnswer(shown[0]!.index);
+        // A head's options are labelled "1  …" to "4  …": that digit picks it while nothing has been typed.
+        else if (!ask.many && !filter && /^[1-4]$/.test(event.key)) { const index = ask.items.findIndex(item => item.label.startsWith(`${event.key}  `)); if (index >= 0) { event.preventDefault(); onAnswer(index); } }
+      }} />
     {ask.error && <p className="host-ask-error" role="alert">{ask.error}</p>}
     <ul className="host-pick-list">
       {shown.map(({ item, index }) => <li key={index}>
