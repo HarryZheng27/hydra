@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **Lanes say when they are waiting for you.** A lane's tile shows **Waiting for you** (its Claude Code agent asked a question or needs a permission) or **Finished its turn**, and the Lanes view lists the waiting lanes first. The signal clears when you type into the lane or its output resumes. Hydra adds a `Stop` and a `Notification` hook next to its usage-limit hook in `~/.claude/settings.json` (removed byte for byte on disconnect and uninstall, beside your own hooks); they record nothing for any Claude Code session outside Hydra's worktrees. For Codex lanes, Hydra adds a `notify` block at the top of `~/.codex/config.toml`, unless you already have your own `notify`: then Hydra leaves it alone and those lanes show no signal. Settings, Connectors shows exactly what was written.
+
 ## 0.29.0 (2026-10-07)
 
 - **The app shows what a turn changed.** After a turn that edited files, the chat has a card like Claude desktop's: **Edited N files** with the lines added and removed, a row per file that opens that file's diff for the turn, and **Undo**, which puts the files back as they were before the turn, leaving alone any you've edited since. The agent is told about an undo with your next message. Hydra keeps its snapshots in a private repository under its own data, never in your folder, and deletes them with the chat.
