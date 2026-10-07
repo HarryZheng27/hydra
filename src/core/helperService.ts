@@ -713,6 +713,7 @@ export class HelperService {
         await this.options.store.transition(jobId, 'checking');
         await this.options.store.transition(jobId, 'done', undefined, { result: { summary, commit, changedFiles: [], checks: [] } });
         this.changed();
+        this.releaseSlot(jobId);
         return { accepted: true, message: 'Accepted: you changed nothing, so your summary is the result. Stop now.' };
       }
       // Gates come from the lead's folder, never the head's worktree. A gates file Hydra can't
@@ -751,6 +752,7 @@ export class HelperService {
     const status = evidenceStatus({ checks, configured: gatesConfigured(gates.source, floor.gates.length + floor.notRun.length) });
     await this.options.store.transition(jobId, 'done', undefined, { result: { summary, commit, changedFiles, checks, ...(note ? { note } : {}), ...(status ? { status } : {}) } });
     this.changed();
+    this.releaseSlot(jobId);
     return { accepted: true, message: `Accepted. Your work is recorded for the lead.${note ? ` ${note}` : ''} Stop now.` };
   }
 
@@ -762,6 +764,7 @@ export class HelperService {
     if (attempts >= maxAttempts) {
       await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}${why}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit, changedFiles: [], checks, ...(note ? { note } : {}) } });
       this.changed();
+      this.releaseSlot(jobId);
       void this.stopRun(jobId);
       return { accepted: false, message: `${message}\n\nThat was the last attempt (${attempts} of ${maxAttempts}). Stop now; the lead will see the failure.` };
     }
@@ -1118,6 +1121,7 @@ export class HelperService {
     if (job && !finalJobStates.has(job.state)) await this.options.store.transition(id, to, reason, patch);
     active?.answer?.(undefined as unknown as string);
     this.changed();
+    this.releaseSlot(id);
     await this.stopRun(id);
   }
 

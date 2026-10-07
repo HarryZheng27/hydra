@@ -1672,3 +1672,39 @@ test('a head whose launch fails fails alone: its slot goes to the next queued he
     assert.equal(f.runs.length, 2);
   } finally { await f.close(); }
 });
+
+test('a head frees its slot when its work is accepted, not when its process exits; the slot is freed once and never leaked', async () => {
+  let releaseA: () => void = () => {};
+  const f = await fixture({ maxConcurrent: 1, script: async helper => {
+    if (!helper.spec.prompt.includes('Job a')) return;
+    await helper.commit('src/a-done.ts', 'export const done = 1;\n');
+    assert.equal((await helper.call('hydra_done', { summary: 'A' })).result.accepted, true);
+    // The process lingers: only the test lets it go.
+    releaseA = () => helper.exit(0);
+  } });
+  try {
+    const a = await f.start('a'), b = await f.start('b'), c = await f.start('c');
+    await until(() => f.store.get(a.job_id)?.state === 'done', 'a accepted');
+    await until(() => f.store.get(b.job_id)?.state === 'running', "b starts while a's process is still up");
+    assert.equal(f.store.get(c.job_id)?.state, 'queued', 'a freed one slot, so only b took it');
+    // a's process now exits: its slot was already given back, so c still waits for b.
+    releaseA();
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(f.store.get(c.job_id)?.state, 'queued', 'a second release would let c run beside b');
+    assert.equal(f.runs.length, 2);
+    assert.equal(await f.service.stopAll(), 2, 'b running and c queued; a is already finished');
+    assert.equal(f.store.get(c.job_id)?.state, 'cancelled');
+  } finally { await f.close(); }
+});
+
+test('a head cancelled while its launch is still going frees its slot for the next queued head', async () => {
+  const f = await fixture({ maxConcurrent: 1, launchDelayMs: 400, script: async () => {} });
+  try {
+    const a = await f.start('a'), b = await f.start('b');
+    await until(() => f.launchTimes.length === 1, 'a is launching');
+    await f.call('hydra_cancel_head', { job_id: a.job_id, reason: 'Not needed' });
+    await until(() => f.runs.length === 1, 'b takes the slot a gave up');
+    assert.equal(f.store.get(a.job_id)?.state, 'cancelled');
+    assert.equal(f.runs.filter(run => run.prompt.includes('Job b')).length, 1);
+  } finally { await f.close(); }
+});
