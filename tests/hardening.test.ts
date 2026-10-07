@@ -23,13 +23,14 @@ import type { GatesLoader } from '../src/core/gates';
 
 type Script = (helper: { spec: HelperRunSpec; call: (tool: string, args?: Record<string, unknown>) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; exit: (code: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
-async function fixture(options: { script: Script; gates?: unknown; gatesLoader?: GatesLoader }) {
+async function fixture(options: { script: Script; gates?: unknown; gatesLoader?: GatesLoader; files?: Record<string, string> }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-hardening-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
   await git(root, ['init', '-q', '-b', 'main', repo]);
   await git(repo, ['config', 'user.email', 'test@example.invalid']); await git(repo, ['config', 'user.name', 'Test']);
   await writeFile(path.join(repo, 'src', 'a.ts'), 'export const a = 1;\n');
+  for (const [file, text] of Object.entries(options.files ?? {})) { await mkdir(path.dirname(path.join(repo, file)), { recursive: true }); await writeFile(path.join(repo, file), text); }
   if (options.gates) { await mkdir(path.join(repo, '.hydra'), { recursive: true }); await writeFile(path.join(repo, '.hydra', 'gates.json'), JSON.stringify(options.gates)); }
   await git(repo, ['add', '.']); await git(repo, ['commit', '-qm', 'init']);
   const store = new JobStore(path.join(root, 'storage')); await store.load();
@@ -158,6 +159,40 @@ test('1.6 tamper note: a head\'s result says gates.json changed while it ran', a
     const [head] = (await f.wait([job_id])).heads;
     assert.equal(head.state, 'done');
     assert.match(head.note, /gates changed while this head ran/);
+  } finally { await f.close(); }
+});
+
+test('Edited tests are evidence: a head\'s result lists existing tests it changed or deleted, not new ones, and fails nothing', async () => {
+  const f = await fixture({ gates: { gates: [passGate('unit')] }, files: { 'src/a.test.ts': 'a\n', 'src/b.test.ts': 'b\n', 'src/c.ts': 'c\n' }, script: async helper => {
+    await helper.commit('src/a.test.ts', 'weakened\n');
+    await helper.commit('src/new.test.ts', 'new\n');
+    await helper.commit('src/c.ts', 'changed\n');
+    await rm(path.join(helper.spec.worktree, 'src', 'b.test.ts'));
+    const done = await helper.call('hydra_done', { summary: 'done' });
+    assert.equal(done.result.accepted, true, 'a flag, not a gate');
+    assert.match(done.result.message, /Changed existing tests: src\/a\.test\.ts, src\/b\.test\.ts\./);
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('edited-tests', { write_scope: ['src/', 'spec-folder/'] });
+    const [head] = (await f.wait([job_id])).heads;
+    assert.equal(head.state, 'done');
+    assert.ok(head.note.startsWith('Changed existing tests: src/a.test.ts, src/b.test.ts.'), head.note);
+  } finally { await f.close(); }
+});
+
+test('Edited tests are evidence: tests in gates.json replace the default patterns', async () => {
+  const f = await fixture({ gates: { tests: ['spec-folder/**'], gates: [passGate('unit')] }, files: { 'src/a.test.ts': 'a\n', 'spec-folder/x.ts': 'x\n' }, script: async helper => {
+    await helper.commit('src/a.test.ts', 'edited\n');
+    await helper.commit('spec-folder/x.ts', 'edited\n');
+    const done = await helper.call('hydra_done', { summary: 'done' });
+    assert.equal(done.result.accepted, true);
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('custom-tests', { write_scope: ['src/', 'spec-folder/'] });
+    const [head] = (await f.wait([job_id])).heads;
+    assert.ok(head.note.startsWith('Changed existing tests: spec-folder/x.ts.'), head.note);
   } finally { await f.close(); }
 });
 
