@@ -32,6 +32,8 @@ So this plan lists **decisions only you can make**, from any source (chats, plan
 
 ## Phase 1: Tell me when I'm away (app first)
 
+**Built for the app** (`src/core/needsYou.ts` derives the items and decides when to banner; `app/src/main/needsYouBanners.ts` drives the OS banner; the setting is under Notifications in the app's Settings). Two details the plan left open: a banner waits 60 seconds after an item appears, so a lead about to answer a head's question never triggers one (a lead is only "waiting" while it is inside `hydra_wait_for_heads` or `hydra_plan_wait`, which return the moment a head asks); and a chat that finished while you were at the window isn't counted, nor is one you came back to. The IDE banner is still to do.
+
 - **When:** an item enters the "needs you" set (see Phase 5 for the full list; at first: a chat's `needs` or `unread`, a head blocked with no lead waiting, a plan ready to merge or stopped, an unattended report, a usage-limit offer). It fires only when the window isn't focused, or the machine has been idle 5 minutes or more (`powerMonitor.getSystemIdleTime()`).
   - A focused window alone isn't enough: you may have walked away from it.
   - Being idle alone isn't enough either: you may be reading something else.

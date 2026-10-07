@@ -111,6 +111,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       if (name.trim() && !clean) throw new Error('A name is one line of at most 60 characters.');
       return deps.settings.update(current => { const { displayName: _old, ...rest } = current; return clean ? { ...rest, displayName: clean } : rest; });
     },
+    'settings.setWhenAway': ({ on }) => deps.settings.update(current => ({ ...current, notifications: { ...current.notifications, whenAway: on } })),
     'settings.pickCliPath': async ({ provider }) => {
       const file = await deps.pickExecutable(provider);
       return file ? deps.settings.update(current => setCliPath(current, provider, file)) : deps.settings.load();

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Connectors } from './Connectors';
 import { Updates } from './Updates';
-import type { AppInfo, AppSettings, CliProvider } from '../shared/ipc';
+import { whenAwayOn, type AppInfo, type AppSettings, type CliProvider } from '../shared/ipc';
 import type { ThemeSetting } from '../shared/theme';
 
 const themes: Array<{ value: ThemeSetting; label: string }> = [
@@ -20,12 +20,13 @@ interface Props {
   info?: AppInfo;
   onTheme(theme: ThemeSetting): void;
   onDisplayName(name: string): void;
+  onWhenAway(on: boolean): void;
   onPickCli(provider: CliProvider): void;
   onClearCli(provider: CliProvider): void;
   setup: ReactNode;
 }
 
-export function SettingsView({ settings, info, onTheme, onDisplayName, onPickCli, onClearCli, setup }: Props) {
+export function SettingsView({ settings, info, onTheme, onDisplayName, onWhenAway, onPickCli, onClearCli, setup }: Props) {
   const [name, setName] = useState(settings.displayName ?? '');
   useEffect(() => { setName(settings.displayName ?? ''); }, [settings.displayName]);
   const saveName = () => { if (name.trim() !== (settings.displayName ?? '')) onDisplayName(name); };
@@ -48,6 +49,14 @@ export function SettingsView({ settings, info, onTheme, onDisplayName, onPickCli
           ))}
         </div>
       </div>
+      <h2>Notifications</h2>
+      <div className="setting">
+        <div className="setting-label" id="when-away-label">Tell me when I'm away</div>
+        <div className="setting-value">
+          <input type="checkbox" aria-labelledby="when-away-label" checked={whenAwayOn(settings)} onChange={event => onWhenAway(event.target.checked)} />
+        </div>
+      </div>
+      <p className="hint">When something needs you and Hydra isn't the window you're looking at, or you've been away from the computer for 5 minutes, Windows shows one banner naming the project and the chat or plan. It never shows a question or a summary, and it never says how many things are waiting.</p>
       <h2>Command-line tools</h2>
       <p className="hint">Hydra finds <code>claude</code> and <code>codex</code> on your PATH. Choose a program here only to use a different one. This setting belongs to this computer; a project can never change it.</p>
       {providers.map(provider => {

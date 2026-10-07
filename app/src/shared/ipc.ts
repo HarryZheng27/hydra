@@ -42,8 +42,8 @@ export type HydraHostMessage =
   | { kind: 'notice'; requestId?: string; projectId: string; level: 'info' | 'warning' | 'error'; message: string; actions: string[]; error?: string }
   | { kind: 'view'; projectId: string; title: string; format: 'text' | 'markdown' | 'diff'; content: string; images: HydraViewImage[] }
   | { kind: 'dismiss'; requestId: string }
-  /** Main asks the window to show a project (Show All Projects), or the app's own Settings. */
-  | { kind: 'navigate'; projectId?: string; to: 'project' | 'settings' };
+  /** Main asks the window to show a project (Show All Projects), its Agents view, a chat, or the app's own Settings. */
+  | { kind: 'navigate'; projectId?: string; chatId?: string; to: 'project' | 'settings' | 'chat' | 'agents' };
 
 /** A head as a chat card shows it: no paths, no logs, nothing a page could act on beyond its id. */
 export interface HeadCardView {
@@ -95,7 +95,9 @@ export interface AppInfo { name: string; version: string; electron: string; plat
 export interface UpdateStatusView { available: boolean; reason?: string; automatic: boolean; busy: boolean; version: string }
 /** Preferences, in settings.json. CLI paths are machine-only: set from main's file picker, never from a project. */
 /** `displayName`: the sidebar's name for the user, when they set one (else Windows' own full name for the account). */
-export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>>; displayName?: string }
+export interface AppSettings { version: 1; theme: ThemeSetting; cliPaths: Partial<Record<CliProvider, string>>; displayName?: string; notifications?: { whenAway?: boolean } }
+/** `notifications.whenAway` (on unless turned off): OS banners when something needs the user and they're away (src/core/needsYou.ts). */
+export const whenAwayOn = (settings: AppSettings): boolean => settings.notifications?.whenAway !== false;
 /** A folder the user picked. `trustedAt` is set once the user agreed, in main's own confirm, that chats may run there. */
 export interface Project { id: string; path: string; name: string; trustedAt?: string }
 /** What the CLI says about the user's sign-in: only this, never who they are. */
@@ -131,6 +133,8 @@ export interface Channels {
   'settings.setTheme': { payload: { theme: ThemeSetting }; result: AppSettings };
   /** The sidebar's name; empty goes back to Windows' full name for the account. */
   'settings.setDisplayName': { payload: { name: string }; result: AppSettings };
+  /** Banners when away (Needs_You_Plan.md, Phase 1). */
+  'settings.setWhenAway': { payload: { on: boolean }; result: AppSettings };
   /** Main shows a file picker; the renderer never sends a path. */
   'settings.pickCliPath': { payload: { provider: CliProvider }; result: AppSettings };
   'settings.clearCliPath': { payload: { provider: CliProvider }; result: AppSettings };
@@ -275,6 +279,7 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'settings.get': isNull,
   'settings.setTheme': exactly<{ theme: ThemeSetting }>({ theme: oneOf('dark', 'light', 'system') }),
   'settings.setDisplayName': exactly<{ name: string }>({ name: isText(200) }),
+  'settings.setWhenAway': exactly<{ on: boolean }>({ on: value => typeof value === 'boolean' }),
   'settings.pickCliPath': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'settings.clearCliPath': exactly<{ provider: CliProvider }>({ provider: isProvider }),
   'state.get': isNull,
@@ -358,6 +363,7 @@ export interface HydraApi {
   getSettings(): Promise<AppSettings>;
   setTheme(theme: ThemeSetting): Promise<AppSettings>;
   setDisplayName(name: string): Promise<AppSettings>;
+  setWhenAway(on: boolean): Promise<AppSettings>;
   pickCliPath(provider: CliProvider): Promise<AppSettings>;
   clearCliPath(provider: CliProvider): Promise<AppSettings>;
   getState(): Promise<AppState>;

@@ -23,6 +23,7 @@ import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, li
 import { headShellOffNotice, headShellSentence } from '../core/confine';
 import { claudeForRegistration as claudeFor } from './claudeExecutable';
 import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
+import type { HeadFact, LimitOfferFact, NeedsYouFacts, PlanFact } from '../core/needsYou';
 import { codexLaneFanout } from '../core/limitEvents';
 import { AttentionWatcher } from '../core/attentionWatcher';
 import { attentionDirectory, type AttentionEvent } from '../core/attentionEvents';
@@ -42,7 +43,7 @@ import { isLaneMessage, parseMessage, type ClientMessage, type HelperJobView, ty
 import { planIdPattern, planJobKeyPattern, type PlanDispatch, appendBoardPost, applyPlanAmendment, boardForJob, boardForLead, findPlanByIdempotencyKey, planFromLeadInput, type BoardFrom, createPlan, cycleMessage, dependentsOf, findCycle, jobRunAs, jobStarted, maxPlanJobs, buildPlanReport, type Plan, type PlanJob, type PlanJobRunAs, type PlanReportJobDetail, PlanStore } from '../core/plans';
 import { planBrief } from '../core/planner';
 import { planHeadInput, PlanRunner, type PlanJobStatus, type PlanJobView, type PlanLaneLook, type PlanLaneResultInput, type PlanLaneStart, type PlanMergeVia } from '../core/planRunner';
-import { defaultIntegrationFixRounds, integrationLeadView, integrationSettled, isIntegrationFixKey, laneMergeRefusal, mergeRefusal } from '../core/integration';
+import { defaultIntegrationFixRounds, integrationLeadView, integrationPassed, integrationSettled, isIntegrationFixKey, laneMergeRefusal, mergeRefusal } from '../core/integration';
 import { redactText } from '../core/redact';
 import type { StopSwitch } from '../core/stopSwitch';
 import type { AuditLog } from '../core/audit';
@@ -645,6 +646,40 @@ export class HydraController {
         await runner.cancelJob(plan.id, view.key, reason).catch(error => this.host.log(`[plans] ${plan.id}: couldn't cancel job ${view.key}: ${describe(error)}`));
       }
     }
+  }
+  /**
+   * What is waiting on the user in this project, from state Hydra already keeps (src/core/needsYou.ts): blocked heads
+   * with no lead to answer them, plans ready to merge or stopped, unattended reports, a usage-limit offer. The app
+   * adds its chats.
+   */
+  needsYouFacts(now = Date.now()): Pick<NeedsYouFacts, 'heads' | 'plans' | 'limitOffers'> {
+    const service = this.helpers?.service;
+    const planLeadWaiting = this.planWaiters.size > 0;
+    const heads: HeadFact[] = (service?.list() ?? []).filter(job => job.state === 'blocked').map(job => {
+      const clock = service!.questionClock(job.id);
+      const since = clock?.since ?? Date.parse(job.updatedAt);
+      // A plan's job is answered by its plan's lead (hydra_plan_wait), a loose head by its own (hydra_wait_for_heads).
+      return { id: job.id, title: job.title, state: job.state, since: Number.isFinite(since) ? since : now, leadWaiting: this.jobPlanFor(job.id) ? planLeadWaiting : service!.leadWaiting(), ...(clock ? { answersAt: clock.answersAt } : {}) };
+    });
+    const plans: PlanFact[] = (this.plans?.store.list() ?? []).map(plan => {
+      const integration = plan.integration;
+      const ended = plan.state === 'done' || plan.state === 'incomplete' || plan.state === 'failed';
+      const since = Date.parse(plan.updatedAt);
+      return {
+        id: plan.id, title: plan.title, since: Number.isFinite(since) ? since : now, leadWaiting: planLeadWaiting,
+        // An unattended plan's report says what stopped it; it isn't also listed as stopped.
+        stopped: plan.state === 'incomplete' && !plan.unattended,
+        readyToMerge: plan.state === 'done' && !!integration && !integration.merged && integrationPassed(integration),
+        reportReady: !!plan.unattended && ended && integrationSettled(plan),
+      };
+    });
+    const limitOffers: LimitOfferFact[] = [...this.latestLimits.values()]
+      .filter(event => event.source !== 'lane' && otherStillLimited(event, new Date(now)))
+      .map(event => {
+        const since = Date.parse(event.at), resets = event.resetsAt ? Date.parse(event.resetsAt) : NaN;
+        return { id: `${event.provider}:${event.at}`, provider: event.provider, since: Number.isFinite(since) ? since : now, ...(Number.isFinite(resets) ? { resetsAt: resets } : {}) };
+      });
+    return { heads, plans, limitOffers };
   }
   /** Each plan's job statuses, for plans that have run. */
   planJobViews(): Record<string, PlanJobView[]> {

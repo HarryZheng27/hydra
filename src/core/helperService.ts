@@ -627,6 +627,14 @@ export class HelperService {
     return this.options.roles.pick(this.options.leadFolder, name);
   }
 
+  /** Whether a lead is in hydra_wait_for_heads right now, so it, not the user, will see a blocked head's question. */
+  leadWaiting(): boolean { return this.waiters.size > 0; }
+  /** A blocked head's question clock: when it began waiting and when Hydra answers it itself. Undefined when it isn't waiting on an answer. */
+  questionClock(jobId: string): { since: number; answersAt: number } | undefined {
+    const since = this.active.get(jobId)?.blockedSince;
+    return since === undefined ? undefined : { since, answersAt: since + (this.options.questionWaitMs ?? headQuestionWaitMs) };
+  }
+
   private async waitForHelpers(args: Record<string, unknown>, signal: AbortSignal) {
     const ids = args.job_ids;
     if (!Array.isArray(ids) || ids.length < 1 || ids.length > 16) throw new Error('job_ids must list 1–16 head job ids.');
