@@ -267,6 +267,37 @@ test('HSEC-09: once checked, Hydra\'s git calls are pinned to the worktree\'s re
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('HSEC-09: hydra_done never runs git inside a nested repository a head committed, so its planted filter never runs', async () => {
+  let marker = '';
+  const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
+    const wt = helper.spec.worktree;
+    // An earlier attempt committed a nested repository (a gitlink) under src/.
+    const nested = path.join(wt, 'src', 'n');
+    await git(wt, ['init', '-q', nested]);
+    await writeFile(path.join(nested, 'a.txt'), 'a\n');
+    await git(nested, ['add', '-A']); await git(nested, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'n']);
+    await git(wt, ['add', '-A']); await git(wt, ['commit', '-qm', 'head: nested']);
+    // Then it gives that repository a clean filter of its own, and a same-size change git must hash to see.
+    marker = path.join(path.dirname(wt), 'pwned-nested');
+    await git(nested, ['config', 'filter.p.clean', `echo pwned > "${marker.replace(/\\/g, '/')}"; cat`]);
+    await writeFile(path.join(nested, '.gitattributes'), '* filter=p\n');
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    await writeFile(path.join(nested, 'a.txt'), 'b\n');
+    await writeFile(path.join(wt, 'src', 'y.ts'), 'y\n');
+    const done = await helper.call('hydra_done', { summary: 'nested repo' });
+    assert.equal(done.result.accepted, true, done.result.message);
+    await assert.rejects(readFile(marker), 'the nested repository\'s filter never ran');
+    // The head's ordinary file was still committed for it.
+    assert.match(await git(wt, ['show', '--name-only', '--format=', 'HEAD']), /src\/y\.ts/);
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('nested');
+    assert.equal((await f.wait([job_id])).heads[0].state, 'done');
+    await assert.rejects(readFile(marker), 'not even later');
+  } finally { await f.close(); }
+});
+
 test('HSEC-30: hydra_done refuses when the git settings check can\'t run, rather than calling it unchanged', async () => {
   const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
     await helper.commit('src/x.ts', 'x\n');
