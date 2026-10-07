@@ -1,4 +1,5 @@
 import { git, gitRun, readOnlyGitTimeoutMs } from './git';
+import { redactText } from './redact';
 
 /**
  * What a head starts from (docs/internal/Gates_Plan.md, section 3).
@@ -15,11 +16,17 @@ import { git, gitRun, readOnlyGitTimeoutMs } from './git';
  * that runs a plan job (docs/internal/Plan_Lanes_Plan.md, "Starting a lane job"); for a
  * lane, `id` is the lane's id and `summary` its Mark job done note or commit subjects.
  */
-export interface DependencyResult { id: string; kind: 'head' | 'lane'; title: string; summary: string; commit: string; branch?: string; changedFiles: string[] }
+export interface DependencyResult {
+  id: string; kind: 'head' | 'lane'; title: string; summary: string; commit: string; branch?: string; changedFiles: string[];
+  /** What it landed on the plan's integration branch, as a capped, redacted diff (dependencyDiff): the real code, so a dependent needn't re-read it. */
+  diff?: string;
+}
 /** "heads" while every dependency is a head, as before lanes could run plan jobs; "jobs" once any is a lane. */
 export const dependencyNoun = (dependencies: readonly Pick<DependencyResult, 'kind'>[]): 'heads' | 'jobs' => dependencies.some(dependency => dependency.kind === 'lane') ? 'jobs' : 'heads';
 
 export const maxDependencyBrief = 4096;
+/** The most diff text a dependent's brief carries, all its dependencies together. */
+export const maxDependencyDiff = 24 * 1024;
 const sha = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 /** Hydra's own commits carry Hydra's name, whatever the repository's identity is. */
 export const hydraIdentity: NodeJS.ProcessEnv = {
@@ -92,5 +99,43 @@ export function dependencyBrief(dependencies: readonly DependencyResult[]): stri
       ...(files ? [`  Changed files: ${files}`] : []),
     ].join('\n'), share);
   });
-  return clip([header, ...entries].join('\n'), maxDependencyBrief);
+  const summary = clip([header, ...entries].join('\n'), maxDependencyBrief);
+  const diffs = dependencies.filter(dependency => dependency.diff?.trim());
+  if (!diffs.length) return summary;
+  const sections = diffs.map(dependency => `### ${dependency.title}\n\`\`\`diff\n${dependency.diff!.trim()}\n\`\`\``);
+  return `${summary}\n\nThe code they landed (their diff; your worktree already has it, so read it here before opening the files):\n\n${clip(sections.join('\n\n'), maxDependencyDiff + 200 * diffs.length)}`;
+}
+
+/** A file's chunk of a diff reads as interface: an exported or declared name, or a file named for types or an index. */
+const interfaceLine = /^\+\s*(export\b|module\.exports|exports\.|(?:abstract\s+)?(?:interface|type|class|enum)\s+\w|public\b|pub\s)/m;
+const interfacePath = /(^|\/)(index|types?|api|interfaces?|schema|models?|contracts?)\.[a-z]+$|\.d\.ts$/i;
+export const isInterfaceChunk = (file: string, chunk: string): boolean => interfacePath.test(file) || interfaceLine.test(chunk);
+
+/**
+ * A unified diff cut to `max` characters, whole files at a time: files that define what others call (exports,
+ * types, an index) first, then the rest in path order, each file's chunk kept whole or left out. What was left
+ * out is named, so the head knows to read those files itself. Secrets are redacted the way brief content is.
+ */
+export function capDiff(raw: string, max: number, redact: (text: string) => string = redactText): string {
+  const chunks = raw.split(/^(?=diff --git )/m).filter(chunk => chunk.startsWith('diff --git '));
+  const entries = chunks.map(chunk => ({ file: /^diff --git a\/(.+?) b\//.exec(chunk)?.[1] ?? chunk.split('\n', 1)[0]!, chunk: redact(chunk.replace(/\r?\n$/, '')) }));
+  const first = entries.filter(entry => isInterfaceChunk(entry.file, entry.chunk)), rest = entries.filter(entry => !first.includes(entry));
+  const kept: string[] = [], cut: string[] = [];
+  let used = 0;
+  for (const entry of [...first, ...rest]) {
+    if (used + entry.chunk.length + 1 <= max) { kept.push(entry.chunk); used += entry.chunk.length + 1; } else cut.push(entry.file);
+  }
+  if (cut.length) kept.push(`# Cut to fit ${Math.round(max / 1024)} KB: ${cut.length} file${cut.length === 1 ? '' : 's'} not shown: ${cut.slice(0, 20).join(', ')}${cut.length > 20 ? `, and ${cut.length - 20} more` : ''}. Read them in your worktree.`);
+  return kept.join('\n');
+}
+
+/**
+ * What `to` changed from `from`, for a dependent's brief (capDiff, `max` characters). Git's own diff drivers are off
+ * (a head can commit attributes that name one), so only git itself reads the files. Undefined when git can't say.
+ */
+export async function dependencyDiff(repository: string, from: string, to: string, max: number): Promise<string | undefined> {
+  if (!sha.test(from) || !sha.test(to) || max <= 0) return undefined;
+  const result = await gitRun(repository, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--unified=3', from, to, '--'], undefined, readOnlyGitTimeoutMs);
+  if (result.code !== 0 || !result.stdout.trim()) return undefined;
+  return capDiff(result.stdout, max) || undefined;
 }

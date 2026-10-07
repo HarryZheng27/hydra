@@ -1,4 +1,4 @@
-import { DependencyConflict, dependencyBase, dependencyBrief, type DependencyResult } from './headStart';
+import { DependencyConflict, dependencyBase, dependencyBrief, dependencyDiff, maxDependencyDiff, type DependencyResult } from './headStart';
 import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobLimits, JobState } from './jobs';
 import {
   applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
@@ -898,7 +898,7 @@ export class PlanRunner {
         // O3: every job starts from the integration branch's tip, which already has what it depends on (landed and
         // merged), so there is nothing to merge here; its dependencies' results go into its brief only.
         const tip = plan.integration.tip;
-        const dependencies = await this.dependencyResults(plan, job);
+        const dependencies = await this.dependencyResults(plan, job, undefined, true);
         if (jobRunAs(job) === 'head') {
           const { jobId } = await this.options.startHead(plan, job, [], dependencies, { baseCommit: tip, ...(job.conflict ? { carry: job.conflict.commit } : {}) });
           await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key && !jobStarted(item) ? { ...item, jobId } : item) }));
@@ -958,8 +958,9 @@ export class PlanRunner {
   }
 
   /** What each job it depends on handed on, heads and lanes alike (or only lanes), in the order it names them. */
-  private async dependencyResults(plan: Plan, job: PlanJob, only?: PlanJobRunAs): Promise<DependencyResult[]> {
+  private async dependencyResults(plan: Plan, job: PlanJob, only?: PlanJobRunAs, withDiff = false): Promise<DependencyResult[]> {
     const results: DependencyResult[] = [];
+    const diffShare = Math.floor(maxDependencyDiff / Math.max(1, job.dependsOn.length));
     for (const key of job.dependsOn) {
       const other = plan.jobs.find(item => item.key === key);
       if (!other || (only && jobRunAs(other) !== only)) continue;
@@ -968,14 +969,28 @@ export class PlanRunner {
         const lane = this.options.look.lane(other.laneId);
         const subjects = other.result.note ? [] : lane ? await this.options.commitSubjects(lane.baseCommit, other.result.commit).catch(() => []) : [];
         const summary = other.result.note || subjects.join('; ') || `Its work is in commit ${other.result.commit.slice(0, 12)}.`;
-        results.push({ id: other.laneId, kind: 'lane', title: other.title, summary: clip(summary, 2000), commit: other.result.commit, ...(lane ? { branch: lane.branch } : {}), changedFiles: other.result.changedFiles });
+        results.push({ id: other.laneId, kind: 'lane', title: other.title, summary: clip(summary, 2000), commit: other.result.commit, ...(lane ? { branch: lane.branch } : {}), changedFiles: other.result.changedFiles, ...await this.diffOf(plan, other, withDiff && diffShare) });
       } else {
         const head = other.jobId ? this.options.look.head(other.jobId) : undefined;
         if (!head || head.state !== 'done' || !head.result) throw new Error(`${other.title} has no result to start from.`);
-        results.push({ id: other.jobId!, kind: 'head', title: other.title, summary: clip(head.result.summary, 2000), commit: head.result.commit, ...(head.branch ? { branch: head.branch } : {}), changedFiles: head.result.changedFiles });
+        results.push({ id: other.jobId!, kind: 'head', title: other.title, summary: clip(head.result.summary, 2000), commit: head.result.commit, ...(head.branch ? { branch: head.branch } : {}), changedFiles: head.result.changedFiles, ...await this.diffOf(plan, other, withDiff && diffShare) });
       }
     }
     return results;
+  }
+
+  /**
+   * What a dependency landed on the integration branch, as a `diff` field for its dependents' briefs: the branch's
+   * change from where it was before that job landed to the tip it made (so a merged landing shows only this job's work).
+   * Best effort: a dependency without a landing, or a git that can't say, just leaves the brief as it was.
+   */
+  private async diffOf(plan: Plan, dependency: PlanJob, max: number | false): Promise<{ diff?: string }> {
+    const integration = plan.integration;
+    if (!max || !integration) return {};
+    const index = integration.landed.findIndex(entry => entry.key === dependency.key && entry.attempt === (dependency.attempt ?? 0));
+    if (index < 0) return {};
+    const diff = await dependencyDiff(this.options.repository, integration.landed[index - 1]?.tip ?? integration.base, integration.landed[index]!.tip, max).catch(() => undefined);
+    return diff ? { diff } : {};
   }
 
   /** Tell the extension when a plan's jobs or statuses changed since it last heard. */

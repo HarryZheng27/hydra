@@ -696,3 +696,19 @@ test('O3: automatic fixes run round after round alongside scoped jobs, then stop
     assert.match(mergeRefusal(p.get())!, /Integration gate failed/);
   } finally { p.dispose(); await f.close(); }
 });
+
+test('seams (step 1): a dependent head is given the diff of what each dependency landed, not only summaries', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const p = await planFixture(f, [headJob('a'), headJob('b'), headJob('d', { dependsOn: ['a', 'b'] })]);
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('b', await f.commitFrom(f.base, { 'src/b.ts': 'export const b = 2;\n' }, 'b'));
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a.ts': 'export const a = 1;\n' }, 'a'));
+    const [input] = [p.startedFor('d')[0]!.inputs];
+    const diffs = Object.fromEntries(input!.map(item => [item.title, item.diff ?? '']));
+    assert.match(diffs['Job a']!, /\+export const a = 1;/);
+    assert.ok(!diffs['Job a']!.includes('export const b'), 'a merged landing shows only that job\'s own work, not what landed before it');
+    assert.match(diffs['Job b']!, /\+export const b = 2;/);
+    assert.ok(!diffs['Job b']!.includes('src/a.ts'));
+  } finally { p.dispose(); await f.close(); }
+});
