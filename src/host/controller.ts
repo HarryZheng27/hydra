@@ -68,7 +68,7 @@ export interface ControllerLanes {
   openWorktrees(): string[];
   activeRolesChanged(): Promise<void>;
   onLimitEvent(event: LimitEvent): Promise<void>;
-  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean } | undefined;
+  laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean; notes?: string[] } | undefined;
   laneGatesLogRoot(): string | undefined;
   laneWorktreeEntries(): { id: string; worktree: string }[];
   runningLanes(provider: Provider): { id: string; worktree: string }[];
@@ -1650,14 +1650,14 @@ export class HydraController {
     let base: string, markdown: string;
     if (kind === 'head') {
       const job = this.helpers?.store.get(id);
-      if (!job?.result?.checks.length) throw new Error('This head has no gate results yet.');
+      if (!job?.result?.checks.length && !job?.result?.note) throw new Error('This head has no gate results yet.');
       base = path.join(this.storageDirectory, 'helpers', 'logs');
-      markdown = buildEvidenceMarkdown({ title: job.title, worktree: job.worktree ?? this.helpers!.service.leadFolder, logDirectories: [base], baseDirectory: base, results: job.result.checks, ...(job.result.status ? { status: job.result.status, commit: job.result.commit } : {}) });
+      markdown = buildEvidenceMarkdown({ title: job.title, worktree: job.worktree ?? this.helpers!.service.leadFolder, logDirectories: [base], baseDirectory: base, results: job.result.checks, ...(job.result.note ? { notes: [job.result.note] } : {}), ...(job.result.status ? { status: job.result.status, commit: job.result.commit } : {}) });
     } else {
       const evidence = this.lanes.laneEvidence(id), root = this.lanes.laneGatesLogRoot();
       if (!evidence || !root) throw new Error('This lane has no gate results yet.');
       base = root;
-      markdown = buildEvidenceMarkdown({ title: evidence.title, worktree: evidence.worktree, logDirectories: [root], baseDirectory: root, results: evidence.results, ...(evidence.status ? { status: evidence.status, commit: evidence.commit, stale: evidence.stale } : {}) });
+      markdown = buildEvidenceMarkdown({ title: evidence.title, worktree: evidence.worktree, logDirectories: [root], baseDirectory: root, results: evidence.results, ...(evidence.notes ? { notes: evidence.notes } : {}), ...(evidence.status ? { status: evidence.status, commit: evidence.commit, stale: evidence.stale } : {}) });
     }
     await mkdir(base, { recursive: true });
     const file = path.join(base, `${id}-evidence.md`);

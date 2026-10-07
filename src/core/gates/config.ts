@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { maxTestPatternLength, maxTestPatterns } from '../editedTests';
 
 /**
  * What has to pass before a head's work is accepted, or a lane is merged
@@ -50,6 +51,8 @@ export interface GatesConfig {
   source: 'gates' | 'checks' | 'none';
   /** From gates.json; otherwise the head's default applies. */
   maxAttempts?: number;
+  /** From gates.json: the globs that say which files are tests, replacing the defaults (editedTests.ts). */
+  tests?: string[];
   lanes: LanePolicy;
   gates: Gate[];
 }
@@ -130,7 +133,7 @@ export function parseGate(value: unknown, index: number, options: { roles?: read
 /** Validate the contents of a gates.json. Throws the first problem found, in plain English. */
 export function parseGatesConfig(value: unknown): Omit<GatesConfig, 'source'> {
   const source = record(value, 'The gates file');
-  onlyKeys(source, ['$schema', 'maxAttempts', 'lanes', 'gates'], 'The gates file');
+  onlyKeys(source, ['$schema', 'maxAttempts', 'lanes', 'tests', 'gates'], 'The gates file');
   const lanes = source.lanes ?? 'onMerge';
   if (lanes !== 'onMerge' && lanes !== 'off') throw new Error('"lanes" must be "onMerge" or "off".');
   if (!Array.isArray(source.gates)) throw new Error('The gates file needs a "gates" list.');
@@ -140,8 +143,18 @@ export function parseGatesConfig(value: unknown): Omit<GatesConfig, 'source'> {
   for (const gate of gates) { if (seen.has(gate.id)) throw new Error(`Two gates have the id "${gate.id}".`); seen.add(gate.id); }
   return {
     ...(source.maxAttempts !== undefined ? { maxAttempts: wholeNumber(source.maxAttempts, 0, 1, 10, '"maxAttempts"') } : {}),
+    ...(source.tests !== undefined ? { tests: testPatterns(source.tests) } : {}),
     lanes, gates,
   };
+}
+
+/** gates.json's "tests": 1 to maxTestPatterns globs, so a typo never silently leaves a project with no test files. */
+function testPatterns(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > maxTestPatterns) throw new Error(`"tests" must list 1–${maxTestPatterns} patterns like "**/*.test.*".`);
+  return value.map(pattern => {
+    if (typeof pattern !== 'string' || !pattern.trim() || pattern.length > maxTestPatternLength || pattern.includes('\0')) throw new Error(`Each "tests" pattern must be text of 1–${maxTestPatternLength} characters.`);
+    return pattern.trim();
+  });
 }
 
 /** One check from the older .hydra/checks.json. */

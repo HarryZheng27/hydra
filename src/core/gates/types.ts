@@ -24,6 +24,8 @@ export interface GateContext {
   gitEnvironment?: NodeJS.ProcessEnv;
   /** O6: providers this job ran under before `author` (a usage-limit handoff). When set, "other" has no clean choice — both wrote the diff — and the pick says so. */
   priorAuthors?: Provider[];
+  /** The project's `tests` globs from gates.json (editedTests.ts), replacing the default test patterns. */
+  testPatterns?: readonly string[];
   /** Where this run's logs, the reviewer's reply and the screenshots go. Created if missing. */
   logDirectory: string;
   /** What the work was for, for the reviewer: the head's title, brief and write scope, or a lane's goal. */
@@ -114,6 +116,8 @@ export interface GateRun extends GateContext {
   baseCommit: string;
   runtime: GateRuntime;
   earlier: JobCheckResult[];
+  /** Existing test files this change edited or deleted, for a review gate to check (editedTests.ts). Only worked out when a review gate runs. */
+  editedTests?: readonly string[];
 }
 
 export type GateRunner<G extends Gate> = (gate: G, run: GateRun) => Promise<JobCheckResult>;
