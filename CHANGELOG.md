@@ -2,7 +2,7 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
-## Unreleased
+## 0.29.0 (2026-10-07)
 
 - **The app shows what a turn changed.** After a turn that edited files, the chat has a card like Claude desktop's: **Edited N files** with the lines added and removed, a row per file that opens that file's diff for the turn, and **Undo**, which puts the files back as they were before the turn, leaving alone any you've edited since. The agent is told about an undo with your next message. Hydra keeps its snapshots in a private repository under its own data, never in your folder, and deletes them with the chat.
 - **Faster heads: queued heads start together and free their slot at acceptance.** Heads waiting for a free slot now launch side by side instead of one after another, and a head's slot goes to the next queued head as soon as its work is accepted, not when its process exits.
