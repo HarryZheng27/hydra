@@ -169,16 +169,33 @@ export function gitMetaChanges(before: GitMetaFingerprint, after: GitMetaFingerp
  * checkout's `.git/worktrees/`, which heads can't write. `commonDir` is the main checkout's common git dir.
  */
 export async function worktreeGitPointerProblem(worktree: string, commonDir: string, platform: NodeJS.Platform = process.platform): Promise<string | undefined> {
+  const found = await worktreeGitDir(worktree, commonDir, platform);
+  return 'problem' in found ? found.problem : undefined;
+}
+
+/**
+ * The worktree's own metadata folder, `<commonDir>/worktrees/<name>`, once its `.git` file passes the check above, or
+ * why it doesn't. The folder is built from `commonDir`, not taken from the file, so what Hydra passes to git is a path
+ * under the main checkout's `.git`, which heads can't write.
+ */
+export async function worktreeGitDir(worktree: string, commonDir: string, platform: NodeJS.Platform = process.platform): Promise<{ dir: string } | { problem: string }> {
   const file = path.join(worktree, '.git');
   const stat = await lstat(file).catch(() => undefined);
-  if (!stat) return 'its .git file is missing';
-  if (!stat.isFile()) return 'its .git is no longer the plain file git made for the worktree';
+  if (!stat) return { problem: 'its .git file is missing' };
+  if (!stat.isFile()) return { problem: 'its .git is no longer the plain file git made for the worktree' };
   const text = (await readFile(file, 'utf8').catch(() => '')).trim();
   const match = /^gitdir: (.+)$/.exec(text);
-  if (!match || text.includes('\n')) return 'its .git file no longer says where the worktree\'s metadata is';
+  if (!match || text.includes('\n')) return { problem: 'its .git file no longer says where the worktree\'s metadata is' };
   const target = path.resolve(worktree, match[1]!.trim());
   const key = (value: string) => { const resolved = path.resolve(value); return platform === 'win32' ? resolved.toLowerCase() : resolved; };
   const parent = path.dirname(target);
-  if (key(parent) !== key(path.join(commonDir, 'worktrees')) || !path.basename(target)) return 'its .git file points outside the repository\'s own worktree metadata';
-  return undefined;
+  if (key(parent) !== key(path.join(commonDir, 'worktrees')) || !path.basename(target)) return { problem: 'its .git file points outside the repository\'s own worktree metadata' };
+  return { dir: path.join(commonDir, 'worktrees', path.basename(target)) };
 }
+
+/**
+ * The environment that pins git to a head worktree's checked metadata (HSEC-09): with GIT_DIR and GIT_WORK_TREE set,
+ * git never reads the worktree's `.git` file, so a head that rewrites it after the check (a background command, say)
+ * can't send Hydra's later git calls to a repository of its making.
+ */
+export const pinnedWorktreeGit = (worktree: string, gitDir: string): NodeJS.ProcessEnv => ({ GIT_DIR: gitDir, GIT_WORK_TREE: worktree });

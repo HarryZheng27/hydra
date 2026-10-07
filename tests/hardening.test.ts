@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { git } from '../src/core/git';
-import { gitMetaChanges, gitMetaFingerprint } from '../src/core/git';
+import { commonGitDir, gitMetaChanges, gitMetaFingerprint, pinnedWorktreeGit, worktreeGitDir } from '../src/core/git';
 import { JobStore } from '../src/core/jobs';
 import { HelperEndpoint, callHelperEndpoint } from '../src/core/helperEndpoint';
-import { HelperService, type HelperServiceOptions } from '../src/core/helperService';
+import { HelperService, commitAll, type HelperServiceOptions } from '../src/core/helperService';
 import type { HelperRun, HelperRunSpec } from '../src/core/helperRunner';
 import { reviewPrompt } from '../src/core/gates/review';
 import { terminalText } from '../src/core/lanePty';
@@ -186,6 +186,12 @@ test('1.4 git hardening: hydra_done refuses acceptance when .git/hooks changed m
   } finally { await f.close(); }
 });
 
+/** Rewrites a file in place: Git for Windows marks a worktree's .git hidden, and a plain write can't replace a hidden file. */
+async function overwrite(file: string, text: string): Promise<void> {
+  const handle = await open(file, 'r+');
+  try { await handle.truncate(0); await handle.write(text, 0); } finally { await handle.close(); }
+}
+
 test('HSEC-09: hydra_done refuses a worktree whose .git was repointed, before Hydra runs git there', async () => {
   let marker = '';
   const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
@@ -199,13 +205,13 @@ test('HSEC-09: hydra_done refuses a worktree whose .git was repointed, before Hy
     await git(fake, ['config', 'filter.p.clean', `echo pwned > "${marker.replace(/\\/g, '/')}"; cat`]);
     await writeFile(path.join(wt, '.gitattributes'), '* filter=p\n');
     await writeFile(path.join(wt, 'src', 'y.ts'), 'y\n');
-    await writeFile(path.join(wt, '.git'), `gitdir: ${path.join(fake, '.git')}\n`);
+    await overwrite(path.join(wt, '.git'), `gitdir: ${path.join(fake, '.git')}\n`);
     const first = await helper.call('hydra_done', { summary: 'repointed .git' });
     assert.equal(first.result.accepted, false);
     assert.match(first.result.message, /won't run git in your worktree: its \.git file points outside/);
     await assert.rejects(readFile(marker), 'the filter never ran');
     // Put back, the work is accepted.
-    await writeFile(path.join(wt, '.git'), original);
+    await overwrite(path.join(wt, '.git'), original);
     await rm(fake, { recursive: true, force: true }); await rm(path.join(wt, '.gitattributes'));
     const second = await helper.call('hydra_done', { summary: 'put it back' });
     assert.equal(second.result.accepted, true);
@@ -217,6 +223,36 @@ test('HSEC-09: hydra_done refuses a worktree whose .git was repointed, before Hy
     assert.equal(head.state, 'done'); assert.equal(head.attempts, 1, 'the refusal spends no attempt');
     await assert.rejects(readFile(marker), 'the filter never ran, not even later');
   } finally { await f.close(); }
+});
+
+test('HSEC-09: once checked, Hydra\'s git calls are pinned to the worktree\'s real metadata, so a .git rewritten afterwards runs nothing', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hydra-pin-'));
+  try {
+    const repo = path.join(root, 'repo'), wt = path.join(root, 'wt');
+    await git(root, ['init', '-q', repo]);
+    await git(repo, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base']);
+    await git(repo, ['worktree', 'add', '-q', '-b', 'work', wt]);
+    const common = await commonGitDir(repo);
+    const checked = await worktreeGitDir(wt, common);
+    assert.ok('dir' in checked, 'a fresh worktree passes the check');
+    assert.equal(path.dirname(checked.dir), path.join(common, 'worktrees'), 'the pinned folder is built under the main checkout\'s .git');
+    // After the check, a command the head left running repoints .git at a repository of its making with a clean filter.
+    const marker = path.join(root, 'pwned');
+    const fake = path.join(root, 'fake');
+    await git(wt, ['init', '-q', fake]);
+    await git(fake, ['config', 'filter.p.clean', `echo pwned > "${marker.replace(/\\/g, '/')}"; cat`]);
+    await writeFile(path.join(wt, '.gitattributes'), '* filter=p\n');
+    await writeFile(path.join(wt, 'work.txt'), 'work\n');
+    await overwrite(path.join(wt, '.git'), `gitdir: ${path.join(fake, '.git')}\n`);
+    const pinned = pinnedWorktreeGit(wt, checked.dir);
+    await git(wt, ['status', '--porcelain'], pinned);
+    const hooksOff = await mkdtemp(path.join(root, 'nh-'));
+    await commitAll(wt, 'head work', hooksOff, { ...pinned, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' });
+    await assert.rejects(readFile(marker), 'the planted filter never ran');
+    // The commit landed on the real branch, in the real repository.
+    assert.match(await git(repo, ['log', '-1', '--format=%s', 'work']), /^head work/);
+    assert.equal((await git(repo, ['show', '--name-only', '--format=', 'work'])).split('\n').filter(Boolean).sort().join(','), '.gitattributes,work.txt');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('HSEC-30: hydra_done refuses when the git settings check can\'t run, rather than calling it unchanged', async () => {

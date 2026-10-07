@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **Security: Hydra's git calls in a head's worktree are pinned to its real metadata.** Once `hydra_done` has checked the worktree's `.git`, Hydra tells git exactly where the metadata is, so a `.git` rewritten after the check (by a command left running) can't redirect them.
+
 ## 0.28.0 (2026-10-07)
 
 **The Hydra app.** This release carries a second installer, `HydraAppSetup.exe`, beside `HydraSetup.exe`: Hydra, a desktop app built around the chat, in the style of Claude desktop. It's a new product, so it's worth reading the [app guide](docs/App.md) first.
