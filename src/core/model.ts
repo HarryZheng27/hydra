@@ -4,6 +4,7 @@ import type { Plan, PlanDispatch, PlanJobRunAs } from './plans';
 import type { PlanJobStatus, PlanJobView } from './planRunner';
 import type { EvidenceStatus, HeadCheckView, JobCheckResult } from './jobs';
 import type { ProviderWait } from './providerWait';
+import type { NeedsYouItem } from './needsYou';
 export type { HeadCheckView, EvidenceStatus } from './jobs';
 
 export type Provider = 'claude' | 'codex';
@@ -75,6 +76,18 @@ export type ClientMessage =
   | { type: 'openOfficial' | 'showOfficial' | 'copyHandoffPrompt' }
   | { type: 'helperReview' | 'helperLog' | 'helperCancel' | 'helperAnswer' | 'helperEvidence'; jobId: string }
   | { type: 'helperStopAll' }
+  // ---- Needs_You_Plan.md, Phase 5: what the Needs you list sends beyond the canvas's own messages ----
+  /** 1 to 4 on a head's question: reply with that one of its options (hydra_reply_to_head `option`). */
+  | { type: 'headOption'; jobId: string; option: number }
+  /** R: answer a head's question in your own words, without the options picker. */
+  | { type: 'helperReply'; jobId: string }
+  /** Continue in the other provider, for the usage-limit offer with this id (`<provider>:<time>`). */
+  | { type: 'limitContinue'; id: string }
+  /** Open an unattended plan's report. */
+  | { type: 'planReport'; id: string }
+  /** L and Z: put an item off until a time (ms), or bring it back. Kept in the project's own state; never changes the work. */
+  | { type: 'needsYouPutOff'; key: string; until: number }
+  | { type: 'needsYouUndo'; key: string }
   /** "Learn how" (docs/internal/Lanes_And_Planner_Plan.md, "A walkthrough"): opens hydra.learn from an empty state. */
   | { type: 'learn' }
   /** The Finished tray's Clear button: dismiss these heads from the tray (docs/internal/Lanes_And_Planner_Plan.md, "Canvas tidy-up"). */
@@ -114,6 +127,27 @@ export function parseMessage(value: unknown): ClientMessage {
     return { type, jobId };
   }
   if (type === 'helperStopAll') return { type };
+  if (type === 'needsYouPutOff' || type === 'needsYouUndo') {
+    const key = string('key', 400); if (!/^[a-z-]+:[^\s]{1,200}$/.test(key)) throw new Error('Invalid key.');
+    if (type === 'needsYouUndo') return { type, key };
+    const until = message.until;
+    if (typeof until !== 'number' || !Number.isFinite(until) || until <= Date.now() || until > Date.now() + 30 * 24 * 60 * 60_000 + 60_000) throw new Error('Invalid put-off time.');
+    return { type, key, until };
+  }
+  if (type === 'helperReply') {
+    const jobId = string('jobId'); if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error('Invalid head job ID.');
+    return { type, jobId };
+  }
+  if (type === 'headOption') {
+    const jobId = string('jobId'); if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error('Invalid head job ID.');
+    const option = message.option;
+    if (typeof option !== 'number' || !Number.isInteger(option) || option < 1 || option > 4) throw new Error('Invalid option.');
+    return { type, jobId, option };
+  }
+  if (type === 'limitContinue') {
+    const id = string('id', 120); if (!/^[a-z]+:[0-9TZ:.+-]+$/i.test(id)) throw new Error('Invalid usage-limit offer.');
+    return { type, id };
+  }
   if (type === 'learn') return { type };
   if (type === 'trayClear') {
     const ids = message.ids;
@@ -153,7 +187,7 @@ export function parseMessage(value: unknown): ClientMessage {
   }
   if (type === 'planRetryJobs') return { type, id: planId() };
   if (type === 'planCancelJob' || type === 'planStartJob') return { type, id: planId(), key: jobKey() };
-  if (type === 'planIntegrate' || type === 'planMergeAnyway') return { type, id: planId() };
+  if (type === 'planIntegrate' || type === 'planMergeAnyway' || type === 'planReport') return { type, id: planId() };
   if (type === 'planMerge') {
     const via = message.via;
     if (via !== 'merge' && via !== 'pr') throw new Error('Merge plan is "merge" or "pr".');
@@ -211,14 +245,18 @@ export type LaneView = Lane & {
   previewNote?: string;
   /** Needs_You_Plan.md, Phase 4: its agent is waiting on you ("Waiting for you") or ended its turn ("Finished its turn"). Cleared when you type or its output resumes. */
   attention?: LaneAttention;
+  /** When `attention` was set (ms), for the Needs you list's order. */
+  attentionAt?: number;
 };
 export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resume' | 'restart' | 'diff' | 'openWindow' | 'refresh' | 'switchProvider' | 'runGates' | 'evidence'
   // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 5) ----
   | 'markJobDone' | 'cancelJob' | 'showPlan'
+  // ---- Needs_You_Plan.md, Phase 5: the failed gates, typed into the lane's terminal input as Merge's "Send to lane" does ----
+  | 'sendGates'
   // ---- Step E: a preview for each lane ----
   | 'preview' | 'stopPreview';
-export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan', 'preview', 'stopPreview'];
-export type AgentsView = 'canvas' | 'lanes';
+export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan', 'sendGates', 'preview', 'stopPreview'];
+export type AgentsView = 'canvas' | 'lanes' | 'needs';
 /** What a lane's tile says about its agent's attention (Needs_You_Plan.md, Phase 4). */
 export const laneAttentionLabel: Record<LaneAttention, string> = { waiting: 'Waiting for you', 'turn-ended': 'Finished its turn' };
 /** The Lanes view's order: lanes waiting for you first, then the rest, each group keeping its own order. */
@@ -266,7 +304,9 @@ export type LaneServerMessage =
    * undefined means the run just finished; the lane's own `lastGates` (in the
    * next `lanes` message) then has the final chips.
    */
-  | { type: 'laneGates'; id: string; done: JobCheckResult[]; running?: string };
+  | { type: 'laneGates'; id: string; done: JobCheckResult[]; running?: string }
+  /** Needs_You_Plan.md, Phase 5: what waits on you in this project, in order (chats are the app's own and are added there). */
+  | { type: 'needsYou'; items: NeedsYouItem[] };
 
 export const laneInputMaxBytes = 64 * 1024;
 const utf8Length = (text: string) => text.length <= laneInputMaxBytes / 4 ? text.length : new TextEncoder().encode(text).byteLength;
@@ -312,7 +352,7 @@ export function parseLaneMessage(message: Record<string, unknown>, type: string)
     case 'laneCancelSwitch': return { type, id: laneId('id', 'lane ID') };
     case 'view': {
       const view = message.view;
-      if (view !== 'canvas' && view !== 'lanes') throw new Error('Unknown view.');
+      if (view !== 'canvas' && view !== 'lanes' && view !== 'needs') throw new Error('Unknown view.');
       return { type, view, ...(message.focus !== undefined ? { focus: laneId('focus', 'lane or head ID') } : {}) };
     }
   }

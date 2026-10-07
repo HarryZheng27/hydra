@@ -84,6 +84,8 @@ class Manager {
   // ---- Stop all (5.3): the workspace-wide switch, and its status bar item ----
   private readonly stop: StopSwitch;
   private readonly stopStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
+  /** Needs_You_Plan.md, Phase 5: how many decisions wait on the user, for the status bar item. */
+  private needsYouCount = 0;
   // ---- Audit log (5.2): one per window, denials/approvals/stops ----
   private readonly audit: AuditLog;
   private readonly output = redactedChannel(vscode.window.createOutputChannel('Hydra'), createRedactor(() => []));
@@ -188,6 +190,7 @@ class Manager {
         openAgents: () => this.openAgents(),
         tree: update => this.tree.update(update),
         inHandoff: () => !!this.handoff,
+        needsYouChanged: count => { this.needsYouCount = count; this.updateStatusText(); },
         refreshSettingsPages: async pages => { await this.settings.refreshPages(pages); },
         showSettings: page => this.settings.show(page),
         accounts: () => this.accounts.snapshot(),
@@ -361,6 +364,13 @@ class Manager {
   }
   private async refresh(): Promise<void> { this.error = undefined; await this.controller.refreshRepositories(); await this.publish(); }
   private describe(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  /** The mode item: "Agent Manager" or "Editor", with how many things need the user when any do. */
+  private updateStatusText(): void {
+    const waiting = this.needsYouCount > 0 ? ` · ${this.needsYouCount} need${this.needsYouCount === 1 ? 's' : ''} you` : '';
+    this.status.text = `$(layout) ${this.mode === 'agents' ? 'Agent Manager' : 'Editor'}${waiting}${this.error ? ' $(warning)' : ''}`;
+    this.status.tooltip = `Hydra: switch to the ${this.mode === 'agents' ? 'Editor' : 'Agent Manager'} (Alt+Shift+A)${this.needsYouCount > 0 ? `
+${this.needsYouCount} waiting on you: open the Agent Manager's Needs you tab.` : ''}`;
+  }
   /** 5.3: the status bar item, shown only while Hydra is stopped. */
   private updateStopStatus(): void {
     if (!this.stop.isStopped()) { this.stopStatus.hide(); return; }
@@ -389,8 +399,7 @@ class Manager {
   private async publish(): Promise<void> { await this.controller.publish(); }
   /** The IDE's part of each snapshot, and the status bar that always changed with it. */
   private view(): Pick<Snapshot, 'mode' | 'busy' | 'error' | 'handoff' | 'officialExtensions'> {
-    this.status.text = `$(layout) ${this.mode === 'agents' ? 'Agent Manager' : 'Editor'}${this.error ? ' $(warning)' : ''}`;
-    this.status.tooltip = `Hydra: switch to the ${this.mode === 'agents' ? 'Editor' : 'Agent Manager'} (Alt+Shift+A)`;
+    this.updateStatusText();
     return { mode: this.mode, busy: this.busy || this.disabled, error: this.error, handoff: this.handoff, officialExtensions: ['claude', 'codex'].map(provider => officialExtensionInfo(provider as 'claude' | 'codex')) };
   }
 

@@ -23,12 +23,14 @@ import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, li
 import { headShellOffNotice, headShellSentence } from '../core/confine';
 import { claudeForRegistration as claudeFor } from './claudeExecutable';
 import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
-import type { HeadFact, LimitOfferFact, NeedsYouFacts, PlanFact } from '../core/needsYou';
+import { deriveNeedsYou, type FinishedHeadFact, type HeadFact, type LaneFact, type LimitOfferFact, type NeedsYouFacts, type NeedsYouItem, type PlanFact } from '../core/needsYou';
+import { putOffKey, putOffStorageKey, PutOffs } from '../core/needsYouList';
+import { finishedLingerMs, integrationCanvasView, trayWindowMs } from '../core/agentsCanvas';
 import { codexLaneFanout } from '../core/limitEvents';
 import { AttentionWatcher } from '../core/attentionWatcher';
 import { attentionDirectory, type AttentionEvent } from '../core/attentionEvents';
 import { ClaudeChatLimits, CodexChatLimits, type QuotaSource } from './chatLimits';
-import { registerLimitOffer } from './limitOffer';
+import { registerLimitOffer, type LimitOfferHandle } from './limitOffer';
 import { loadGates } from '../core/gates';
 import { detectTestScript, noGatesFile, starterGateActions, starterGateChoices, starterTestGatesFile } from '../core/starterGates';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from '../core/windowClose';
@@ -80,7 +82,7 @@ export interface ControllerLanes {
 }
 
 /** What the tree of lanes, heads and plans shows (the IDE's Hydra panel). */
-export interface TreeUpdate { lanes?: readonly LaneView[]; heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>>; roles?: readonly SnapshotRole[] }
+export interface TreeUpdate { needsYou?: readonly NeedsYouItem[]; lanes?: readonly LaneView[]; heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>>; roles?: readonly SnapshotRole[] }
 
 /**
  * What the IDE still does itself while G2 moves code (docs/internal/hydra-app/G2-host-split.md): its window layout,
@@ -98,6 +100,8 @@ export interface ControllerIde {
   showingAgents(): boolean;
   openAgents(): Promise<void>;
   tree(update: TreeUpdate): void;
+  /** Needs_You_Plan.md, Phase 5: how many items wait on the user here, for the status bar. */
+  needsYouChanged?(count: number): void;
   /** A handoff window (one piece of work handed to an official extension) runs no heads. */
   inHandoff(): boolean;
   /** Refreshes open Settings pages, so they show a change made elsewhere. */
@@ -191,6 +195,13 @@ export class HydraController {
   readonly limitEvents = new Emitter<LimitEvent>(error => this.host.log(`[limits] a listener failed: ${describe(error)}`));
   // ---- Gates (docs/internal/Gates_Plan.md): each provider's latest usage limit, so a review gate uses the other agent while one is limited ----
   readonly latestLimits = new Map<Provider, LimitEvent>();
+  private limitOffer?: LimitOfferHandle;
+  /** Items the user put off (Needs_You_Plan.md, Phase 5), kept in this project's state; they come back by themselves. */
+  private putOffs: PutOffs;
+  private needsYouTimer?: ReturnType<typeof setTimeout>;
+  private needsYouWake?: ReturnType<typeof setTimeout>;
+  private needsYouSent = '';
+  private needsYouPoll?: ReturnType<typeof setInterval>;
   /** This controller's heads' processes (none before its heads start), for a program that runs several controllers. */
   helperProcessIds(): ReadonlySet<number> { return this.helpers?.service.helperProcessIds() ?? new Set<number>(); }
   /** Set once startHelpers finds it; the folder `hydra.packs.*` commands and the roles refresh use by default. */
@@ -202,6 +213,7 @@ export class HydraController {
     this.host.keep(this.limitEvents);
     const storedDismissed = this.host.state.get<string[] | undefined>(dismissedTrayKey, undefined);
     if (Array.isArray(storedDismissed)) this.dismissedTrayIds = new Set(storedDismissed.filter(id => typeof id === 'string'));
+    this.putOffs = PutOffs.parse(this.host.state.get<unknown>(putOffStorageKey, undefined), Date.now());
   }
 
   private get stop(): StopSwitch { return this.options.stop; }
@@ -276,6 +288,7 @@ export class HydraController {
       roles: this.roles,
     };
     await this.broadcast({ type: 'snapshot', snapshot });
+    this.needsYouSoon();
   }
   async broadcast(message: unknown): Promise<void> {
     await this.host.postToUi(message);
@@ -290,6 +303,13 @@ export class HydraController {
     }
     if (isLaneMessage(message)) { await this.lanes.handle(message); return; }
     if (message.type === 'trayClear') { await this.trayClear(message.ids); return; }
+    // ---- Needs_You_Plan.md, Phase 5: the Needs you list. Each of these is what the canvas does for the same thing. ----
+    if (message.type === 'needsYouPutOff') { this.putOffs.putOff(message.key, message.until); await this.putOffChanged(); return; }
+    if (message.type === 'needsYouUndo') { if (this.putOffs.remove(message.key)) await this.putOffChanged(); return; }
+    if (message.type === 'headOption') { await this.headOption(message.jobId, message.option); return; }
+    if (message.type === 'helperReply') { await this.helperAction('helperAnswer', message.jobId, true); return; }
+    if (message.type === 'limitContinue') { await this.limitContinue(message.id); return; }
+    if (message.type === 'planReport') { await this.openPlanReport(message.id); return; }
     if (message.type === 'helperReview' || message.type === 'helperLog' || message.type === 'helperCancel' || message.type === 'helperAnswer' || message.type === 'helperEvidence') { await this.helperAction(message.type, message.jobId); return; }
     // ---- Planner (docs/internal/Lanes_And_Planner_Plan.md, section 4): its own block. ----
     if (message.type === 'planCreate') { await this.planCreate(message.title, message.brief); return; }
@@ -652,17 +672,32 @@ export class HydraController {
    * with no lead to answer them, plans ready to merge or stopped, unattended reports, a usage-limit offer. The app
    * adds its chats.
    */
-  needsYouFacts(now = Date.now()): Pick<NeedsYouFacts, 'heads' | 'plans' | 'limitOffers'> {
+  needsYouFacts(now = Date.now()): Pick<NeedsYouFacts, 'heads' | 'plans' | 'limitOffers' | 'lanes' | 'finishedHeads'> {
     const service = this.helpers?.service;
     const planLeadWaiting = this.planWaiters.size > 0;
     const heads: HeadFact[] = (service?.list() ?? []).filter(job => job.state === 'blocked').map(job => {
       const clock = service!.questionClock(job.id);
       const since = clock?.since ?? Date.parse(job.updatedAt);
       // A plan's job is answered by its plan's lead (hydra_plan_wait), a loose head by its own (hydra_wait_for_heads).
-      return { id: job.id, title: job.title, state: job.state, since: Number.isFinite(since) ? since : now, leadWaiting: this.jobPlanFor(job.id) ? planLeadWaiting : service!.leadWaiting(), ...(clock ? { answersAt: clock.answersAt } : {}) };
+      return {
+        id: job.id, title: job.title, state: job.state, since: Number.isFinite(since) ? since : now, leadWaiting: this.jobPlanFor(job.id) ? planLeadWaiting : service!.leadWaiting(), ...(clock ? { answersAt: clock.answersAt } : {}),
+        ...(job.question ? { question: job.question } : {}),
+        ...(job.options?.length ? { options: job.options.map((option, index) => ({ option: index + 1, text: option.text, ...(option.recommended ? { recommended: true } : {}) })) } : {}),
+      };
     });
+    // The Finished tray's heads: done, nobody merged, off the canvas, not dismissed, not a plan's job (its plan lands it) and no lead waiting on it.
+    const finishedHeads: FinishedHeadFact[] = (this.headViews() ?? [])
+      .filter(head => head.state === 'done' && !head.merged && !this.dismissedTrayIds.has(head.id) && !this.jobPlanFor(head.id) && !service!.leadWaiting())
+      .flatMap(head => {
+        const finished = Date.parse(head.finishedAt || head.createdAt);
+        if (!Number.isFinite(finished) || now - finished < finishedLingerMs || now - finished >= trayWindowMs) return [];
+        return [{ id: head.id, title: head.title, since: finished, ...(head.headline ? { headline: head.headline } : {}), ...(head.status ? { evidence: evidenceLabel(head.status, head.checks) } : {}) }];
+      });
+    const jobViews = this.planJobViews();
     const plans: PlanFact[] = (this.plans?.store.list() ?? []).map(plan => {
       const integration = plan.integration;
+      const canvas = integrationCanvasView(plan);
+      const failedJobs = (jobViews[plan.id] ?? []).filter(view => view.status === 'failed').map(view => plan.jobs.find(job => job.key === view.key)?.title ?? view.key);
       const ended = plan.state === 'done' || plan.state === 'incomplete' || plan.state === 'failed';
       const since = Date.parse(plan.updatedAt);
       return {
@@ -671,6 +706,7 @@ export class HydraController {
         stopped: plan.state === 'incomplete' && !plan.unattended,
         readyToMerge: plan.state === 'done' && !!integration && !integration.merged && integrationPassed(integration),
         reportReady: !!plan.unattended && ended && integrationSettled(plan),
+        ...(canvas ? { gate: canvas.label, branch: canvas.branch } : {}), ...(failedJobs.length ? { failedJobs } : {}),
       };
     });
     const limitOffers: LimitOfferFact[] = [...this.latestLimits.values()]
@@ -679,7 +715,56 @@ export class HydraController {
         const since = Date.parse(event.at), resets = event.resetsAt ? Date.parse(event.resetsAt) : NaN;
         return { id: `${event.provider}:${event.at}`, provider: event.provider, since: Number.isFinite(since) ? since : now, ...(Number.isFinite(resets) ? { resetsAt: resets } : {}) };
       });
-    return { heads, plans, limitOffers };
+    // A lane that isn't merged or closed: its agent's attention (Phase 4), and gates that failed on its current commit and weren't accepted.
+    const lanes: LaneFact[] = this.lanes.state().lanes.filter(lane => lane.state === 'running' || lane.state === 'exited').map(lane => {
+      const created = Date.parse(lane.createdAt), gates = lane.lastGates, gatesAt = gates ? Date.parse(gates.at) : NaN;
+      const failed = gates && !lane.gatesStale && gates.status !== 'override' && gates.status !== 'passed' ? gates.results.filter(result => result.required && !result.passed).map(result => result.id) : [];
+      return {
+        id: lane.id, name: lane.name, since: Number.isFinite(created) ? created : now,
+        ...(lane.goal ? { goal: lane.goal } : {}), ...(lane.attention ? { attention: lane.attention, ...(lane.attentionAt ? { attentionSince: lane.attentionAt } : {}) } : {}),
+        ...(failed.length ? { failedGates: failed, ...(Number.isFinite(gatesAt) ? { gatesSince: gatesAt } : {}) } : {}),
+      };
+    });
+    return { heads, plans, limitOffers, lanes, finishedHeads };
+  }
+  /** This project's Needs you items that aren't put off, in order, for the Needs you tab (the app adds its chats). */
+  needsYouItems(project: { id: string; name: string } = { id: this.leadKey, name: '' }, now = Date.now()): NeedsYouItem[] {
+    return this.putOffs.visible(this.allNeedsYou(project, now), now);
+  }
+  private allNeedsYou(project: { id: string; name: string }, now: number): NeedsYouItem[] {
+    return deriveNeedsYou([{ projectId: project.id, projectName: project.name, ...this.needsYouFacts(now) }], now);
+  }
+  /** Sends the Needs you list to the view and the count to the status bar, once things have settled. Cheap to call on any change. */
+  needsYouSoon(): void {
+    if (this.needsYouTimer) return;
+    this.needsYouTimer = setTimeout(() => { this.needsYouTimer = undefined; this.pushNeedsYou(); }, 150);
+    this.needsYouTimer.unref?.();
+  }
+  private pushNeedsYou(): void {
+    const now = Date.now();
+    // Time and lead waiting change the list with no event of their own (a head leaves the canvas, a limit resets, a lead stops waiting): look again every so often.
+    this.needsYouPoll ??= setInterval(() => this.needsYouSoon(), 30_000);
+    this.needsYouPoll.unref?.();
+    // A put-off is for the thing it was set on: once that item is gone (answered, merged), a new one with the same key isn't hidden by it.
+    if (this.helpers) this.putOffs.prune(now, new Set(this.allNeedsYou({ id: this.leadKey, name: '' }, now).map(putOffKey)));
+    else this.putOffs.prune(now);
+    const items = this.needsYouItems(undefined, now);
+    // A put-off that ends, or a limit that resets, changes the list with nothing else happening: wake for it.
+    if (this.needsYouWake) clearTimeout(this.needsYouWake);
+    const next = this.putOffs.nextReturn(now);
+    this.needsYouWake = next !== undefined ? setTimeout(() => this.needsYouSoon(), Math.min(Math.max(next - now, 1000), 60 * 60_000)) : undefined;
+    this.needsYouWake?.unref?.();
+    this.ide.needsYouChanged?.(items.length);
+    const text = JSON.stringify(items);
+    if (text === this.needsYouSent) return;
+    this.needsYouSent = text;
+    void this.broadcast({ type: 'needsYou', items }).catch(() => undefined);
+    this.ide.tree({ needsYou: items });
+  }
+  private async putOffChanged(): Promise<void> {
+    await this.host.state.update(putOffStorageKey, this.putOffs.toJSON());
+    this.needsYouSent = '';
+    this.pushNeedsYou();
   }
   /** Each plan's job statuses, for plans that have run. */
   planJobViews(): Record<string, PlanJobView[]> {
@@ -970,7 +1055,7 @@ export class HydraController {
   /** What to offer when a chat or head hits its usage limit (docs/internal/Hydra_Agent_Plan.md, Phase 3), and each lane's tile banner. */
   startLimitOffer(): void {
     const settings = this.host.settings;
-    this.host.keep(registerLimitOffer({
+    const offer = registerLimitOffer({
       host: this.host, openOfficial: provider => this.ide.openOfficial(provider),
       limitEvents: this.limitEvents.event,
       storageDir: this.host.paths.storage,
@@ -985,7 +1070,9 @@ export class HydraController {
       autoContinuePlan: jobId => settings.get<boolean>('limits.autoContinuePlans', true) && !!this.jobPlanFor(jobId),
       log: line => this.host.log(line),
       tracker: this.options.limitOfferTracker,
-    }));
+    });
+    this.limitOffer = offer;
+    this.host.keep(offer);
     // Lanes (docs/internal/Gates_Plan.md, section 2): a lane's own tile banner, never a notification.
     this.host.keep(this.limitEvents.event(event => { void this.lanes.onLimitEvent(event).catch(error => this.host.log(`[lanes] limit offer: ${describe(error)}`)); }));
   }
@@ -1292,6 +1379,7 @@ export class HydraController {
    */
   laneFoldersChanged(): void {
     this.ide.tree({ lanes: this.lanes.state().lanes });
+    this.needsYouSoon();
     // Plan lanes: a lane merged, marked, closed or started may move its plan along.
     this.planRunner?.advanceSoon();
     this.projectSummary?.changed();
@@ -1480,6 +1568,10 @@ export class HydraController {
   }
   async stopHelpers(): Promise<void> {
     this.planRunner?.dispose(); this.planRunner = undefined;
+    if (this.needsYouTimer) clearTimeout(this.needsYouTimer);
+    if (this.needsYouWake) clearTimeout(this.needsYouWake);
+    if (this.needsYouPoll) clearInterval(this.needsYouPoll);
+    this.needsYouTimer = this.needsYouWake = this.needsYouPoll = undefined;
     const plans = this.plans; this.plans = undefined;
     for (const controller of plans?.planning.values() ?? []) controller.abort();
     const helpers = this.helpers; this.helpers = undefined;
@@ -1655,7 +1747,28 @@ export class HydraController {
     } else void this.host.notify('info', `${done.join(' and ')} ${done.length === 1 ? 'is' : 'are'} connected to Hydra: chat in ${done.length === 1 ? 'its extension' : 'their extensions'}, and they can start Hydra heads.`);
   }
   /** Dashboard actions: review a helper's changes as a diff, open its log, view its gate evidence, or cancel it. */
-  private async helperAction(action: 'helperReview' | 'helperLog' | 'helperCancel' | 'helperAnswer' | 'helperEvidence', jobId: string): Promise<void> {
+  /** 1 to 4 in the Needs you list: reply to a blocked head with one of its options, as the picker's choice would. */
+  private async headOption(jobId: string, option: number): Promise<void> {
+    const job = this.helpers?.store.get(jobId);
+    if (!this.helpers || !job) throw new Error('That head is not in this window.');
+    if (job.state !== 'blocked') throw new Error('That head is not waiting for an answer.');
+    if (!job.options?.[option - 1]) throw new Error(`That head offered no option ${option}.`);
+    await this.helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, option }, new AbortController().signal);
+  }
+  /** The usage-limit offer's "Continue in the other provider", for the event the Needs you list names. */
+  private async limitContinue(id: string): Promise<void> {
+    const event = [...this.latestLimits.values()].find(candidate => `${candidate.provider}:${candidate.at}` === id);
+    if (!event || !this.limitOffer) throw new Error('That usage-limit offer has passed.');
+    await this.limitOffer.continueIn(event);
+  }
+  /** Opens an unattended plan's report, written again from the plan as it is now. */
+  private async openPlanReport(id: string): Promise<void> {
+    const plans = this.requirePlans(), plan = plans.store.get(id);
+    if (!plan) throw new Error(`No plan ${id}.`);
+    const file = await plans.store.writeReport(plan.id, this.planReportMarkdown(plan));
+    await this.host.openFile(file, { preview: false });
+  }
+  private async helperAction(action: 'helperReview' | 'helperLog' | 'helperCancel' | 'helperAnswer' | 'helperEvidence', jobId: string, freeText = false): Promise<void> {
     const helpers = this.helpers;
     const job = helpers?.store.get(jobId);
     if (!helpers || !job) throw new Error('That head is not in this window.');
@@ -1665,7 +1778,7 @@ export class HydraController {
       // The head is waiting on the lead; you can answer in its place from the Agents view.
       if (job.state !== 'blocked') throw new Error('That head is not waiting for an answer.');
       // A head that offered options: they come first, numbered 1 to 4 (the app's picker answers on those keys), with a way to write your own.
-      const options = job.options ?? [];
+      const options = freeText ? [] : job.options ?? [];
       if (options.length) {
         const items = [
           ...options.map((option, index) => ({ label: `${index + 1}  ${option.text}`, description: option.recommended ? 'recommended' : '', option: index + 1 })),

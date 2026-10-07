@@ -161,3 +161,68 @@ test('a stretch begun with items already waiting banners once, for the most urge
   assert.equal(banners.update(items, at, NOW)?.body, 'Asks');
   assert.equal(banners.update(items, at, NOW), undefined);
 });
+
+// ---- Phase 5: the rest of the list ----
+
+test('lanes, failed lane gates and a finished head nobody merged appear, and leave when their state does', () => {
+  const waiting = facts({
+    lanes: [
+      { id: 'l1', name: 'Checkout', since: NOW - 9, attention: 'waiting', attentionSince: NOW - 3, goal: 'Fix the cart' },
+      { id: 'l2', name: 'Docs', since: NOW - 9, attention: 'turn-ended', attentionSince: NOW - 2 },
+      { id: 'l3', name: 'Search', since: NOW - 9, failedGates: ['unit', 'lint'], gatesSince: NOW - 4 },
+      { id: 'l4', name: 'Quiet', since: NOW - 9 },
+    ],
+    finishedHeads: [{ id: 'h9', title: 'Builder', since: NOW - 5, headline: 'Added the cart total', evidence: 'Passed' }],
+  });
+  const items = deriveNeedsYou([waiting], NOW);
+  assert.deepEqual(items.map(item => [item.kind, item.sourceId]), [['lane-gates', 'l3'], ['lane-waiting', 'l1'], ['head-finished', 'h9'], ['lane-finished', 'l2']]);
+  assert.equal(items.find(item => item.kind === 'lane-gates')!.detail, 'Gates failed: unit, lint');
+  assert.equal(items.find(item => item.kind === 'lane-waiting')!.detail, 'Fix the cart');
+  assert.equal(items.find(item => item.kind === 'head-finished')!.detail, 'Added the cart total · Passed');
+  // The same lanes once you've typed into them, the gates passed and the head was merged.
+  const settled = facts({ lanes: [{ id: 'l1', name: 'Checkout', since: NOW }, { id: 'l3', name: 'Search', since: NOW }, { id: 'l2', name: 'Docs', since: NOW }] });
+  assert.deepEqual(deriveNeedsYou([settled], NOW), []);
+});
+
+test('a head\'s question carries its text and options, for the list but never a banner', () => {
+  const [item] = deriveNeedsYou([facts({ heads: [{ id: 'h1', title: 'Builder', state: 'blocked', since: NOW, leadWaiting: false, answersAt: NOW + minute, question: 'Use Postgres or SQLite?', options: [{ option: 1, text: 'Postgres', recommended: true }, { option: 2, text: 'SQLite' }] }] })], NOW);
+  assert.equal(item!.detail, 'Use Postgres or SQLite?');
+  assert.deepEqual(item!.options?.map(option => option.option), [1, 2]);
+  const banner = bannerFor(item!);
+  assert.doesNotMatch(JSON.stringify(banner), /Postgres|SQLite/);
+});
+
+test('plans say their gate and branch when ready to merge, and their failed jobs when stopped', () => {
+  const items = deriveNeedsYou([facts({ plans: [
+    { id: 'pl1', title: 'Ship it', since: NOW, stopped: false, readyToMerge: true, leadWaiting: false, reportReady: false, gate: 'Passed', branch: 'hydra/plan-ship' },
+    { id: 'pl2', title: 'Stuck', since: NOW + 1, stopped: true, readyToMerge: false, leadWaiting: false, reportReady: false, failedJobs: ['Schema', 'Auth'] },
+  ] })], NOW);
+  assert.equal(items.find(item => item.kind === 'plan-merge')!.detail, 'Passed · hydra/plan-ship');
+  assert.equal(items.find(item => item.kind === 'plan-stopped')!.detail, 'Failed: Schema, Auth');
+});
+
+test('the order holds with every kind: clock, then decisions, then reading; oldest first inside each', () => {
+  const everything = facts({
+    chats: [{ id: 'c1', title: 'Old chat', status: 'needs', since: NOW - 50 }, { id: 'c2', title: 'Done chat', status: 'unread', since: NOW - 90 }],
+    heads: [{ id: 'h1', title: 'Asks', state: 'blocked', since: NOW - 10, leadWaiting: false }],
+    plans: [{ id: 'pl1', title: 'Merge me', since: NOW - 40, stopped: false, readyToMerge: true, leadWaiting: false, reportReady: false }, { id: 'pl2', title: 'Overnight', since: NOW - 80, stopped: false, readyToMerge: false, leadWaiting: false, reportReady: true }],
+    limitOffers: [{ id: 'lim', provider: 'claude', since: NOW - 5, resetsAt: NOW + minute }],
+    lanes: [{ id: 'l1', name: 'Lane', since: NOW, attention: 'waiting', attentionSince: NOW - 60 }, { id: 'l2', name: 'Gates', since: NOW, failedGates: ['unit'], gatesSince: NOW - 30 }, { id: 'l3', name: 'Done turn', since: NOW, attention: 'turn-ended', attentionSince: NOW - 100 }],
+    finishedHeads: [{ id: 'h2', title: 'Finished', since: NOW - 70 }],
+  });
+  assert.deepEqual(deriveNeedsYou([everything], NOW).map(item => item.kind), [
+    'head-question', 'limit-offer', // on a clock, oldest first
+    'lane-waiting', 'chat-needs', 'plan-merge', 'lane-gates', // decisions, oldest first
+    'lane-finished', 'chat-unread', 'plan-report', 'head-finished', // reading, oldest first
+  ]);
+});
+
+test('things to read never raise a banner: a finished head or a lane that ended its turn', () => {
+  const banners = new AwayBanners(0);
+  const items = deriveNeedsYou([facts({ lanes: [{ id: 'l3', name: 'Done turn', since: NOW - 5, attention: 'turn-ended', attentionSince: NOW - 5 }], finishedHeads: [{ id: 'h2', title: 'Finished', since: NOW - 5 }] })], NOW);
+  assert.equal(items.length, 2);
+  assert.equal(banners.update(items, at, NOW), undefined);
+  // A lane waiting on you does.
+  const waiting = deriveNeedsYou([facts({ lanes: [{ id: 'l1', name: 'Checkout', since: NOW - 5, attention: 'waiting', attentionSince: NOW - 5 }] })], NOW);
+  assert.match(banners.update(waiting, at, NOW)!.body, /Checkout/);
+});

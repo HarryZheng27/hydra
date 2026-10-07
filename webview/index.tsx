@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ClientMessage, HelperJobView, LaneLimitOfferView, LaneServerMessage, LaneView, Snapshot, Provider, Handoff, OfficialExtensionInfo } from '../src/core/model';
 import type { Plan } from '../src/core/plans';
@@ -10,6 +10,8 @@ import type { LaneSwitchCountdown } from './LanesView';
 import { HydraMark } from './HydraMark';
 import { emitLaneEvent } from './laneBus';
 import { hostBridge } from './bridge';
+import type { NeedsYouItem } from '../src/core/needsYou';
+import { putOffKey } from '../src/core/needsYouList';
 
 const api = hostBridge();
 const send = (message: ClientMessage) => api.postMessage(message);
@@ -70,7 +72,11 @@ function App() {
   // ---- A gates run in progress on a lane (docs/internal/Gates_Plan.md, "Lanes"): the tile header's "Gates: unit ✓ · review …" ----
   const [laneGates, setLaneGates] = useState<Record<string, { done: JobCheckResult[]; running?: string }>>({});
   const [headFocus, setHeadFocus] = useState<{ id: string; at: number }>();
+  // ---- Needs_You_Plan.md, Phase 5: the Needs you tab opens by default when it has items, until the user picks a view. ----
+  const [needsYou, setNeedsYou] = useState<NeedsYouItem[]>([]);
+  const pickedView = useRef(false);
   const changeView = (next: AgentsViewName, focus?: string) => {
+    pickedView.current = true;
     setView(next);
     try { api.setState({ view: next }); } catch { /* private windows: state just isn't remembered */ }
     send({ type: 'view', view: next, ...(focus ? { focus } : {}) });
@@ -82,6 +88,11 @@ function App() {
       if (data?.type === 'heads') setHeads(data.heads as HelperJobView[]);
       if (data?.type === 'plans') { setPlans(data.plans as Plan[]); setPlanJobs((data as { planJobs?: Record<string, PlanJobView[]> }).planJobs || {}); }
       if (data?.type === 'showNewPlan') setNewPlanSignal(value => value + 1);
+      if (data?.type === 'needsYou') {
+        const items = (data as { items?: NeedsYouItem[] }).items ?? [];
+        setNeedsYou(items);
+        if (items.length && !pickedView.current) { pickedView.current = true; setView('needs'); }
+      }
       // ---- Lanes: 'lanes'/'show' update React state; 'laneData'/'laneReplay' skip it entirely (the lane bus writes straight into xterm). ----
       const lane = data as LaneServerMessage | undefined;
       if (lane?.type === 'lanes') { setLanes(lane.lanes); setTerminals(lane.terminals); }
@@ -98,6 +109,7 @@ function App() {
         return { ...current, [lane.id]: { done: lane.done, ...(lane.running ? { running: lane.running } : {}) } };
       });
       if (lane?.type === 'show') {
+        pickedView.current = true;
         setView(lane.view);
         try { api.setState({ view: lane.view }); } catch { /* ignore */ }
         if (lane.focus) { if (lane.view === 'lanes') setLaneFocus(lane.focus); else setHeadFocus({ id: lane.focus, at: Date.now() }); }
@@ -119,7 +131,8 @@ function App() {
       : <AgentsBody view={view} onViewChange={changeView} heads={heads} dismissedTray={dismissedTray} plans={plans} lanes={lanes} planJobs={planJobs} terminals={terminals} defaultProvider={snapshot.defaultProvider}
           laneError={laneError} laneFocus={laneFocus} onLaneFocused={() => setLaneFocus(undefined)} laneLimits={laneLimits} laneSwitchCountdowns={laneSwitchCountdowns} laneGates={laneGates} roles={snapshot.roles} openNewPlanAt={newPlanSignal} focusHead={headFocus}
           onAction={(type, jobId) => send({ type, jobId })} onPlan={send} onStopAll={() => send({ type: 'helperStopAll' })}
-          onOpenLane={id => { setLaneFocus(id); changeView('lanes', id); }} onSend={send} />}
+          onOpenLane={id => { setLaneFocus(id); changeView('lanes', id); }} onSend={send}
+          needsYou={needsYou} onNeedsYouPutOff={(item, until) => send({ type: 'needsYouPutOff', key: putOffKey(item), until })} onNeedsYouUndo={item => send({ type: 'needsYouUndo', key: putOffKey(item) })} />}
   </main>;
 }
 createRoot(document.getElementById('root')!).render(<App />);

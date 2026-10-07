@@ -1,5 +1,5 @@
 import { finalJobStates } from '../../../src/core/jobs';
-import type { NeedsYouFacts } from '../../../src/core/needsYou';
+import type { NeedsYouFacts, NeedsYouItem } from '../../../src/core/needsYou';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -374,10 +374,11 @@ export class HydraProjects {
       report: error => { const message = error instanceof Error ? error.message : String(error); log(`[error] ${message}`); this.options.notice?.(project, 'error', message); },
     };
     const tree: HydraTreeMessage = { projectId: project.id, heads: [], plans: [], owned: false };
-    let latest: { heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>> } = {};
+    let latest: { needsYou?: readonly NeedsYouItem[]; heads?: readonly HelperJobView[]; plans?: readonly Plan[]; planJobs?: Readonly<Record<string, readonly PlanJobView[]>> } = {};
     function publish(update: TreeUpdate): void {
-      latest = { ...latest, ...(update.heads ? { heads: update.heads } : {}), ...(update.plans ? { plans: update.plans } : {}), ...(update.planJobs ? { planJobs: update.planJobs } : {}) };
-      if (!update.heads && !update.plans && !update.planJobs) return;
+      latest = { ...latest, ...(update.needsYou ? { needsYou: update.needsYou } : {}), ...(update.heads ? { heads: update.heads } : {}), ...(update.plans ? { plans: update.plans } : {}), ...(update.planJobs ? { planJobs: update.planJobs } : {}) };
+      if (!update.heads && !update.plans && !update.planJobs && !update.needsYou) return;
+      tree.needsYou = latest.needsYou ? [...latest.needsYou] : undefined;
       tree.heads = (latest.heads ?? []).map(headCard);
       tree.plans = (latest.plans ?? []).map(plan => planCard(plan, latest.planJobs?.[plan.id]));
       notifyTree(tree);

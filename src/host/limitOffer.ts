@@ -42,7 +42,10 @@ export interface LimitOfferDeps {
   tracker?: LimitOfferTracker;
 }
 
-export function registerLimitOffer(deps: LimitOfferDeps): Disposable {
+/** `continueIn`: the offer's "Continue in <Other>" for a limit event, without its notification (the Needs you list's primary action). */
+export interface LimitOfferHandle extends Disposable { continueIn(event: LimitEvent): Promise<void> }
+
+export function registerLimitOffer(deps: LimitOfferDeps): LimitOfferHandle {
   const tracker = deps.tracker ?? new LimitOfferTracker();
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? (() => undefined);
@@ -88,7 +91,18 @@ export function registerLimitOffer(deps: LimitOfferDeps): Disposable {
       void deps.host.notify('error', error instanceof Error ? error.message : String(error));
     }
   }
-  return { dispose: () => subscription.dispose() };
+  async function continueIn(event: LimitEvent): Promise<void> {
+    const other = otherProvider(event.provider);
+    if (!await deps.otherReady(other).catch(() => false)) {
+      void deps.host.notify('warning', `${providerLabel[other]} isn't set up in Hydra yet, so there is nowhere to continue.`, 'Open Connectors').then(pick => { if (pick) void deps.host.command('hydra.openSettings', 'connectors'); });
+      return;
+    }
+    const job = event.source === 'head' && event.jobId ? deps.job(event.jobId) : undefined;
+    const handoff = await buildHandoff({ event, job }, deps.handoffDeps);
+    await saveHandoff(deps.storageDir, event, handoff.markdown);
+    await continueInOther(event, other, handoff.markdown, deps);
+  }
+  return { dispose: () => subscription.dispose(), continueIn };
 }
 
 async function continueInOther(event: LimitEvent, other: Provider, markdown: string, deps: LimitOfferDeps): Promise<void> {
