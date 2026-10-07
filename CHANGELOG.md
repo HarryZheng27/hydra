@@ -4,6 +4,8 @@ What changed in each Hydra release. Installers and checksums are on the [release
 
 ## Unreleased
 
+- **Faster heads: queued heads start together and free their slot at acceptance.** Heads waiting for a free slot now launch side by side instead of one after another, and a head's slot goes to the next queued head as soon as its work is accepted, not when its process exits.
+- **An unattended plan's budget counts the heads that will run.** A plan Hydra runs as one head is checked against one head's cost, so `--usd 5` no longer refuses a six-job plan that would run as one head. Plans that split keep the strict check.
 - **Security: Hydra's git calls in a head's worktree are pinned to its real metadata.** Once `hydra_done` has checked the worktree's `.git`, Hydra tells git exactly where the metadata is, so a `.git` rewritten after the check (by a command left running) can't redirect them.
 - **Security: Hydra never runs git inside a nested repository in a head's worktree.** A repository an earlier attempt committed could otherwise have its own settings (a clean filter) run when Hydra checked and committed the head's work.
 

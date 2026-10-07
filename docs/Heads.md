@@ -74,6 +74,7 @@ any unfinished state → failed or cancelled
 
 - **The state table:** every change is checked against one allowed-transitions table in `src/core/jobs.ts`, written atomically, and kept in the job's history.
 - **Queueing:** heads wait in a queue up to `hydra.maxConcurrentHelpers` (default 3). A head whose dependency failed or was cancelled fails too.
+- **Slots:** queued heads start together, up to the free slots, so a head's worktree and settings setup is paid once per round rather than once per head. A head gives its slot back as soon as `hydra_done` accepts its work (or its job reaches a final state), not when its process exits, so the next queued head starts while the finished one winds down. A head that fails to launch frees its slot and fails alone.
 - **Silent stops:** a head that stops without calling `hydra_done` or `hydra_stuck` is nudged once, then failed. A head process that exits is failed.
 - **After a restart:** heads that were running are failed with the reason, because no head process survives a restart.
 - **Waiting on the provider:** a running head can also be waiting on its provider. See [Waiting on the provider](#waiting-on-the-provider).
