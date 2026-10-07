@@ -309,12 +309,12 @@ const failingGate = { gates: [{ id: 'always-fails', type: 'command', command: [p
 
 test('heads: a role\'s agent when no provider is given; changes "optional" is accepted with nothing changed and runs no gates; "required" still refuses', () => withSecrets(async () => {
   const f = await headWorld(async helper => {
-    const first = await helper.call('hydra_done', { summary: 'Every claim checks out.' });
+    const first = await helper.call('hydra_done', { headline: 'Done.', summary: 'Every claim checks out.' });
     if (helper.spec.provider === 'claude') {
       // A required-changes role (the builder, on Claude) must change something first.
       assert.equal(first.result.accepted, false); assert.match(first.result.message, /You have not changed anything yet/);
       await helper.commit('src/b.ts', 'export const b = 2;\n');
-      const checked = await helper.call('hydra_done', { summary: 'Added b.' });
+      const checked = await helper.call('hydra_done', { headline: 'Done.', summary: 'Added b.' });
       assert.equal(checked.result.accepted, false); assert.match(checked.result.message, /always-fails/);
     } else assert.equal(first.result.accepted, true, first.result.message);
     helper.exit(0);
@@ -348,7 +348,7 @@ test('heads: the role\'s --mcp-config file holds only references, and is removed
   const f = await headWorld(async helper => {
     if (helper.spec.prompt.includes('): Job first')) await released;
     await helper.commit(`src/${helper.spec.prompt.includes('): Job first') ? 'first' : 'other'}.ts`, 'x\n');
-    const done = await helper.call('hydra_done', { summary: 'Done.' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'Done.' });
     assert.equal(done.result.accepted, true, done.result.message);
     helper.exit(0);
   });
@@ -387,7 +387,7 @@ test('heads: the role\'s --mcp-config file holds only references, and is removed
 });
 
 test('heads without packs: a role is refused, and nothing else changes', async () => {
-  const f = await headWorld(async helper => { await helper.commit('src/c.ts', 'c\n'); await helper.call('hydra_done', { summary: 'c' }); helper.exit(0); }, { noPacks: true });
+  const f = await headWorld(async helper => { await helper.commit('src/c.ts', 'c\n'); await helper.call('hydra_done', { headline: 'Done.', summary: 'c' }); helper.exit(0); }, { noPacks: true });
   try {
     const refused = await f.start('r', { role: 'builder' });
     assert.match(refused.error!, /packs aren't available in this Hydra window/);

@@ -77,7 +77,7 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
         setTimeout(() => void (async () => {
           await writeFile(path.join(spec.worktree, 'src', 'b.ts'), 'export const b = 2;\n');
           await git(spec.worktree, ['add', '.']); await git(spec.worktree, ['commit', '-qm', 'head: b']);
-          await callHelperEndpoint(Number(spec.bridge.env.HYDRA_HELPER_PORT), spec.bridge.env.HYDRA_HELPER_TOKEN!, 'hydra_done', { summary: 'Added b.ts' });
+          await callHelperEndpoint(Number(spec.bridge.env.HYDRA_HELPER_PORT), spec.bridge.env.HYDRA_HELPER_TOKEN!, 'hydra_done', { headline: 'Done.', summary: 'Added b.ts' });
           for (const listener of listeners) listener();
         })().catch(error => host.log(`[stand-in] ${error instanceof Error ? error.message : String(error)}`)), 0);
         return run;

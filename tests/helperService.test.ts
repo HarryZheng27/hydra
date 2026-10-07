@@ -100,7 +100,7 @@ const passCheck = { checks: [{ id: 'unit', command: [process.execPath, '-e', "pr
 test('a head that commits in scope and reports done is checked and handed back to the lead', async () => {
   const f = await fixture({ checks: passCheck, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    const reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     assert.equal(reported.result.accepted, true);
     helper.endTurn();
   } });
@@ -123,7 +123,7 @@ test('a head that commits in scope and reports done is checked and handed back t
 
 test('the first prompt lists the repository\'s tracked files and the project\'s gate commands (headStartContext), so a head needn\'t spend a turn on git ls-files or cat package.json', async () => {
   const f = await fixture({ gates: { gates: [{ id: 'test', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 }] }, script: async helper => {
-    await helper.call('hydra_done', { summary: 'Looked around' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Looked around' });
     helper.endTurn();
   } });
   try {
@@ -140,7 +140,7 @@ test('the first prompt lists the repository\'s tracked files and the project\'s 
 
 test('with no command gate, the first prompt falls back to package.json\'s own "test" script, worded so a head knows Hydra won\'t run it', async () => {
   const f = await fixture({ script: async helper => {
-    await helper.call('hydra_done', { summary: 'Looked around' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Looked around' });
     helper.endTurn();
   } });
   try {
@@ -158,10 +158,10 @@ test('with no command gate, the first prompt falls back to package.json\'s own "
 test('failed checks re-prompt the head, which fixes and passes; the third failure fails the job', async () => {
   const f = await fixture({ checks: passCheck, script: async helper => {
     await helper.commit('src/wip.ts', 'wip\n');
-    const first = await helper.call('hydra_done', { summary: 'First try' });
+    const first = await helper.call('hydra_done', { headline: 'Done.', summary: 'First try' });
     assert.equal(first.result.accepted, false); assert.match(first.result.message, /These gates failed:\n- unit \(command, exit 1\)/); assert.equal(first.result.attempts_left, 2);
     await helper.commit('src/fixed.ts', 'fixed\n');
-    const second = await helper.call('hydra_done', { summary: 'Fixed it' });
+    const second = await helper.call('hydra_done', { headline: 'Done.', summary: 'Fixed it' });
     assert.equal(second.result.accepted, true);
     helper.endTurn();
   } });
@@ -172,7 +172,7 @@ test('failed checks re-prompt the head, which fixes and passes; the third failur
   } finally { await f.close(); }
   const never = await fixture({ checks: passCheck, script: async helper => {
     await helper.commit('src/wip.ts', 'wip\n');
-    for (let attempt = 1; attempt <= 3; attempt++) { const result = await helper.call('hydra_done', { summary: `try ${attempt}` }); if (attempt < 3) assert.equal(result.result.accepted, false); else assert.match(result.result.message, /last attempt/); }
+    for (let attempt = 1; attempt <= 3; attempt++) { const result = await helper.call('hydra_done', { headline: 'Done.', summary: `try ${attempt}` }); if (attempt < 3) assert.equal(result.result.accepted, false); else assert.match(result.result.message, /last attempt/); }
   } });
   try {
     const { job_id } = await never.start('never');
@@ -183,16 +183,16 @@ test('failed checks re-prompt the head, which fixes and passes; the third failur
 
 test('Hydra commits leftover changes; no changes and changes outside the write scope are refused', async () => {
   const f = await fixture({ script: async helper => {
-    const empty = await helper.call('hydra_done', { summary: 'nothing' });
+    const empty = await helper.call('hydra_done', { headline: 'Done.', summary: 'nothing' });
     assert.match(empty.result.message, /not changed anything yet/);
     // Left uncommitted (a sandboxed Codex helper can't commit): Hydra commits it.
     await writeFile(path.join(helper.spec.worktree, 'src', 'dirty.ts'), 'x');
     await writeFile(path.join(helper.spec.worktree, 'README.md'), 'outside\n');
-    const refused = await helper.call('hydra_done', { summary: 'outside' });
+    const refused = await helper.call('hydra_done', { headline: 'Done.', summary: 'outside' });
     assert.equal(refused.result.accepted, false); assert.match(refused.result.message, /outside your write scope[\s\S]*README\.md/);
     assert.match(await git(helper.spec.worktree, ['log', '-1', '--format=%s']), /Job scope \(Hydra head [a-f0-9]{12}\)/);
     await git(helper.spec.worktree, ['rm', '-q', 'README.md']); await git(helper.spec.worktree, ['commit', '-qm', 'undo']);
-    assert.equal((await helper.call('hydra_done', { summary: 'clean' })).result.accepted, true);
+    assert.equal((await helper.call('hydra_done', { headline: 'Done.', summary: 'clean' })).result.accepted, true);
     helper.endTurn();
   } });
   try {
@@ -259,7 +259,7 @@ test('continueWith restarts a head that hit a usage limit with the other provide
       helper.endTurn();
     } else {
       await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-      const reported = await helper.call('hydra_done', { summary: 'Continued in Codex' });
+      const reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Continued in Codex' });
       assert.equal(reported.result.accepted, true);
       helper.endTurn();
     }
@@ -312,7 +312,7 @@ test('a stuck head waits for the lead, gets the answer as its tool result and co
     const answer = await helper.call('hydra_stuck', { reason: 'Two APIs exist', question: 'Use v1 or v2?' });
     assert.deepEqual(answer.result, { answered: true, answer: 'v2' });
     await helper.commit('src/v2.ts', 'v2\n');
-    await helper.call('hydra_done', { summary: 'Used v2' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Used v2' });
     helper.endTurn();
   } });
   try {
@@ -413,7 +413,7 @@ test('scope matching, head prompts, runner arguments and the supported CLI range
 test('a head records the chat that started it, and is seen as merged once its branch is in the lead folder', async () => {
   const f = await fixture({ checks: passCheck, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     helper.endTurn();
   } });
   try {
@@ -459,16 +459,16 @@ test('a head\'s work goes through the gates in order; failures come back with th
   ]);
   const f = await fixture({ gates: { gates: [{ id: 'review', type: 'review', focus: 'The flag.' }, fixedExists] }, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
     await helper.commit('src/wip.ts', 'wip\n');
-    const first = await helper.call('hydra_done', { summary: 'First try' });
+    const first = await helper.call('hydra_done', { headline: 'Done.', summary: 'First try' });
     assert.equal(first.result.accepted, false); assert.equal(first.result.attempts_left, 2);
     assert.match(first.result.message, /^These gates failed:\n- unit \(command, exit 1\): Exited with code 1\./);
     assert.doesNotMatch(first.result.message, /review/, 'the review is skipped while the tests fail');
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const second = await helper.call('hydra_done', { summary: 'Second try' });
+    const second = await helper.call('hydra_done', { headline: 'Done.', summary: 'Second try' });
     assert.equal(second.result.accepted, false); assert.equal(second.result.attempts_left, 1);
     assert.match(second.result.message, /^These gates failed:\n- review \(review by Codex\): Reviewed by Codex\. The flag is wrong\.\n  - major src\/fixed\.ts:1: Always true\.\n  - minor: Name it better\.\nFix them, commit, and call hydra_done again\.$/);
     await helper.commit('src/fixed.ts', 'export const fixed = process.env.FLAG === "1";\n');
-    const third = await helper.call('hydra_done', { summary: 'Fixed the flag' });
+    const third = await helper.call('hydra_done', { headline: 'Done.', summary: 'Fixed the flag' });
     assert.equal(third.result.accepted, true, 'a fail with only minor findings passes');
     helper.endTurn();
   } });
@@ -498,11 +498,11 @@ test('maxAttempts comes from gates.json; a review that can\'t run never fails th
   const f = await fixture({ gates: { maxAttempts: 1, gates: [fixedExists, { id: 'review', type: 'review' }] }, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
     if (jobKey(helper.spec.prompt) === 'once') {
       await helper.commit('src/wip.ts', 'wip\n');
-      const only = await helper.call('hydra_done', { summary: 'Only try' });
+      const only = await helper.call('hydra_done', { headline: 'Done.', summary: 'Only try' });
       assert.match(only.result.message, /last attempt \(1 of 1\)/);
     } else {
       await helper.commit('src/fixed.ts', 'fixed\n');
-      assert.equal((await helper.call('hydra_done', { summary: 'Reviewer timed out' })).result.accepted, true);
+      assert.equal((await helper.call('hydra_done', { headline: 'Done.', summary: 'Reviewer timed out' })).result.accepted, true);
       helper.endTurn();
     }
   } });
@@ -521,7 +521,7 @@ test('maxAttempts comes from gates.json; a review that can\'t run never fails th
 
   const broken = await fixture({ gates: { gates: 'unit' }, script: async helper => {
     await helper.commit('src/fixed.ts', 'fixed\n');
-    const refused = await helper.call('hydra_done', { summary: 'Done' });
+    const refused = await helper.call('hydra_done', { headline: 'Done.', summary: 'Done' });
     assert.equal(refused.result.accepted, false);
     assert.match(refused.result.message, /^Hydra can't check your work: \.hydra\/gates\.json: The gates file needs a "gates" list\. That isn't your fault\. Call hydra_stuck/);
     await helper.call('hydra_progress', { note: 'waiting on the lead' });
@@ -541,11 +541,11 @@ test('a dependent starts from its dependency\'s result commit, sees its file, an
   const f = await fixture({ script: async helper => {
     if (jobKey(helper.spec.prompt) === 'first') {
       await helper.commit('src/first.ts', 'export const first = 1;\n');
-      await helper.call('hydra_done', { summary: 'Added first.ts with the parser.' });
+      await helper.call('hydra_done', { headline: 'Done.', summary: 'Added first.ts with the parser.' });
     } else {
       assert.match(await readFile(path.join(helper.spec.worktree, 'src', 'first.ts'), 'utf8'), /^export const first = 1;\r?\n$/);
       await helper.commit('src/second.ts', 'export const second = 2;\n');
-      await helper.call('hydra_done', { summary: 'Added second.ts on top.' });
+      await helper.call('hydra_done', { headline: 'Done.', summary: 'Added second.ts on top.' });
     }
     helper.endTurn();
   } });
@@ -574,7 +574,7 @@ test('several dependencies are merged into one Hydra commit; ones that conflict 
       await helper.commit('src/both.ts', 'both\n');
     } else if (key.startsWith('clash-')) await helper.commit('src/shared.ts', `${key}\n`);
     else await helper.commit(`src/${key}.ts`, `${key}\n`);
-    await helper.call('hydra_done', { summary: `Did ${key}.` });
+    await helper.call('hydra_done', { headline: 'Done.', summary: `Did ${key}.` });
     helper.endTurn();
   } });
   try {
@@ -603,7 +603,7 @@ test('a head started from a lane takes the lane\'s HEAD as its base, not the mai
     script: async helper => {
       if (jobKey(helper.spec.prompt) === 'from-lane') assert.match(await readFile(path.join(helper.spec.worktree, 'src', 'lane.ts'), 'utf8'), /^lane work\r?\n$/, 'the lane\'s committed work is there');
       await helper.commit('src/head.ts', 'head\n');
-      await helper.call('hydra_done', { summary: 'Done.' });
+      await helper.call('hydra_done', { headline: 'Done.', summary: 'Done.' });
       helper.endTurn();
     },
   });
@@ -642,7 +642,7 @@ test('a plan head starts from a lane job\'s result, sees its file, and is told w
   const f = await fixture({ script: async helper => {
     if (jobKey(helper.spec.prompt) === 'api') assert.match(await readFile(path.join(helper.spec.worktree, 'src', 'schema.ts'), 'utf8'), /^schema\r?\n$/, 'the lane\'s work is there');
     await helper.commit(`src/${jobKey(helper.spec.prompt)}.ts`, 'done\n');
-    await helper.call('hydra_done', { summary: 'Done.' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Done.' });
     helper.endTurn();
   } });
   try {
@@ -700,7 +700,7 @@ test('heads queued behind a head that hit its usage limit wait for it (decision 
     const key = jobKey(helper.spec.prompt);
     if (helper.spec.provider === 'claude' && (key === 'limited' || key === 'abandoned')) { helper.limit({ message: 'Claude AI usage limit reached|1790000000' }); helper.endTurn(); return; }
     await helper.commit(`src/${key}.ts`, 'done\n');
-    await helper.call('hydra_done', { summary: 'Done.' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Done.' });
     helper.endTurn();
   } });
   try {
@@ -772,7 +772,7 @@ test('O6: strict adds a review the project doesn\'t already have; quick and stan
   const reviewer = scriptedReviewer([{ verdict: 'pass', summary: 'Looks fine.', findings: [] }]);
   const f = await fixture({ checks: passCheck, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const done = await helper.call('hydra_done', { summary: 'Rigor' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'Rigor' });
     assert.equal(done.ok, true, done.error);
     helper.endTurn();
   } });
@@ -805,7 +805,7 @@ test('O6: rigor never duplicates a review the project already runs', async () =>
   const reviewer = scriptedReviewer([{ verdict: 'pass', summary: 'Fine.', findings: [] }]);
   const f = await fixture({ gates: { gates: [fixedExists, { id: 'review', type: 'review', reviewer: 'other', focus: 'x' }] }, gateRuntime: { runReviewer: reviewer.runReviewer }, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const result = await helper.call('hydra_done', { summary: 'Done' });
+    const result = await helper.call('hydra_done', { headline: 'Done.', summary: 'Done' });
     assert.equal(result.ok, true, result.error);
     helper.endTurn();
   } });
@@ -984,7 +984,7 @@ test("hydra_plan_get returns a job enriched with its head's own detail when it h
   const { bridge, plans } = fakePlanBridge();
   const f = await fixture({ checks: passCheck, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const x = 1;\n');
-    await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     helper.endTurn();
   }, plans: bridge });
   try {
@@ -1180,7 +1180,7 @@ test('hydra_progress/hydra_done: name how many board posts are waiting (excludin
     let progressed: any; for (let i = 0; i < 100 && !progressed?.ok; i++) { progressed = await helper.call('hydra_progress', { note: 'Starting.' }); if (!progressed.ok) await new Promise(resolve => setTimeout(resolve, 20)); }
     progressResult = progressed;
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    doneResult = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    doneResult = await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     helper.endTurn();
   } });
   try {
@@ -1301,7 +1301,7 @@ test('hydra_done logs one timing line naming every step it ran, on the way into 
     // so the worktree is already clean by the time hydra_done runs: "commit" is skipped, but
     // "status" still runs to notice that.
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    const reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     assert.equal(reported.result.accepted, true);
     helper.endTurn();
   } });
@@ -1320,7 +1320,7 @@ test('hydra_done\'s timing line includes "commit" only when Hydra itself had to 
     // commitAll), unlike helper.commit's fixture shortcut which commits directly.
     await mkdir(path.dirname(path.join(helper.spec.worktree, 'src/fixed.ts')), { recursive: true });
     await writeFile(path.join(helper.spec.worktree, 'src', 'fixed.ts'), 'export const fixed = true;\n');
-    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    const reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     assert.equal(reported.result.accepted, true);
     helper.endTurn();
   } });
@@ -1336,7 +1336,7 @@ test('hydra_done\'s timing line includes "commit" only when Hydra itself had to 
 test('hydra_done still logs a timing line when a step throws, marking that step with "!"', async () => {
   const f = await fixture({ gatesLoader: async () => { throw new Error('gates.json is broken'); }, script: async helper => {
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    const reported = await helper.call('hydra_done', { summary: 'Added fixed.ts' });
+    const reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Added fixed.ts' });
     assert.equal(reported.result.accepted, false);
     assert.match(reported.result.message, /gates\.json is broken/);
     helper.endTurn();
@@ -1352,7 +1352,7 @@ test('hydra_done still logs a timing line when a step throws, marking that step 
 
 test('hydra_done logs a partial timing line when refused because nothing changed yet', async () => {
   const f = await fixture({ script: async helper => {
-    const reported = await helper.call('hydra_done', { summary: 'Nothing yet.' });
+    const reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Nothing yet.' });
     assert.equal(reported.result.accepted, false);
     assert.match(reported.result.message, /have not changed anything/);
     helper.endTurn();
@@ -1375,7 +1375,7 @@ test('waiting on the provider: hydra_get_head and hydra_list_heads show the open
     await released;
     helper.providerWait(undefined, 780_000);
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    await helper.call('hydra_done', { summary: 'Fixed.' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Fixed.' });
   } });
   try {
     const { job_id } = await f.start('wait');
@@ -1412,7 +1412,7 @@ test('a stuck head whose call ends without an answer goes back to running, and h
     asked = await call;
     await until(() => f.store.list('window')[0]?.state === 'running', 'the head is running again');
     await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-    reported = await helper.call('hydra_done', { summary: 'Decided myself' });
+    reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Decided myself' });
     helper.endTurn();
   } });
   try {
@@ -1435,7 +1435,7 @@ test('an attended head\'s question stops waiting after its time, and the head ca
   const f = await fixture({ questionWaitMs: 50, script: async helper => {
     asked = await helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?' });
     await helper.commit('src/v1.ts', 'v1\n');
-    await helper.call('hydra_done', { summary: 'Picked v1 myself' });
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Picked v1 myself' });
     helper.endTurn();
   } });
   try {
@@ -1457,7 +1457,7 @@ test('a head in an unattended plan gets an automatic answer at once, recorded on
     script: async helper => {
       asked = await helper.call('hydra_stuck', { reason: 'My structure test fails on another job\'s leftover', question: 'May I delete it?' });
       await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
-      reported = await helper.call('hydra_done', { summary: 'Finished my part; the leftover in another job\'s scope needs deleting.' });
+      reported = await helper.call('hydra_done', { headline: 'Done.', summary: 'Finished my part; the leftover in another job\'s scope needs deleting.' });
       helper.endTurn();
     },
   });
@@ -1643,7 +1643,7 @@ test('heads queued behind a finished one launch together: three launches that ea
   const f = await fixture({ maxConcurrent: 3, launchDelayMs: delay, script: async helper => {
     if (!helper.spec.prompt.includes('Job first')) return;
     await helper.commit('src/first.ts', 'export const first = 1;\n');
-    assert.equal((await helper.call('hydra_done', { summary: 'First' })).result.accepted, true);
+    assert.equal((await helper.call('hydra_done', { headline: 'Done.', summary: 'First' })).result.accepted, true);
     helper.exit(0);
   } });
   try {
@@ -1678,7 +1678,7 @@ test('a head frees its slot when its work is accepted, not when its process exit
   const f = await fixture({ maxConcurrent: 1, script: async helper => {
     if (!helper.spec.prompt.includes('Job a')) return;
     await helper.commit('src/a-done.ts', 'export const done = 1;\n');
-    assert.equal((await helper.call('hydra_done', { summary: 'A' })).result.accepted, true);
+    assert.equal((await helper.call('hydra_done', { headline: 'Done.', summary: 'A' })).result.accepted, true);
     // The process lingers: only the test lets it go.
     releaseA = () => helper.exit(0);
   } });
@@ -1706,5 +1706,152 @@ test('a head cancelled while its launch is still going frees its slot for the ne
     await until(() => f.runs.length === 1, 'b takes the slot a gave up');
     assert.equal(f.store.get(a.job_id)?.state, 'cancelled');
     assert.equal(f.runs.filter(run => run.prompt.includes('Job b')).length, 1);
+  } finally { await f.close(); }
+});
+
+// ---- A headline on hydra_done, options on hydra_stuck (docs/internal/Needs_You_Plan.md, Phase 2) ----
+
+test('hydra_done refuses a missing or 111-character headline with the reason, spends no attempt, and returns an accepted one from hydra_get_head and hydra_list_heads', async () => {
+  const results: any[] = [];
+  const f = await fixture({ checks: passCheck, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    results.push(await helper.call('hydra_done', { summary: 'No headline' }));
+    results.push(await helper.call('hydra_done', { headline: 'x'.repeat(111), summary: 'Too long' }));
+    results.push(await helper.call('hydra_done', { headline: '  Added   fixed.ts;\n nothing left to decide.  '.padEnd(110, ' '), summary: 'Fine' }));
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('headline');
+    await until(() => results.length === 3 && f.store.get(job_id)?.state === 'done', 'the head finished');
+    assert.match(results[0].error ?? '', /headline is required: one plain sentence of at most 110 characters/);
+    assert.match(results[0].error ?? '', /no attempt was used/);
+    assert.match(results[1].error ?? '', /headline is 111 characters; the most is 110/);
+    assert.equal(results[2].result.accepted, true, JSON.stringify(results[2]));
+    const job = f.store.get(job_id)!;
+    assert.equal(job.attempts, 1, 'only the accepted call counted as a gate attempt');
+    assert.equal(job.result!.headline, 'Added fixed.ts; nothing left to decide.');
+    const detail = (await f.call('hydra_get_head', { job_id })).result;
+    assert.equal(detail.headline, 'Added fixed.ts; nothing left to decide.');
+    const listed = (await f.call('hydra_list_heads')).result;
+    assert.equal((listed.heads ?? listed).find((row: { job_id: string }) => row.job_id === job_id).headline, 'Added fixed.ts; nothing left to decide.');
+  } finally { await f.close(); }
+});
+
+test('a headline of exactly 110 characters is accepted', async () => {
+  let reported: any;
+  const f = await fixture({ checks: passCheck, script: async helper => {
+    await helper.commit('src/fixed.ts', 'export const fixed = true;\n');
+    reported = await helper.call('hydra_done', { headline: 'y'.repeat(110), summary: 'Edge' });
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('headline-edge');
+    await until(() => reported !== undefined, 'the head heard back');
+    assert.equal(reported.result.accepted, true);
+    assert.equal(f.store.get(job_id)!.result!.headline!.length, 110);
+  } finally { await f.close(); }
+});
+
+test('hydra_stuck refuses options that are not one to four, 110 characters at most, with exactly one recommended', async () => {
+  const bad: unknown[] = [
+    [],
+    [{ text: 'a' }, { text: 'b' }],
+    [{ text: 'a', recommended: true }, { text: 'b', recommended: true }],
+    [1, 2, 3, 4, 5].map(n => ({ text: `option ${n}`, recommended: n === 1 })),
+    [{ text: 'z'.repeat(111), recommended: true }],
+    [{ text: '', recommended: true }],
+    'v1',
+  ];
+  const refusals: string[] = [];
+  const f = await fixture({ script: async helper => {
+    for (const options of bad) refusals.push((await helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?', options })).error ?? 'accepted');
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('bad-options');
+    await until(() => refusals.length === bad.length, 'every call answered');
+    assert.match(refusals[0]!, /options must be one to 4 choices/);
+    assert.match(refusals[1]!, /Exactly one option must be marked recommended \(0 are\)/);
+    assert.match(refusals[2]!, /Exactly one option must be marked recommended \(2 are\)/);
+    assert.match(refusals[3]!, /options must be one to 4 choices/);
+    assert.match(refusals[4]!, /Option 1 must be 1 to 110 characters \(it is 111\)/);
+    assert.match(refusals[5]!, /Option 1 must be 1 to 110 characters/);
+    assert.match(refusals[6]!, /options must be one to 4 choices/);
+    assert.equal(f.store.get(job_id)!.state, 'running', 'a refused question never blocks the head');
+  } finally { await f.close(); }
+});
+
+test('a lead sees a blocked head\'s options and answers with option: n', async () => {
+  let asked: any;
+  const f = await fixture({ script: async helper => {
+    asked = await helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?', options: [{ text: 'Use v1' }, { text: 'Use v2', recommended: true }] });
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('options-reply');
+    await until(() => f.store.get(job_id)?.state === 'blocked', 'the head is blocked');
+    const waited = (await f.call('hydra_wait_for_heads', { job_ids: [job_id], max_wait_s: 5 })).result;
+    assert.deepEqual(waited.heads[0].options, [{ option: 1, text: 'Use v1' }, { option: 2, text: 'Use v2', recommended: true }]);
+    assert.match((await f.call('hydra_reply_to_head', { job_id, option: 3 })).error ?? '', /option must be a whole number from 1 to 2/);
+    assert.match((await f.call('hydra_reply_to_head', { job_id, option: 1, message: 'x' })).error ?? '', /either message or option/);
+    assert.equal((await f.call('hydra_reply_to_head', { job_id, option: 1 })).result.delivered, true);
+    await until(() => f.store.get(job_id)?.replies.length === 1 && asked !== undefined, 'the reply is saved and heard');
+    assert.equal(asked.result.answer, 'Use v1');
+    const reply = f.store.get(job_id)!.replies[0]!;
+    assert.deepEqual([reply.option, reply.choice, reply.message], [1, 'Use v1', 'Use v1']);
+    assert.equal(f.store.get(job_id)!.options, undefined, 'the options are gone once it is answered');
+  } finally { await f.close(); }
+});
+
+test('a head that offered no options cannot be answered with option: n', async () => {
+  const f = await fixture({ script: async helper => { void helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?' }).catch(() => undefined); } });
+  try {
+    const { job_id } = await f.start('no-options');
+    await until(() => f.store.get(job_id)?.state === 'blocked', 'the head is blocked');
+    assert.match((await f.call('hydra_reply_to_head', { job_id, option: 1 })).error ?? '', /offered no options: answer with message/);
+  } finally { await f.close(); }
+});
+
+test('when nobody answers, an attended head with options gets its recommended one, recorded on the job and in the audit log; a late reply is still refused', async () => {
+  const audit: AuditEvent[] = [];
+  let asked: any;
+  const f = await fixture({ questionWaitMs: 50, audit: event => { audit.push(event); }, script: async helper => {
+    asked = await helper.call('hydra_stuck', { reason: 'Unsure', question: 'v1 or v2?', options: [{ text: 'Use v1' }, { text: 'Use v2', recommended: true }] });
+    await helper.commit('src/v2.ts', 'v2\n');
+    await helper.call('hydra_done', { headline: 'Done.', summary: 'Used v2' });
+    helper.endTurn();
+  } });
+  try {
+    const { job_id } = await f.start('timed-out-options');
+    await until(() => f.store.get(job_id)?.state === 'done', 'the head finished');
+    assert.equal(asked.result.automatic, true); assert.equal(asked.result.option, 2);
+    assert.equal(asked.result.answer, 'No answer came within 0s. Go with your recommended option: Use v2');
+    const job = f.store.get(job_id)!;
+    assert.deepEqual(job.replies.map(reply => [reply.auto, reply.option, reply.choice]), [['no-answer', 2, 'Use v2']]);
+    const detail = (await f.call('hydra_get_head', { job_id })).result;
+    assert.deepEqual([detail.auto_answered[0].option, detail.auto_answered[0].choice], [2, 'Use v2']);
+    const recorded = audit.find(event => event.kind === 'auto');
+    assert.match(recorded?.detail ?? '', /chose its recommended option 2: Use v2/);
+    assert.match((await f.call('hydra_reply_to_head', { job_id, option: 1 })).error ?? '', /not waiting for an answer \(it is done\)\. It stopped waiting at .* and carried on without an answer \(none came in time\)/);
+  } finally { await f.close(); }
+});
+
+test('an unattended plan\'s head with options gets its recommended one at once', async () => {
+  const audit: AuditEvent[] = [];
+  let asked: any;
+  const f = await fixture({
+    audit: event => { audit.push(event); },
+    planBoard: { jobPlan: () => ({ planId: 'aaaaaaaaaaaa', jobKey: 'finish' }), unattended: planId => planId === 'aaaaaaaaaaaa', post: async () => undefined, boardFor: () => [] },
+    script: async helper => {
+      asked = await helper.call('hydra_stuck', { reason: 'Unsure', question: 'May I delete it?', options: [{ text: 'Delete it', recommended: true }, { text: 'Leave it' }] });
+      helper.endTurn();
+    },
+  });
+  try {
+    const { job_id } = await f.start('unattended-options');
+    await until(() => asked !== undefined, 'the head was answered');
+    assert.equal(asked.result.answer, 'Nobody is watching this plan, so no one will answer. Go with your recommended option: Delete it');
+    assert.deepEqual(f.store.get(job_id)!.replies.map(reply => [reply.auto, reply.option, reply.choice]), [['unattended', 1, 'Delete it']]);
+    assert.match(audit.find(event => event.kind === 'auto')?.detail ?? '', /chose its recommended option 1: Delete it/);
   } finally { await f.close(); }
 });

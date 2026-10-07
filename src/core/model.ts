@@ -20,6 +20,10 @@ export interface OfficialExtensionInfo { provider: Provider; extensionId: string
 export interface HelperJobView {
   id: string; title: string; state: string; provider: Provider; createdAt: string; finishedAt?: string;
   progress?: string; question?: string; reason?: string; branch?: string; commit?: string; summary?: string;
+  /** The head's one-sentence headline from hydra_done, once it has reported. */
+  headline?: string;
+  /** The choices a blocked head offered with its question, numbered from 1 (exactly one recommended). */
+  options?: { option: number; text: string; recommended?: boolean }[];
   changedFiles: number; checks: HeadCheckView[];
   /** The repository the lead works in, where the helper's worktree was branched. */
   repository?: string;

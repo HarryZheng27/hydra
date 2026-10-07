@@ -9,7 +9,7 @@ import { agentIsolation } from './agentHome';
 import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
-import { defaultMaxAttempts, evidenceStatus, finalJobStates, type JobReply, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
+import { defaultMaxAttempts, evidenceStatus, finalJobStates, maxHeadlineLength, maxStuckOptions, type JobReply, type StuckOption, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
 import { carryOver, integrationAuthors, integrationGates, landingGates, withGateWorktree, type IntegrationLeadView } from './integration';
 import { detectTestScript } from './starterGates';
 import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
@@ -234,12 +234,43 @@ const clip = (value: string, max: number) => value.length > max ? `${value.slice
  * head is never left blocked with nobody coming, and its call returns while it can still use the result.
  */
 export const headQuestionWaitMs = 20 * 60_000;
+/** The answer an unattended plan's head gets when it offered options: its own recommended one. */
+export const unattendedChoice = (recommended: string) => `Nobody is watching this plan, so no one will answer. Go with your recommended option: ${recommended}`;
 /** The answer a head in an unattended plan gets at once: nobody is there to give another. */
 export const unattendedAnswer = 'Nobody is watching this plan, so no one will answer. Decide within your scope and brief. If something outside your write scope needs changing, finish your own part and describe what needs changing in hydra_done\'s summary. Then call hydra_done.';
 /** The answer a head gets when its wait ended with none. */
-export function noAnswerReply(why: 'timeout' | 'ended', waitedMs: number): string {
+export function noAnswerReply(why: 'timeout' | 'ended', waitedMs: number, recommended?: string): string {
   const when = why === 'timeout' ? `No answer came within ${waitDuration(waitedMs)}` : 'Your question\'s call ended before anyone answered';
+  if (recommended) return `${when}. Go with your recommended option: ${recommended}`;
   return `${when}, so carry on without one. Decide within your scope and brief. If something outside your write scope needs changing, finish your own part and describe what needs changing in hydra_done's summary. Then call hydra_done.`;
+}
+
+/** hydra_done's headline, checked before anything else so a refusal spends no gate attempt; throws the reason. */
+export function parseHeadline(value: unknown): string {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (!text) throw new Error(`headline is required: one plain sentence of at most ${maxHeadlineLength} characters saying what happened and what, if anything, is left to decide. Call hydra_done again with it; no attempt was used.`);
+  if (text.length > maxHeadlineLength) throw new Error(`headline is ${text.length} characters; the most is ${maxHeadlineLength}. Say it in one shorter sentence and put the detail in summary, then call hydra_done again; no attempt was used.`);
+  return text;
+}
+/** hydra_stuck's options: none, or one to four short choices with exactly one recommended. Throws the reason when they're wrong. */
+export function parseStuckOptions(value: unknown): StuckOption[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || !value.length || value.length > maxStuckOptions) throw new Error(`options must be one to ${maxStuckOptions} choices. Call hydra_stuck again, with them or without.`);
+  const options = value.map((item, index): StuckOption => {
+    const entry = item as { text?: unknown; recommended?: unknown } | null;
+    const text = typeof entry?.text === 'string' ? entry.text.replace(/\s+/g, ' ').trim() : '';
+    if (!text || text.length > maxHeadlineLength) throw new Error(`Option ${index + 1} must be 1 to ${maxHeadlineLength} characters (it is ${text.length}).`);
+    if (entry?.recommended !== undefined && typeof entry.recommended !== 'boolean') throw new Error(`Option ${index + 1}: recommended must be true or false.`);
+    return { text, ...(entry?.recommended === true ? { recommended: true as const } : {}) };
+  });
+  const recommended = options.filter(option => option.recommended).length;
+  if (recommended !== 1) throw new Error(`Exactly one option must be marked recommended (${recommended} are). Call hydra_stuck again.`);
+  return options;
+}
+/** The one a head recommended, with its number (from 1), or undefined when it offered none. */
+export function recommendedOption(options: readonly StuckOption[] | undefined): { option: number; text: string } | undefined {
+  const index = options?.findIndex(option => option.recommended) ?? -1;
+  return index >= 0 ? { option: index + 1, text: options![index]!.text } : undefined;
 }
 
 /** One step of `hydra_done` and how long it took, in the order it ran (see formatDoneTiming). */
@@ -615,18 +646,29 @@ export class HelperService {
 
   private async reply(args: Record<string, unknown>) {
     const job = this.ownJob(args.job_id);
-    if (typeof args.message !== 'string' || !args.message.trim() || args.message.length > 8000) throw new Error('message must be 1–8000 characters.');
+    const hasOption = args.option !== undefined;
+    if (hasOption && args.message !== undefined) throw new Error('Give either message or option, not both.');
+    if (!hasOption && (typeof args.message !== 'string' || !args.message.trim() || args.message.length > 8000)) throw new Error('message must be 1–8000 characters (or give option: the number of one of the head\'s options).');
     const active = this.active.get(job.id);
     if (job.state !== 'blocked' || !active?.answer) {
       const last = job.replies.at(-1);
       const carried = last?.auto ? ` It stopped waiting at ${last.at} and carried on without an answer (${last.auto === 'unattended' ? 'its plan runs unattended' : 'none came in time'}).` : '';
       throw new Error(`Head ${job.id} is not waiting for an answer (it is ${job.state}).${carried}`);
     }
+    let message = args.message as string, picked: { option: number; choice: string } | undefined;
+    if (hasOption) {
+      const options = job.options ?? [];
+      if (!options.length) throw new Error(`Head ${job.id} offered no options: answer with message.`);
+      const number = args.option;
+      if (typeof number !== 'number' || !Number.isInteger(number) || number < 1 || number > options.length) throw new Error(`option must be a whole number from 1 to ${options.length}.`);
+      message = options[number - 1]!.text;
+      picked = { option: number, choice: message };
+    }
     // Delivered before anything is awaited: settling the wait also clears its 20-minute timer at once,
     // so the timer can't give the head an automatic answer while this reply is being saved.
     const at = new Date(this.now()).toISOString();
-    active.answer(args.message);
-    await this.options.store.update(job.id, { replies: [...job.replies, { at, message: args.message }] }).catch(error => this.options.log?.(`[heads] ${job.id}: couldn't save the lead's reply: ${error instanceof Error ? error.message : String(error)}`));
+    active.answer(message);
+    await this.options.store.update(job.id, { replies: [...job.replies, { at, message, ...(picked ?? {}) }] }).catch(error => this.options.log?.(`[heads] ${job.id}: couldn't save the lead's reply: ${error instanceof Error ? error.message : String(error)}`));
     return { job_id: job.id, delivered: true };
   }
 
@@ -651,6 +693,8 @@ export class HelperService {
   private async done(jobId: string, args: Record<string, unknown>, signal?: AbortSignal) {
     const job = this.options.store.get(jobId);
     if (!job || job.state !== 'running') throw new Error(`This head can't report done while it is ${job?.state ?? 'unknown'}.`);
+    // Before anything else, and before any attempt is counted: a refusal here costs the head nothing.
+    const headline = parseHeadline(args.headline);
     if (typeof args.summary !== 'string' || !args.summary.trim()) throw new Error('summary is required.');
     const summary = clip(args.summary.trim(), 8000);
     const worktree = job.worktree!, base = job.baseCommit!;
@@ -711,7 +755,7 @@ export class HelperService {
         // anything: its summary is the result, and with nothing to check no gate runs.
         if (this.active.get(jobId)?.role?.changes !== 'optional') return { accepted: false, message: 'You have not changed anything yet. Make the changes, then call hydra_done again.' };
         await this.options.store.transition(jobId, 'checking');
-        await this.options.store.transition(jobId, 'done', undefined, { result: { summary, commit, changedFiles: [], checks: [] } });
+        await this.options.store.transition(jobId, 'done', undefined, { result: { headline, summary, commit, changedFiles: [], checks: [] } });
         this.changed();
         this.releaseSlot(jobId);
         return { accepted: true, message: 'Accepted: you changed nothing, so your summary is the result. Stop now.' };
@@ -750,7 +794,7 @@ export class HelperService {
     // Step A: a head has no override, so this is passed/partial/none/none-chosen or, for
     // an empty checks list that isn't from "no gates configured" (there shouldn't be one here — floor.gates.length was checked), undefined.
     const status = evidenceStatus({ checks, configured: gatesConfigured(gates.source, floor.gates.length + floor.notRun.length) });
-    await this.options.store.transition(jobId, 'done', undefined, { result: { summary, commit, changedFiles, checks, ...(note ? { note } : {}), ...(status ? { status } : {}) } });
+    await this.options.store.transition(jobId, 'done', undefined, { result: { headline, summary, commit, changedFiles, checks, ...(note ? { note } : {}), ...(status ? { status } : {}) } });
     this.changed();
     this.releaseSlot(jobId);
     return { accepted: true, message: `Accepted. Your work is recorded for the lead.${note ? ` ${note}` : ''} Stop now.` };
@@ -796,14 +840,18 @@ export class HelperService {
     if (!job || job.state !== 'running' || !active) throw new Error(`This head can't ask a question while it is ${job?.state ?? 'unknown'}.`);
     const reason = typeof args.reason === 'string' && args.reason.trim() ? clip(args.reason.trim(), 2000) : 'Blocked.';
     const question = typeof args.question === 'string' && args.question.trim() ? clip(args.question.trim(), 2000) : reason;
+    // Refused with the reason before the job reads as blocked, so the head can ask again at once.
+    const options = parseStuckOptions(args.options);
+    const recommended = recommendedOption(options);
     // O7: nobody answers an unattended plan's heads, so Hydra does at once, and says so on the job, in the report and in the audit log.
     const plan = this.options.planBoard?.jobPlan(jobId);
     if (plan && this.options.planBoard?.unattended?.(plan.planId)) {
-      await this.options.store.transition(jobId, 'blocked', reason, { question });
-      await this.options.store.transition(jobId, 'running', 'Answered automatically: nobody is watching this unattended plan.', { question: undefined });
-      await this.recordAutoAnswer(jobId, question, unattendedAnswer, 'unattended');
+      const answer = recommended ? unattendedChoice(recommended.text) : unattendedAnswer;
+      await this.options.store.transition(jobId, 'blocked', reason, { question, ...(options ? { options } : {}) });
+      await this.options.store.transition(jobId, 'running', 'Answered automatically: nobody is watching this unattended plan.', { question: undefined, options: undefined });
+      await this.recordAutoAnswer(jobId, question, answer, 'unattended', recommended);
       this.changed();
-      return { answered: true, automatic: true, answer: unattendedAnswer };
+      return { answered: true, automatic: true, answer, ...(recommended ? { option: recommended.option } : {}) };
     }
     const waitMs = this.options.questionWaitMs ?? headQuestionWaitMs;
     // Ready for an answer before the job reads as blocked, so a reply that arrives the moment it does is taken.
@@ -819,7 +867,7 @@ export class HelperService {
       timer.unref?.();
       signal.addEventListener('abort', () => settle({ none: 'ended' }), { once: true });
     });
-    try { await this.options.store.transition(jobId, 'blocked', reason, { question }); }
+    try { await this.options.store.transition(jobId, 'blocked', reason, { question, ...(options ? { options } : {}) }); }
     catch (error) { active.answer?.(undefined as unknown as string); throw error; }
     active.blockedSince = this.now();
     this.changed();
@@ -828,7 +876,7 @@ export class HelperService {
     const current = this.options.store.get(jobId)!;
     if (current.state !== 'blocked') return { answered: false, message: 'No answer is coming: this head was stopped. Stop now.' };
     if ('reply' in answer) {
-      await this.options.store.transition(jobId, 'running', 'The lead answered.', { question: undefined });
+      await this.options.store.transition(jobId, 'running', 'The lead answered.', { question: undefined, options: undefined });
       this.changed();
       return { answered: true, answer: answer.reply };
     }
@@ -836,21 +884,22 @@ export class HelperService {
     // its CLI) while the head still runs. It goes back to running rather than failing: its work so far is kept, it
     // can usually decide within its brief, and hydra_done works again. Left blocked, every hydra_done was refused
     // and the head burned its whole work clock doing nothing.
-    const auto = noAnswerReply(answer.none, waitMs);
-    await this.options.store.transition(jobId, 'running', answer.none === 'timeout' ? `No answer within ${waitDuration(waitMs)}; carrying on without one.` : 'Its question\'s call ended with no answer; carrying on without one.', { question: undefined });
-    await this.recordAutoAnswer(jobId, current.question ?? question, auto, 'no-answer');
+    const auto = noAnswerReply(answer.none, waitMs, recommended?.text);
+    await this.options.store.transition(jobId, 'running', answer.none === 'timeout' ? `No answer within ${waitDuration(waitMs)}; carrying on without one.` : 'Its question\'s call ended with no answer; carrying on without one.', { question: undefined, options: undefined });
+    await this.recordAutoAnswer(jobId, current.question ?? question, auto, 'no-answer', recommended);
     this.changed();
-    return { answered: true, automatic: true, answer: auto };
+    return { answered: true, automatic: true, answer: auto, ...(recommended ? { option: recommended.option } : {}) };
   }
 
   /** A question Hydra answered itself: on the job's replies (so the report and hydra_get_head show it), in the log and in the audit log. */
-  private async recordAutoAnswer(jobId: string, question: string, message: string, auto: NonNullable<JobReply['auto']>): Promise<void> {
+  private async recordAutoAnswer(jobId: string, question: string, message: string, auto: NonNullable<JobReply['auto']>, chose?: { option: number; text: string }): Promise<void> {
     const job = this.options.store.get(jobId);
     if (!job || finalJobStates.has(job.state)) return;
-    await this.options.store.update(jobId, { replies: [...job.replies, { at: new Date(this.now()).toISOString(), message, auto, question }] });
+    await this.options.store.update(jobId, { replies: [...job.replies, { at: new Date(this.now()).toISOString(), message, auto, question, ...(chose ? { option: chose.option, choice: chose.text } : {}) }] });
     const why = auto === 'unattended' ? 'nobody is watching this unattended plan' : 'no answer came';
-    this.options.log?.(`[heads] ${jobId}: answered its question automatically (${why})`);
-    this.options.audit?.({ kind: 'auto', what: 'head question answered automatically', detail: `${why}: ${clip(question, 300)}`, jobId });
+    const picked = chose ? `; chose its recommended option ${chose.option}: ${clip(chose.text, 150)}` : '';
+    this.options.log?.(`[heads] ${jobId}: answered its question automatically (${why})${picked}`);
+    this.options.audit?.({ kind: 'auto', what: 'head question answered automatically', detail: `${why}: ${clip(question, 300)}${picked}`, jobId });
   }
 
   private async progress(jobId: string, args: Record<string, unknown>) {
@@ -1028,7 +1077,7 @@ export class HelperService {
     if (await this.limitReached(id)) return;
     if (!job.nudged) {
       await this.options.store.update(id, { nudged: true });
-      const sent = await active.run.send('You stopped without reporting to Hydra. Call hydra_done with a summary (Hydra commits your work), or call hydra_stuck with one clear question. Do it now.');
+      const sent = await active.run.send('You stopped without reporting to Hydra. Call hydra_done with a headline and a summary (Hydra commits your work), or call hydra_stuck with one clear question. Do it now.');
       if (sent) return;
     }
     await this.finish(id, 'failed', 'The head stopped without calling hydra_done or hydra_stuck.');
@@ -1492,11 +1541,11 @@ export class HelperService {
       job_id: job.id, title: job.title, state: job.state, provider: job.provider,
       ...(job.role ? { role: job.role.ref, role_title: job.role.title } : {}),
       ...(job.branch ? { branch: job.branch } : {}), ...(job.worktree ? { worktree: job.worktree } : {}), ...(job.baseCommit ? { base_commit: job.baseCommit } : {}),
-      ...(job.progress ? { progress: job.progress } : {}), ...(job.question && job.state === 'blocked' ? { question: job.question } : {}),
+      ...(job.progress ? { progress: job.progress } : {}), ...(job.question && job.state === 'blocked' ? { question: job.question, ...(job.options?.length ? { options: job.options.map((option, index) => ({ option: index + 1, text: option.text, ...(option.recommended ? { recommended: true } : {}) })) } : {}) } : {}),
       // When nobody answers (docs/Heads.md): the questions Hydra answered itself, so the lead sees the head carried on.
-      ...(job.replies.some(reply => reply.auto) ? { auto_answered: job.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto, ...(reply.question ? { question: reply.question } : {}) })) } : {}),
+      ...(job.replies.some(reply => reply.auto) ? { auto_answered: job.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto, ...(reply.question ? { question: reply.question } : {}), ...(reply.option ? { option: reply.option, choice: reply.choice } : {}) })) } : {}),
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
-      ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
+      ...(job.result ? { ...(job.result.headline ? { headline: job.result.headline } : {}), summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
       // O9: when it moved between states, and why (the benchmark times each job's phases and gate failures from it).
       ...(detail ? { timeline: job.history.map(event => ({ at: event.at, to: event.to, ...(event.reason ? { reason: event.reason } : {}) })) } : {}),
@@ -1692,9 +1741,9 @@ export function helperPrompt(job: Pick<Job, 'id' | 'title' | 'brief' | 'writeSco
     '- Nobody will approve anything for you. Tools you are not allowed to use are denied; work around them.',
     ...headWorkingGuidance({ provider: job.provider, shellOff: !!shellOff, hasCommandGate: !!context?.hasCommandGate }).map(line => `- ${line}`),
     ...(shellOff ? [`- Your shell is off: Codex's Windows sandbox isn't available (${shellOff}). Hydra's gates run the tests.`] : []),
-    '- When you are finished, call the hydra_done tool with a summary. Hydra commits your changes for you, so don\'t commit yourself: git commands that write (commit, checkout, config) may fail in your sandbox. Hydra then runs the project\'s gates on the changes (its checks, and possibly a review by another agent), and tells you if anything must be fixed.',
+    '- When you are finished, call the hydra_done tool with a headline (one plain sentence, at most 110 characters, saying what happened and what is left to decide, if anything) and a summary. Hydra commits your changes for you, so don\'t commit yourself: git commands that write (commit, checkout, config) may fail in your sandbox. Hydra then runs the project\'s gates on the changes (its checks, and possibly a review by another agent), and tells you if anything must be fixed.',
     ...(role?.changes === 'optional' ? ['- Your role may finish without changing any file: then your summary is the result, so put everything the lead needs in it.'] : []),
-    '- If you cannot continue without a decision, call hydra_stuck with one clear question. The answer comes back as the tool result.',
+    '- If you cannot continue without a decision, call hydra_stuck with one clear question. The answer comes back as the tool result. When the answer is a choice, add one to four options (at most 110 characters each, exactly one marked recommended, each something you could act on without asking again): they can be picked in one step, and if nobody answers in time Hydra goes with the recommended one.',
     '- Never stop without calling hydra_done or hydra_stuck.',
   ].join('\n');
 }
