@@ -259,6 +259,8 @@ export function formatDoneTiming(jobId: string, totalMs: number, steps: readonly
 
 export class HelperService {
   private readonly active = new Map<string, Active>();
+  /** The concurrency slots in use: a head holds one from the moment dispatch picks it until its work is accepted or it reaches a final state, not until its process exits. A Set, so a slot is never released twice. */
+  private readonly slots = new Set<string>();
   /** Every process Hydra started for a helper or its checks. None of them, or their children, may act as a lead. */
   private readonly helperPids = new Set<number>();
   private readonly waiters = new Set<() => void>();
@@ -881,23 +883,43 @@ export class HelperService {
   private async dispatchQueued(): Promise<void> {
     // 5.3: stopped means no queued head starts, ever, until Resume Agents.
     if (this.options.stop?.isStopped()) return;
-    {
-      for (const listed of this.list().filter(item => item.state === 'queued').sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-        // Each job is judged on its current state, and one job's trouble never stops the rest.
-        const job = this.options.store.get(listed.id);
-        if (!job || job.state !== 'queued') continue;
-        try {
-          const dependencies = job.dependsOn.map(id => this.options.store.get(id));
-          // A dependency that stopped on a usage limit can still be continued in the other provider
-          // (docs/internal/Plan_Lanes_Plan.md, decision 7), so its dependents wait for it instead of failing.
-          const broken = dependencies.find(dependency => !dependency || dependency.state === 'cancelled' || (dependency.state === 'failed' && !dependency.limitHit));
-          if (broken) { await this.options.store.transition(job.id, 'failed', `A job it depends on did not finish (${broken?.id ?? 'missing'}).`); this.changed(); continue; }
-          if (dependencies.some(dependency => dependency!.state !== 'done')) continue;
-          if (this.disposed || this.active.size >= Math.max(1, this.options.maxConcurrent())) continue;
-          await this.launch(job);
-        } catch (error) { this.options.log?.(`[heads] ${job.id}: ${error instanceof Error ? error.message : String(error)}`); }
-      }
+    const launches: Promise<void>[] = [];
+    for (const listed of this.list().filter(item => item.state === 'queued').sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+      // Each job is judged on its current state, and one job's trouble never stops the rest.
+      const job = this.options.store.get(listed.id);
+      if (!job || job.state !== 'queued') continue;
+      try {
+        const dependencies = job.dependsOn.map(id => this.options.store.get(id));
+        // A dependency that stopped on a usage limit can still be continued in the other provider
+        // (docs/internal/Plan_Lanes_Plan.md, decision 7), so its dependents wait for it instead of failing.
+        const broken = dependencies.find(dependency => !dependency || dependency.state === 'cancelled' || (dependency.state === 'failed' && !dependency.limitHit));
+        if (broken) { await this.options.store.transition(job.id, 'failed', `A job it depends on did not finish (${broken?.id ?? 'missing'}).`); this.changed(); continue; }
+        if (dependencies.some(dependency => dependency!.state !== 'done')) continue;
+        if (this.disposed || this.slotsInUse() >= Math.max(1, this.options.maxConcurrent())) continue;
+        // The slot is taken here, before anything is awaited, so heads launching side by side never overbook the cap.
+        this.slots.add(job.id);
+        launches.push(this.launch(job).then(
+          () => { if (finalJobStates.has(this.options.store.get(job.id)?.state ?? 'failed')) this.releaseSlot(job.id); },
+          error => { this.releaseSlot(job.id); this.options.log?.(`[heads] ${job.id}: ${error instanceof Error ? error.message : String(error)}`); },
+        ));
+      } catch (error) { this.options.log?.(`[heads] ${job.id}: ${error instanceof Error ? error.message : String(error)}`); }
     }
+    // Heads that fit the free slots start together; one that fails to launch frees its own slot and fails only itself.
+    await Promise.all(launches);
+  }
+
+  /** Slots held by a head still working. One whose job is final or gone is dropped here too, so a missed release can't leak a slot. */
+  private slotsInUse(): number {
+    for (const id of [...this.slots]) {
+      const state = this.options.store.get(id)?.state;
+      if (!state || finalJobStates.has(state)) this.slots.delete(id);
+    }
+    return this.slots.size;
+  }
+
+  /** Free a head's slot and start whatever is queued behind it. Safe to call again: a second call finds nothing to free. */
+  private releaseSlot(id: string): void {
+    if (this.slots.delete(id)) void this.dispatch();
   }
 
   private async launch(job: Job): Promise<void> {

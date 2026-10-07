@@ -23,7 +23,7 @@ import type { AuditEvent } from '../src/core/audit';
 type Script = (helper: { spec: HelperRunSpec; activity: (value: HeadActivity | (() => HeadActivity) | undefined) => void; onNudge: (handler: () => void) => void; call: (tool: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; providerWait: (wait: ProviderWait | undefined, waitedMs?: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
 const noIsolation = async (): Promise<AgentIsolation> => ({ env: {}, codexArgs: [], claudePlugins: [] });
-async function fixture(options: { script: Script; questionWaitMs?: number; silence?: HelperServiceOptions['silence']; audit?: HelperServiceOptions['audit']; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard']; defaultProvider?: HelperServiceOptions['defaultProvider'] }) {
+async function fixture(options: { script: Script; questionWaitMs?: number; silence?: HelperServiceOptions['silence']; audit?: HelperServiceOptions['audit']; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard']; defaultProvider?: HelperServiceOptions['defaultProvider']; launchDelayMs?: number; failLaunchFor?: string }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -39,12 +39,13 @@ async function fixture(options: { script: Script; questionWaitMs?: number; silen
   const port = await endpoint.start();
   const runs: HelperRunSpec[] = [];
   const logs: string[] = [];
+  const launchTimes: number[] = [];
   // A silent head (headSilence.ts): what the watchdog did to the fake runs.
   const nudges: string[] = [];
   let stalls = 0;
   service = new HelperService({
     store, endpoint, leadFolder: repo, leadKey: 'window', worktreeRoot: () => path.join(root, 'worktrees'),
-    executable: async provider => `fake-${provider}`, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
+    executable: async provider => { launchTimes.push(Date.now()); if (options.launchDelayMs) await new Promise(resolve => setTimeout(resolve, options.launchDelayMs)); return `fake-${provider}`; }, bridge: { command: 'hydra.exe', args: ['hydra-mcp.cjs'] },
     logDirectory: path.join(root, 'logs'), maxConcurrent: () => options.maxConcurrent ?? 2, now: options.now, watchdogMs: 20,
     // HSEC-71's isolation, emptied: no test reads your own Claude or Codex folders (tests/agentHome.test.ts covers it).
     gateRuntime: { isolation: noIsolation, ...options.gateRuntime }, agentIsolation: noIsolation,
@@ -52,6 +53,7 @@ async function fixture(options: { script: Script; questionWaitMs?: number; silen
     gates: options.gatesLoader, questionWaitMs: options.questionWaitMs, silence: options.silence, audit: options.audit,
     log: line => logs.push(line), defaultProvider: options.defaultProvider,
     startRun: spec => {
+      if (options.failLaunchFor && spec.prompt.includes(options.failLaunchFor)) throw new Error('launch boom');
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
       const waitListeners: ((wait: ProviderWait | undefined, waitedMs: number) => void)[] = [];
@@ -84,7 +86,7 @@ async function fixture(options: { script: Script; questionWaitMs?: number; silen
   const call = (tool: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; result?: any; error?: string }> => callHelperEndpoint(port, lead, tool, args);
   const start = async (key: string, extra: Record<string, unknown> = {}): Promise<any> => (await call('hydra_start_head', { title: `Job ${key}`, brief: 'Do the thing.', write_scope: ['src/'], idempotency_key: key, ...extra })).result;
   const wait = async (ids: string[], max = 90): Promise<any> => (await call('hydra_wait_for_heads', { job_ids: ids, max_wait_s: max })).result;
-  return { root, repo, store, service, endpoint, runs, logs, nudges, stalls: () => stalls, call, start, wait, close: async () => { await service.dispose(); await endpoint.close(); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); } };
+  return { root, repo, store, service, endpoint, runs, logs, launchTimes, nudges, stalls: () => stalls, call, start, wait, close: async () => { await service.dispose(); await endpoint.close(); await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); } };
 }
 
 /** Wait for a condition instead of sleeping a fixed time; creating a worktree is slow on Windows. */
@@ -1633,5 +1635,40 @@ test('a plan in a project with no gates tells the lead so, and what .hydra/gates
     await writeFile(path.join(f.repo, '.hydra', 'gates.json'), JSON.stringify({ gates: [{ id: 'test', type: 'command', command: ['npm', 'test'] }] }));
     const gated = await call('hydra_plan_create', { title: 'C', jobs: [{ key: 'c', title: 'C', brief: 'Do c.', write_scope: ['src/'] }], idempotency_key: 'k-gated' });
     assert.equal((gated.result as any).gates_note, undefined);
+  } finally { await f.close(); }
+});
+
+test('heads queued behind a finished one launch together: three launches that each take 600ms take about 600ms, not 1800ms', async () => {
+  const delay = 600;
+  const f = await fixture({ maxConcurrent: 3, launchDelayMs: delay, script: async helper => {
+    if (!helper.spec.prompt.includes('Job first')) return;
+    await helper.commit('src/first.ts', 'export const first = 1;\n');
+    assert.equal((await helper.call('hydra_done', { summary: 'First' })).result.accepted, true);
+    helper.exit(0);
+  } });
+  try {
+    const first = await f.start('first');
+    const rest = [await f.start('b', { depends_on: [first.job_id] }), await f.start('c', { depends_on: [first.job_id] }), await f.start('d', { depends_on: [first.job_id] })];
+    await until(() => f.store.get(first.job_id)?.state === 'done', 'the first head done');
+    const doneAt = Date.now();
+    await until(() => rest.every(head => f.store.get(head.job_id)?.state === 'running'), 'all three dependents running');
+    const dispatchMs = Date.now() - doneAt;
+    const starts = f.launchTimes.slice(-3);
+    const spread = Math.max(...starts) - Math.min(...starts);
+    console.log(`[dispatch] 3 queued heads, 3 free slots, ${delay}ms per launch: all running ${dispatchMs}ms after the first was done; launches began within ${spread}ms of each other`);
+    assert.ok(spread < delay / 2, `the three launches began together (spread ${spread}ms)`);
+  } finally { await f.close(); }
+});
+
+test('a head whose launch fails fails alone: its slot goes to the next queued head and the cap holds', async () => {
+  const f = await fixture({ maxConcurrent: 2, failLaunchFor: 'Job bad', script: async () => {} });
+  try {
+    const bad = await f.start('bad'), good = await f.start('good'), later = await f.start('later'), last = await f.start('last');
+    await until(() => f.store.get(bad.job_id)?.state === 'failed', 'the bad launch failed');
+    assert.match(f.store.get(bad.job_id)?.reason ?? '', /Could not start: launch boom/);
+    await until(() => f.runs.length === 2, 'the freed slot went on');
+    assert.equal(f.store.get(later.job_id)?.state, 'running');
+    assert.equal(f.store.get(last.job_id)?.state, 'queued', 'two run at once, the cap');
+    assert.equal(f.runs.length, 2);
   } finally { await f.close(); }
 });
