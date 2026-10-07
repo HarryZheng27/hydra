@@ -175,6 +175,14 @@ function Assert-EqualVersionRefused([string]$label) {
   if ((Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -ne $beforeHash -or (Get-ItemProperty -LiteralPath $uninstallKey).DisplayVersion -ne $beforeVersion -or (Test-Path -LiteralPath $desktopShortcut) -ne $beforeShortcut) { throw 'Equal-version refusal changed the installation.' }
   Assert-DataPreserved
 }
+# Inno's uninstaller copies itself to TEMP, starts that copy and exits, so -Wait returns while the copy may still be
+# deleting files and the registration: give it up to 30 seconds before calling anything left behind.
+function Assert-UninstallClean {
+  $left = { (Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $uninstallKey) }
+  $deadline = (Get-Date).AddSeconds(30)
+  while ((& $left) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+  if (& $left) { throw 'Uninstall left the executable, helper, shortcut, or registration behind.' }
+}
 function Remove-TestInstallation([string]$label, [string[]]$extraArgs = @(), [switch]$RemovesData) {
   $uninstaller = Join-Path $installRoot 'unins000.exe'
   if (Test-Path -LiteralPath $uninstaller) {
@@ -182,7 +190,7 @@ function Remove-TestInstallation([string]$label, [string[]]$extraArgs = @(), [sw
     if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
     if ($RemovesData) { $script:hydraDataRemoved = $true }
   }
-  if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, shortcut, or registration behind.' }
+  Assert-UninstallClean
   Assert-AppShortcutKept
   Assert-DataPreserved
 }
@@ -218,7 +226,7 @@ try {
   Get-ChildItem -LiteralPath $testRoot -Filter '*.log' | Copy-Item -Destination $logRoot
   if (Test-Path -LiteralPath $cleanupLog) { Copy-Item -LiteralPath $cleanupLog -Destination $logRoot }
 }
-if ((Test-Path -LiteralPath (Join-Path $installRoot 'Hydra.exe')) -or (Test-Path -LiteralPath (Join-Path $installRoot 'tools\HydraUpdateVerify.exe')) -or (Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Uninstall left the executable, helper, shortcut, or registration behind.' }
+Assert-UninstallClean
 Assert-AppShortcutKept
 Remove-Item -LiteralPath $appShortcut -Force
 Assert-DataPreserved
