@@ -299,7 +299,7 @@ function EvidenceChip({ lane }: { lane: LaneView }) {
   const status = lane.lastGates?.status;
   if (!status) return null;
   return <Chip tone={status === 'override' ? 'warning' : status === 'passed' ? 'good' : 'neutral'}>
-    {evidenceLabel(status)}{lane.gatesStale ? ' — Checks are for an older commit' : ''}
+    {evidenceLabel(status, lane.lastGates?.results)}{lane.gatesStale ? ' — Checks are for an older commit' : ''}
   </Chip>;
 }
 

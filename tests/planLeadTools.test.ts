@@ -54,6 +54,14 @@ test('validatePlan: refuses a malformed leadOrigin', () => {
   assert.throws(() => validatePlan(plan), /Invalid leadOrigin/);
 });
 
+test('a lead plan keeps the agent of its lead for its heads to fall back to; an unknown one is refused', () => {
+  const plan = planFromLeadInput({ title: 'Codex lead', jobs: [leadJob('a', { role: 'coding/builder' })] }, { ...origin, provider: 'codex' });
+  assert.equal(plan.leadOrigin?.provider, 'codex');
+  assert.equal(plan.jobs[0]!.provider, undefined, 'a role job stays unset, so the agent its role names can still win');
+  validatePlan(plan);
+  assert.throws(() => validatePlan({ ...plan, leadOrigin: { ...origin, provider: 'gemini' as never } }), /Invalid leadOrigin/);
+});
+
 test('findPlanByIdempotencyKey: matches only the same lead session and key; a canvas-drafted plan (no leadOrigin) never matches', () => {
   const a = planFromLeadInput({ title: 'A', jobs: [leadJob('a')] }, { leadSessionId: 'lead-1', idempotencyKey: 'k1' });
   const b = planFromLeadInput({ title: 'B', jobs: [leadJob('a')] }, { leadSessionId: 'lead-2', idempotencyKey: 'k1' });

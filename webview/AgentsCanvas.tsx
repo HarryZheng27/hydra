@@ -399,7 +399,7 @@ function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, o
       {!!head.checks.length && <div className="canvas-node-gates" aria-label="Gate results">
         {head.checks.map(check => { const chip = gateChip(check); return <span key={chip.id} className={`gate-chip tone-${chip.tone}`} title={chip.title}>{chip.label}</span>; })}
       </div>}
-      {head.status && <p className="canvas-node-evidence">{evidenceLabel(head.status)}</p>}
+      {head.status && <p className="canvas-node-evidence">{evidenceLabel(head.status, head.checks)}</p>}
       {!!conflictNames?.length && <p className="canvas-node-conflict" title={(head.conflicts || []).flatMap(conflict => conflict.files).join(', ')}>Conflicts with {conflictNames.join(', ')}</p>}
       {head.integrationConflict && <p className="canvas-node-conflict" title={head.integrationConflict.files.join(', ')}>Conflicts with {head.integrationConflict.branch} (what landed since it started)</p>}
       <div className="canvas-node-foot">
@@ -567,7 +567,7 @@ function PlanRunningJobSlot({ item, onOpenMenu, onOpenLane, onPlan }: {
         {!!lane.lastGates?.results.length && <div className="canvas-node-gates" aria-label="Gate results">
           {lane.lastGates.results.map(check => { const chip = gateChip(check); return <span key={chip.id} className={`gate-chip tone-${chip.tone}`} title={chip.title}>{chip.label}</span>; })}
         </div>}
-        {lane.lastGates?.status && <p className="canvas-node-evidence">{evidenceLabel(lane.lastGates.status)}{lane.gatesStale ? ' (older commit)' : ''}</p>}
+        {lane.lastGates?.status && <p className="canvas-node-evidence">{evidenceLabel(lane.lastGates.status, lane.lastGates.results)}{lane.gatesStale ? ' (older commit)' : ''}</p>}
         <div className="canvas-node-foot">
           <code title={lane.branch}>{lane.branch}</code>
           <button className="canvas-node-more" aria-label={`More actions for ${job.title}`} onClick={event => { event.stopPropagation(); onOpenMenu(event.clientX, event.clientY); }}>⋯</button>
