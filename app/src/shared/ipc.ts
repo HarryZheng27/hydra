@@ -6,6 +6,7 @@
 import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, TurnFile, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
+import type { NeedsYouItem } from '../../../src/core/needsYou';
 
 export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, TurnFile, ChatProvider, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox, LogEntry };
 
@@ -61,6 +62,8 @@ export interface PlanCardView {
 /** One project's heads and plans, as its controller last published them. */
 export interface HydraTreeMessage {
   projectId: string; heads: HeadCardView[]; plans: PlanCardView[];
+  /** What waits on the user in this project (src/core/needsYou.ts), put-offs already taken out; the window adds its chats. */
+  needsYou?: NeedsYouItem[];
   /** Whether Hydra runs here: this app owns the project, or another Hydra (the IDE) does and it runs there. */
   owned: boolean;
   error?: string;

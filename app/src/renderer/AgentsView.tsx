@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ClientMessage, HelperJobView, LaneLimitOfferView, LaneServerMessage, LaneView, Snapshot } from '../../../src/core/model';
 import type { Plan } from '../../../src/core/plans';
 import type { JobCheckResult } from '../../../src/core/jobs';
@@ -9,6 +9,8 @@ import { emitLaneEvent } from '../../../webview/laneBus';
 import '../../../webview/agents-canvas.css';
 import '../../../webview/lanes.css';
 import type { HydraControl, HydraStopState, Project } from '../shared/ipc';
+import type { NeedsYouItem } from '../../../src/core/needsYou';
+import type { NeedsYouAction } from '../../../src/core/needsYouList';
 
 /**
  * The Agents view (G5 milestone 3): the IDE's own canvas of heads, plans and lanes (webview/AgentsBody.tsx), for the
@@ -16,7 +18,16 @@ import type { HydraControl, HydraStopState, Project } from '../shared/ipc';
  * controller sends arrives over `onHydraUi`, and what the view asks goes back through `agentsMessage`, where the
  * controller parses and checks it. This replaces webview/index.tsx's App, which talks to VS Code's webview instead.
  */
-export function AgentsView({ project }: { project: Project }) {
+export function AgentsView({ project, needsYou, target, onPutOff, onUndo, onOpenChat }: {
+  project: Project;
+  /** What waits on the user in this project, chats included, in order (Needs_You_Plan.md, Phase 5). */
+  needsYou: readonly NeedsYouItem[];
+  /** The sidebar's Needs you group asked for a tab. */
+  target?: { view: AgentsViewName; at: number };
+  onPutOff: (item: NeedsYouItem, until: number) => void;
+  onUndo: (item: NeedsYouItem) => void;
+  onOpenChat: (chatId: string) => void;
+}) {
   const send = (message: ClientMessage) => { void window.hydra.agentsMessage(project.id, message).catch(error => setError(error instanceof Error ? error.message : String(error))); };
   const [snapshot, setSnapshot] = useState<Snapshot>({ busy: false, mode: 'agents' });
   const [heads, setHeads] = useState<HelperJobView[]>([]);
@@ -46,7 +57,12 @@ export function AgentsView({ project }: { project: Project }) {
     const timer = setInterval(read, 4000);
     return () => { current = false; clearInterval(timer); };
   }, [project.id]);
-  const changeView = (next: AgentsViewName, focus?: string) => { setView(next); send({ type: 'view', view: next, ...(focus ? { focus } : {}) }); };
+  // The Needs you tab opens by default when it has items, until a view is picked (here or by the controller).
+  const picked = useRef(false);
+  const changeView = (next: AgentsViewName, focus?: string) => { picked.current = true; setView(next); send({ type: 'view', view: next, ...(focus ? { focus } : {}) }); };
+  useEffect(() => { if (needsYou.length && !picked.current) { picked.current = true; setView('needs'); } }, [needsYou.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (target) changeView(target.view); }, [target?.at]);
 
   useEffect(() => {
     // A different project: its own state from scratch, then its controller's snapshot.
@@ -73,6 +89,7 @@ export function AgentsView({ project }: { project: Project }) {
         return { ...current, [lane.id]: { done: lane.done, ...(lane.running ? { running: lane.running } : {}) } };
       });
       if (lane?.type === 'show') {
+        picked.current = true;
         setView(lane.view);
         if (lane.focus) { if (lane.view === 'lanes') setLaneFocus(lane.focus); else setHeadFocus({ id: lane.focus, at: Date.now() }); }
       }
@@ -99,7 +116,8 @@ export function AgentsView({ project }: { project: Project }) {
       <AgentsBody view={view} onViewChange={changeView} heads={heads} dismissedTray={dismissedTray} plans={plans} lanes={lanes} planJobs={planJobs} terminals={terminals} defaultProvider={snapshot.defaultProvider}
         laneError={laneError} laneFocus={laneFocus} onLaneFocused={() => setLaneFocus(undefined)} laneLimits={laneLimits} laneSwitchCountdowns={laneSwitchCountdowns} laneGates={laneGates} roles={snapshot.roles} openNewPlanAt={newPlanSignal} focusHead={headFocus}
         onAction={(type, jobId) => send({ type, jobId } as ClientMessage)} onPlan={send} onStopAll={() => send({ type: 'helperStopAll' })}
-        onOpenLane={id => { setLaneFocus(id); changeView('lanes', id); }} onSend={send} />
+        onOpenLane={id => { setLaneFocus(id); changeView('lanes', id); }} onSend={send}
+        needsYou={needsYou} onNeedsYouPutOff={onPutOff} onNeedsYouUndo={onUndo} onNeedsYouAction={(action: NeedsYouAction) => { if (action.kind === 'chat') onOpenChat(action.chatId); }} />
     </section>
   );
 }

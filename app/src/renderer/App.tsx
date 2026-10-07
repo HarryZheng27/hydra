@@ -7,6 +7,10 @@ import { ConfirmDelete, deleteConfirmed } from './ConfirmDelete';
 import { nextStatus, type ChatStatus } from './chatStatus';
 import type { AppInfo, AppSettings, AppState, ChatAnswer, ChatDefaults, ChatEvent, HydraTreeMessage, ChatEventsMessage, ChatRecord, ClaudePermissionMode, CodexApprovals, OnboardingReport, Project, BrowserState, ShellTabInfo } from '../shared/ipc';
 import { mergePush } from './chatModel';
+import type { NeedsYouItem } from '../../../src/core/needsYou';
+import { PutOffs } from '../../../src/core/needsYouList';
+import { isChatItem, needsYouItems, putOffKey, readChatPutOffs, saveChatPutOffs } from './needsYou';
+import type { AgentsViewName } from '../../../webview/AgentsBody';
 import { resolveTheme, themeVariables, type ThemeName } from '../shared/theme';
 import { ChatPane } from './ChatPane';
 import { EmptyState, type KnownModels, type StartRequest } from './EmptyState';
@@ -161,6 +165,34 @@ export function App() {
   const [defaults, setDefaults] = useState<Record<string, ChatDefaults>>({});
   /** Each running project's heads and plans (G5), by project id. */
   const [trees, setTrees] = useState<Record<string, HydraTreeMessage>>({});
+  // ---- Needs_You_Plan.md, Phase 5: the Needs you list. Chats put off are kept here; every other item's put-off is its project's. ----
+  const [chatPutOffs, setChatPutOffs] = useState<PutOffs>(() => readChatPutOffs());
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(timer); }, []);
+  const needsYou = useMemo(
+    () => needsYouItems({ projects: state?.projects ?? [], trees, chats, statuses, chatPutOffs, now: clock }),
+    [state?.projects, trees, chats, statuses, chatPutOffs, clock]);
+  /** Where the Agents view should show next (a click on the sidebar's Needs you group), and when. */
+  const [agentsTarget, setAgentsTarget] = useState<{ projectId: string; view: AgentsViewName; at: number }>();
+  const putOffItem = (item: NeedsYouItem, until: number) => {
+    if (isChatItem(item)) {
+      const next = new PutOffs(chatPutOffs.toJSON()); next.putOff(putOffKey(item), until);
+      saveChatPutOffs(next); setChatPutOffs(next); return;
+    }
+    void window.hydra.agentsMessage(item.projectId, { type: 'needsYouPutOff', key: putOffKey(item), until }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  };
+  const undoPutOff = (item: NeedsYouItem) => {
+    if (isChatItem(item)) {
+      const next = new PutOffs(chatPutOffs.toJSON()); next.remove(putOffKey(item));
+      saveChatPutOffs(next); setChatPutOffs(next); return;
+    }
+    void window.hydra.agentsMessage(item.projectId, { type: 'needsYouUndo', key: putOffKey(item) }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  };
+  /** A chat opens in place; anything else opens its project's Agents view on the Needs you tab, where its actions are. */
+  const openNeedsYou = (item: NeedsYouItem) => {
+    if (isChatItem(item)) { setMode('chat'); showChat.current(item.sourceId); return; }
+    setMode('agents'); setView({ kind: 'project', id: item.projectId }); setAgentsTarget({ projectId: item.projectId, view: 'needs', at: Date.now() });
+  };
   /** Pushes that arrive while a chat's log is being read, merged once it is in. */
   const opening = useRef(new Map<string, ChatEventsMessage[]>());
   const reopen = useRef<(id: string) => void>(() => undefined);
@@ -412,6 +444,8 @@ export function App() {
               projects={state.projects}
               chats={chats}
               statuses={statuses}
+              needsYou={needsYou}
+              onOpenNeedsYou={openNeedsYou}
               view={view}
               user={settings?.displayName ?? info?.user}
               agents={signedIn}
@@ -438,7 +472,7 @@ export function App() {
           {problems.map(problem => <div className="banner warning" role="alert" key={problem}>{problem}</div>)}
           {error && <div className="banner error" role="alert">{error}{/Your agents/.test(error) && <> <button className="link" onClick={() => setView({ kind: 'settings' })}>Open Your agents</button></>}</div>}
           {mode === 'agents'
-            ? (project?.trustedAt ? <AgentsView key={project.id} project={project} /> : <section className="empty"><h1>Agents</h1><p>{project ? 'Trust this project to run heads, plans and lanes in it: start a chat there.' : 'Open a project to see its heads, plans and lanes.'}</p></section>)
+            ? (project?.trustedAt ? <AgentsView key={project.id} project={project} needsYou={needsYou.filter(item => item.projectId === project.id)} target={agentsTarget?.projectId === project.id ? agentsTarget : undefined} onPutOff={putOffItem} onUndo={undoPutOff} onOpenChat={id => { setMode('chat'); showChat.current(id); }} /> : <section className="empty"><h1>Agents</h1><p>{project ? 'Trust this project to run heads, plans and lanes in it: start a chat there.' : 'Open a project to see its heads, plans and lanes.'}</p></section>)
             : view.kind === 'settings' && settings
             ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onDisplayName={name => void run(window.hydra.setDisplayName(name), setSettings)} onWhenAway={on => void run(window.hydra.setWhenAway(on), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat

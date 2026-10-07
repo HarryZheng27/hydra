@@ -677,6 +677,15 @@ body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 .project-row.menu-open .hover-only { opacity: 1; }
 .project-row .row-menu { top: 100%; }
 .side-group { margin-bottom: 12px; }
+/* Needs you (Needs_You_Plan.md, Phase 5): the group above the projects. */
+.needs-you-count { min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--text); color: var(--primary); font-size: 11px; text-align: center; line-height: 18px; }
+.needs-you-rows { list-style: none; margin: 0; padding: 0; }
+.needs-you-row { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 4px 8px 4px 12px; border-radius: 6px; text-align: left; font-size: 13px; color: inherit; border-left: 2px solid transparent; }
+.needs-you-row:hover { background: var(--surface); }
+.needs-you-row.tier-clock { border-left-color: #e3b75a; }
+.needs-you-row.tier-decision { border-left-color: #8cc8ff; }
+.needs-you-row-kind { flex-shrink: 0; font-size: 11px; color: var(--muted); }
+.needs-you-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-group .section-head { height: 28px; padding: 0 8px; font-size: 13px; font-weight: 400; color: var(--muted); }
 .sidebar .chats { margin: 0; }
 .sidebar .chats .chat-link { height: 28px; padding: 0 8px; gap: 10px; border-radius: 8px; line-height: 28px; }

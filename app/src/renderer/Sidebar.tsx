@@ -4,12 +4,17 @@ import type { View } from './App';
 import { ChatRow } from './ChatRow';
 import type { ChatStatus } from './chatStatus';
 import { Icon } from './Icon';
+import type { NeedsYouItem } from '../../../src/core/needsYou';
+import { emptyNeedsYou, kindLabel } from '../../../src/core/needsYouList';
 
 interface Props {
   projects: Project[];
   chats: ChatRecord[];
   /** Each chat's dot: working, waiting on the user, or finished unseen (chatStatus.ts). */
   statuses?: Record<string, ChatStatus>;
+  /** Everything waiting on the user, in order (src/core/needsYou.ts): the group above the projects. */
+  needsYou?: readonly NeedsYouItem[];
+  onOpenNeedsYou?(item: NeedsYouItem): void;
   view: View;
   /** The account row: the Windows user's name and the agents that are signed in. */
   user?: string;
@@ -99,7 +104,7 @@ function ProjectGroup({ project, selected, children, onOpen, onNewChatIn, onRemo
  * Claude desktop's sidebar: search, then New, Projects, Archived and More; each project's chats under its muted label;
  * loose chats under Other; and the account row at the bottom, whose menu holds Settings.
  */
-export function Sidebar({ projects, chats: allChats, statuses = {}, view, user, agents = [], onNewChat, onOpenChat, onOpenProject, onNewChatIn, onAddProject, onClone, onRemoveProject, onOpenSettings, onRenameChat, onArchiveChat, onDeleteChat }: Props) {
+export function Sidebar({ projects, chats: allChats, statuses = {}, needsYou, onOpenNeedsYou, view, user, agents = [], onNewChat, onOpenChat, onOpenProject, onNewChatIn, onAddProject, onClone, onRemoveProject, onOpenSettings, onRenameChat, onArchiveChat, onDeleteChat }: Props) {
   const [query, setQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [more, setMore] = useState(false);
@@ -155,6 +160,16 @@ export function Sidebar({ projects, chats: allChats, statuses = {}, view, user, 
               {archived.filter(matches).length ? <ul className="chats">{archived.filter(matches).map(chat => row(chat, chat.cwd))}</ul> : <div className="sidebar-note">Nothing archived{needle ? ` matches “${query}”` : ''}.</div>}
             </div>
           : <>
+              {needsYou && <div className="side-group needs-you-group" aria-label="Needs you">
+                <div className="section-head"><span>Needs you</span>{needsYou.length > 0 && <span className="needs-you-count" aria-label={`${needsYou.length} waiting`}>{needsYou.length}</span>}</div>
+                {needsYou.length
+                  ? <ul className="chats needs-you-rows">{needsYou.slice(0, 6).map(item => <li key={item.id}>
+                      <button className={`needs-you-row tier-${item.tier}`} title={`${kindLabel[item.kind]}: ${item.title}${item.projectName ? ` (${item.projectName})` : ''}`} onClick={() => onOpenNeedsYou?.(item)}>
+                        <span className="needs-you-row-kind">{kindLabel[item.kind]}</span><span className="needs-you-row-title">{item.title}</span>
+                      </button>
+                    </li>)}{needsYou.length > 6 && <li className="sidebar-note">and {needsYou.length - 6} more in the Agents view</li>}</ul>
+                  : <div className="sidebar-note">{emptyNeedsYou}</div>}
+              </div>}
               <ul className="projects">
                 {shown.map(project => (
                   <ProjectGroup key={project.id} project={project} selected={view.kind === 'project' && view.id === project.id}
