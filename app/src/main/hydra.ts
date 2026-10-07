@@ -1,4 +1,5 @@
 import { finalJobStates } from '../../../src/core/jobs';
+import type { NeedsYouFacts } from '../../../src/core/needsYou';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -196,6 +197,13 @@ export class HydraProjects {
 
   /** Every running project's heads and plans. */
   tree(): HydraTreeMessage[] { return [...this.running.values()].map(running => running.tree); }
+
+  /** What is waiting on the user in each project this app runs Hydra for (src/core/needsYou.ts); the chats are added by the caller. */
+  needsYouFacts(now = Date.now()): NeedsYouFacts[] {
+    return [...this.running.values()]
+      .filter(running => running.project.id !== 'registration' && !running.controller.disabled)
+      .map(running => ({ projectId: running.project.id, projectName: running.project.name, ...running.controller.needsYouFacts(now) }));
+  }
 
   // ---- Connectors (G5 milestone 2): Hydra's own entry in Claude Code's and Codex's user settings ----
   private async registrar(): Promise<HydraController> {

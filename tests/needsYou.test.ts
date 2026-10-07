@@ -91,7 +91,7 @@ test('a banner names the project and the title, never a count, a question or a s
   const banner = bannerFor(item);
   assert.equal(banner.title, 'Hydra needs you in Hydra');
   assert.ok(!banner.body.includes('sk-abcdefghij1234567890'));
-  assert.equal(Object.keys(banner).sort().join(), 'body,itemId,kind,projectId,title');
+  assert.equal(Object.keys(banner).sort().join(), 'body,itemId,kind,projectId,sourceId,title');
   assert.ok(!/\d/.test(banner.title));
 });
 
@@ -102,53 +102,62 @@ const head = (id: string) => deriveNeedsYou([facts({ heads: [{ id, title: `Head 
 
 test('no banner while Hydra is focused and the user is active', () => {
   const banners = new AwayBanners();
-  assert.equal(banners.update([chat('a', 'needs')], present), undefined);
-  assert.equal(banners.update([chat('a', 'needs'), head('h')], present), undefined);
+  assert.equal(banners.update([chat('a', 'needs')], present, NOW), undefined);
+  assert.equal(banners.update([chat('a', 'needs'), head('h')], present, NOW), undefined);
 });
 
 test('one banner for three arrivals while away', () => {
   const banners = new AwayBanners();
-  const first = banners.update([chat('a')], at);
+  const first = banners.update([chat('a')], at, NOW);
   assert.equal(first?.title, 'Hydra needs you in Hydra');
   assert.equal(first?.body, 'Chat a');
-  assert.equal(banners.update([chat('a'), chat('b', 'needs')], at), undefined);
-  assert.equal(banners.update([chat('a'), chat('b', 'needs'), chat('c')], at), undefined);
+  assert.equal(banners.update([chat('a'), chat('b', 'needs')], at, NOW), undefined);
+  assert.equal(banners.update([chat('a'), chat('b', 'needs'), chat('c')], at, NOW), undefined);
 });
 
 test('a blocked head after a finished chat earns a second banner, and nothing earns a third', () => {
   const banners = new AwayBanners();
-  assert.ok(banners.update([chat('a')], at));
-  assert.equal(banners.update([chat('a'), chat('b', 'needs')], at), undefined);
-  const second = banners.update([chat('a'), chat('b', 'needs'), head('h1')], at);
+  assert.ok(banners.update([chat('a')], at, NOW));
+  assert.equal(banners.update([chat('a'), chat('b', 'needs')], at, NOW), undefined);
+  const second = banners.update([chat('a'), chat('b', 'needs'), head('h1')], at, NOW);
   assert.equal(second?.body, 'Head h1');
-  assert.equal(banners.update([chat('a'), chat('b', 'needs'), head('h1'), head('h2')], at), undefined);
-  assert.equal(banners.update([chat('a'), chat('b', 'needs'), head('h1'), head('h2'), chat('d')], at), undefined);
+  assert.equal(banners.update([chat('a'), chat('b', 'needs'), head('h1'), head('h2')], at, NOW), undefined);
+  assert.equal(banners.update([chat('a'), chat('b', 'needs'), head('h1'), head('h2'), chat('d')], at, NOW), undefined);
 });
 
 test('away because idle counts, and coming back starts a new stretch', () => {
   const banners = new AwayBanners();
   const idle = { focused: true, idleSeconds: 301 };
-  assert.ok(banners.update([chat('a')], idle));
-  assert.equal(banners.update([chat('a'), chat('b')], idle), undefined);
+  assert.ok(banners.update([chat('a')], idle, NOW));
+  assert.equal(banners.update([chat('a'), chat('b')], idle, NOW), undefined);
   // Back at the window: the stretch ends. The item is still waiting, but it was already announced.
-  assert.equal(banners.update([chat('a'), chat('b')], present), undefined);
-  assert.equal(banners.update([chat('a'), chat('b')], at), undefined);
+  assert.equal(banners.update([chat('a'), chat('b')], present, NOW), undefined);
+  assert.equal(banners.update([chat('a'), chat('b')], at, NOW), undefined);
   // A new arrival in the new stretch gets its banner.
-  assert.ok(banners.update([chat('a'), chat('b'), chat('c')], at));
+  assert.ok(banners.update([chat('a'), chat('b'), chat('c')], at, NOW));
 });
 
 test('an item that left and came back is announced again', () => {
   const banners = new AwayBanners();
-  assert.ok(banners.update([chat('a')], at));
-  assert.equal(banners.update([], at), undefined);
-  banners.update([], present);
-  assert.ok(banners.update([chat('a')], at));
+  assert.ok(banners.update([chat('a')], at, NOW));
+  assert.equal(banners.update([], at, NOW), undefined);
+  banners.update([], present, NOW);
+  assert.ok(banners.update([chat('a')], at, NOW));
+});
+
+test('an item has to wait out the grace first, so a lead about to answer never banners', () => {
+  const banners = new AwayBanners(20_000);
+  const blocked = deriveNeedsYou([facts({ heads: [{ id: 'h', title: 'Asks', state: 'blocked', since: NOW, leadWaiting: false }] })], NOW);
+  assert.equal(banners.update(blocked, at, NOW + 5_000), undefined);
+  assert.equal(banners.update([], at, NOW + 10_000), undefined);
+  assert.equal(banners.update(blocked, at, NOW + 19_999), undefined);
+  assert.equal(banners.update(blocked, at, NOW + 20_000)?.body, 'Asks');
 });
 
 test('a stretch begun with items already waiting banners once, for the most urgent', () => {
   const banners = new AwayBanners();
   const items = deriveNeedsYou([facts({ chats: [{ id: 'a', title: 'Read me', status: 'unread', since: 1 }], heads: [{ id: 'h', title: 'Asks', state: 'blocked', since: 5, leadWaiting: false }] })], NOW);
-  assert.equal(banners.update(items, present), undefined);
-  assert.equal(banners.update(items, at)?.body, 'Asks');
-  assert.equal(banners.update(items, at), undefined);
+  assert.equal(banners.update(items, present, NOW), undefined);
+  assert.equal(banners.update(items, at, NOW)?.body, 'Asks');
+  assert.equal(banners.update(items, at, NOW), undefined);
 });

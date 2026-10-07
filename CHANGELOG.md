@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **The app tells you when something needs you and you're away.** When a chat waits on you, a chat finishes while you're elsewhere, a head asks a question no lead is waiting to answer, a plan is ready to merge or stopped, an unattended plan's report is ready, or a provider's usage limit offers a way to continue, Windows shows one banner, "Hydra needs you in <project>", with the chat or plan's name. It shows only when Hydra isn't the window you're looking at or you've been idle for 5 minutes, once per stretch away, with at most one more for something on a clock (a head's question, a usage-limit offer). It never shows a question, a summary or a count, and clicking it opens the chat or the project's Agents view. Turn it off in Settings, under Notifications (`notifications.whenAway`).
+
 ## 0.29.0 (2026-10-07)
 
 - **The app shows what a turn changed.** After a turn that edited files, the chat has a card like Claude desktop's: **Edited N files** with the lines added and removed, a row per file that opens that file's diff for the turn, and **Undo**, which puts the files back as they were before the turn, leaving alone any you've edited since. The agent is told about an undo with your next message. Hydra keeps its snapshots in a private repository under its own data, never in your folder, and deletes them with the chat.

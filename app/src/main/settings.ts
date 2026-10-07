@@ -42,8 +42,13 @@ export function cleanDisplayName(value: unknown): string | undefined {
 }
 
 export function parseSettings(raw: unknown): AppSettings | undefined {
-  if (!isRecord(raw) || raw.version !== 1 || !onlyKeys(raw, ['version', 'theme', 'cliPaths', 'displayName'])) return undefined;
+  if (!isRecord(raw) || raw.version !== 1 || !onlyKeys(raw, ['version', 'theme', 'cliPaths', 'displayName', 'notifications'])) return undefined;
   if (raw.displayName !== undefined && cleanDisplayName(raw.displayName) === undefined) return undefined;
+  let notifications: AppSettings['notifications'];
+  if (raw.notifications !== undefined) {
+    if (!isRecord(raw.notifications) || !onlyKeys(raw.notifications, ['whenAway']) || (raw.notifications.whenAway !== undefined && typeof raw.notifications.whenAway !== 'boolean')) return undefined;
+    notifications = raw.notifications.whenAway === undefined ? {} : { whenAway: raw.notifications.whenAway };
+  }
   if (!themeSettings.includes(raw.theme as ThemeSetting)) return undefined;
   if (!isRecord(raw.cliPaths) || !onlyKeys(raw.cliPaths, ['claude', 'codex'])) return undefined;
   const cliPaths: AppSettings['cliPaths'] = {};
@@ -53,7 +58,7 @@ export function parseSettings(raw: unknown): AppSettings | undefined {
     if (!isAbsolutePath(value)) return undefined;
     cliPaths[provider] = value;
   }
-  return { version: 1, theme: raw.theme as ThemeSetting, cliPaths, ...(raw.displayName !== undefined ? { displayName: cleanDisplayName(raw.displayName)! } : {}) };
+  return { version: 1, theme: raw.theme as ThemeSetting, cliPaths, ...(notifications ? { notifications } : {}), ...(raw.displayName !== undefined ? { displayName: cleanDisplayName(raw.displayName)! } : {}) };
 }
 
 const MAX_PROJECTS = 500;

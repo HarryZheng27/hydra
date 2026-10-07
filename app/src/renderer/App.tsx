@@ -53,6 +53,8 @@ export function App() {
   useEffect(() => window.hydra.onHydraHost(message => {
     if (message.kind !== 'navigate') return;
     if (message.to === 'settings') { setMode('chat'); setView({ kind: 'settings' }); }
+    else if (message.to === 'chat' && message.chatId) { setMode('chat'); showChat.current(message.chatId); }
+    else if (message.to === 'agents' && message.projectId) { setMode('agents'); setView({ kind: 'project', id: message.projectId }); }
     else if (message.projectId) setView({ kind: 'project', id: message.projectId });
   }), []);
   /** Chat or Agents (G5): the title bar's switch. Agents shows the open project's heads, plans and lanes. */
@@ -162,6 +164,8 @@ export function App() {
   /** Pushes that arrive while a chat's log is being read, merged once it is in. */
   const opening = useRef(new Map<string, ChatEventsMessage[]>());
   const reopen = useRef<(id: string) => void>(() => undefined);
+  /** A banner's click opens the chat it was about. */
+  const showChat = useRef<(id: string) => void>(() => undefined);
   const systemDark = useSystemDark();
   const theme = resolveTheme(settings?.theme ?? 'system', systemDark);
 
@@ -353,6 +357,7 @@ export function App() {
     }).finally(() => opening.current.delete(id));
   };
   reopen.current = id => openChat(id, false);
+  showChat.current = id => openChat(id);
   /** A new chat in a project: main asks the user to trust the folder first, in its own dialog. */
   const newChat = async (target: Project, provider: 'claude' | 'codex' = 'claude') => {
     let current = target;
@@ -435,7 +440,7 @@ export function App() {
           {mode === 'agents'
             ? (project?.trustedAt ? <AgentsView key={project.id} project={project} /> : <section className="empty"><h1>Agents</h1><p>{project ? 'Trust this project to run heads, plans and lanes in it: start a chat there.' : 'Open a project to see its heads, plans and lanes.'}</p></section>)
             : view.kind === 'settings' && settings
-            ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onDisplayName={name => void run(window.hydra.setDisplayName(name), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
+            ? <SettingsView settings={settings} info={info} onTheme={value => void run(window.hydra.setTheme(value), setSettings)} onDisplayName={name => void run(window.hydra.setDisplayName(name), setSettings)} onWhenAway={on => void run(window.hydra.setWhenAway(on), setSettings)} onPickCli={provider => void run(window.hydra.pickCliPath(provider), afterCliChange)} onClearCli={provider => void run(window.hydra.clearCliPath(provider), afterCliChange)} setup={setupPanel} />
             : view.kind === 'chat' && chat
               ? <ChatPane key={chat.id} record={chat} events={chatEvents[chat.id] ?? []}
                   projectName={state?.projects.find(p => p.path.toLowerCase() === chat.cwd.toLowerCase())?.name}

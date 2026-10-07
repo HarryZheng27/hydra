@@ -1,8 +1,8 @@
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, type WebContents } from 'electron';
-import type { CliProvider } from '../shared/ipc';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, powerMonitor, protocol, session, shell, type WebContents } from 'electron';
+import { whenAwayOn, type CliProvider } from '../shared/ipc';
 import { ChatStore } from '../../../src/core/chat/store';
 import { nodeLaunch } from '../../../src/core/chat/launch';
 import { findProvider } from '../../../src/core/providers';
@@ -34,6 +34,7 @@ import { identityProblems, PRODUCT_NAME } from './identity';
 import { registerIpc } from './ipc';
 import { APP_SCHEME, confirmAndOpen, guardContents, guardSession, serveAppRequest } from './security';
 import { createSettingsStore, createStateStore } from './settings';
+import { WhenAwayBanners } from './needsYouBanners';
 import { AppUpdates, createUpdateStore } from './updates';
 import { readFileSync } from 'node:fs';
 import { applyTheme, createMainWindow, focusMainWindow, getMainWindow, repaintTitleBar } from './window';
@@ -180,10 +181,35 @@ export function start(): void {
     cliPath: async provider => (await settings.load()).cliPaths[provider],
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
     openConsole: (title, executable, args, cwd) => openConsole(consoleLaunch(title, consoleScript(title, executable, args, cwd)), cwd),
-    tree: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_TREE, message); },
+    tree: message => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_TREE, message); whenAway.changed(); },
     // The smoke's stand-in heads: an unpackaged app only, and only when the smoke asks.
     ...(!app.isPackaged && process.env.HYDRA_APP_STANDIN_HEADS === '1' ? { startRun: startStandinHead } : {}),
     post: (project, message) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(HYDRA_UI, { projectId: project.id, message }); },
+  });
+  // OS banners while the user is away (src/core/needsYou.ts decides; needsYouBanners.ts drives). The banner is held until
+  // it closes, or Electron may collect it and lose the click.
+  const banners = new Set<Notification>();
+  const whenAway = new WhenAwayBanners({
+    now: () => Date.now(),
+    presence: () => { const win = getMainWindow(); return { focused: !!win && win.isFocused() && win.isVisible() && !win.isMinimized(), idleSeconds: powerMonitor.getSystemIdleTime() }; },
+    enabled: async () => whenAwayOn(await settings.load()),
+    projects: () => hydra.needsYouFacts(),
+    chat: async chatId => { const record = await chatStore.get(chatId); return record ? { title: record.title, cwd: record.cwd } : undefined; },
+    known: async () => (await state.load()).projects,
+    show: (banner, click) => {
+      if (!Notification.isSupported()) return;
+      const notification = new Notification({ title: banner.title, body: banner.body, silent: false });
+      banners.add(notification);
+      notification.on('click', () => { click(); });
+      notification.on('close', () => banners.delete(notification));
+      notification.show();
+    },
+    // Focus the window and open what it was about: a chat, or the project's Agents view for a head, plan or limit.
+    open: banner => {
+      if (banner.kind === 'chat-needs' || banner.kind === 'chat-unread') navigate({ kind: 'navigate', to: 'chat', chatId: banner.sourceId, ...(banner.projectId ? { projectId: banner.projectId } : {}) });
+      else navigate({ kind: 'navigate', to: 'agents', projectId: banner.projectId });
+    },
+    log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
   });
   const syncHydra = (projects: Project[]) => { void hydra.sync(projects).catch(() => undefined); };
   // Before quitting: end every chat's process, then wait for the store to write what it still holds.
@@ -216,7 +242,7 @@ export function start(): void {
     quit: () => app.quit(),
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
   });
-  app.on('will-quit', () => updates.stop());
+  app.on('will-quit', () => { updates.stop(); whenAway.stop(); });
   const handlers = createHandlers({
     terminals,
     shellTabs,
@@ -256,6 +282,11 @@ export function start(): void {
     const win = createMainWindow(distDir);
     // Hydra Settings goes with the window: closing it quits the app as before.
     win.on('closed', () => settingsWindow.close());
+    // Focusing or leaving Hydra changes whether the user is away; an idle machine is noticed by the banners' own timer.
+    win.on('focus', () => whenAway.changed());
+    win.on('blur', () => whenAway.changed());
+    win.on('minimize', () => whenAway.changed());
+    whenAway.start();
     // A page that (re)loads gets Hydra's open questions again, and every Agents view starts closed until it says so.
     win.webContents.on('did-finish-load', () => { hydra.windowLoaded(); hostUi.resendAll(); });
     // Controllers start when a project is opened (a chat in it), not here: launching the app takes no repository.

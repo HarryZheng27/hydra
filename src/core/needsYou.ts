@@ -134,14 +134,15 @@ export function bannerText(text: string, limit = bannerTextLimit): string {
 }
 
 /** What an OS banner may say. Never a count, a question or a summary. */
-export interface BannerContent { title: string; body: string; projectId: string; itemId: string; kind: NeedsYouKind }
+/** `projectId`, `sourceId` and `kind` say where a click goes; they are never shown. */
+export interface BannerContent { title: string; body: string; projectId: string; itemId: string; sourceId: string; kind: NeedsYouKind }
 
 /** The banner for an item: "Hydra needs you in <project>" and the item's title. */
 export function bannerFor(item: NeedsYouItem): BannerContent {
   return {
     title: `Hydra needs you in ${bannerText(item.projectName, 60)}`,
     body: bannerText(item.title),
-    projectId: item.projectId, itemId: item.id, kind: item.kind,
+    projectId: item.projectId, itemId: item.id, sourceId: item.sourceId, kind: item.kind,
   };
 }
 
@@ -152,18 +153,21 @@ export function bannerFor(item: NeedsYouItem): BannerContent {
  *  - Nothing while Hydra is focused and the user is active.
  *  - One banner per stretch away, for the most urgent item not yet announced, however many arrive after it.
  *  - At most one more in the same stretch, for an item on a clock that arrives after the first.
+ *  - An item has to have waited `graceMs` first: a lead that is about to answer a head's question, or a chat that
+ *    resumes at once, never gets as far as a banner.
  *  - Coming back (focused and active) ends the stretch. An item already announced isn't announced again by a later
  *    stretch while it still waits; one that left and returned is new.
  */
 export class AwayBanners {
   private announced = new Set<string>();
   private sent = 0;
+  constructor(private readonly graceMs = 0) {}
 
-  update(items: readonly NeedsYouItem[], presence: Presence): BannerContent | undefined {
+  update(items: readonly NeedsYouItem[], presence: Presence, now: number): BannerContent | undefined {
     const live = new Set(items.map(item => item.id));
     for (const id of this.announced) if (!live.has(id)) this.announced.delete(id);
     if (!isAway(presence)) { this.sent = 0; return undefined; }
-    const fresh = items.filter(item => !this.announced.has(item.id));
+    const fresh = items.filter(item => !this.announced.has(item.id) && now - item.since >= this.graceMs);
     if (!fresh.length) return undefined;
     // `items` is ordered most urgent first (deriveNeedsYou).
     let pick: NeedsYouItem | undefined;
