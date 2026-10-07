@@ -268,7 +268,9 @@ export const gatesPage: SettingsPage = {
     if (message.type !== 'setGates') return false;
     try {
       const root = await leadFolder(ctx.host);
-      const candidate = { maxAttempts: message.maxAttempts, lanes: message.lanes, gates: message.gates };
+      // The page has no field for "tests" (editedTests.ts), so saving keeps what the file already says.
+      const tests = (await loadGates(root).catch(() => undefined))?.tests;
+      const candidate = { maxAttempts: message.maxAttempts, lanes: message.lanes, ...(tests ? { tests } : {}), gates: message.gates };
       const parsed = parseGatesConfig(candidate);
       const file = gatesFile(root);
       await mkdir(path.dirname(file), { recursive: true });
@@ -283,7 +285,7 @@ export const gatesPage: SettingsPage = {
 };
 
 /** Exported for tests: the raw gates.json this page would write for a given form-submitted config. */
-export function buildGatesFile(config: Pick<GatesConfig, 'maxAttempts' | 'lanes' | 'gates'>): string {
+export function buildGatesFile(config: Pick<GatesConfig, 'maxAttempts' | 'lanes' | 'tests' | 'gates'>): string {
   const parsed = parseGatesConfig(config);
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }

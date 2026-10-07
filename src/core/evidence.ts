@@ -27,6 +27,8 @@ export interface EvidenceSubject {
   commit?: string;
   /** The subject's HEAD has moved past `commit`: "Checks are for an older commit." */
   stale?: boolean;
+  /** Facts to check beside the gates, such as the existing tests the change edited (editedTests.ts). */
+  notes?: readonly string[];
 }
 
 const stateLabel: Record<'passed' | 'failed' | 'notRun', string> = { passed: '✓ Passed', failed: '✗ Failed', notRun: '– Not run' };
@@ -98,7 +100,8 @@ function statusLine(subject: EvidenceSubject): string | undefined {
 /** The whole document: a heading, Step A's status line, then one section per gate, in the order the gates ran. */
 export function buildEvidenceMarkdown(subject: EvidenceSubject): string {
   const status = statusLine(subject);
-  if (!subject.results.length) return [`# ${subject.title} — gate evidence`, '', ...(status ? [status, ''] : []), 'No gates have run.', ''].join('\n');
+  const notes = subject.notes?.length ? ['## Notes', '', ...subject.notes.map(note => `- ${note}`), ''] : [];
+  if (!subject.results.length) return [`# ${subject.title} — gate evidence`, '', ...(status ? [status, ''] : []), 'No gates have run.', '', ...notes].join('\n');
   const sections = subject.results.map(result => resultSection(result, subject.worktree, subject.logDirectories, subject.baseDirectory));
-  return [`# ${subject.title} — gate evidence`, '', ...(status ? [status, ''] : []), ...sections, ''].join('\n');
+  return [`# ${subject.title} — gate evidence`, '', ...(status ? [status, ''] : []), ...sections, ...notes, ''].join('\n');
 }
