@@ -332,7 +332,7 @@ export function AgentsCanvas({ heads, dismissedTray = [], plans = [], lanes = []
         </div>}
         {model.tray.length > 0 && <div className="canvas-tray" aria-label="Finished heads">
           <span className="canvas-tray-label">Finished</span>
-          {model.tray.slice(0, 8).map(head => <button key={head.id} className={`canvas-chip state-${head.state}`} title={`${head.title} · ${headStatus[head.state] || head.state}${head.reason ? `\n${head.reason}` : ''}`} onClick={() => onAction('helperReview', head.id)} onContextMenu={event => { event.preventDefault(); openMenu(head.id, event.clientX, event.clientY); }}>
+          {model.tray.slice(0, 8).map(head => <button key={head.id} className={`canvas-chip state-${head.state}`} title={`${head.title} · ${headStatus[head.state] || head.state}${head.headline ? `\n${head.headline}` : ''}${head.reason ? `\n${head.reason}` : ''}`} onClick={() => onAction('helperReview', head.id)} onContextMenu={event => { event.preventDefault(); openMenu(head.id, event.clientX, event.clientY); }}>
             <i aria-hidden="true" />{head.title}</button>)}
           <button className="canvas-tray-clear text-button" onClick={() => onPlan({ type: 'trayClear', ids: model.tray.map(head => head.id) })}>Clear</button>
         </div>}
@@ -382,7 +382,7 @@ function HeadNode({ item, now, fresh, from, selected, conflictNames, onSelect, o
   const detail = head.state === 'blocked' ? `Asks: ${head.question || 'a question'}`
     : waiting ? providerWaitLabel(head.provider, waiting, now)
     : active ? head.progress || (head.state === 'queued' ? (head.dependsOn.length ? 'Waiting for what it depends on' : 'Waiting for a free slot') : 'Working…')
-    : head.state === 'done' ? `${head.changedFiles} ${head.changedFiles === 1 ? 'file' : 'files'} changed`
+    : head.state === 'done' ? head.headline || `${head.changedFiles} ${head.changedFiles === 1 ? 'file' : 'files'} changed`
     : head.reason || status;
   const style = { transform: `translate(${item.x}px, ${item.y}px)`, ...(fresh && from ? { '--from-x': `${from.x - item.x}px`, '--from-y': `${from.y - item.y}px` } : {}) } as React.CSSProperties;
   return <div id={`head-${item.id}`} className={`canvas-node provider-${head.provider} state-${head.state}${fresh ? ' entering' : ''}${selected ? ' selected' : ''}`} style={style}

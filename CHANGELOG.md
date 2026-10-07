@@ -4,6 +4,7 @@ What changed in each Hydra release. Installers and checksums are on the [release
 
 ## Unreleased
 
+- **A headline on every head's report, and options on its questions.** `hydra_done` now needs a one-sentence `headline` (110 characters at most; a longer or missing one is refused with the reason and costs no attempt), shown on the canvas card, in `hydra_get_head` and `hydra_list_heads`, in the app's head card and for each job in a plan report. `hydra_stuck` can offer one to four `options` with exactly one `recommended`: **Answer question…** shows them as numbered choices, a lead answers with `hydra_reply_to_head`'s `option`, and when nobody answers in time (or the plan is unattended) Hydra goes with the recommended one and records which in the audit log, `auto_answered` and the plan's report.
 - **Edited tests are flagged as evidence.** When a head calls `hydra_done`, or a lane runs its gates before Merge, Hydra lists the test files that already existed and were changed or deleted ("Changed existing tests: …"). The list is a note on the result beside the gates-changed note, shows in **View evidence**, is given to the review gate as a fact to check (does the change weaken a test so that it passes?), and reaches a plan's integration review. New test files aren't flagged, and it fails nothing on its own. Which files count as tests is `**/*.test.*`, `**/*.spec.*`, `**/test/**`, `**/tests/**` and `**/__tests__/**`, unless `.hydra/gates.json` has a `tests` list, which replaces them.
 
 ## 0.29.0 (2026-10-07)

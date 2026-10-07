@@ -113,7 +113,7 @@ export function headSilenceStep(silentMs: number | undefined, done: { recorded: 
 }
 
 /** What a silent head is told when it's nudged. */
-export const headSilenceNudge = 'Hydra has seen no output from you for several minutes, so your last response may have been cut off. Continue where you left off: finish your work and call hydra_done with a summary (or hydra_stuck with one clear question).';
+export const headSilenceNudge = 'Hydra has seen no output from you for several minutes, so your last response may have been cut off. Continue where you left off: finish your work and call hydra_done with a headline and a summary (or hydra_stuck with one clear question).';
 
 /**
  * A Claude head's nudge (HelperRun.nudge): an `interrupt` control request, then the "continue" message

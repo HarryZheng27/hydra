@@ -20,7 +20,7 @@ export const startStandinHead: StartHelperRun = (spec: HelperRunSpec): HelperRun
       const name = /\bsmoke\/([a-z0-9-]+)\.txt\b/.exec(spec.prompt)?.[1] ?? path.basename(spec.worktree);
       await mkdir(path.join(spec.worktree, 'smoke'), { recursive: true });
       await writeFile(path.join(spec.worktree, 'smoke', `${name}.txt`), `Written by a stand-in head in ${path.basename(spec.worktree)}.\n`);
-      await callHelperEndpoint(port, token, 'hydra_done', { summary: `Wrote smoke/${name}.txt.` });
+      await callHelperEndpoint(port, token, 'hydra_done', { headline: `Wrote smoke/${name}.txt.`, summary: `Wrote smoke/${name}.txt.` });
       for (const listener of turnEnds) listener();
       exit(0);
     } catch { exit(1); }

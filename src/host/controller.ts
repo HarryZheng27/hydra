@@ -226,6 +226,8 @@ export class HydraController {
       id: job.id, title: job.title, state: job.state, provider: job.provider, createdAt: job.createdAt, finishedAt: job.finishedAt,
       progress: job.progress, question: job.state === 'blocked' ? job.question : undefined, reason: job.state === 'running' ? undefined : job.reason,
       branch: job.branch, commit: job.result?.commit, summary: job.result?.summary, changedFiles: job.result?.changedFiles.length ?? 0,
+      ...(job.result?.headline ? { headline: job.result.headline } : {}),
+      ...(job.state === 'blocked' && job.options?.length ? { options: job.options.map((option, index) => ({ option: index + 1, text: option.text, ...(option.recommended ? { recommended: true } : {}) })) } : {}),
       checks: job.result?.checks.map(toHeadCheckView) ?? [],
       repository: service.leadFolder, worktree: job.worktree, dependsOn: job.dependsOn,
       lead: job.lead, merged: service.isMerged(job.id), startedAt: job.startedAt, writeScope: job.writeScope,
@@ -608,6 +610,7 @@ export class HydraController {
         ...(head?.attempts !== undefined ? { attempts: head.attempts } : {}),
         ...(head?.startedAt ? { startedAt: head.startedAt } : {}),
         ...(head?.finishedAt ? { finishedAt: head.finishedAt } : {}),
+        ...(head?.result?.headline ? { headline: head.result.headline } : {}),
         ...(head?.result?.summary ? { summary: head.result.summary } : {}),
         ...(head?.result?.changedFiles?.length ? { changedFiles: head.result.changedFiles } : {}),
         ...(head?.result?.checks?.length ? { checks: head.result.checks.map(check => ({ id: check.id, required: check.required, passed: check.passed, ...(check.state ? { state: check.state } : {}), ...(check.summary ? { summary: check.summary } : {}) })) } : {}),
@@ -617,7 +620,7 @@ export class HydraController {
         ...(head?.usage?.inputTokens !== undefined ? { inputTokens: head.usage.inputTokens } : {}),
         ...(head?.usage?.outputTokens !== undefined ? { outputTokens: head.usage.outputTokens } : {}),
         ...(head?.providerWaitMs ? { providerWaitMs: head.providerWaitMs } : {}),
-        ...(head?.replies.some(reply => reply.auto) ? { autoAnswered: head.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto!, ...(reply.question ? { question: reply.question } : {}) })) } : {}),
+        ...(head?.replies.some(reply => reply.auto) ? { autoAnswered: head.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto!, ...(reply.question ? { question: reply.question } : {}), ...(reply.option ? { option: reply.option, choice: reply.choice } : {}) })) } : {}),
       };
     });
     return buildPlanReport(plan, details, defaultHeadBudgetUsd);
@@ -1591,6 +1594,17 @@ export class HydraController {
     if (action === 'helperAnswer') {
       // The head is waiting on the lead; you can answer in its place from the Agents view.
       if (job.state !== 'blocked') throw new Error('That head is not waiting for an answer.');
+      // A head that offered options: they come first, numbered 1 to 4 (the app's picker answers on those keys), with a way to write your own.
+      const options = job.options ?? [];
+      if (options.length) {
+        const items = [
+          ...options.map((option, index) => ({ label: `${index + 1}  ${option.text}`, description: option.recommended ? 'recommended' : '', option: index + 1 })),
+          { label: 'Write your own answer…', description: '', option: 0 },
+        ];
+        const chosen = await this.host.pick(items, { title: `Answer "${job.title}"`, placeHolder: job.question || 'The head is waiting for an answer.', ignoreFocusOut: true });
+        if (!chosen) return;
+        if (chosen.option) { await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, option: chosen.option }, new AbortController().signal); return; }
+      }
       const message = await this.host.input({ title: `Answer "${job.title}"`, prompt: job.question || 'The head is waiting for an answer.', placeHolder: 'Your answer', ignoreFocusOut: true, validateInput: value => value.trim() && value.length <= 8000 ? undefined : 'Write an answer (up to 8000 characters).' });
       if (message === undefined) return;
       await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, message }, new AbortController().signal);
