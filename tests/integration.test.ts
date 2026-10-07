@@ -8,7 +8,7 @@ import { createPlan, PlanStore, applyPlanAmendment, planJobBriefMax, type Plan, 
 import { PlanRunner, planHeadInput, type PlanHeadLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import {
   applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, integrationSettled, landCommit, mergeRefusal, newIntegration, reconcile,
-  integrationFixJob, laneMergeRefusal, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
+  findingFiles, integrationFixJob, integrationFixJobs, laneMergeRefusal, warmFixSections, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
 } from '../src/core/integration';
 import { parseGatesConfig, runGateList } from '../src/core/gates';
 import { JobStore, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
@@ -825,5 +825,137 @@ test('seams (step 2): a restart while a seam is open keeps its dependents waitin
     assert.equal(p.startedFor('d').length, 0, 'after a restart d still waits for the seam fix');
     assert.equal(p.get().integration!.seams?.[0]?.fix, 'seam-fix-1');
     assert.equal(p.startedFor('seam-fix-1').length, 1, 'and the fix isn\'t started twice');
+  } finally { p.dispose(); await f.close(); }
+});
+
+// ---- Warmer fix rounds (step 3) ----
+
+const reviewFailed = (findings: { file?: string; line?: number; severity: 'blocker' | 'major' | 'minor'; note: string }[], extra: Partial<JobCheckResult> = {}): JobCheckResult => ({ id: 'rigor-review', kind: 'review', state: 'failed', required: true, passed: false, exitCode: null, durationMs: 1, outputTail: '', summary: 'The pieces don\'t fit.', findings, ...extra });
+const gateWith = (checks: JobCheckResult[]): IntegrationGateRecord => ({ tip: sha('c'), at: '2026-10-07T00:00:00.000Z', checks, failed: true });
+const areaJobs = [{ key: 'a', title: 'Cart', writeScope: ['src/cart'] }, { key: 'b', title: 'Tax', writeScope: ['src/tax'] }, { key: 'c', title: 'Orders', writeScope: ['src/orders', 'src/cart/orders'] }];
+
+test('integrationFixJobs (step 3): findings in files of disjoint write scopes split into one fix per area, each limited to its area', () => {
+  const record = gateWith([reviewFailed([{ file: 'src/cart/total.ts', line: 3, severity: 'major', note: 'Total ignores tax.' }, { file: 'src/tax/rate.ts', severity: 'blocker', note: 'Rate is a string.' }, { file: 'src/tax/rate.ts', severity: 'minor', note: 'Naming.' }])]);
+  const fixes = integrationFixJobs({ title: 'Shop', jobs: areaJobs.slice(0, 2) }, record);
+  assert.deepEqual(fixes.map(fix => fix.key), ['integration-fix-1', 'integration-fix-2']);
+  assert.deepEqual(fixes.map(fix => fix.write_scope), [['src/cart'], ['src/tax']], 'each limited to the scope its findings are in');
+  assert.match(fixes[0]!.title, /in Cart \(round 1 of 2\)/); assert.match(fixes[1]!.title, /in Tax \(round 1 of 2\)/);
+  assert.match(fixes[0]!.brief, /Total ignores tax/); assert.ok(!fixes[0]!.brief.includes('Rate is a string'), 'only its own area\'s findings');
+  assert.match(fixes[1]!.brief, /Rate is a string/); assert.match(fixes[1]!.brief, /Naming/, 'a minor one in its area stays, as before');
+  assert.match(fixes[1]!.brief, /2 separate areas.*Yours is Tax \(src\/tax\)/);
+  // The next round counts the two as one: round 2 is integration-fix-3, and a third round is refused.
+  const next = integrationFixJobs({ title: 'Shop', jobs: [...areaJobs.slice(0, 2), ...fixes.map(fix => ({ key: fix.key, title: fix.title, writeScope: fix.write_scope }))] }, record);
+  assert.deepEqual(next.map(fix => fix.key), ['integration-fix-3', 'integration-fix-4']);
+  assert.match(next[0]!.title, /round 2 of 2/);
+  const all = [...areaJobs.slice(0, 2), ...fixes, ...next].map(fix => ({ key: fix.key, title: 'title' in fix ? fix.title : undefined, writeScope: 'write_scope' in fix ? fix.write_scope : (fix as { writeScope?: string[] }).writeScope }));
+  assert.deepEqual(integrationFixJobs({ title: 'Shop', jobs: all }, record), [], 'two rounds, however many fixes each had');
+});
+
+test('integrationFixJobs (step 3): one whole fix, as before, whenever the areas aren\'t clear or can\'t run apart', () => {
+  const one = (findings: Parameters<typeof reviewFailed>[0], jobs = areaJobs, checks: JobCheckResult[] = []) => integrationFixJobs({ title: 'Shop', jobs }, gateWith([...checks, reviewFailed(findings)]));
+  const whole = (fixes: ReturnType<typeof one>) => { assert.equal(fixes.length, 1); assert.deepEqual(fixes[0]!.write_scope, ['.']); };
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/cart/b.ts', severity: 'major', note: 'y' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { severity: 'major', note: 'no file named' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'docs/readme.md', severity: 'major', note: 'in no job\'s scope' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/tax/b.ts', severity: 'major', note: 'y' }], areaJobs.slice(0, 2), [failedCheck()]));
+  // Two jobs whose scopes overlap (Orders reaches into src/cart/orders) share an area, so they never fix in parallel.
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/orders/o.ts', severity: 'major', note: 'y' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/tax/b.ts', severity: 'major', note: 'y' }], [{ key: 'a', title: 'Cart', writeScope: ['.'] }, areaJobs[1]!]));
+  assert.equal(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/tax/b.ts', severity: 'major', note: 'y' }], areaJobs.slice(0, 2)).length, 2, 'while the same two do split');
+});
+
+test('warmFixSections (step 3): the full reply, the stat, the diff and the authors, each capped and redacted, in that order', () => {
+  const key = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const text = warmFixSections({
+    replies: [{ id: 'rigor-review', text: `Reasoning ${key} ${'long '.repeat(6000)}END` }],
+    stat: ' src/a.ts | 4 ++--\n 1 file changed',
+    diff: 'diff --git a/src/a.ts b/src/a.ts\n+const x = 1;',
+    authors: [{ key: 'cart', title: 'Cart', brief: 'Build the cart.', summary: 'Built it.', files: ['src/cart/a.ts'] }],
+  });
+  assert.ok(text.indexOf('## What the reviewer said') < text.indexOf('## What the plan changed in all') && text.indexOf('## What the plan changed in all') < text.indexOf('## The code the findings name') && text.indexOf('## The code the findings name') < text.indexOf('## Who wrote it'));
+  assert.ok(!text.includes(key), 'secrets are redacted');
+  assert.ok(!text.includes('END'), 'a long reply is cut at 16 KB');
+  assert.ok(text.length < 24 * 1024, `${text.length}`);
+  assert.match(text, /- Cart \(cart\): Build the cart\.\n  It reported: Built it\.\n  Files: src\/cart\/a\.ts/);
+  assert.equal(warmFixSections({ replies: [], authors: [] }), '', 'nothing to add');
+});
+
+test('findingFiles (step 3): the files blockers and majors name, as plain relative paths inside the fix\'s own scope', () => {
+  const check = reviewFailed([{ file: './src/a.ts', severity: 'major', note: 'x' }, { file: 'src\\b.ts', severity: 'blocker', note: 'x' }, { file: 'src/minor.ts', severity: 'minor', note: 'x' }, { file: '../outside.ts', severity: 'major', note: 'x' }, { file: '/etc/passwd', severity: 'major', note: 'x' }, { file: ':(top)x', severity: 'major', note: 'x' }, { file: 'src/*.ts', severity: 'major', note: 'x' }, { file: 'lib/c.ts', severity: 'major', note: 'x' }]);
+  assert.deepEqual(findingFiles([check]), ['src/a.ts', 'src/b.ts', 'lib/c.ts']);
+  assert.deepEqual(findingFiles([check], ['src']), ['src/a.ts', 'src/b.ts']);
+});
+
+test('warm fixes (step 3): a failed review hands its fix head the full reply, the diff of the files it names and the jobs that wrote them', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const replyFile = path.join(f.root, 'rigor-review-reply.txt');
+  await writeFile(replyFile, 'The cart never applies tax because tax.ts returns a string. Full reasoning here, with a secret ghp_abcdefghijklmnopqrstuvwxyz0123456789.\n{"verdict":"fail"}');
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [reviewFailed([{ file: 'src/cart/total.ts', line: 1, severity: 'major', note: 'No tax.' }], { evidence: [replyFile, path.join(f.root, 'rigor-review-prompt.md')] })], configured: 'file' });
+  const p = await planFixture(f, [headJob('cart', { writeScope: ['src/cart'], brief: 'Build the cart totals.' }), headJob('tax', { writeScope: ['src/tax'] })], { runGate: failing, fixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('cart', await f.commitFrom(f.base, { 'src/cart/total.ts': 'export const total = (n) => n;\n' }, 'cart'));
+    await p.finish('tax', await f.commitFrom(f.base, { 'src/tax/rate.ts': 'export const rate = "8";\n' }, 'tax'));
+    await p.runner.integrate(p.plan.id);
+    const fix = p.startedFor('integration-fix-1');
+    assert.equal(fix.length, 1);
+    const brief = fix[0]!.brief;
+    assert.match(brief, /### rigor-review \(review\) failed/, 'the findings, as before');
+    assert.match(brief, /## What the reviewer said[\s\S]*The cart never applies tax because tax\.ts returns a string/, 'and the reviewer\'s whole reply');
+    assert.ok(!brief.includes('ghp_abcdefghijklmnopqrstuvwxyz0123456789'), 'redacted');
+    assert.match(brief, /## What the plan changed in all[\s\S]*src\/cart\/total\.ts/);
+    assert.match(brief, /## The code the findings name[\s\S]*\+export const total = \(n\) => n;/, 'the diff of the file the finding names');
+    assert.ok(!brief.includes('export const rate'), 'not the files it doesn\'t');
+    assert.match(brief, /## Who wrote it[\s\S]*- Job cart \(cart\): Build the cart totals\./);
+    assert.ok(!/- Job tax \(tax\)/.test(brief), 'only the jobs that wrote those files');
+    assert.equal(p.get().jobs.find(job => job.key === 'integration-fix-1')!.brief.includes('What the reviewer said'), false, 'the plan\'s own copy of the brief is untouched');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('warm fixes (step 3): a fix whose context can\'t be read is as cold as before, never failing to start', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'Broken.' }], { evidence: [path.join(f.root, 'gone-reply.txt')] })], configured: 'file' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] })], { runGate: failing, fixRounds: 1 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.runner.integrate(p.plan.id);
+    const fix = p.startedFor('integration-fix-1');
+    assert.equal(fix.length, 1);
+    assert.match(fix[0]!.brief, /Broken\./);
+    assert.ok(!fix[0]!.brief.includes('What the reviewer said'), 'no reply file, no reply section');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('warm fixes (step 3): findings in two areas start two fix heads at once, each with its own area, and the gate runs again once both have landed', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  let runs = 0;
+  const gate: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => {
+    runs++;
+    return { checks: runs === 1 ? [reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'A is broken.' }, { file: 'src/b/y.ts', severity: 'blocker', note: 'B is broken.' }])] : [passed('rigor-review')], configured: 'file' };
+  };
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('b', { writeScope: ['src/b'] })], { runGate: gate, fixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.finish('b', await f.commitFrom(f.base, { 'src/b/y.ts': 'b\n' }, 'b'));
+    const first = await p.runner.integrate(p.plan.id);
+    assert.equal(first.failed, true);
+    assert.equal(p.get().state, 'running');
+    const [one, two] = [p.startedFor('integration-fix-1'), p.startedFor('integration-fix-2')];
+    assert.equal(one.length, 1); assert.equal(two.length, 1, 'both fix heads are running together');
+    assert.equal(p.get().jobs.find(job => job.key === 'integration-fix-1')!.writeScope!.join(), 'src/a');
+    assert.equal(p.get().jobs.find(job => job.key === 'integration-fix-2')!.writeScope!.join(), 'src/b');
+    assert.equal(p.get().amendments?.filter(item => item.kind === 'add').length, 2);
+    const tip = p.get().integration!.tip;
+    // Done one at a time, as heads finish; the gate waits for the plan to be done, so for both.
+    await p.finish('integration-fix-2', await f.commitFrom(tip, { 'src/b/y.ts': 'b fixed\n' }, 'fix b'));
+    assert.equal(p.get().state, 'running', 'one fix landed; the other is still going');
+    await p.finish('integration-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'a fixed\n' }, 'fix a'));
+    assert.equal(p.get().state, 'done');
+    const second = await p.runner.integrate(p.plan.id);
+    assert.equal(second.status, 'passed', 'the gate ran again on both fixes together');
+    assert.equal(p.get().jobs.filter(job => job.key.startsWith('integration-fix-')).length, 2, 'no third fix');
   } finally { p.dispose(); await f.close(); }
 });

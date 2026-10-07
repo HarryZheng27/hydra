@@ -1,8 +1,10 @@
-import { DependencyConflict, dependencyBase, dependencyBrief, dependencyDiff, maxDependencyDiff, type DependencyResult } from './headStart';
-import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobLimits, JobState } from './jobs';
+import { readFile } from 'node:fs/promises';
+import { gitRun, readOnlyGitTimeoutMs } from './git';
+import { DependencyConflict, capDiff, dependencyBase, dependencyBrief, dependencyDiff, maxDependencyDiff, type DependencyResult } from './headStart';
+import { gateBlocks, gateKind, type EvidenceStatus, type GatesConfigured, type JobCheckResult, type JobLimits, type JobState } from './jobs';
 import {
-  applyLanding, applySeamVerdict, conflictSection, defaultLandingAttempts, defaultSeamFixRounds, effectiveDependencies, isIntegrationGateFixKey, seamVerdict, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
-  newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, type IntegrationGateRecord, type PlanIntegration,
+  applyLanding, applySeamVerdict, conflictSection, isIntegrationFixKey, defaultLandingAttempts, defaultSeamFixRounds, effectiveDependencies, isIntegrationGateFixKey, seamVerdict, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, findingFiles, fixDiffMax, integrationFixJobs, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
+  newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, warmFixSections, type FixContext, type IntegrationGateRecord, type PlanIntegration,
 } from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
 import { singleHeadDecision, singleHeadJobBrief, singleHeadKey, singleHeadLimits, singleHeadPlan } from './planShape';
@@ -783,18 +785,18 @@ export class PlanRunner {
     await this.withPlan(planId, () => this.options.store.update(planId, current => {
       if (!current.integration?.gate?.running || current.integration.gate.tip !== tip) return undefined;
       const updated: Plan = { ...current, integration: { ...current.integration, gate: record } };
-      const fix = current.state === 'done' ? integrationFixJob(current, record, gate.fixRounds?.()) : undefined;
-      if (!fix) return updated;
+      const fixes = current.state === 'done' ? integrationFixJobs(current, record, gate.fixRounds?.()) : [];
+      if (!fixes.length) return updated;
       try {
-        const amended = applyPlanAmendment(current, { add: [fix] }, undefined, () => this.now(), gate.headBudgetUsd?.());
-        fixing = fix.key;
+        const amended = applyPlanAmendment(current, { add: fixes }, undefined, () => this.now(), gate.headBudgetUsd?.());
+        fixing = fixes.map(fix => fix.key).join(', ');
         return { ...updated, jobs: amended.jobs, amendments: amended.amendments, state: 'running' };
       } catch (error) {
         this.options.log?.(`[plans] ${planId}: couldn't add a fix for the integration gate: ${describe(error)}`);
         return updated;
       }
     }));
-    this.options.log?.(`[plans] ${planId} integration gate on ${tip.slice(0, 7)}: ${record.error ? `couldn't run (${record.error})` : record.failed ? `failed${fixing ? `; ${fixing} fixes it` : ''}` : record.status ?? 'done'}`);
+    this.options.log?.(`[plans] ${planId} integration gate on ${tip.slice(0, 7)}: ${record.error ? `couldn't run (${record.error})` : record.failed ? `failed${fixing ? `; ${fixing} ${fixing.includes(',') ? 'fix it' : 'fixes it'}` : ''}` : record.status ?? 'done'}`);
     this.notify(planId);
     if (fixing) { await this.advance(planId); return record; }
     const finished = this.options.store.get(planId);
@@ -953,7 +955,9 @@ export class PlanRunner {
         const tip = plan.integration.tip;
         const dependencies = await this.dependencyResults(plan, job, undefined, true);
         if (jobRunAs(job) === 'head') {
-          const { jobId } = await this.options.startHead(plan, job, [], dependencies, { baseCommit: tip, ...(job.conflict ? { carry: job.conflict.commit } : {}) });
+          // An integration fix isn't cold: it also gets the reviewer's full reply, the code the findings name and who wrote it.
+          const warm = isIntegrationGateFixKey(job.key) ? await this.fixContext(plan, job).then(context => warmFixSections(context)).catch(() => '') : '';
+          const { jobId } = await this.options.startHead(plan, warm ? { ...job, brief: `${job.brief}\n\n${warm}` } : job, [], dependencies, { baseCommit: tip, ...(job.conflict ? { carry: job.conflict.commit } : {}) });
           await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key && !jobStarted(item) ? { ...item, jobId } : item) }));
           this.options.log?.(`[plans] ${planId} started head ${jobId} for job ${key} from ${plan.integration.branch} at ${tip.slice(0, 7)}`);
           return true;
@@ -1044,6 +1048,37 @@ export class PlanRunner {
     if (index < 0) return {};
     const diff = await dependencyDiff(this.options.repository, integration.landed[index - 1]?.tip ?? integration.base, integration.landed[index]!.tip, max).catch(() => undefined);
     return diff ? { diff } : {};
+  }
+
+  /**
+   * What an integration fix job starts with beyond its brief (warmFixSections): the failed reviews' full replies (read from
+   * the files the gate kept), the plan's diff stat, the diff of the files its findings name (only those in its own write
+   * scope), and the jobs that wrote them. Each part that can't be read is left out; a fix without any is as cold as before.
+   */
+  private async fixContext(plan: Plan, job: PlanJob): Promise<FixContext> {
+    const integration = plan.integration!;
+    const failed = (integration.gate?.checks ?? []).filter(gateBlocks);
+    const scope = job.writeScope?.length ? job.writeScope : ['.'];
+    const files = findingFiles(failed, scope);
+    const replies: FixContext['replies'] = [];
+    for (const check of failed) {
+      const file = gateKind(check) === 'review' ? check.evidence?.find(item => /-reply(?:-retry)?\.txt$/.test(item)) : undefined;
+      const text = file ? await readFile(file, 'utf8').catch(() => '') : '';
+      if (text.trim()) replies.push({ id: check.id, text });
+    }
+    const [base, tip] = [integration.base, integration.tip];
+    const stat = await gitRun(this.options.repository, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--stat=100', '--stat-count=40', base, tip, '--'], undefined, readOnlyGitTimeoutMs).then(result => result.code === 0 ? result.stdout : undefined).catch(() => undefined);
+    const diff = files.length ? await gitRun(this.options.repository, ['--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--unified=3', base, tip, '--', ...files], undefined, readOnlyGitTimeoutMs).then(result => result.code === 0 && result.stdout.trim() ? capDiff(result.stdout, fixDiffMax) : undefined).catch(() => undefined) : undefined;
+    const authors: FixContext['authors'] = [];
+    for (const other of plan.jobs) {
+      if (other.key === job.key || isIntegrationFixKey(other.key) || !landedEntry(integration, other.key, other.attempt ?? 0)) continue;
+      const head = other.jobId ? this.options.look.head(other.jobId) : undefined;
+      const changed = head?.result?.changedFiles ?? other.result?.changedFiles ?? [];
+      const wrote = files.filter(file => changed.includes(file) || (!!other.writeScope?.length && other.writeScope.some(entry => { const prefix = entry.replace(/\/+$/, ''); return prefix === '' || prefix === '.' || file === prefix || file.startsWith(`${prefix}/`); })));
+      if (!wrote.length) continue;
+      authors.push({ key: other.key, title: other.title, brief: other.brief, ...(head?.result?.summary || other.result?.note ? { summary: head?.result?.summary ?? other.result?.note } : {}), files: wrote });
+    }
+    return { replies, ...(stat?.trim() ? { stat } : {}), ...(diff ? { diff } : {}), authors };
   }
 
   /** Tell the extension when a plan's jobs or statuses changed since it last heard. */
