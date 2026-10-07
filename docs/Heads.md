@@ -190,6 +190,10 @@ No agent grades its own work. When a head calls `hydra_done`, its changes pass t
 - **Not run:** a browser that can't run, a review that times out or hits a usage limit, or a reviewer that can't run at all marks its gate **not run**: a fixed reviewer (`"same"`, `"claude"` or `"codex"`) that isn't available, or `"other"` when neither agent is. That never fails the head. A reviewer that crashed (Codex exiting with code 1, say) or replied with something Hydra couldn't read is tried once more first, and the gate's summary says so; a timeout or a usage limit isn't retried.
 - **Failures:** they go back to the head with the output and findings, up to `maxAttempts`.
 
+**Edited tests are evidence:** a head can change the tests that grade it, so at `hydra_done` (and when a lane runs its gates before Merge) Hydra lists the files that existed at the base commit, look like tests, and were changed or deleted.
+- **Which files count:** `**/*.test.*`, `**/*.spec.*`, `**/test/**`, `**/tests/**` and `**/__tests__/**`. A `tests` list in `.hydra/gates.json` (1–20 globs) replaces them: `"tests": ["spec/**", "**/*.check.*"]`. New test files aren't flagged; adding tests is normal.
+- **What it does:** the list goes on the result as "Changed existing tests: …" beside the gates-changed note, shows in **View evidence**, and is given to the review gate as a fact to check (a weakened test is a major finding). For a plan, it reaches the integration gate's combined review too. It is a flag, not a gate: it fails nothing by itself.
+
 **Seeing the results:** gate chips (**✓ unit · ✓ ui · ✗ review**) sit on the head's card. **View evidence** in its menu opens the output, findings (linked to file:line) and screenshots.
 
 **Compatibility:** an older `.hydra/checks.json` still works, read as command gates. With neither file, a head is accepted after the scope check.
