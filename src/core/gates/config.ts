@@ -24,7 +24,15 @@ interface GateBase {
 }
 /** Extra environment for the process a pack gate starts: `{node}` runs Hydra's executable with ELECTRON_RUN_AS_NODE. Set only by the packs loader. */
 interface GateProcess { env?: Record<string, string> }
-export interface CommandGate extends GateBase, GateProcess { type: 'command'; command: string[]; timeoutSeconds: number }
+export interface CommandGate extends GateBase, GateProcess {
+  type: 'command'; command: string[]; timeoutSeconds: number;
+  /**
+   * Also run on a plan's integration branch right after each job lands there (a seam check, docs/Heads.md, "Seam checks"):
+   * a failure queues a fix before the jobs that depend on it start. Meant for a fast check (a type check, a build); the
+   * gate still runs everywhere it ran before.
+   */
+  onLanding?: boolean;
+}
 export interface ScreenshotsGate extends GateBase, GateProcess { type: 'screenshots'; start: string[]; url: string; widths: number[]; readyTimeoutSeconds: number }
 export interface ReviewGate extends GateBase {
   type: 'review'; reviewer: ReviewerChoice; focus: string;
@@ -51,7 +59,7 @@ export const gateIdPattern = /^[a-z0-9-]{1,24}$/;
 export const defaultScreenshotWidths: readonly number[] = [390, 768, 1280];
 const reviewerChoices: readonly ReviewerChoice[] = ['other', 'same', 'claude', 'codex'];
 const gateKeys: Readonly<Record<GateType, readonly string[]>> = {
-  command: ['id', 'type', 'required', 'command', 'timeoutSeconds'],
+  command: ['id', 'type', 'required', 'command', 'timeoutSeconds', 'onLanding'],
   screenshots: ['id', 'type', 'required', 'start', 'url', 'widths', 'readyTimeoutSeconds'],
   review: ['id', 'type', 'required', 'reviewer', 'focus'],
 };
@@ -98,7 +106,8 @@ export function parseGate(value: unknown, index: number, options: { roles?: read
   if (source.required !== undefined && typeof source.required !== 'boolean') throw new Error(`${what}: "required" must be true or false.`);
   const required = source.required !== false;
   if (type === 'command') {
-    return { id, type, required, command: argumentList(source.command, `${what}: "command"`), timeoutSeconds: wholeNumber(source.timeoutSeconds, 600, 1, 900, `${what}: "timeoutSeconds"`) };
+    if (source.onLanding !== undefined && typeof source.onLanding !== 'boolean') throw new Error(`${what}: "onLanding" must be true or false.`);
+    return { id, type, required, command: argumentList(source.command, `${what}: "command"`), timeoutSeconds: wholeNumber(source.timeoutSeconds, 600, 1, 900, `${what}: "timeoutSeconds"`), ...(source.onLanding === true ? { onLanding: true } : {}) };
   }
   if (type === 'screenshots') {
     const start = argumentList(source.start, `${what}: "start"`);
