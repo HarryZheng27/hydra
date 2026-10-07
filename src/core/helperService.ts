@@ -903,7 +903,7 @@ export class HelperService {
         this.slots.add(job.id);
         launches.push(this.launch(job).then(
           () => { if (finalJobStates.has(this.options.store.get(job.id)?.state ?? 'failed')) this.releaseSlot(job.id); },
-          error => { this.releaseSlot(job.id); this.options.log?.(`[heads] ${job.id}: ${error instanceof Error ? error.message : String(error)}`); },
+          error => { this.releaseSlot(job.id, false); this.options.log?.(`[heads] ${job.id}: ${error instanceof Error ? error.message : String(error)}`); },
         ));
       } catch (error) { this.options.log?.(`[heads] ${job.id}: ${error instanceof Error ? error.message : String(error)}`); }
     }
@@ -920,9 +920,9 @@ export class HelperService {
     return this.slots.size;
   }
 
-  /** Free a head's slot and start whatever is queued behind it. Safe to call again: a second call finds nothing to free. */
-  private releaseSlot(id: string): void {
-    if (this.slots.delete(id)) void this.dispatch();
+  /** Free a head's slot and start whatever is queued behind it. Safe to call again: a second call finds nothing to free. A launch that threw frees its slot without redispatching, so a store that keeps failing can't spin. */
+  private releaseSlot(id: string, redispatch = true): void {
+    if (this.slots.delete(id) && redispatch) void this.dispatch();
   }
 
   private async launch(job: Job): Promise<void> {

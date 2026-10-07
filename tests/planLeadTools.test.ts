@@ -417,17 +417,17 @@ test('G7: a plan job\'s "where": old plans and "local" run here; "cloud" is refu
   assert.throws(() => validatePlan({ ...local, jobs: [{ ...stored, runAs: 'lane' }] }), /lane, which runs on this computer/);
 });
 
-test('planFromLeadInput: a plan that will run as one head is budgeted as one head, not as its jobs', () => {
+test('planFromLeadInput: a plan that will run as one head counts as one job against max_jobs', () => {
   const chain = ['a', 'b', 'c', 'd', 'e', 'f'].map((key, i, keys) => leadJob(key, i ? { depends_on: [keys[i - 1]!] } : {}));
   assert.equal(jobsToRun({ jobs: planFromLeadInput({ title: 'Chain', jobs: chain }, origin).jobs, leadOrigin: origin }), 1);
-  // Six dependent jobs collapse into one head, so $5 covers them: it was refused as 6 × $5 before.
-  const plan = planFromLeadInput({ title: 'Chain', jobs: chain, run: 'unattended', budget: { usd: 5 } }, origin, 5);
-  assert.equal(plan.unattended?.usd, 5);
+  // Six dependent jobs collapse into one head: max_jobs counts one. Dollars don't shrink: that head's own cap is every job's default added up.
   assert.equal(planFromLeadInput({ title: 'Chain', jobs: chain, run: 'unattended', budget: { max_jobs: 1 } }, origin, 5).unattended?.maxJobs, 1);
+  assert.throws(() => planFromLeadInput({ title: 'Chain', jobs: chain, run: 'unattended', budget: { usd: 5 } }, origin, 5), /could reach \$30/);
+  assert.equal(planFromLeadInput({ title: 'Chain', jobs: chain, run: 'unattended', budget: { usd: 30 } }, origin, 5).unattended?.usd, 30);
   // The cap counts too: seven independent jobs under a cap of 3 take three rounds and run as one head.
   const seven = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(key => leadJob(key));
-  assert.throws(() => planFromLeadInput({ title: 'Seven', jobs: seven, run: 'unattended', budget: { usd: 5 } }, origin, 5), /could reach \$35/);
-  assert.equal(planFromLeadInput({ title: 'Seven', jobs: seven, run: 'unattended', budget: { usd: 5 } }, origin, 5, 3).unattended?.usd, 5);
+  assert.throws(() => planFromLeadInput({ title: 'Seven', jobs: seven, run: 'unattended', budget: { max_jobs: 1 } }, origin, 5), /allows at most 1 job/);
+  assert.equal(planFromLeadInput({ title: 'Seven', jobs: seven, run: 'unattended', budget: { max_jobs: 1 } }, origin, 5, 3).unattended?.maxJobs, 1);
 });
 
 test('planFromLeadInput: a plan that splits keeps the strict budget check', () => {
@@ -439,8 +439,8 @@ test('planFromLeadInput: a plan that splits keeps the strict budget check', () =
 
 test('applyPlanAmendment: the budget follows what the amended plan will run', () => {
   const jobs = [{ key: 'a', title: 'A', brief: 'x', dependsOn: [] }, { key: 'b', title: 'B', brief: 'x', dependsOn: ['a'] }];
-  const plan = { title: 'Chain', jobs, unattended: { usd: 5 }, leadOrigin: origin };
+  const plan = { title: 'Chain', jobs, unattended: { maxJobs: 1 }, leadOrigin: origin };
   const add = { add: [{ key: 'c', title: 'C', brief: 'x', write_scope: ['src/c/'], depends_on: ['b'] }] };
   assert.equal(applyPlanAmendment(plan, add, undefined, undefined, 5).jobs.length, 3, 'three chained jobs still run as one head');
-  assert.throws(() => applyPlanAmendment({ ...plan, leadOrigin: undefined }, add, undefined, undefined, 5), /could reach \$15/, 'a canvas plan runs as drawn');
+  assert.throws(() => applyPlanAmendment({ ...plan, leadOrigin: undefined }, add, undefined, undefined, 5), /allows at most 1 job/, 'a canvas plan runs as drawn');
 });
