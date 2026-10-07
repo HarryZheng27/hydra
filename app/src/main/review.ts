@@ -34,7 +34,7 @@ export const MAX_REVIEW_TOTAL = 16 * 1024 * 1024;
 const statusNames: Record<string, ReviewFile['status']> = { A: 'added', M: 'modified', D: 'deleted', T: 'changed' };
 
 /** The user's own GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_*) would point the review elsewhere. */
-function cleanEnvironment(): NodeJS.ProcessEnv {
+export function cleanEnvironment(): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const key of Object.keys(process.env)) if (/^GIT_/i.test(key)) environment[key] = undefined;
   return { ...environment, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_LITERAL_PATHSPECS: '1' };

@@ -41,7 +41,17 @@ export type ChatEvent =
   /** A turn ended. */
   | { type: 'done'; status: 'success' | 'interrupted' | 'error'; detail?: string }
   /** A cloud chat's session started (G7): the work runs on claude.ai, not here. */
-  | { type: 'cloud'; sessionId: string; title: string; url: string };
+  | { type: 'cloud'; sessionId: string; title: string; url: string }
+  /**
+   * What a turn changed in the chat's folder, written by the app after `done` (never by an adapter). `before` and `after`
+   * are trees in the app's private snapshot repository; `turn` counts the user's messages, from 1, to place the card.
+   */
+  | { type: 'turn-changes'; changeId: string; turn: number; before: string; after: string; files: TurnFile[] }
+  /** The user undid a turn's changes: the files restored, and the ones left alone because they changed since. */
+  | { type: 'turn-undone'; changeId: string; files: string[]; skipped: Array<{ path: string; reason: string }> };
+
+/** One file a turn changed, folder-relative with forward slashes. Binary files carry no counts. */
+export interface TurnFile { path: string; kind: 'add' | 'update' | 'delete'; added?: number; removed?: number }
 
 export type ApprovalChoice = 'allow' | 'allow-session' | 'deny' | 'edit';
 
