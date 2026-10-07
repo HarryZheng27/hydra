@@ -91,7 +91,8 @@ function App() {
       if (data?.type === 'needsYou') {
         const items = (data as { items?: NeedsYouItem[] }).items ?? [];
         setNeedsYou(items);
-        if (items.length && !pickedView.current) { pickedView.current = true; setView('needs'); }
+        // Decided once, on the first list the view gets: an item that turns up later never moves the user off the canvas.
+        if (!pickedView.current) { pickedView.current = true; if (items.length) setView('needs'); }
       }
       // ---- Lanes: 'lanes'/'show' update React state; 'laneData'/'laneReplay' skip it entirely (the lane bus writes straight into xterm). ----
       const lane = data as LaneServerMessage | undefined;

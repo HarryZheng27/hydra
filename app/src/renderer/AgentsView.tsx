@@ -12,6 +12,9 @@ import type { HydraControl, HydraStopState, Project } from '../shared/ipc';
 import type { NeedsYouItem } from '../../../src/core/needsYou';
 import type { NeedsYouAction } from '../../../src/core/needsYouList';
 
+/** How long after the Agents view opens its first Needs you list may still choose the tab (the list arrives over IPC). */
+const arrivalWindowMs = 3000;
+
 /**
  * The Agents view (G5 milestone 3): the IDE's own canvas of heads, plans and lanes (webview/AgentsBody.tsx), for the
  * project the user has open, driven by that project's controller. Its messages are the IDE webview's own: what the
@@ -57,11 +60,13 @@ export function AgentsView({ project, needsYou, target, onPutOff, onUndo, onOpen
     const timer = setInterval(read, 4000);
     return () => { current = false; clearInterval(timer); };
   }, [project.id]);
-  // The Needs you tab opens by default when it has items, until a view is picked (here or by the controller).
+  // The Needs you tab opens by default when it has items as the view opens, until a view is picked (here or by the
+  // controller). The choice is made once, on arrival: an item that turns up later never moves you off the canvas.
   const picked = useRef(false);
   const mountedAt = useRef(Date.now());
+  useEffect(() => { const settle = setTimeout(() => { picked.current = true; }, arrivalWindowMs); return () => clearTimeout(settle); }, []);
   const changeView = (next: AgentsViewName, focus?: string) => { picked.current = true; setView(next); send({ type: 'view', view: next, ...(focus ? { focus } : {}) }); };
-  useEffect(() => { if (needsYou.length && !picked.current) { picked.current = true; setView('needs'); } }, [needsYou.length]);
+  useEffect(() => { if (needsYou.length && !picked.current && Date.now() - mountedAt.current < arrivalWindowMs) { picked.current = true; setView('needs'); } }, [needsYou.length]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (target && target.at >= mountedAt.current - 2000) changeView(target.view); }, [target?.at]);
 
