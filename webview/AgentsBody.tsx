@@ -5,8 +5,11 @@ import type { JobCheckResult } from '../src/core/jobs';
 import type { PlanJobView } from '../src/core/planRunner';
 import { AgentsCanvas, type HeadAction } from './AgentsCanvas';
 import { LanesView, type LaneSwitchCountdown } from './LanesView';
+import { NeedsYouView } from './NeedsYouView';
+import type { NeedsYouItem } from '../src/core/needsYou';
+import { type NeedsYouAction } from '../src/core/needsYouList';
 
-export type AgentsViewName = 'canvas' | 'lanes';
+export type AgentsViewName = 'canvas' | 'lanes' | 'needs';
 
 /**
  * The Agents tab's Canvas | Lanes switch (docs/internal/Lanes_And_Planner_Plan.md,
@@ -18,6 +21,7 @@ export type AgentsViewName = 'canvas' | 'lanes';
 export function AgentsBody({
   view, onViewChange, heads, dismissedTray, plans, lanes, planJobs, terminals, defaultProvider, laneError, laneFocus, onLaneFocused,
   laneLimits, laneSwitchCountdowns, laneGates, roles, onAction, onPlan, onStopAll, openNewPlanAt, onOpenLane, onSend, focusHead,
+  needsYou, onNeedsYouAction, onNeedsYouPutOff, onNeedsYouUndo,
 }: {
   view: AgentsViewName;
   onViewChange: (view: AgentsViewName) => void;
@@ -47,14 +51,36 @@ export function AgentsBody({
   onOpenLane: (laneId: string) => void;
   onSend: (message: ClientMessage) => void;
   focusHead?: { id: string; at: number };
+  /** The Needs you tab (docs/internal/Needs_You_Plan.md, Phase 5): what waits on the user, already in order and without what's put off. Without it there is no tab. */
+  needsYou?: readonly NeedsYouItem[];
+  /** Anything the tab's keys chose that isn't a message to the controller: opening a chat (the app) is the parent's. Messages and opening a head or lane are handled here. */
+  onNeedsYouAction?: (action: NeedsYouAction, item: NeedsYouItem) => void;
+  onNeedsYouPutOff?: (item: NeedsYouItem, until: number) => void;
+  onNeedsYouUndo?: (item: NeedsYouItem) => void;
 }) {
+  const [headTarget, setHeadTarget] = React.useState<{ id: string; at: number }>();
+  const focus = headTarget && (!focusHead || headTarget.at >= focusHead.at) ? headTarget : focusHead;
+  const needsAction = (action: NeedsYouAction, item: NeedsYouItem) => {
+    if (action.kind === 'send') { onSend(action.message); return; }
+    if (action.kind === 'open') {
+      if (action.view === 'lanes' && action.focus) { onOpenLane(action.focus); return; }
+      if (action.focus) setHeadTarget({ id: action.focus, at: Date.now() });
+      onViewChange('canvas');
+      return;
+    }
+    onNeedsYouAction?.(action, item);
+  };
   return <div className="agents-body">
     <div className="agents-view-switch" role="tablist" aria-label="Agents view">
+      {needsYou && <button role="tab" aria-selected={view === 'needs'} className={view === 'needs' ? 'on' : ''} onClick={() => onViewChange('needs')}>Needs you <span className="agents-view-count">{needsYou.length}</span></button>}
       <button role="tab" aria-selected={view === 'canvas'} className={view === 'canvas' ? 'on' : ''} onClick={() => onViewChange('canvas')}>Canvas</button>
       <button role="tab" aria-selected={view === 'lanes'} className={view === 'lanes' ? 'on' : ''} onClick={() => onViewChange('lanes')}>Lanes <span className="agents-view-count">{(lanes || []).length}</span></button>
     </div>
+    {needsYou && <div className="agents-view-pane" hidden={view !== 'needs'}>
+      <NeedsYouView items={needsYou} onAction={needsAction} onPutOff={(item, until) => onNeedsYouPutOff?.(item, until)} onUndo={item => onNeedsYouUndo?.(item)} />
+    </div>}
     <div className="agents-view-pane" hidden={view !== 'canvas'}>
-      <AgentsCanvas heads={heads} dismissedTray={dismissedTray} plans={plans} lanes={lanes} planJobs={planJobs} defaultProvider={defaultProvider} roles={roles} onAction={onAction} onPlan={onPlan} onStopAll={onStopAll} openNewPlanAt={openNewPlanAt} onOpenLane={onOpenLane} focusHead={focusHead} />
+      <AgentsCanvas heads={heads} dismissedTray={dismissedTray} plans={plans} lanes={lanes} planJobs={planJobs} defaultProvider={defaultProvider} roles={roles} onAction={onAction} onPlan={onPlan} onStopAll={onStopAll} openNewPlanAt={openNewPlanAt} onOpenLane={onOpenLane} focusHead={focus} />
     </div>
     <div className="agents-view-pane" hidden={view !== 'lanes'}>
       <LanesView lanes={lanes || []} terminals={terminals} defaultProvider={defaultProvider} laneError={laneError} focus={laneFocus} onSend={onSend} onFocused={onLaneFocused}

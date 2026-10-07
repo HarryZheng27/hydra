@@ -1,0 +1,28 @@
+/* The Needs you tab (docs/internal/Needs_You_Plan.md, Phase 5). */
+.needs-you { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--primary); color: var(--text); }
+.needs-you-list { flex: 1; min-height: 0; overflow: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; outline: none; }
+.needs-you-empty { margin: auto; color: var(--muted); font-size: 13px; }
+.needs-you-item { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface); cursor: default; display: flex; flex-direction: column; gap: 6px; }
+.needs-you-item.tier-clock { border-left: 3px solid #e3b75a; }
+.needs-you-item.tier-decision { border-left: 3px solid #8cc8ff; }
+.needs-you-item.tier-read { border-left: 3px solid var(--border); }
+.needs-you-list:focus-visible .needs-you-item.selected, .needs-you-item.selected { outline: 1px solid var(--muted); }
+.needs-you-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.needs-you-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); flex-shrink: 0; }
+.needs-you-title { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.needs-you-project, .needs-you-clock { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+.needs-you-clock { margin-left: auto; }
+.needs-you-detail { margin: 0; font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.needs-you-item.selected .needs-you-detail { -webkit-line-clamp: 8; }
+.needs-you-options { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.needs-you-option { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.needs-you-option:hover { background: var(--primary); }
+.needs-you-option em { margin-left: auto; font-style: normal; font-size: 11px; color: var(--green); }
+.needs-you-actions, .needs-you-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.needs-you-actions button, .needs-you-confirm button { height: 26px; padding: 0 10px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.needs-you-actions button.primary, .needs-you-confirm button.primary { background: var(--text); color: var(--primary); border-color: var(--text); }
+.needs-you-actions button:hover, .needs-you-confirm button:hover { background: var(--primary); }
+.needs-you-actions button.primary:hover, .needs-you-confirm button.primary:hover { opacity: .9; }
+.needs-you-confirm { padding-top: 4px; font-size: 12px; }
+.needs-you kbd { font: inherit; font-size: 10px; padding: 0 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); }
+.needs-you-keys { padding: 8px 18px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); flex-shrink: 0; }
