@@ -3,7 +3,7 @@ import { readdir, realpath, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { limitHookPaths, removeClaudeLimitHook, scanJson } from './claudeLimitHook';
-import { blockEnd, blockStart, codexAgentsFile, providerPaths, read, readMarkedBlock, removeClaudeAllowRule, removeCodexBlock, removeGuidanceBlock, serverName, writeAtomic, type ProviderPaths } from './helperRegistration';
+import { blockEnd, blockStart, codexAgentsFile, providerPaths, read, codexNotifyPaths, readMarkedBlock, removeClaudeAllowRule, removeCodexBlock, removeCodexNotify, removeGuidanceBlock, serverName, writeAtomic, type ProviderPaths } from './helperRegistration';
 import { processLaunch } from './process';
 import { findProvider } from './providers';
 
@@ -158,6 +158,11 @@ async function cleanCodex(options: CleanupOptions, paths: ProviderPaths, report:
     if (command === undefined) { log('Codex has no Hydra block'); return false; }
     if (!insideInstall(command, options.app, options.platform)) { log('Codex\'s Hydra block belongs to another Hydra; left alone'); return false; }
     return editFile(paths.codexConfig, current => insideInstall(codexBlockCommand(current), options.app, options.platform) ? removeCodexBlock(current).text : undefined, options, 'Hydra\'s block');
+  });
+  // The lane notifier at the top of config.toml: this install's own, byte-exactly; another Hydra's is left alone.
+  await step('the Codex lane notifier', log, false, async () => {
+    const ownNotify = (text: string) => { const { executable, script } = codexNotifyPaths(text); return insideInstall(executable, options.app, options.platform) && insideInstall(script, options.app, options.platform); };
+    return editFile(paths.codexConfig, current => ownNotify(current) ? removeCodexNotify(current).text : undefined, options, 'Hydra\'s lane notifier');
   });
   if (!report.codexBlock) return;
   report.codexGuidance = await step('the Codex guidance', log, false, async () => {

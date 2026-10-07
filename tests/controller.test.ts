@@ -43,7 +43,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }) {
     startPlanLane: async () => ({ wait: 'no lanes' }), unlinkPlan: async () => {}, laneName: () => undefined, show: async () => {},
     planStatesChanged: () => {}, handle: async message => { laneMessages.push(message); }, webviewReady: () => {},
     start: async () => {}, stop: async () => {}, stopProcesses: async () => 0, exists: () => false, describe: async () => ({ lanes: [] }),
-    jobReady: async () => ({}), openWorktrees: () => [], activeRolesChanged: async () => {}, onLimitEvent: async () => {}, laneWorktreeEntries: () => [], runningLanes: () => [], laneEvidence: () => undefined, laneGatesLogRoot: () => undefined,
+    jobReady: async () => ({}), openWorktrees: () => [], activeRolesChanged: async () => {}, onLimitEvent: async () => {}, laneForAttention: () => undefined, onAttention: () => {}, laneWorktreeEntries: () => [], runningLanes: () => [], laneEvidence: () => undefined, laneGatesLogRoot: () => undefined,
   };
   const store = new PlanStore(path.join(root, 'plans'));
   await store.load();

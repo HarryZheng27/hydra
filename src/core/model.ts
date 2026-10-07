@@ -1,3 +1,4 @@
+import type { LaneAttention } from './attentionEvents';
 import type { Lane } from './lanes';
 import type { Plan, PlanDispatch, PlanJobRunAs } from './plans';
 import type { PlanJobStatus, PlanJobView } from './planRunner';
@@ -208,6 +209,8 @@ export type LaneView = Lane & {
   preview?: { port: number; url: string };
   /** Step E: the preview server exited on its own since it was last started, and why. Cleared at its next start. */
   previewNote?: string;
+  /** Needs_You_Plan.md, Phase 4: its agent is waiting on you ("Waiting for you") or ended its turn ("Finished its turn"). Cleared when you type or its output resumes. */
+  attention?: LaneAttention;
 };
 export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resume' | 'restart' | 'diff' | 'openWindow' | 'refresh' | 'switchProvider' | 'runGates' | 'evidence'
   // ---- Plan lanes (docs/internal/Plan_Lanes_Plan.md, section 5) ----
@@ -216,6 +219,10 @@ export type LaneAction = 'commit' | 'merge' | 'update' | 'pr' | 'close' | 'resum
   | 'preview' | 'stopPreview';
 export const laneActions: readonly LaneAction[] = ['commit', 'merge', 'update', 'pr', 'close', 'resume', 'restart', 'diff', 'openWindow', 'refresh', 'switchProvider', 'runGates', 'evidence', 'markJobDone', 'cancelJob', 'showPlan', 'preview', 'stopPreview'];
 export type AgentsView = 'canvas' | 'lanes';
+/** What a lane's tile says about its agent's attention (Needs_You_Plan.md, Phase 4). */
+export const laneAttentionLabel: Record<LaneAttention, string> = { waiting: 'Waiting for you', 'turn-ended': 'Finished its turn' };
+/** The Lanes view's order: lanes waiting for you first, then the rest, each group keeping its own order. */
+export const waitingFirst = <T extends { attention?: LaneAttention }>(lanes: readonly T[]): T[] => [...lanes.filter(lane => lane.attention === 'waiting'), ...lanes.filter(lane => lane.attention !== 'waiting')];
 
 /** The lane tile's usage-limit banner (docs/internal/Gates_Plan.md, section 2). Buttons match src/core/limitOffer.ts's LaneOfferButtonId. */
 export type LaneOfferButtonId = 'continueOther' | 'viewHandoff' | 'wait';

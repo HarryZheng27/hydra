@@ -99,6 +99,7 @@ Hydra's promise is that no agent grades its own work. But a head can change the 
   - It's cleared when you type into the lane's terminal, or when the agent's output resumes.
   - The tile shows **Waiting for you** or **Finished its turn**.
   - The Lanes view sorts waiting lanes first. It already puts running lanes first.
+- **Status (2026-10-07):** built on `feat/needs-you-lane-attention`. The hook input fields were checked against Claude Code's published hooks reference and the Codex config reference, not against a live session: a live run needs a signed-in copy of `.credentials.json` / `auth.json` in the isolated config folder, which was not done. Still to check live by hand: that Claude Code 2.1.282 sends `Notification` with `notification_type: permission_prompt` in a lane, and that Codex 0.160 runs `notify` with the lane's environment (`HYDRA_LANE_ID`) and cwd. Codex's `notify` is a top-level key, so it is its own marked block at the top of `config.toml`, not part of the appended block.
 - **Verify first:** on the pinned Claude Code and Codex versions, run the existing live acceptance protocol to confirm the hook input fields (`cwd`, `session_id`, `hook_event_name`, the notification's kind) before building on them.
 - **Tests:**
   - An event from a lane's worktree sets `waiting`.
