@@ -41,6 +41,9 @@ const paths: Record<string, string> = {
   // A code block's Run (Claude desktop's play triangle).
   play: 'M7 5l8 5l-8 5z',
   terminal: 'M3.5 4.5h13v11h-13zM6.5 8.5l2 1.5l-2 1.5M10.5 12.5h3',
+  // A change summary's file (a page with a folded corner and a plus) and a file's code (angle brackets and a slash).
+  file: 'M5 2.5h6.5l3.5 3.5v11.5H5zM11.5 2.5v3.5H15M10 9.5v4M8 11.5h4',
+  code: 'M7.5 6.5L4 10l3.5 3.5M12.5 6.5L16 10l-3.5 3.5M11 5.5l-2 9',
   diff: 'M6 3.5v6M3 6.5h6M3.5 14.5h6M12.5 3.5h4v13h-4',
 };
 

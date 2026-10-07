@@ -4,6 +4,7 @@ import type { ChatAnswer, ChatDefaults, ChatEvent, ChatImage, ChatRecord, Claude
 import { foldEvents, type ChatItem } from './chatModel';
 import { hydraCard, type HydraView } from './HydraCards';
 import { Composer } from './Composer';
+import { ChangeCard } from './ChangeCard';
 import { Icon } from './Icon';
 import { Markdown } from './markdown';
 import { ReviewPane } from './ReviewPane';
@@ -257,6 +258,8 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
   const cloudStarted = events.some(event => event.type === 'cloud');
   const cloudUrl = (events.find(event => event.type === 'cloud') as { url?: string } | undefined)?.url;
   const [reviewing, setReviewing] = useState(false);
+  // A file of a turn's change card opened in the review pane: that turn's diff, not the working tree's.
+  const [turnDiff, setTurnDiff] = useState<{ changeId: string; path: string }>();
   // Each request is answered once: a second click on the same card sends nothing.
   const answered = useRef(new Set<string>());
   const answerOnce: Props['onAnswer'] = (id, answer) => {
@@ -299,7 +302,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
           <span className="chat-head-spacer" />
           {/* For anything the pane can't show: the CLI's own interactive resume of this chat. */}
           {onShell && <button className="head-action terminal" onClick={onShell} aria-pressed={!!shellOpen} aria-label="Terminal" title="Terminal"><Icon name="terminal" /></button>}
-          <button className="head-action" onClick={() => setReviewing(current => !current)} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
+          <button className="head-action" onClick={() => { setTurnDiff(undefined); setReviewing(current => !current); }} aria-pressed={reviewing} aria-label={reviewing ? 'Back to chat' : 'Review changes'} title={reviewing ? 'Back to chat' : 'Review changes'}><Icon name="diff" /></button>
           {onBrowser && <button className="head-action" onClick={() => onBrowser(record.pr?.url ?? cloudUrl)} aria-pressed={!!browserOpen} aria-label="Browser" title={record.pr ? 'Browser: opens the pull request' : cloudUrl ? 'Browser: opens the session on claude.ai' : 'Browser'}><Icon name="globe" /></button>}
           <div className="head-more" ref={moreRoot}>
             <button className="head-action" aria-label="More" aria-haspopup="menu" aria-expanded={more} title="More" onClick={() => setMore(value => !value)}><Icon name="more" /></button>
@@ -316,7 +319,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
         </div>, slot)}
       {hydra?.error && <div className="banner hydra-banner" role="status">{hydra.error}</div>}
       {inTerminal && <div className="banner warning terminal-banner" role="status">This chat is open in a terminal. Close that window before sending here, so two programs don't write to one session. <button onClick={onTerminalClosed}>I closed the terminal</button></div>}
-      {reviewing && <ReviewPane chatId={record.id} />}
+      {reviewing && <ReviewPane chatId={record.id} {...(turnDiff ? { turn: turnDiff } : {})} />}
       <div className="transcript" role="log" aria-live="polite" hidden={reviewing} onMouseUp={pickQuote} onScroll={() => setQuote(undefined)}>
         {groupSteps(view.items, hydra).map(item => {
           switch (item.kind) {
@@ -340,6 +343,7 @@ export function ChatPane({ record, defaults, hydra, events, settledBefore = 0, o
             }
             // Every turn keeps its end marker (empty when it simply finished), so what follows knows where a turn ended.
             case 'turn-end': return <div key={item.key} className={`turn-end ${item.status}`}>{usageLine(item)}</div>;
+            case 'changes': return <ChangeCard key={item.key} card={item} onOpen={path => { setTurnDiff({ changeId: item.changeId, path }); setReviewing(true); }} {...(view.running ? {} : { onUndo: () => window.hydra.undoTurn(record.id, item.changeId) })} />;
             case 'cloud': return (
               <div key={item.key} className="card cloud-card" role="status">
                 <div className="card-title">Running on claude.ai: {item.title}</div>
