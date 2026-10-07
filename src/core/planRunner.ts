@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { gitRun, readOnlyGitTimeoutMs } from './git';
+import { plannerResultText } from './planner';
 import { DependencyConflict, capDiff, dependencyBase, dependencyBrief, dependencyDiff, maxDependencyDiff, type DependencyResult } from './headStart';
 import { gateBlocks, gateKind, type EvidenceStatus, type GatesConfigured, type JobCheckResult, type JobLimits, type JobState } from './jobs';
 import {
-  applyLanding, applySeamVerdict, conflictSection, isIntegrationFixKey, defaultLandingAttempts, defaultSeamFixRounds, effectiveDependencies, isIntegrationGateFixKey, seamVerdict, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, findingFiles, fixDiffMax, integrationFixJobs, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
+  applyLanding, applySeamVerdict, conflictSection, isIntegrationFixKey, defaultLandingAttempts, defaultSeamFixRounds, effectiveDependencies, isIntegrationGateFixKey, seamVerdict, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, findingFiles, fixDiffMax, integrationFixJob, integrationFixJobs, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
   newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, warmFixSections, type FixContext, type IntegrationGateRecord, type PlanIntegration,
 } from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
@@ -668,6 +669,8 @@ export class PlanRunner {
         await this.options.store.update(planId, current => { if (!current.integration) return undefined; const { inFlight: _inFlight, ...rest } = current.integration; return { ...current, integration: rest }; });
         continue;
       }
+      // A restart cut a seam check short: run it again first, on the tip it was for.
+      if (integration.seamPending) { await this.seamCheck(planId, integration.seamPending.key, integration.seamPending.tip); progressed = true; continue; }
       const entry = integration.queue[0];
       if (!entry) break;
       const job = plan.jobs.find(item => item.key === entry.key);
@@ -681,11 +684,14 @@ export class PlanRunner {
       let outcome: LandingOutcome;
       try { outcome = await landCommit(repository, integration.branch, from, entry.commit, `Hydra: land job "${job.title}" (${entry.key}) of plan "${plan.title}"`); }
       catch (error) { await this.stopQueue(planId, `Couldn't land ${job.title}: ${describe(error)}`); return true; }
+      // A landing a seam check is due for (not a gate fix's, not a job the branch already had; a seam fix always, so its round is judged) is written down with it.
+      const checkDue = outcome.kind === 'landed' && !!this.options.integration?.landingCheck && !isIntegrationGateFixKey(entry.key) && (outcome.via !== 'contained' || (isIntegrationFixKey(entry.key) && !isIntegrationGateFixKey(entry.key)));
       await this.options.store.update(planId, current => current.integration ? { ...current, ...applyLanding(current, entry, outcome, () => this.now(), attempts) } : undefined);
+      if (checkDue) await this.options.store.update(planId, current => current.integration ? { ...current, integration: { ...current.integration, seamPending: { key: entry.key, tip: (outcome as { tip: string }).tip } } } : undefined);
       this.options.log?.(`[plans] ${planId} job ${entry.key}: ${outcome.kind === 'landed' ? `landed on ${integration.branch} (${outcome.via}) at ${outcome.tip.slice(0, 7)}` : `conflicts with ${integration.branch} in ${outcome.files.join(', ')}`}`);
       progressed = true;
-      // A job that landed for real (not one the branch already had) is checked before anything else lands or starts from it.
-      if (outcome.kind === 'landed' && outcome.via !== 'contained') await this.seamCheck(planId, entry.key, outcome.tip);
+      // What landed is checked before anything else lands or starts from it.
+      if (checkDue) await this.seamCheck(planId, entry.key, (outcome as { tip: string }).tip);
     }
     return progressed;
   }
@@ -697,6 +703,10 @@ export class PlanRunner {
    * run, or a fix that can't be added, leaves the plan as it was (the integration gate is the backstop).
    */
   private async seamCheck(planId: string, key: string, tip: string): Promise<void> {
+    try { await this.runSeamCheck(planId, key, tip); }
+    finally { await this.options.store.update(planId, current => { if (!current.integration?.seamPending) return undefined; const { seamPending: _pending, ...rest } = current.integration; return { ...current, integration: rest }; }); }
+  }
+  private async runSeamCheck(planId: string, key: string, tip: string): Promise<void> {
     const gate = this.options.integration;
     if (!gate?.landingCheck || isIntegrationGateFixKey(key)) return;
     const plan = this.options.store.get(planId);
@@ -788,8 +798,15 @@ export class PlanRunner {
       const fixes = current.state === 'done' ? integrationFixJobs(current, record, gate.fixRounds?.()) : [];
       if (!fixes.length) return updated;
       try {
-        const amended = applyPlanAmendment(current, { add: fixes }, undefined, () => this.now(), gate.headBudgetUsd?.());
-        fixing = fixes.map(fix => fix.key).join(', ');
+        let amended;
+        try { amended = applyPlanAmendment(current, { add: fixes }, undefined, () => this.now(), gate.headBudgetUsd?.()); fixing = fixes.map(fix => fix.key).join(', '); }
+        catch (error) {
+          // A split that doesn't fit the plan falls back to the one whole fix.
+          const whole = fixes.length > 1 ? integrationFixJob(current, record, gate.fixRounds?.()) : undefined;
+          if (!whole) throw error;
+          amended = applyPlanAmendment(current, { add: [whole] }, undefined, () => this.now(), gate.headBudgetUsd?.());
+          fixing = whole.key;
+        }
         return { ...updated, jobs: amended.jobs, amendments: amended.amendments, state: 'running' };
       } catch (error) {
         this.options.log?.(`[plans] ${planId}: couldn't add a fix for the integration gate: ${describe(error)}`);
@@ -957,7 +974,7 @@ export class PlanRunner {
         if (jobRunAs(job) === 'head') {
           // An integration fix isn't cold: it also gets the reviewer's full reply, the code the findings name and who wrote it.
           const warm = isIntegrationGateFixKey(job.key) ? await this.fixContext(plan, job).then(context => warmFixSections(context)).catch(() => '') : '';
-          const { jobId } = await this.options.startHead(plan, warm ? { ...job, brief: `${job.brief}\n\n${warm}` } : job, [], dependencies, { baseCommit: tip, ...(job.conflict ? { carry: job.conflict.commit } : {}) });
+          const { jobId } = await this.options.startHead(plan, warm ? { ...job, brief: `${job.brief}\n\n${warm}`.slice(0, 27000) } : job, [], dependencies, { baseCommit: tip, ...(job.conflict ? { carry: job.conflict.commit } : {}) });
           await this.options.store.update(planId, current => ({ ...current, jobs: current.jobs.map(item => item.key === key && !jobStarted(item) ? { ...item, jobId } : item) }));
           this.options.log?.(`[plans] ${planId} started head ${jobId} for job ${key} from ${plan.integration.branch} at ${tip.slice(0, 7)}`);
           return true;
@@ -1063,7 +1080,8 @@ export class PlanRunner {
     const replies: FixContext['replies'] = [];
     for (const check of failed) {
       const file = gateKind(check) === 'review' ? check.evidence?.find(item => /-reply(?:-retry)?\.txt$/.test(item)) : undefined;
-      const text = file ? await readFile(file, 'utf8').catch(() => '') : '';
+      const raw = file ? (await readFile(file, 'utf8').catch(() => '')).split('\n--- stderr ---')[0]! : '';
+      const text = raw && check.reviewer ? plannerResultText(check.reviewer, raw) : raw;
       if (text.trim()) replies.push({ id: check.id, text });
     }
     const [base, tip] = [integration.base, integration.tip];

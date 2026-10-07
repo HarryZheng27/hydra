@@ -4,11 +4,11 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { git, gitRun } from '../src/core/git';
-import { createPlan, PlanStore, applyPlanAmendment, planJobBriefMax, type Plan, type PlanJob } from '../src/core/plans';
+import { createPlan, PlanStore, applyPlanAmendment, planJobBriefMax, planJobTitleMax, type Plan, type PlanJob } from '../src/core/plans';
 import { PlanRunner, planHeadInput, type PlanHeadLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import {
   applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, integrationSettled, landCommit, mergeRefusal, newIntegration, reconcile,
-  findingFiles, integrationFixJob, integrationFixJobs, laneMergeRefusal, warmFixSections, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
+  findingFiles, seamVerdict, integrationFixJob, integrationFixJobs, laneMergeRefusal, warmFixSections, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
 } from '../src/core/integration';
 import { parseGatesConfig, runGateList } from '../src/core/gates';
 import { JobStore, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
@@ -957,5 +957,70 @@ test('warm fixes (step 3): findings in two areas start two fix heads at once, ea
     const second = await p.runner.integrate(p.plan.id);
     assert.equal(second.status, 'passed', 'the gate ran again on both fixes together');
     assert.equal(p.get().jobs.filter(job => job.key.startsWith('integration-fix-')).length, 2, 'no third fix');
+  } finally { p.dispose(); await f.close(); }
+});
+
+// ---- Review fixes ----
+
+test('seams (review): fix titles fit a plan job\'s 80 characters whatever the job titles, and keep the round suffix', () => {
+  const long = 'Implement the shopping cart totals with tax and discount rules for all';
+  const seam = seamVerdict({ title: 'Shop', jobs: [{ key: 'a', title: long, writeScope: ['src/a'] }], integration: {} }, 'a', sha('c'), [failedCheck()]);
+  assert.equal(seam.kind, 'fix');
+  assert.ok(seam.kind === 'fix' && seam.job.title.length <= planJobTitleMax);
+  const jobs = [{ key: 'a', title: long, writeScope: ['src/a'] }, { key: 'b', title: `${long.slice(0, 60)} again`, writeScope: ['src/b'] }];
+  const fixes = integrationFixJobs({ title: 'Shop', jobs }, gateWith([reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'x' }, { file: 'src/b/y.ts', severity: 'major', note: 'y' }])]));
+  assert.equal(fixes.length, 2);
+  for (const fix of fixes) { assert.ok(fix.title.length <= planJobTitleMax, fix.title); assert.match(fix.title, /\(round 1 of 2\)$/); }
+  assert.doesNotThrow(() => applyPlanAmendment({ jobs: jobs.map(job => ({ ...job, brief: 'x', dependsOn: [] })) }, { add: fixes.map(fix => ({ ...fix })) }));
+  // A job title that mentions a round can't make every round read as round 1.
+  const tricky = [{ key: 'a', title: 'Cart (round 1 of 5) x', writeScope: ['src/a'] }, { key: 'integration-fix-1', title: 'Fix (round 2 of 2)' }];
+  assert.equal(integrationFixJobs({ title: 'Shop', jobs: tricky }, gateWith([failedCheck()])).length, 0);
+});
+
+test('seams (review): a seam fix that changes nothing (lands as contained) is still judged, so the seam never stays open on a broken tip', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seamCheck({ broken: true }).check, seamFixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.finish('seam-fix-1', p.get().integration!.tip);
+    assert.equal(p.get().integration!.seams?.[0]?.fix, 'seam-fix-2', 'round 2 starts');
+    assert.equal(p.get().integration!.seamPending, undefined);
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (review): a restart in the middle of a seam check runs it again before anything starts from the tip', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const state = { broken: true };
+  const seam = seamCheck(state);
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    const tip = p.get().integration!.tip;
+    // Hydra stopped after recording the landing but before the check finished: no seam recorded, the check still pending.
+    await p.store.update(p.plan.id, current => { const { seams: _seams, ...rest } = current.integration!; return { ...current, jobs: current.jobs.filter(job => job.key !== 'seam-fix-1'), integration: { ...rest, seamPending: { key: 'a', tip } } }; });
+    const before = seam.ran.length;
+    const runner = await p.restart();
+    await runner.advanceAll({ startup: true });
+    assert.equal(seam.ran.length, before + 1, 'the check ran again, on the recorded tip');
+    assert.equal(p.get().integration!.seamPending, undefined);
+    assert.equal(p.get().integration!.seams?.[0]?.key, 'a', 'and its failure holds a\'s dependents');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('warm fixes (review): the reviewer\'s reply is its message, not the CLI\'s envelope or stderr', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const replyFile = path.join(f.root, 'rigor-review-reply.txt');
+  await writeFile(replyFile, `${JSON.stringify({ type: 'result', usage: { input_tokens: 99 }, result: 'The cart skips tax entirely.' })}\n--- stderr ---\nnoise`);
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'x' }], { reviewer: 'claude', evidence: [replyFile] })], configured: 'file' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] })], { runGate: failing, fixRounds: 1 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.runner.integrate(p.plan.id);
+    const brief = p.startedFor('integration-fix-1')[0]!.brief;
+    assert.match(brief, /The cart skips tax entirely\./);
+    assert.ok(!brief.includes('input_tokens') && !brief.includes('noise'));
   } finally { p.dispose(); await f.close(); }
 });

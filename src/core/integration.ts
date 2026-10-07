@@ -79,6 +79,8 @@ export interface PlanIntegration {
   error?: string;
   /** Seam checks that failed and whose fix hasn't passed yet: the jobs that depend on `key` wait for `fix` (seamVerdict). */
   seams?: IntegrationSeam[];
+  /** A landing whose seam check hasn't finished: a restart runs it again before anything else lands or starts. */
+  seamPending?: { key: string; tip: string };
 }
 /** A job's landing broke the landing check (an `onLanding` command gate); `fix` is the job that repairs it, `round` how many fixes it took so far. */
 export interface IntegrationSeam { key: string; fix: string; round: number; tip: string; at: string }
@@ -289,6 +291,10 @@ export const isIntegrationGateFixKey = (key: string): boolean => integrationFixP
 
 /** Rounds of seam fixes after one landing's check fails, unless the window says otherwise. */
 export const defaultSeamFixRounds = 2;
+/** plans.ts's planJobTitleMax, repeated for the same reason as fixBriefMax. */
+const fixTitleMax = 80;
+/** `head` clipped so that it and `suffix` (never clipped: it names the round) fit a plan job's title. */
+const fitTitle = (head: string, suffix = ''): string => `${head.length + suffix.length > fixTitleMax ? `${head.slice(0, fixTitleMax - suffix.length - 1).trimEnd()}…` : head}${suffix}`;
 /** The job key of a plan's nth seam fix. Like an integration fix, it is Hydra's own: it doesn't use up the lead's amendments and may share paths with jobs that depend on the one it follows. */
 export const seamFixKey = (n: number): string => `seam-fix-${n}`;
 const seamFixPattern = /^seam-fix-\d+$/;
@@ -335,7 +341,7 @@ export function seamVerdict(plan: { title: string; jobs: readonly { key: string;
   const scope = root?.writeScope?.length ? [...root.writeScope] : ['.'];
   return {
     kind: 'fix', seam: { key: rootKey, fix: key, round, tip, at: now().toISOString() },
-    job: { key, title: `Fix the seam after ${root?.title ?? rootKey}`.slice(0, 200), brief: brief.length > fixBriefMax ? `${brief.slice(0, fixBriefMax - 1)}…` : brief, write_scope: scope, depends_on: [landedKey], rigor: 'quick' },
+    job: { key, title: fitTitle(`Fix the seam after ${root?.title ?? rootKey}`), brief: brief.length > fixBriefMax ? `${brief.slice(0, fixBriefMax - 1)}…` : brief, write_scope: scope, depends_on: [landedKey], rigor: 'quick' },
   };
 }
 
@@ -366,7 +372,7 @@ export interface FixPlanJob { key: string; title?: string; writeScope?: readonly
 
 /** The round the next fix is: one past the highest round a fix job's title names, or past the count of fix jobs for one with no title. */
 function nextFixRound(jobs: readonly FixPlanJob[]): number {
-  return jobs.filter(job => integrationFixPattern.test(job.key)).reduce((highest, job, index) => Math.max(highest, Number(/\(round (\d+) of \d+\)/.exec(job.title ?? '')?.[1]) || index + 1), 0) + 1;
+  return jobs.filter(job => integrationFixPattern.test(job.key)).reduce((highest, job, index) => Math.max(highest, Number(/\(round (\d+) of \d+\)$/.exec(job.title ?? '')?.[1]) || index + 1), 0) + 1;
 }
 
 const findingLine = (finding: GateFinding): string => `- [${finding.severity}]${finding.file ? ` ${finding.file}${finding.line ? `:${finding.line}` : ''}` : ''}: ${oneLine(finding.note)}`;
@@ -490,7 +496,7 @@ export function integrationFixJobs(plan: { title: string; jobs: readonly FixPlan
     ].join('\n');
     return {
       key: integrationFixKey(first + index),
-      title: `Fix the integration gate's findings in ${names}${rounds > 1 ? ` (round ${round} of ${rounds})` : ''}`.slice(0, 200),
+      title: fitTitle(`Fix the integration gate's findings in ${names}`, rounds > 1 ? ` (round ${round} of ${rounds})` : ''),
       brief: clipBrief(brief),
       write_scope: area.scope,
       rigor: 'quick' as const,
