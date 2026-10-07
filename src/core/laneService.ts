@@ -322,7 +322,7 @@ export class LaneService {
         ...lane, ...(sync ? { sync: structuredClone(sync) } : {}), running: !!this.terminals.get(lane.id)?.running,
         ...(roleNote ? { roleNote } : {}), ...(resumeNote ? { resumeNote } : {}), ...(gatesStale ? { gatesStale } : {}),
         ...(preview ? { preview: { port: preview.port, url: preview.url } } : {}), ...(previewNote ? { previewNote } : {}),
-        ...(this.attention.has(lane.id) ? { attention: this.attention.get(lane.id)!.kind } : {}),
+        ...(this.attention.has(lane.id) ? { attention: this.attention.get(lane.id)!.kind, attentionAt: this.attention.get(lane.id)!.at } : {}),
       };
     });
   }

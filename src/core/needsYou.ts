@@ -15,8 +15,9 @@ import { redactText } from './redact';
  * Pure: no clock, no Electron, no files.
  */
 
-/** What is waiting. Later steps (lanes, failed lane gates, a finished head nobody merged) add kinds here and in `tiers`. */
-export type NeedsYouKind = 'head-question' | 'limit-offer' | 'chat-needs' | 'plan-merge' | 'plan-stopped' | 'plan-report' | 'chat-unread';
+/** What is waiting (the table in Needs_You_Plan.md, Phase 5). */
+export type NeedsYouKind = 'head-question' | 'limit-offer' | 'chat-needs' | 'plan-merge' | 'plan-stopped' | 'lane-gates' | 'lane-waiting'
+  | 'plan-report' | 'chat-unread' | 'lane-finished' | 'head-finished';
 
 /** First the items on a clock, then decisions that unblock work, then things to read. */
 export type NeedsYouTier = 'clock' | 'decision' | 'read';
@@ -27,21 +28,43 @@ export const needsYouTiers: Readonly<Record<NeedsYouKind, NeedsYouTier>> = {
   'chat-needs': 'decision',
   'plan-merge': 'decision',
   'plan-stopped': 'decision',
+  'lane-gates': 'decision',
+  'lane-waiting': 'decision',
   'plan-report': 'read',
   'chat-unread': 'read',
+  'lane-finished': 'read',
+  'head-finished': 'read',
 };
+/** Kinds that never raise an OS banner: things to read, which the list shows when the user is back (Phase 1 banners the rest). */
+const quietKinds: ReadonlySet<NeedsYouKind> = new Set(['lane-finished', 'head-finished']);
 const tierOrder: Readonly<Record<NeedsYouTier, number>> = { clock: 0, decision: 1, read: 2 };
 
 /** A chat's status in the sidebar (app/src/renderer/chatStatus.ts). `working` and idle chats don't need the user. */
 export interface ChatFact { id: string; title: string; status?: 'working' | 'needs' | 'unread'; since: number }
 /** A head, from `headViews()`. `leadWaiting`: a lead is in hydra_wait_for_heads (or hydra_plan_wait, for a plan's job) and will answer. */
-export interface HeadFact { id: string; title: string; state: string; since: number; leadWaiting: boolean; answersAt?: number }
+export interface HeadFact {
+  id: string; title: string; state: string; since: number; leadWaiting: boolean; answersAt?: number;
+  /** A blocked head's question and the choices it offered, numbered from 1 (exactly one recommended). Shown in the list, never in a banner. */
+  question?: string; options?: readonly NeedsYouOption[];
+}
+export interface NeedsYouOption { option: number; text: string; recommended?: boolean }
+/** A head that finished and nobody merged: no lead waiting on it, not a plan's job, and the Finished tray still shows it. */
+export interface FinishedHeadFact { id: string; title: string; since: number; headline?: string; evidence?: string }
+/**
+ * A lane that isn't merged or closed. `attention`: its agent is waiting on you, or ended its turn (Phase 4).
+ * `failedGates`: the gates that failed on its current commit and weren't accepted, so Merge would stop at them.
+ */
+export interface LaneFact { id: string; name: string; since: number; goal?: string; attention?: 'waiting' | 'turn-ended'; attentionSince?: number; failedGates?: readonly string[]; gatesSince?: number }
 /**
  * A plan. `stopped`: nothing left to run but a job failed or is asking (`incomplete`). `readyToMerge`: its integration
  * gate passed on the current tip and it isn't merged. `leadWaiting`: a lead is in hydra_plan_wait for it.
  * `reportReady`: an unattended plan ended and its report is written.
  */
-export interface PlanFact { id: string; title: string; since: number; stopped: boolean; readyToMerge: boolean; leadWaiting: boolean; reportReady: boolean }
+export interface PlanFact {
+  id: string; title: string; since: number; stopped: boolean; readyToMerge: boolean; leadWaiting: boolean; reportReady: boolean;
+  /** What the list says under the title: the integration gate's label and branch (ready to merge), or the jobs that failed (stopped). */
+  gate?: string; branch?: string; failedJobs?: readonly string[];
+}
 /** The latest usage-limit event for a provider that is still limited, with a chat or head to offer to continue elsewhere. */
 export interface LimitOfferFact { id: string; provider: string; since: number; resetsAt?: number }
 
@@ -52,6 +75,8 @@ export interface NeedsYouFacts {
   heads?: readonly HeadFact[];
   plans?: readonly PlanFact[];
   limitOffers?: readonly LimitOfferFact[];
+  lanes?: readonly LaneFact[];
+  finishedHeads?: readonly FinishedHeadFact[];
 }
 
 export interface NeedsYouItem {
@@ -69,6 +94,10 @@ export interface NeedsYouItem {
   since: number;
   /** Items on a clock only: when Hydra answers or the limit resets (ms). */
   deadline?: number;
+  /** One line under the title: the question, the failed gates, the gate label. Free text from the work: it shows in the list, never in a banner. */
+  detail?: string;
+  /** A head's question's choices, numbered from 1. */
+  options?: readonly NeedsYouOption[];
 }
 
 const itemId = (kind: NeedsYouKind, projectId: string, sourceId: string) => `${kind}:${projectId}:${sourceId}`;
@@ -85,22 +114,31 @@ export function compareNeedsYou(a: NeedsYouItem, b: NeedsYouItem): number {
 export function deriveNeedsYou(projects: readonly NeedsYouFacts[], now: number): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
   for (const project of projects) {
-    const add = (kind: NeedsYouKind, sourceId: string, title: string, since: number, deadline?: number) =>
-      items.push({ id: itemId(kind, project.projectId, sourceId), kind, tier: needsYouTiers[kind], projectId: project.projectId, projectName: project.projectName, title, sourceId, since, ...(deadline !== undefined ? { deadline } : {}) });
+    const add = (kind: NeedsYouKind, sourceId: string, title: string, since: number, extra: { deadline?: number; detail?: string; options?: readonly NeedsYouOption[] } = {}) =>
+      items.push({
+        id: itemId(kind, project.projectId, sourceId), kind, tier: needsYouTiers[kind], projectId: project.projectId, projectName: project.projectName, title, sourceId, since,
+        ...(extra.deadline !== undefined ? { deadline: extra.deadline } : {}), ...(extra.detail ? { detail: extra.detail } : {}), ...(extra.options?.length ? { options: extra.options } : {}),
+      });
     for (const chat of project.chats ?? []) {
       if (chat.status === 'needs') add('chat-needs', chat.id, chat.title, chat.since);
       else if (chat.status === 'unread') add('chat-unread', chat.id, chat.title, chat.since);
     }
     for (const head of project.heads ?? []) {
-      if (head.state === 'blocked' && !head.leadWaiting) add('head-question', head.id, head.title, head.since, head.answersAt);
+      if (head.state === 'blocked' && !head.leadWaiting) add('head-question', head.id, head.title, head.since, { deadline: head.answersAt, detail: head.question, options: head.options });
     }
     for (const plan of project.plans ?? []) {
-      if (plan.readyToMerge && !plan.leadWaiting) add('plan-merge', plan.id, plan.title, plan.since);
-      if (plan.stopped && !plan.leadWaiting) add('plan-stopped', plan.id, plan.title, plan.since);
+      if (plan.readyToMerge && !plan.leadWaiting) add('plan-merge', plan.id, plan.title, plan.since, { detail: [plan.gate, plan.branch].filter(Boolean).join(' · ') });
+      if (plan.stopped && !plan.leadWaiting) add('plan-stopped', plan.id, plan.title, plan.since, { detail: plan.failedJobs?.length ? `Failed: ${plan.failedJobs.join(', ')}` : undefined });
       if (plan.reportReady && now - plan.since < reportMaxAgeMs) add('plan-report', plan.id, plan.title, plan.since);
     }
+    for (const lane of project.lanes ?? []) {
+      if (lane.failedGates?.length) add('lane-gates', lane.id, lane.name, lane.gatesSince ?? lane.since, { detail: `Gates failed: ${lane.failedGates.join(', ')}` });
+      if (lane.attention === 'waiting') add('lane-waiting', lane.id, lane.name, lane.attentionSince ?? lane.since, { detail: lane.goal });
+      else if (lane.attention === 'turn-ended') add('lane-finished', lane.id, lane.name, lane.attentionSince ?? lane.since, { detail: lane.goal });
+    }
+    for (const head of project.finishedHeads ?? []) add('head-finished', head.id, head.title, head.since, { detail: [head.headline, head.evidence].filter(Boolean).join(' · ') });
     for (const offer of project.limitOffers ?? []) {
-      if (offer.resetsAt === undefined || offer.resetsAt > now) add('limit-offer', offer.id, offer.provider, offer.since, offer.resetsAt);
+      if (offer.resetsAt === undefined || offer.resetsAt > now) add('limit-offer', offer.id, offer.provider, offer.since, { deadline: offer.resetsAt });
     }
   }
   return items.sort(compareNeedsYou);
@@ -167,7 +205,7 @@ export class AwayBanners {
     const live = new Set(items.map(item => item.id));
     for (const id of this.announced) if (!live.has(id)) this.announced.delete(id);
     if (!isAway(presence)) { this.sent = 0; return undefined; }
-    const fresh = items.filter(item => !this.announced.has(item.id) && now - item.since >= this.graceMs);
+    const fresh = items.filter(item => !this.announced.has(item.id) && !quietKinds.has(item.kind) && now - item.since >= this.graceMs);
     if (!fresh.length) return undefined;
     // `items` is ordered most urgent first (deriveNeedsYou).
     let pick: NeedsYouItem | undefined;

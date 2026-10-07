@@ -4,10 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { HydraController, type ControllerIde, type ControllerLanes, type TreeUpdate } from '../src/host/controller';
-import { PlanStore, type Plan } from '../src/core/plans';
+import { PlanStore, createPlan, type Plan } from '../src/core/plans';
 import { StopSwitch } from '../src/core/stopSwitch';
 import { AuditLog } from '../src/core/audit';
-import type { ClientMessage, Snapshot } from '../src/core/model';
+import type { ClientMessage, LaneView, Snapshot } from '../src/core/model';
 import { JobStore } from '../src/core/jobs';
 import type { HelperService } from '../src/core/helperService';
 import type { PackService } from '../src/core/packs/service';
@@ -53,7 +53,7 @@ async function setup(t: { after(fn: () => Promise<void>): void }) {
   const headSandbox = { shell: async () => ({ kind: 'unconfined' }), reset: () => {} } as unknown as HeadSandbox;
   const controller = new HydraController({ host, ide, lanes, stop, audit: new AuditLog({ file: path.join(root, 'audit', 'audit.jsonl') }), packs, headSandbox, storageDirectory: path.join(root, 'workspaces', 'lead'), leadKey: 'lead', quota: { refresh: async () => {}, snapshot: () => ({ status: 'unchecked', text: '' }) }, limitOfferTracker: new LimitOfferTracker() });
   controller.plans = { store, planning: new Map() };
-  return { host, controller, store, ideMessages, trees, laneMessages, closeAgents: () => { agentsOpen = false; }, counts: () => ({ opened, ready }) };
+  return { host, controller, store, ideMessages, trees, laneMessages, lanes, closeAgents: () => { agentsOpen = false; }, counts: () => ({ opened, ready }) };
 }
 const snapshots = (host: FakeHost) => host.posted.filter((message): message is { type: 'snapshot'; snapshot: Snapshot } => (message as { type?: string }).type === 'snapshot').map(message => message.snapshot);
 const planNamed = (store: PlanStore, title: string): Plan => { const plan = store.list().find(item => item.title === title); assert.ok(plan, `plan ${title}`); return plan; };
@@ -194,4 +194,68 @@ test('the board bridge finds a head\'s plan and its integration target', async t
   assert.equal(controller.jobPlanFor('000000000000'), undefined);
   assert.deepEqual(board.integrationTarget?.('abcdefabcdef'), { branch: `hydra/plan-${plan.planId}`, tip: 'b'.repeat(40) });
   assert.equal(board.unattended?.(plan.planId), false);
+});
+
+// ---- Needs_You_Plan.md, Phase 5: the Needs you list ----
+
+const laneView = (extra: Record<string, unknown>) => ({
+  id: '0123456789ab', name: 'Checkout', provider: 'claude', repository: '/repo', worktree: '/repo.worktrees/x', branch: 'lane/x', baseCommit: 'a'.repeat(40),
+  target: 'main', createdAt: new Date(Date.now() - 60_000).toISOString(), state: 'running', running: true, ...extra,
+}) as unknown as LaneView;
+const failedGate = { id: 'unit', required: true, passed: false, exitCode: 1, durationMs: 5, outputTail: '' };
+
+test('the controller derives lane items: waiting, finished its turn and failed gates; a stale or accepted run is not one', async t => {
+  const { controller, lanes } = await setup(t);
+  lanes.state = () => ({ terminals: true, lanes: [
+    laneView({ id: '111111111111', name: 'Waiting', attention: 'waiting', attentionAt: Date.now() - 1000 }),
+    laneView({ id: '222222222222', name: 'Ended', attention: 'turn-ended', attentionAt: Date.now() - 2000 }),
+    laneView({ id: '333333333333', name: 'Broken', lastGates: { source: 'gates', at: new Date(Date.now() - 5000).toISOString(), results: [failedGate], commit: 'b'.repeat(40) } }),
+    laneView({ id: '444444444444', name: 'Stale', gatesStale: true, lastGates: { source: 'gates', at: new Date().toISOString(), results: [failedGate], commit: 'b'.repeat(40) } }),
+    laneView({ id: '555555555555', name: 'Accepted', lastGates: { source: 'gates', at: new Date().toISOString(), results: [failedGate], commit: 'b'.repeat(40), status: 'override' } }),
+    laneView({ id: '666666666666', name: 'Merged', state: 'merged', attention: 'waiting' }),
+    laneView({ id: '777777777777', name: 'Optional', lastGates: { source: 'gates', at: new Date().toISOString(), results: [{ ...failedGate, required: false }] } }),
+  ] });
+  const items = controller.needsYouItems();
+  assert.deepEqual(items.map(item => [item.kind, item.title]), [['lane-gates', 'Broken'], ['lane-waiting', 'Waiting'], ['lane-finished', 'Ended']]);
+  assert.equal(items[0]!.detail, 'Gates failed: unit');
+});
+
+test('Put off hides an item until its time, Z brings it back, and the host state keeps it', async t => {
+  const { host, controller, lanes, trees } = await setup(t);
+  lanes.state = () => ({ terminals: true, lanes: [laneView({ id: '111111111111', name: 'Waiting', attention: 'waiting' })] });
+  const key = 'lane-waiting:111111111111';
+  assert.equal(controller.needsYouItems().length, 1);
+  const until = Date.now() + 60 * 60_000;
+  await controller.handle({ type: 'needsYouPutOff', key, until });
+  assert.equal(controller.needsYouItems().length, 0);
+  assert.deepEqual(host.state.get('hydra.needsYou.putOff.v1', []), [{ id: key, until }]);
+  // The view is told at once: an empty list, and the project's tree too.
+  assert.deepEqual((host.posted.filter(message => (message as { type?: string }).type === 'needsYou').at(-1) as { items: unknown[] }).items, []);
+  assert.deepEqual(trees.filter(update => update.needsYou).at(-1)!.needsYou, []);
+  // A controller made later reads it back, and it returns by itself at its time.
+  assert.equal(controller.needsYouItems(undefined, until - 1).length, 0);
+  assert.equal(controller.needsYouItems(undefined, until + 1).length, 1);
+  await controller.handle({ type: 'needsYouUndo', key });
+  assert.equal(controller.needsYouItems().length, 1);
+  assert.deepEqual(host.state.get('hydra.needsYou.putOff.v1', []), []);
+  assert.deepEqual((host.posted.filter(message => (message as { type?: string }).type === 'needsYou').at(-1) as { items: { kind: string }[] }).items.map(item => item.kind), ['lane-waiting']);
+});
+
+test('a stopped plan and a plan ready to merge are items, and an unattended plan\'s report opens through the controller', async t => {
+  const { host, controller, store } = await setup(t);
+  await store.save({ ...createPlan({ title: 'Stuck', state: 'incomplete' }) });
+  await store.save({ ...createPlan({ title: 'Overnight', state: 'done' }), unattended: { wallClockMinutes: 60 } as never });
+  const items = controller.needsYouItems();
+  assert.deepEqual(items.map(item => [item.kind, item.title]), [['plan-stopped', 'Stuck'], ['plan-report', 'Overnight']]);
+  await controller.handle({ type: 'planReport', id: items[1]!.sourceId });
+  assert.equal(host.opened.length, 1);
+  assert.match(String(host.opened[0]!.file), /report/i);
+  await assert.rejects(() => controller.handle({ type: 'planReport', id: 'ffffffffffff' }), /No plan/);
+});
+
+test('the other messages the list sends reach the controller\'s own paths and refuse what isn\'t there', async t => {
+  const { controller } = await setup(t);
+  await assert.rejects(() => controller.handle({ type: 'headOption', jobId: 'abcdef012345', option: 1 }), /not in this window/);
+  await assert.rejects(() => controller.handle({ type: 'helperReply', jobId: 'abcdef012345' }), /not in this window/);
+  await assert.rejects(() => controller.handle({ type: 'limitContinue', id: 'claude:2026-10-07T12:00:00.000Z' }), /passed/);
 });

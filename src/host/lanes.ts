@@ -690,6 +690,14 @@ export class LanesController implements Disposable {
         this.postState(true);
         return { cancelled: true };
       }
+      case 'sendGates': {
+        // Needs_You_Plan.md, Phase 5: the failed gates on the lane's current commit, typed into its terminal as Merge's "Send to lane" does.
+        const gates = lane.lastGates;
+        const failed = gates && gates.status !== 'override' && gates.status !== 'passed' ? gates.results.filter(result => result.required && !result.passed) : [];
+        if (!failed.length) { void info(`Lane ${lane.name} has no failed gates to send.`); return undefined; }
+        this.sendGatesToLane(service, lane, failed);
+        return undefined;
+      }
       case 'showPlan': {
         const job = this.planJobOf(lane.id);
         if (!job) throw new Error(`Lane ${lane.name} doesn't run a plan job.`);
