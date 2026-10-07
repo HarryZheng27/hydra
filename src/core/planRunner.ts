@@ -1,7 +1,7 @@
 import { DependencyConflict, dependencyBase, dependencyBrief, dependencyDiff, maxDependencyDiff, type DependencyResult } from './headStart';
 import type { EvidenceStatus, GatesConfigured, JobCheckResult, JobLimits, JobState } from './jobs';
 import {
-  applyLanding, conflictSection, defaultLandingAttempts, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
+  applyLanding, applySeamVerdict, conflictSection, defaultLandingAttempts, defaultSeamFixRounds, effectiveDependencies, isIntegrationGateFixKey, seamVerdict, type LandingOutcome, enqueue, ensureIntegrationBranch, gateRecord, integrationFixJob, integrationStart, landCommit, landedEntry, mergeIntegration, mergeRefusal,
   newIntegration, pushIntegration, queuePosition, reconcile, reconcileFacts, recreateIntegrationBranch, releaseConflict, type IntegrationGateRecord, type PlanIntegration,
 } from './integration';
 import type { LaneCloseMode, LaneState } from './lanes';
@@ -102,8 +102,12 @@ const describe = (error: unknown) => error instanceof Error ? error.message : St
  */
 export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions = {}): PlanSteps {
   const byKey = new Map(plan.jobs.map(job => [job.key, job]));
-  const cycle = findCycle(plan.jobs);
-  const order = cycle ? plan.jobs.map(job => job.key).sort() : topologicalOrder(plan.jobs);
+  // A seam check that failed makes the jobs that depend on the job it blamed wait for its fix too (effectiveDependencies).
+  const seams = plan.integration?.seams;
+  const waitsFor = (job: PlanJob): string[] => effectiveDependencies(job, seams);
+  const walked = seams?.length ? plan.jobs.map(job => ({ ...job, dependsOn: waitsFor(job) })) : plan.jobs;
+  const cycle = findCycle(walked);
+  const order = cycle ? plan.jobs.map(job => job.key).sort() : topologicalOrder(walked);
   const status = new Map<string, PlanJobStatus>();
   const views = new Map<string, PlanJobView>();
   const record: PlanRecord[] = [];
@@ -185,7 +189,7 @@ export function planSteps(plan: Plan, look: PlanLook, options: PlanStepOptions =
     // A lane whose plan link names this job, from a start whose record was never saved (a crash in between).
     const found = runAs === 'lane' ? adoptable.get(key) : undefined;
     if (found && found.attempt === (job.attempt ?? 0)) { record.push({ key, kind: 'adopt', laneId: found.laneId }); view.laneId = found.laneId; set('active'); continue; }
-    const dependencies = job.dependsOn.filter(dependency => byKey.has(dependency));
+    const dependencies = waitsFor(job).filter(dependency => byKey.has(dependency));
     const broken = dependencies.find(dependency => ended.has(status.get(dependency)!));
     if (broken) {
       const reason = `${title(broken)} did not finish.`;
@@ -352,6 +356,14 @@ export interface PlanIntegrationOptions {
   fixRounds?(): number;
   /** The per-head budget an unattended plan's fix job is estimated at (hydra.heads.defaultBudgetUsd). Default 5. */
   headBudgetUsd?(): number;
+  /**
+   * The seam check (docs/Heads.md, "Seam checks"): the project's `onLanding` command gates run on the integrated tree at `tip`,
+   * right after the job `key` landed there. No checks means none are configured. Without this option nothing is checked
+   * (as before). A check Hydra can't run (it throws) never holds a plan up.
+   */
+  landingCheck?(plan: Plan, tip: string, key: string): Promise<JobCheckResult[]>;
+  /** Fix rounds after one landing's seam check fails. Default 2; 0 turns the fixes off (a failing check then only logs). */
+  seamFixRounds?(): number;
 }
 /** What hydra_plan_merge (or the canvas) asked for. */
 export type PlanMergeVia = 'merge' | 'pr';
@@ -670,8 +682,49 @@ export class PlanRunner {
       await this.options.store.update(planId, current => current.integration ? { ...current, ...applyLanding(current, entry, outcome, () => this.now(), attempts) } : undefined);
       this.options.log?.(`[plans] ${planId} job ${entry.key}: ${outcome.kind === 'landed' ? `landed on ${integration.branch} (${outcome.via}) at ${outcome.tip.slice(0, 7)}` : `conflicts with ${integration.branch} in ${outcome.files.join(', ')}`}`);
       progressed = true;
+      // A job that landed for real (not one the branch already had) is checked before anything else lands or starts from it.
+      if (outcome.kind === 'landed' && outcome.via !== 'contained') await this.seamCheck(planId, entry.key, outcome.tip);
     }
     return progressed;
+  }
+
+  /**
+   * The seam check after one landing (docs/Heads.md, "Seam checks"), on the plan's own queue, so nothing lands or starts
+   * meanwhile. A failure adds a fix job for the landed job's scope in the same update that records the open seam, so
+   * a dependent never sees the broken branch as ready; a pass closes every open seam. Fails open: a check that can't
+   * run, or a fix that can't be added, leaves the plan as it was (the integration gate is the backstop).
+   */
+  private async seamCheck(planId: string, key: string, tip: string): Promise<void> {
+    const gate = this.options.integration;
+    if (!gate?.landingCheck || isIntegrationGateFixKey(key)) return;
+    const plan = this.options.store.get(planId);
+    if (!plan?.integration || plan.integration.tip !== tip) return;
+    let checks: JobCheckResult[];
+    try { checks = await gate.landingCheck(plan, tip, key); }
+    catch (error) { this.options.log?.(`[plans] ${planId} job ${key}: the seam check couldn't run: ${describe(error)}`); return; }
+    if (!checks.length) return;
+    let note: string | undefined;
+    await this.options.store.update(planId, current => {
+      const integration = current.integration;
+      if (!integration || integration.tip !== tip) return undefined;
+      const rounds = gate.seamFixRounds?.() ?? defaultSeamFixRounds;
+      let verdict = seamVerdict({ title: current.title, jobs: current.jobs, integration }, key, tip, checks, () => this.now(), rounds);
+      let jobs = current.jobs, amendments = current.amendments;
+      if (verdict.kind === 'fix') {
+        try {
+          const amended = applyPlanAmendment(current, { add: [verdict.job] }, undefined, () => this.now(), gate.headBudgetUsd?.());
+          jobs = amended.jobs; amendments = amended.amendments;
+        } catch (error) {
+          this.options.log?.(`[plans] ${planId}: couldn't add a fix for the seam after ${key}: ${describe(error)}`);
+          verdict = { kind: 'exhausted', key: verdict.seam.key };
+        }
+      }
+      note = verdict.kind === 'passed' ? undefined : verdict.kind === 'fix' ? `the seam check failed; ${verdict.job.key} fixes it before its dependents start` : verdict.kind === 'covered' ? 'the seam check still fails; a fix for an earlier landing is on its way' : 'the seam check still fails after its fixes; its dependents go on';
+      const { seams: _seams, ...rest } = integration;
+      const seams = applySeamVerdict(integration.seams, verdict);
+      return { ...current, jobs, ...(amendments ? { amendments } : {}), integration: { ...rest, ...(seams.length ? { seams } : {}) } };
+    });
+    if (note) this.options.log?.(`[plans] ${planId} job ${key}: ${note}`);
   }
   /** The queue stops for a person: the reason shows on every job waiting to land, and Merge plan refuses. */
   private readonly queueStops = new Map<string, number>();

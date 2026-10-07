@@ -555,6 +555,8 @@ export class HydraController {
           providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
         }),
         fixRounds: () => settings.get<number>('plans.integrationFixRounds', defaultIntegrationFixRounds),
+        // The seam check (docs/Heads.md, "Seam checks"): the project's onLanding command gates, on the branch after each landing.
+        landingCheck: async (plan, tip) => (await service.runIntegrationGate({ planId: plan.id, title: plan.title, base: plan.integration!.base, tip, review: false, providers: [], landing: true })).checks,
         headBudgetUsd: () => settings.get<number>('heads.defaultBudgetUsd', 5),
       },
     });

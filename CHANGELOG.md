@@ -4,6 +4,9 @@ What changed in each Hydra release. Installers and checksums are on the [release
 
 ## Unreleased
 
+- **Plan jobs that depend on others see the code they landed.** A dependent's brief now carries the diff of what each dependency landed (up to 24 KB, interface files first, redacted), so it doesn't spend its first turns re-reading it.
+- **Optional seam check at each landing.** A command gate marked `"onLanding": true` in `.hydra/gates.json` runs on the plan's integration branch right after each job lands. When it fails, the jobs that depend on that job wait while a fix job repairs it, instead of building on a broken branch.
+
 - **Security: Hydra's git calls in a head's worktree are pinned to its real metadata.** Once `hydra_done` has checked the worktree's `.git`, Hydra tells git exactly where the metadata is, so a `.git` rewritten after the check (by a command left running) can't redirect them.
 - **Security: Hydra never runs git inside a nested repository in a head's worktree.** A repository an earlier attempt committed could otherwise have its own settings (a clean filter) run when Hydra checked and committed the head's work.
 

@@ -73,7 +73,7 @@ interface Started { key: string; id: string; dependsOn: string[]; inputs: Depend
 const headJob = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], runAs: 'head', ...extra });
 
 /** A plan runner over a real repository, with fake heads that a test finishes with real commits. */
-async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; fixRounds?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
+async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; landingCheck?: NonNullable<PlanRunnerOptions['integration']>['landingCheck']; seamFixRounds?: number; attempts?: number; fixRounds?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
   const directory = options.directory ?? path.join(repo.root, `plans-${++counter}`);
   const heads = new Map<string, PlanHeadLook>();
   const started: Started[] = [];
@@ -94,7 +94,7 @@ async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: Non
     terminalsAvailable: () => true, debounceMs: 1,
     ...(options.now ? { now: options.now } : {}), ...options.hooks,
     // Automatic fixes are off unless a test asks for them, so each test sees one gate run of its own.
-    integration: { runGate: options.runGate ?? passingGate, fixRounds: () => options.fixRounds ?? 0, ...(options.attempts ? { attempts: options.attempts } : {}) },
+    integration: { runGate: options.runGate ?? passingGate, fixRounds: () => options.fixRounds ?? 0, ...(options.attempts ? { attempts: options.attempts } : {}), ...(options.landingCheck ? { landingCheck: options.landingCheck } : {}), ...(options.seamFixRounds !== undefined ? { seamFixRounds: () => options.seamFixRounds! } : {}) },
   });
   let store = new PlanStore(directory);
   await store.load();
@@ -710,5 +710,120 @@ test('seams (step 1): a dependent head is given the diff of what each dependency
     assert.ok(!diffs['Job a']!.includes('export const b'), 'a merged landing shows only that job\'s own work, not what landed before it');
     assert.match(diffs['Job b']!, /\+export const b = 2;/);
     assert.ok(!diffs['Job b']!.includes('src/a.ts'));
+  } finally { p.dispose(); await f.close(); }
+});
+
+// ---- Seam checks (step 2) ----
+
+/** A landing check whose verdict a test flips by hand, and which records where it ran. */
+function seamCheck(state: { broken: boolean; throws?: boolean }) {
+  const ran: { tip: string; key: string }[] = [];
+  const check: NonNullable<PlanRunnerOptions['integration']>['landingCheck'] = async (_plan, tip, key) => {
+    ran.push({ tip, key });
+    if (state.throws) throw new Error('no worktree');
+    return [state.broken ? failedCheck('types') : passed('types')];
+  };
+  return { ran, check };
+}
+
+test('seams (step 2): a failing check at a landing blocks its dependents and queues a fix for that job\'s scope; they start once the fix lands and the check passes', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const state = { broken: true };
+  const seam = seamCheck(state);
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('c', { writeScope: ['src/c'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    const integration = p.get().integration!;
+    assert.equal(seam.ran.length, 1); assert.equal(seam.ran[0]!.key, 'a'); assert.equal(seam.ran[0]!.tip, integration.tip, 'checked on the integrated tip');
+    assert.deepEqual(integration.seams?.map(item => [item.key, item.fix, item.round]), [['a', 'seam-fix-1', 1]]);
+    const fixJob = p.get().jobs.find(job => job.key === 'seam-fix-1')!;
+    assert.deepEqual(fixJob.writeScope, ['src/a'], 'the landed job\'s own scope');
+    assert.deepEqual(fixJob.dependsOn, ['a']);
+    assert.equal(p.get().amendments?.at(-1)?.key, 'seam-fix-1');
+    const fix = p.startedFor('seam-fix-1');
+    assert.equal(fix.length, 1, 'the fix starts at once');
+    assert.equal(fix[0]!.start?.baseCommit, integration.tip, 'from the broken tip, where the problem is');
+    assert.match(fix[0]!.brief, /Job "Job a" has landed/); assert.match(fix[0]!.brief, /### types failed/); assert.match(fix[0]!.brief, /boom/);
+    assert.equal(p.startedFor('d').length, 0, 'd never starts from the broken state');
+    assert.match(p.status('d').reason!, /Waiting for Fix the seam after Job a to land/);
+
+    // Another job landing meanwhile fails the same check, but isn't blamed: the open seam covers it.
+    await p.finish('c', await f.commitFrom(p.get().integration!.tip, { 'src/c/y.ts': 'c\n' }, 'c'));
+    assert.equal(p.get().jobs.filter(job => job.key.startsWith('seam-fix-')).length, 1, 'no second fix for the same break');
+    assert.equal(p.startedFor('d').length, 0);
+
+    state.broken = false;
+    await p.finish('seam-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'a fixed\n' }, 'fix the seam'));
+    assert.equal(p.get().integration!.seams, undefined, 'a passing check closes the seam');
+    assert.equal(p.startedFor('d').length, 1, 'd starts, from the repaired tip');
+    assert.equal(p.startedFor('d')[0]!.start?.baseCommit, p.get().integration!.tip);
+    assert.equal(await f.show(p.startedFor('d')[0]!.start!.baseCommit, 'src/a/x.ts'), 'a fixed\n');
+    await p.finish('d', await f.commitFrom(p.get().integration!.tip, { 'src/d/z.ts': 'd\n' }, 'd'));
+    assert.equal(p.get().state, 'done');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 2): a fix that still fails the check gets another round, then its dependents go on and the integration gate is left to catch it', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const state = { broken: true };
+  const seam = seamCheck(state);
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check, seamFixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.finish('seam-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'try\n' }, 'first try'));
+    assert.deepEqual(p.get().integration!.seams?.map(item => [item.key, item.fix, item.round]), [['a', 'seam-fix-2', 2]], 'round 2, still for job a');
+    assert.equal(p.startedFor('d').length, 0);
+    assert.match(p.startedFor('seam-fix-2')[0]!.brief, /round 2 of 2/);
+    await p.finish('seam-fix-2', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'try again\n' }, 'second try'));
+    assert.equal(p.get().integration!.seams, undefined, 'out of rounds: nothing is held up any more');
+    assert.equal(p.get().jobs.filter(job => job.key.startsWith('seam-fix-')).length, 2, 'two rounds, no third');
+    assert.equal(p.startedFor('d').length, 1, 'd goes on');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 2): a seam fix that fails skips the jobs waiting on it instead of leaving them waiting for ever', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seamCheck({ broken: true }).check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    p.heads.get(p.get().jobs.find(job => job.key === 'seam-fix-1')!.jobId!)!.state = 'failed';
+    await p.runner.advance(p.plan.id);
+    assert.equal(p.status('seam-fix-1').status, 'failed');
+    assert.equal(p.status('d').status, 'skipped');
+    assert.match(p.status('d').reason!, /Fix the seam after Job a did not finish/);
+    assert.equal(p.get().state, 'incomplete', 'the plan ends for the lead to look at, not stuck running');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 2): a passing check, a check that can\'t run, or no check at all changes nothing', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  for (const options of [{ landingCheck: seamCheck({ broken: false }).check }, { landingCheck: seamCheck({ broken: true, throws: true }).check }, {}]) {
+    const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], options);
+    try {
+      await p.runner.run(p.plan.id);
+      await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+      assert.equal(p.get().jobs.length, 2, 'no fix job');
+      assert.equal(p.get().integration!.seams, undefined);
+      assert.equal(p.startedFor('d').length, 1, 'd starts as it always did');
+    } finally { p.dispose(); }
+  }
+  await f.close();
+});
+
+test('seams (step 2): a restart while a seam is open keeps its dependents waiting and doesn\'t start the fix twice', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const seam = seamCheck({ broken: true });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    const runner = await p.restart();
+    await runner.advanceAll({ startup: true });
+    assert.equal(p.startedFor('d').length, 0, 'after a restart d still waits for the seam fix');
+    assert.equal(p.get().integration!.seams?.[0]?.fix, 'seam-fix-1');
+    assert.equal(p.startedFor('seam-fix-1').length, 1, 'and the fix isn\'t started twice');
   } finally { p.dispose(); await f.close(); }
 });

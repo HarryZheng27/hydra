@@ -76,7 +76,11 @@ export interface PlanIntegration {
   merged?: { via: 'merge' | 'pr'; tip: string; at: string; into?: string; commit?: string; url?: string };
   /** The queue stopped and needs a person: the branch was moved by hand, say. */
   error?: string;
+  /** Seam checks that failed and whose fix hasn't passed yet: the jobs that depend on `key` wait for `fix` (seamVerdict). */
+  seams?: IntegrationSeam[];
 }
+/** A job's landing broke the landing check (an `onLanding` command gate); `fix` is the job that repairs it, `round` how many fixes it took so far. */
+export interface IntegrationSeam { key: string; fix: string; round: number; tip: string; at: string }
 /** Why a job's try couldn't land, and the commit its next try carries over. `held`: out of tries, waiting for the lead. */
 export interface PlanJobConflict { files: string[]; commit: string; tip: string; count: number; at: string; held?: boolean }
 
@@ -124,6 +128,12 @@ export function validateIntegration(value: unknown, planId: string): void {
   if (merged !== undefined && (!merged || (merged.via !== 'merge' && merged.via !== 'pr') || !isSha(merged.tip) || !isTime(merged.at)
     || (merged.into !== undefined && !isSafeBranchName(merged.into)) || (merged.commit !== undefined && !isSha(merged.commit)) || (merged.url !== undefined && (typeof merged.url !== 'string' || merged.url.length > 8000)))) throw new Error('An integration merge record is malformed.');
   if (source.error !== undefined && (typeof source.error !== 'string' || !source.error || source.error.length > 2000)) throw new Error('An integration error must be text.');
+  if (source.seams !== undefined) {
+    if (!Array.isArray(source.seams) || source.seams.length > 50) throw new Error('A plan\'s open seams must be a list.');
+    for (const seam of source.seams) {
+      if (!seam || !jobKeyPattern.test(String(seam.key)) || !jobKeyPattern.test(String(seam.fix)) || !Number.isInteger(seam.round) || seam.round < 1 || seam.round > 100 || !isSha(seam.tip) || !isTime(seam.at)) throw new Error('An open seam is malformed.');
+    }
+  }
 }
 
 /** Throws the first problem found. */
@@ -270,7 +280,84 @@ export const defaultIntegrationFixRounds = 2;
 export const integrationFixKey = (round: number): string => `integration-fix-${round}`;
 const integrationFixPattern = /^integration-fix-\d+$/;
 /** A plan's automatic fix job: added only once every other job has landed, and the next only once it has, so it never runs alongside another. */
-export const isIntegrationFixKey = (key: string): boolean => integrationFixPattern.test(key);
+export const isIntegrationFixKey = (key: string): boolean => integrationFixPattern.test(key) || seamFixPattern.test(key);
+/** An integration-gate fix, not a seam fix: the gate runs again after it, so its landing needs no seam check. */
+export const isIntegrationGateFixKey = (key: string): boolean => integrationFixPattern.test(key);
+
+// ---- Seam checks: an `onLanding` command gate on the branch right after each landing ----
+
+/** Rounds of seam fixes after one landing's check fails, unless the window says otherwise. */
+export const defaultSeamFixRounds = 2;
+/** The job key of a plan's nth seam fix. Like an integration fix, it is Hydra's own: it doesn't use up the lead's amendments and may share paths with jobs that depend on the one it follows. */
+export const seamFixKey = (n: number): string => `seam-fix-${n}`;
+const seamFixPattern = /^seam-fix-\d+$/;
+
+/** The command gates marked `onLanding` (pure): what runs on the integration branch after each landing. Nothing marked means no seam check. */
+export function landingGates(config: Pick<GatesConfig, 'gates'>): Gate[] {
+  return config.gates.filter(gate => gate.type === 'command' && gate.onLanding);
+}
+
+export interface SeamFixJob { key: string; title: string; brief: string; write_scope: string[]; depends_on: string[]; rigor: 'quick' }
+export type SeamVerdict =
+  /** The check passed (or there was none to fail): every open seam is repaired, because the tip has all of their fixes. */
+  | { kind: 'passed' }
+  /** It failed, but an open seam already has a fix coming: this landing isn't blamed for it. */
+  | { kind: 'covered' }
+  /** It failed after the fix's own rounds ran out: dependents stop waiting; the integration gate is the backstop. */
+  | { kind: 'exhausted'; key: string }
+  | { kind: 'fix'; seam: IntegrationSeam; job: SeamFixJob };
+
+/**
+ * What a landing's seam check means for the plan (pure). `landedKey` is the job that just landed, `checks` what the
+ * check printed. A failure queues a fix for that job's own scope that starts from the branch's tip, and the jobs that
+ * depend on it wait (planSteps) until the fix lands and the check passes. While a seam is open, another landing that
+ * fails the check isn't blamed for it; a fix whose own landing still fails gets another round, up to `rounds`.
+ */
+export function seamVerdict(plan: { title: string; jobs: readonly { key: string; title: string; writeScope?: readonly string[] }[]; integration: Pick<PlanIntegration, 'seams'> }, landedKey: string, tip: string, checks: readonly JobCheckResult[], now: () => Date = () => new Date(), rounds = defaultSeamFixRounds): SeamVerdict {
+  const failed = checks.filter(gateBlocks);
+  if (!failed.length) return { kind: 'passed' };
+  const open = plan.integration.seams ?? [];
+  const own = open.find(seam => seam.fix === landedKey);
+  if (open.length && !own) return { kind: 'covered' };
+  const rootKey = own?.key ?? landedKey;
+  const round = (own?.round ?? 0) + 1;
+  if (round > rounds) return { kind: 'exhausted', key: rootKey };
+  const root = plan.jobs.find(job => job.key === rootKey);
+  const key = seamFixKey(plan.jobs.filter(job => seamFixPattern.test(job.key)).length + 1);
+  const sections = failed.map(check => [`### ${check.id} failed${check.summary ? `: ${oneLine(check.summary)}` : ''}`, ...(check.outputTail.trim() ? ['Last output:', '```', check.outputTail.trim().slice(-1500), '```'] : [])].join('\n'));
+  const brief = [
+    `Job "${root?.title ?? rootKey}" has landed on plan "${plan.title}"'s integration branch, which you start from, and the project's landing check fails on the result: what it built doesn't fit with the work already landed there${round > 1 ? ` (a first fix didn't clear it, round ${round} of ${rounds})` : ''}.`,
+    'Fix exactly that, within the files that job changed, without undoing what it built. The jobs that depend on it are waiting for you, so keep this small. Keep every existing test passing. Then finish as usual: the check runs again on the result.',
+    '',
+    ...sections,
+  ].join('\n');
+  const scope = root?.writeScope?.length ? [...root.writeScope] : ['.'];
+  return {
+    kind: 'fix', seam: { key: rootKey, fix: key, round, tip, at: now().toISOString() },
+    job: { key, title: `Fix the seam after ${root?.title ?? rootKey}`.slice(0, 200), brief: brief.length > fixBriefMax ? `${brief.slice(0, fixBriefMax - 1)}…` : brief, write_scope: scope, depends_on: [landedKey], rigor: 'quick' },
+  };
+}
+
+/** The plan's open seams after a verdict (pure): a pass clears them all; a fix replaces the seam it continues, or opens one; exhausted drops the one that ran out. */
+export function applySeamVerdict(seams: readonly IntegrationSeam[] | undefined, verdict: SeamVerdict): IntegrationSeam[] {
+  const open = seams ?? [];
+  switch (verdict.kind) {
+    case 'passed': return [];
+    case 'covered': return [...open];
+    case 'exhausted': return open.filter(seam => seam.key !== verdict.key);
+    case 'fix': return [...open.filter(seam => seam.key !== verdict.seam.key), verdict.seam];
+  }
+}
+
+/**
+ * The jobs a job really waits for (pure): what it names, plus the fix of every open seam after one of those, so a
+ * dependent starts only once the seam its dependency opened is repaired, and is skipped when that fix fails.
+ */
+export function effectiveDependencies(job: { key?: string; dependsOn: readonly string[] }, seams: readonly IntegrationSeam[] | undefined): string[] {
+  // A seam fix is what the seam waits for, so it never waits for itself (or for the fix after it).
+  if (!seams?.length || (job.key !== undefined && seamFixPattern.test(job.key))) return [...job.dependsOn];
+  return [...new Set([...job.dependsOn, ...seams.filter(seam => job.dependsOn.includes(seam.key)).map(seam => seam.fix)])];
+}
 
 /**
  * The job that fixes what a failed integration gate found (pure; docs/Heads.md, "Landing a plan together"), or

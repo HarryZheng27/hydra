@@ -8,6 +8,7 @@ import { gateBlocks, gateKind, gateState, processAlive, type JobCheckResult } fr
 import type { ProbeOutput } from '../src/core/process';
 import { terminateProcessTree } from '../src/core/process';
 import { applyRigor, findBrowser, gateCommandsBrief, gateFailureMessage, gateOrder, hasCommandGate, loadGates, parseGatesConfig, rigorReviewGateId, runGateList, runGates, type Gate, type GateContext, type GateRuntime, type PageCapture, type ReviewerSpec, type ScreenshotBrowser } from '../src/core/gates';
+import { landingGates } from '../src/core/integration';
 import { browserCandidates, connectWithRetry } from '../src/core/gates/browser';
 import { resolveCommand } from '../src/core/gates/command';
 import { capDiff, chooseReviewer, maxReviewDiffBytes, parseReviewOutput, reviewArguments, reviewerSettings, reviewFails, reviewPrompt } from '../src/core/gates/review';
@@ -607,4 +608,14 @@ test('connectWithRetry: a refused DevTools connection right after the browser st
   const started = Date.now(); const budgets: number[] = [];
   await assert.rejects(connectWithRetry(remaining => { budgets.push(remaining); return new Promise((_, reject) => setTimeout(() => reject(new Error('did not open')), remaining)); }, () => false, 120, 5), /did not open/);
   assert.ok(budgets[0]! <= 120 && Date.now() - started < 400, 'the whole connect stays within its budget');
+});
+
+test('gates.json: onLanding marks a command gate for the seam check after each landing, and only a command gate, as a boolean', () => {
+  const parsed = parseGatesConfig({ gates: [{ id: 'types', type: 'command', command: ['npx', 'tsc'], onLanding: true }, { id: 'unit', type: 'command', command: ['npm', 'test'] }, { id: 'off', type: 'command', command: ['npm', 'run', 'x'], onLanding: false }] });
+  assert.deepEqual(landingGates(parsed).map(gate => gate.id), ['types'], 'only the marked gate');
+  assert.deepEqual(parsed.gates.map(gate => 'onLanding' in gate), [true, false, false], 'false is the same as leaving it out');
+  assert.deepEqual(landingGates(parseGatesConfig({ gates: [{ id: 'unit', type: 'command', command: ['npm', 'test'] }] })), [], 'no flag, no seam check');
+  assert.throws(() => parseGatesConfig({ gates: [{ id: 'types', type: 'command', command: ['tsc'], onLanding: 'yes' }] }), /"onLanding" must be true or false/);
+  assert.throws(() => parseGatesConfig({ gates: [{ id: 'look', type: 'screenshots', start: ['x'], url: 'http://localhost:{port}/', onLanding: true }] }), /unknown setting "onLanding"/);
+  assert.throws(() => parseGatesConfig({ gates: [{ id: 'r', type: 'review', onLanding: true }] }), /unknown setting "onLanding"/);
 });
