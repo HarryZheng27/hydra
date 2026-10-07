@@ -2,7 +2,7 @@
   "name": "hydra-app",
   "productName": "Hydra",
   "description": "Hydra: chat with Claude Code and Codex, with Hydra's heads and plans on top.",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "private": true,
   "license": "MIT",
   "main": "dist/main.cjs",
