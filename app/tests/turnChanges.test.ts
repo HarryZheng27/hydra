@@ -328,7 +328,7 @@ test('snapshots keep bytes exactly, keep working beside a nested repository, and
     spawnSync('git', ['init', '-q'], { cwd: nested, windowsHide: true });
     write(nested, 'x.txt', 'x\n');
     const before = (await snapshots.snapshot(CHAT, folder))!;
-    assert.ok(before);
+    assert.ok(before, snapshots.lastProblem);
     write(folder, 'crlf.txt', 'one\r\nTWO\r\n');
     write(folder, 'a.txt', 'new\n');
     const after = (await snapshots.snapshot(CHAT, folder))!;

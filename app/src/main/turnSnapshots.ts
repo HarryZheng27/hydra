@@ -44,6 +44,8 @@ export interface UndoResult { restored: string[]; skipped: Array<{ path: string;
 
 export class TurnSnapshots {
   private readonly queues = new Map<string, Promise<unknown>>();
+  /** Why the last snapshot was skipped, for tests and the log. */
+  lastProblem: string | undefined;
   constructor(private readonly dir: string) {}
 
   private gitDir(chatId: string): string {
@@ -113,7 +115,7 @@ export class TurnSnapshots {
         // A nested repository with no commit can't be added as a pointer and stops `add`; it alone is left out, and nothing else may fail.
         const benign = (stderr: string) => stderr.split(/\r?\n/).every(line => !line.trim() || /does not have a commit checked out|adding files failed|^hint:|^warning:/.test(line));
         if (added.code !== 0 && benign(added.stderr)) added = await this.run(chatId, folder, ['add', '-A', '--ignore-errors', ...spec], left());
-        if (added.code !== 0 && !(benign(added.stderr) && /does not have a commit checked out/.test(added.stderr))) return undefined;
+        if (added.code !== 0 && !(benign(added.stderr) && /does not have a commit checked out/.test(added.stderr))) { this.lastProblem = `add failed (${added.code}): ${added.stderr.trim()}`; return undefined; }
         const tree = await this.run(chatId, folder, ['write-tree'], left());
         const id = tree.stdout.trim();
         return tree.code === 0 && treePattern.test(id) ? id : undefined;
