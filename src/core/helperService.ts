@@ -10,6 +10,7 @@ import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
 import { defaultMaxAttempts, evidenceStatus, finalJobStates, type JobReply, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
+import { editedTests, editedTestsNote } from './editedTests';
 import { carryOver, integrationAuthors, integrationGates, landingGates, withGateWorktree, type IntegrationLeadView } from './integration';
 import { detectTestScript } from './starterGates';
 import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
@@ -721,7 +722,7 @@ export class HelperService {
       try { gates = await timeStep('gates', () => (this.options.gates ?? loadGates)(this.options.leadFolder)); }
       catch (error) { return { accepted: false, message: `Hydra can't check your work: ${error instanceof Error ? error.message : String(error)} That isn't your fault. Call hydra_stuck and ask the lead to fix it, then call hydra_done again.` }; }
       // 1.6's tamper note, and Step 2's reason a Claude head had no shell (design 7: said in the head's result).
-      note = [await timeStep('tamper', () => this.tamperNote(job)), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
+      note = [await timeStep('tamper', () => this.tamperNote(job)), await timeStep('tests', async () => editedTestsNote(await editedTests(worktree, base, { to: commit, ...gates.tests ? { patterns: gates.tests } : {}, environment: pinned }))), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
       changedFiles = (await timeStep('diff', () => git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'], pinned, readOnlyGitTimeoutMs))).split('\0').filter(Boolean);
       outside = changedFiles.filter(file => !inScope(file, job.writeScope));
       await this.options.store.transition(jobId, 'checking');
@@ -737,7 +738,7 @@ export class HelperService {
     const floor = gateFloor(job.gatesAtStart, { ...gates, gates: applyRigor(gates.gates, job.rigor) });
     // The scope and git-metadata checks first, then the gates in order (docs/internal/Gates_Plan.md, "Heads").
     // A listed pack that can't run reports its gates as not run (docs/internal/Packs_Plan.md); those never block.
-    const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, { ...await this.gateContext(job, attempts, signal), gitEnvironment: pinned }) : [], ...floor.notRun];
+    const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, { ...await this.gateContext(job, attempts, signal), gitEnvironment: pinned, ...gates.tests ? { testPatterns: gates.tests } : {} }) : [], ...floor.notRun];
     if (this.options.store.get(jobId)?.state !== 'checking') return { accepted: false, message: 'This head was stopped. Stop now.' };
     if (signal?.aborted) {
       // The head's call ended mid-check: not its failure, so no attempt is spent.
@@ -1533,6 +1534,7 @@ export class HelperService {
     const root = this.options.worktreeRoot?.() ?? defaultWorktreeRoot(this.options.leadFolder);
     const { author, priorAuthors } = integrationAuthors(input.providers, 'claude');
     const checks = await withGateWorktree(this.options.leadFolder, root, input.planId, input.tip, async worktree => runGateList(gates, worktree, input.base, {
+      ...config.tests ? { testPatterns: config.tests } : {},
       author, ...(priorAuthors.length ? { priorAuthors } : {}),
       title: `Plan "${input.title}": every job's work together`,
       brief: input.brief || `The combined work of every job in plan "${input.title}", merged on its integration branch.`,

@@ -137,6 +137,8 @@ export interface ReviewPromptInput {
   earlier: readonly JobCheckResult[];
   screenshots: readonly string[];
   focus: string;
+  /** Existing test files the change edited or deleted (editedTests.ts); the section is left out when there are none. */
+  editedTests?: readonly string[];
   /** A pack review gate's role (docs/internal/Packs_Plan.md): the reviewer works as it says. */
   role?: { title: string; instructions: string };
 }
@@ -189,6 +191,13 @@ export function reviewPrompt(input: ReviewPromptInput): string {
     lines.push('', '## Screenshots of the running app',
       input.provider === 'codex' ? 'They are attached to this message, in this order:' : 'Open each of these images to see how the app renders:',
       ...input.screenshots.map(file => `- ${file}`));
+  }
+  if (input.editedTests?.length) {
+    lines.push('', '## Changed existing tests',
+      'These test files existed before this change, and the change edited or deleted them:',
+      wrap(input.editedTests.slice(0, 50).join('\n')),
+      ...(input.editedTests.length > 50 ? [`(${input.editedTests.length - 50} more not listed.)`] : []),
+      'Check them: does the change weaken a test so that it passes? Look for an assertion removed or loosened, a test skipped or deleted, or an expectation rewritten to match new behaviour the task did not ask for. If so, report it as a major finding. A test updated because the task changed the behaviour it checks is fine.');
   }
   if (input.role) lines.push('', `## Your role: ${input.role.title}`, input.role.instructions.trim(), '', 'You still only read; the reply below is what counts.');
   if (input.focus) lines.push('', '## What to focus on', input.focus);
@@ -277,6 +286,7 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
   const prompt = reviewPrompt({
     provider: pick.provider, title: run.title, brief: run.brief, writeScope: run.writeScope, baseCommit: run.baseCommit,
     diff: await reviewDiff(run.worktree, run.baseCommit, run.gitEnvironment), earlier: run.earlier, screenshots, focus: gate.focus,
+    ...(run.editedTests?.length ? { editedTests: run.editedTests } : {}),
     ...(gate.reviewerRole ? { role: gate.reviewerRole } : {}),
   });
   const promptFile = path.join(run.logDirectory, `${gate.id}-prompt.md`), replyFile = path.join(run.logDirectory, `${gate.id}-reply.txt`);
