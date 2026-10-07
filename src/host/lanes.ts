@@ -226,7 +226,7 @@ export class LanesController implements Disposable {
     if (event.laneId) return lanes.find(lane => lane.id === event.laneId)?.id;
     return event.cwd ? lanes.find(lane => workspaceOwns([lane.worktree])(event.cwd!))?.id : undefined;
   }
-  onAttention(laneId: string, event: AttentionEvent): void { this.service?.setAttention(laneId, event.attention); }
+  onAttention(laneId: string, event: AttentionEvent): void { this.service?.setAttention(laneId, event.attention, Date.parse(event.at)); }
   /** For the Codex account-limit fan-out (src/extension.ts): this window's running lanes of one provider. */
   runningLanes(provider: Provider): { id: string; worktree: string }[] { return (this.service?.views() ?? []).filter(lane => lane.running && lane.provider === provider).map(lane => ({ id: lane.id, worktree: lane.worktree })); }
   /** 5.3: Hydra: Stop All Agents. Ends every open lane's process, keeping the lane and its worktree. */

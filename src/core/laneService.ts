@@ -266,7 +266,7 @@ export const defaultTerminalSize = { cols: 100, rows: 30 };
 /** Output within this long of an attention signal is the agent's own last redraw, not it going back to work. */
 export const attentionOutputGraceMs = 2500;
 /** Keys a person typed, not the terminal's own replies (focus changes and mouse reports that xterm sends as input). */
-export const isTypedInput = (data: string): boolean => data.length > 0 && !/^\u001b\[(?:[IO]|<[0-9;]*[Mm]|M[\s\S]{3})$/.test(data);
+export const isTypedInput = (data: string): boolean => data.length > 0 && !/^\u001b(?:\[(?:[IO]|<[0-9;]*[Mm]|M[\s\S]{3}|[?>]?[0-9;]*[Rc])|\][\s\S]*(?:\u0007|\u001b\\)|P[\s\S]*\u001b\\)$/.test(data);
 
 export class LaneService {
   private readonly terminals = new Map<string, LaneTerminal>();
@@ -288,6 +288,7 @@ export class LaneService {
   private readonly previewNotes = new Map<string, string>();
   private readonly previews: LanePreviews;
   /** Needs_You_Plan.md, Phase 4: a lane whose agent said it is waiting on you or ended its turn. A hint for the tile, never saved. */
+  private readonly started = new Map<string, number>();
   private readonly attention = new Map<string, { kind: LaneAttention; at: number }>();
   constructor(private readonly options: LaneServiceOptions) {
     this.syncer = new LaneSync(options.now);
@@ -461,7 +462,9 @@ export class LaneService {
    * The lane's agent said it is waiting on you (`waiting`) or ended its turn (`turn-ended`). Ignored unless its terminal is
    * running. A `turn-ended` never replaces a `waiting` that is still showing: the question hasn't been answered.
    */
-  setAttention(id: string, kind: LaneAttention): boolean {
+  setAttention(id: string, kind: LaneAttention, signalledAt?: number): boolean {
+    // An event from before this terminal started is the last session's (a file left on disk across a restart).
+    if (signalledAt !== undefined && signalledAt < (this.started.get(id) ?? 0)) return false;
     if (!isLaneId(id) || !this.terminals.get(id)?.running || !this.exists(id)) return false;
     if (kind === 'turn-ended' && this.attention.get(id)?.kind === 'waiting') return false;
     this.attention.set(id, { kind, at: this.now().getTime() });
@@ -819,6 +822,7 @@ export class LaneService {
     });
     this.terminals.set(lane.id, terminal);
     this.attention.delete(lane.id);
+    this.started.set(lane.id, this.now().getTime());
     this.options.log?.(`[lanes] ${lane.id} started ${testCommand ? 'the test command' : lane.provider}${resume ? ' (resumed)' : ''} in ${lane.worktree}`);
   }
 

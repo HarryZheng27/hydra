@@ -299,6 +299,10 @@ test('a lane\'s attention is set by an event, shown on its view, and cleared by 
     for (const report of ['\u001b[I', '\u001b[O', '\u001b[<0;10;5M', '\u001b[<0;10;5m']) { assert.equal(isTypedInput(report), false); service.input(lane.id, report); }
     await settle();
     assert.equal(attentionOf(lane.id), 'waiting');
+    // Answers to the agent's terminal queries aren't typing either.
+    for (const reply of ['\u001b[12;40R', '\u001b[?62;c', '\u001b]11;rgb:0000/0000/0000\u0007', '\u001bP1$r0m\u001b\\']) { assert.equal(isTypedInput(reply), false, JSON.stringify(reply)); service.input(lane.id, reply); }
+    assert.equal(isTypedInput('\u001b[A'), true, 'an arrow key is typing');
+    assert.equal(attentionOf(lane.id), 'waiting');
     // Typing clears it.
     assert.equal(service.input(lane.id, 'y'), true); assert.equal(attentionOf(lane.id), undefined);
     // Output after the grace period clears it.
@@ -309,6 +313,10 @@ test('a lane\'s attention is set by an event, shown on its view, and cleared by 
     assert.equal(attentionOf(other.id), undefined);
     assert.equal(service.setAttention(other.id, 'waiting'), false);
     assert.equal(service.setAttention('ffffffffffff', 'waiting'), false);
+    // An event signalled before the terminal started (a file left over from the last session) is ignored.
+    assert.equal(service.setAttention(lane.id, 'waiting', 1_000_000 - 60_000), false);
+    assert.equal(attentionOf(lane.id), undefined);
+    assert.equal(service.setAttention(lane.id, 'waiting', 1_000_000 + 10_000), true);
   } finally { await close(); }
 });
 
