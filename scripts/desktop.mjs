@@ -180,8 +180,22 @@ begin
     Exit;
   end;
   if IsNotBackgroundUpdate() then`);
+  // ShouldUpdateShortcut guards InstallDelete, which must not delete a shortcut
+  // during a Hydra update. [Icons] uses ShouldCreateShortcut instead: only a
+  // background update leaves an existing shortcut alone, so a Hydra update
+  // recreates the "Hydra IDE" shortcuts the user's task choice selects. Each
+  // install writes a fresh uninstall log (UninstallLogMode=overwrite), and a
+  // shortcut an update skipped would never be in it, so the uninstall would
+  // leave it behind.
   replaceOnce('Result := not (IsBackgroundUpdate() and FileExists(Path));',
-    'Result := not ((IsBackgroundUpdate() or IsHydraUpdate()) and FileExists(Path));');
+    'Result := not ((IsBackgroundUpdate() or IsHydraUpdate()) and FileExists(Path));\nend;\n\nfunction ShouldCreateShortcut(Path: String): Boolean;\nbegin\n  Result := not (IsBackgroundUpdate() and FileExists(Path));');
+  const iconsHeader = '[Icons]\n';
+  if (text.split(iconsHeader).length !== 2) throw new Error('Pinned installer changed: [Icons]');
+  const iconsStart = text.indexOf(iconsHeader) + iconsHeader.length;
+  const iconsEnd = text.indexOf('\n[', iconsStart);
+  const icons = text.slice(iconsStart, iconsEnd === -1 ? undefined : iconsEnd);
+  if (!icons.includes('Check: ShouldUpdateShortcut(')) throw new Error('Pinned installer changed: [Icons] shortcut checks');
+  text = text.slice(0, iconsStart) + icons.replaceAll('Check: ShouldUpdateShortcut(', 'Check: ShouldCreateShortcut(') + (iconsEnd === -1 ? '' : text.slice(iconsEnd));
   replaceOnce('function ShouldRunAfterUpdate(): Boolean;\nbegin\n  if IsBackgroundUpdate() then',
     'function ShouldRunAfterUpdate(): Boolean;\nbegin\n  if IsHydraUpdate() then\n    Result := False\n  else if IsBackgroundUpdate() then');
   replaceOnce('function WizardNotSilent(): Boolean;\nbegin\n  Result := not WizardSilent();',
