@@ -696,7 +696,9 @@ export class HelperService {
       await mkdir(this.tempRoot, { recursive: true });
       const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
       try {
-        const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), ...readOnlyStatus, '--porcelain=v1', '--untracked-files=all'], pinned, readOnlyGitTimeoutMs));
+        // A nested repository (one an earlier attempt committed) is never looked inside: git would run `status`
+        // in it with its own config, whose clean filter the head wrote. Its commit pointer still counts.
+        const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), ...readOnlyStatus, '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=dirty'], pinned, readOnlyGitTimeoutMs));
         // No timeout on the commit itself: killing it mid-write could leave index.lock behind in
         // the worktree's gitdir, which a sandboxed head can't remove, failing every later hydra_done.
         if (dirty.trim()) await timeStep('commit', () => commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff, pinned));
@@ -1584,7 +1586,11 @@ export const noHooks = (emptyFolder: string): string[] => ['-c', `core.hooksPath
  * them off too: it can run a post-index-change hook.
  */
 export async function commitAll(worktree: string, message: string, hooksOff: string, environment?: NodeJS.ProcessEnv): Promise<void> {
-  await git(worktree, [...noHooks(hooksOff), 'add', '-A'], environment);
+  // `add -A` runs `status` inside each nested repository already in the index (a gitlink), with that repository's
+  // own config, so a clean filter a head planted there would run as Hydra. Those paths are left out: their
+  // commit-pointer changes aren't committed for the head. The list comes from the index alone, which runs nothing.
+  const gitlinks = (await git(worktree, ['ls-files', '-s', '-z'], environment)).split('\0').filter(entry => entry.startsWith('160000 ')).map(entry => entry.slice(entry.indexOf('\t') + 1));
+  await git(worktree, [...noHooks(hooksOff), 'add', '-A', '--', '.', ...gitlinks.map(link => `:(exclude,literal)${link}`)], environment);
   try { await git(worktree, [...noHooks(hooksOff), 'commit', '-q', '-m', message], environment); }
   catch (error) {
     if (!/tell me who you are|user\.email|user\.name|empty ident/i.test(String(error))) throw error;
