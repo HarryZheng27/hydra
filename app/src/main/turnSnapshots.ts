@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gitBytes, gitRun } from '../../../src/core/git';
@@ -20,6 +21,8 @@ const GIT_MS = 15_000;
 /** The most a diff shows of one file. */
 export const MAX_TURN_FILE_BYTES = 1024 * 1024;
 const MAX_UNDO_BYTES = 8 * 1024 * 1024;
+/** An undo that runs this long stops, and names the files it didn't reach. */
+const UNDO_MS = 60_000;
 const treePattern = /^[0-9a-f]{40,64}$/;
 const chatPattern = /^[0-9a-f-]{8,64}$/;
 
@@ -60,7 +63,8 @@ export class TurnSnapshots {
   private environment(chatId: string, folder: string): NodeJS.ProcessEnv {
     const gitDir = this.gitDir(chatId);
     const empty = path.join(this.dir, 'empty.config');
-    return { ...cleanEnvironment(), GIT_DIR: gitDir, GIT_WORK_TREE: folder, GIT_INDEX_FILE: path.join(gitDir, 'hydra-index'), GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_SYSTEM: empty, GIT_CONFIG_NOSYSTEM: '1' };
+    // GIT_LITERAL_PATHSPECS=1 (the review's) would turn `:(exclude,literal)` into a literal name and make `add` fail.
+    return { ...cleanEnvironment(), GIT_LITERAL_PATHSPECS: '0', GIT_DIR: gitDir, GIT_WORK_TREE: folder, GIT_INDEX_FILE: path.join(gitDir, 'hydra-index'), GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_SYSTEM: empty, GIT_CONFIG_NOSYSTEM: '1' };
   }
 
   private flags(): string[] {
@@ -84,6 +88,9 @@ export class TurnSnapshots {
       const made = await this.run(chatId, folder, ['init', '--quiet']);
       if (made.code !== 0) throw new Error(`git init failed: ${made.stderr.trim()}`);
     }
+    // The folder's .gitattributes (text=auto, eol, filters, encodings) must not change the bytes a snapshot keeps: this file wins over it.
+    const attributes = path.join(gitDir, 'info', 'attributes');
+    if (!existsSync(attributes)) { await mkdir(path.dirname(attributes), { recursive: true }); await writeFile(attributes, '* -text -eol -filter -ident -working-tree-encoding\n'); }
   }
 
   /**
@@ -100,8 +107,13 @@ export class TurnSnapshots {
         await rm(path.join(this.gitDir(chatId), 'hydra-index.lock'), { force: true });
         const staged = await this.run(chatId, folder, ['ls-files', '-s', '-z'], left());
         const gitlinks = staged.code === 0 ? staged.stdout.split('\u0000').filter(entry => entry.startsWith('160000 ')).map(entry => entry.slice(entry.indexOf('\t') + 1)) : [];
-        // --ignore-errors: a file another program holds open is left as it was, not a reason to lose the whole card.
-        await this.run(chatId, folder, ['add', '-A', '--ignore-errors', '--', '.', ...gitlinks.map(link => `:(exclude,literal)${link}`)], left());
+        // A file git couldn't read would keep its old entry, and the tree would be stale: that snapshot is skipped.
+        const spec = ['--', '.', ...gitlinks.map(link => `:(exclude,literal)${link}`)];
+        let added = await this.run(chatId, folder, ['add', '-A', ...spec], left());
+        // A nested repository with no commit can't be added as a pointer and stops `add`; it alone is left out, and nothing else may fail.
+        const benign = (stderr: string) => stderr.split(/\r?\n/).every(line => !line.trim() || /does not have a commit checked out|adding files failed|^hint:|^warning:/.test(line));
+        if (added.code !== 0 && benign(added.stderr)) added = await this.run(chatId, folder, ['add', '-A', '--ignore-errors', ...spec], left());
+        if (added.code !== 0 && !(benign(added.stderr) && /does not have a commit checked out/.test(added.stderr))) return undefined;
         const tree = await this.run(chatId, folder, ['write-tree'], left());
         const id = tree.stdout.trim();
         return tree.code === 0 && treePattern.test(id) ? id : undefined;
@@ -191,8 +203,10 @@ export class TurnSnapshots {
       const root = await realpath(folder);
       const restored: string[] = [];
       const skipped: UndoResult['skipped'] = [];
+      const deadline = Date.now() + UNDO_MS;
       for (const relative of files) {
         const skip = (reason: string) => { skipped.push({ path: relative, reason }); };
+        if (Date.now() > deadline) { skip('ran out of time'); continue; }
         try {
           if (folderRelative(folder, relative) !== relative) { skip('outside the folder'); continue; }
           const target = path.join(root, ...relative.split('/'));
@@ -209,16 +223,22 @@ export class TurnSnapshots {
           if (now) {
             if (!info) { skip('already gone'); continue; }
             if (info.size > MAX_UNDO_BYTES || await this.blobSize(chatId, folder, now.sha) > MAX_UNDO_BYTES) { skip('too big to undo'); continue; }
-            if (!(await this.bytes(chatId, folder, ['cat-file', 'blob', now.sha])).equals(await readFile(target))) { skip('edited since'); continue; }
           } else if (info) { skip('exists again'); continue; }
-          if (was) {
-            if (await this.blobSize(chatId, folder, was.sha) > MAX_UNDO_BYTES) { skip('too big to undo'); continue; }
-            const content = await this.bytes(chatId, folder, ['cat-file', 'blob', was.sha]);
+          if (was && await this.blobSize(chatId, folder, was.sha) > MAX_UNDO_BYTES) { skip('too big to undo'); continue; }
+          // Everything git has to say is fetched first, so the comparison and the swap that follow it are back to back.
+          const left = now ? await this.bytes(chatId, folder, ['cat-file', 'blob', now.sha]) : undefined;
+          const content = was ? await this.bytes(chatId, folder, ['cat-file', 'blob', was.sha]) : undefined;
+          let scratch: string | undefined;
+          if (content) {
             await mkdir(path.dirname(target), { recursive: true });
-            const scratch = `${target}.hydra-undo`;
-            await writeFile(scratch, content);
-            await rename(scratch, target).catch(async (error: unknown) => { await unlink(scratch).catch(() => undefined); throw error; });
-          } else if (info) await unlink(target);
+            // A new name only this call can create: a link planted at a guessable name is never written through.
+            scratch = `${target}.${randomBytes(6).toString('hex')}.hydra-undo`;
+            await writeFile(scratch, content, { flag: 'wx', mode: info ? info.mode & 0o777 : was!.mode === '100755' ? 0o755 : 0o644 });
+          }
+          try {
+            if (left && !left.equals(await readFile(target))) { skip('edited since'); if (scratch) await unlink(scratch).catch(() => undefined); continue; }
+            if (scratch) await rename(scratch, target); else await unlink(target);
+          } catch (error) { if (scratch) await unlink(scratch).catch(() => undefined); throw error; }
           restored.push(relative);
         } catch (error) { skip(`couldn't restore: ${error instanceof Error ? error.message.split(/\r?\n/)[0] : String(error)}`); }
       }

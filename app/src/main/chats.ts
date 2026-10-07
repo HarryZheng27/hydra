@@ -10,7 +10,7 @@ import { ChatSession, type Launch, type SessionTimings } from '../../../src/core
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry, pullRequestUrlPattern } from '../../../src/core/chat/store';
 import { claudeCloudSessionIdPattern, type ClaudeCloudSession } from '../../../src/core/chat/cloud';
 import type { AgentTerminalGrant } from './agentTerminal';
-import type { TurnSnapshots } from './turnSnapshots';
+import { SNAPSHOT_MS, type TurnSnapshots } from './turnSnapshots';
 import type { ReviewFile, UndoTurnResult } from '../shared/ipc';
 
 /**
@@ -211,6 +211,7 @@ export class ChatManager {
   private readonly undoneFiles = new Map<string, string[]>();
   private readonly notesSent = new Map<string, string>();
   private readonly undoing = new Set<string>();
+  private readonly sendQueue = new Map<string, Promise<void>>();
 
   /**
    * The home screen's spare: the agent the user has picked, started before there is a chat, so the first message
@@ -497,9 +498,10 @@ export class ChatManager {
         const turn = this.turns.get(id);
         this.turns.delete(id);
         if (turn) {
-          const finished = this.finishTurn(id, turn);
+          const queued = !!this.sessions.get(id)?.queued;
+          const finished = this.finishTurn(id, turn, queued);
           // A message queued behind this turn starts from what this one left.
-          if (this.sessions.get(id)?.queued) this.nextBefore.set(id, finished);
+          if (queued) this.nextBefore.set(id, finished);
         }
       }
       return event;
@@ -507,18 +509,19 @@ export class ChatManager {
   }
 
   /** After a turn: a second snapshot, and the card if the files its events named really changed. Never throws. */
-  private async finishTurn(id: string, turn: TurnState): Promise<string | undefined> {
+  private async finishTurn(id: string, turn: TurnState, queued: boolean): Promise<string | undefined> {
     const snapshots = this.deps.snapshots;
     try {
       const before = await turn.before;
       if (!snapshots || !before) return undefined;
-      if (!turn.files.size) return before;
+      // Nothing named and nothing queued behind: no card. A queued turn starts from what the folder is now, whatever this one did.
+      if (!turn.files.size && !queued) return before;
       const record = await this.deps.store.get(id);
       if (!record || this.removed.has(id) || !(await this.deps.trusted(record.cwd))) return undefined;
       const after = await snapshots.snapshot(id, record.cwd);
       if (!after) return undefined;
       if (this.removed.has(id)) { await snapshots.remove(id); return undefined; }
-      const files = await snapshots.changes(id, record.cwd, before, after, turn.files);
+      const files = turn.files.size ? await snapshots.changes(id, record.cwd, before, after, turn.files) : [];
       if (files.length && !this.removed.has(id)) {
         const card: ChatEvent[] = [{ type: 'turn-changes', changeId: randomUUID(), turn: turn.n, before, after, files }];
         const start = await this.deps.store.append(id, card);
@@ -592,15 +595,28 @@ export class ChatManager {
     }
     if (this.inTerminal.has(id)) throw new Error('This chat is open in a terminal. Close that window, then choose "I closed the terminal".');
     if (record.where === 'cloud') { await this.sendCloud(id, record, text, checked); return; }
+    // From here one message at a time per chat: each one's starting snapshot is taken after the one ahead of it was handed to the session.
+    const turn = (this.sendQueue.get(id) ?? Promise.resolve()).then(() => this.handOver(id, record.cwd, text, checked));
+    const tail = turn.then(() => undefined, () => undefined);
+    this.sendQueue.set(id, tail);
+    void tail.then(() => { if (this.sendQueue.get(id) === tail) this.sendQueue.delete(id); });
+    await turn;
+  }
+
+  private async handOver(id: string, cwd: string, text: string, checked?: ChatImage[]): Promise<void> {
+    if (this.undoing.has(id)) throw new Error('An undo is running. Send again in a moment.');
     const session = await this.session(id);
     let message = text;
     if (this.deps.snapshots) {
       // The turn's starting point is taken before the message reaches the CLI (a message queued behind a turn starts from
       // what that turn leaves, set when it ends). It is time-boxed and never fails the send.
       if (!session.busy) {
-        const before = this.deps.snapshots.snapshot(id, record.cwd);
+        const before = this.deps.snapshots.snapshot(id, cwd);
         this.nextBefore.set(id, before);
-        await before;
+        // Bounded: past its time box the turn simply has no card.
+        const late = new Promise<undefined>(resolve => setTimeout(resolve, SNAPSHOT_MS + 2000, undefined));
+        if (await Promise.race([before, late]) === undefined) this.nextBefore.set(id, Promise.resolve(undefined));
+        if (this.removed.has(id)) await this.deps.snapshots.remove(id).catch(() => undefined);
       }
       const undone = this.undoneFiles.get(id);
       if (undone?.length) {

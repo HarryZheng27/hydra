@@ -316,3 +316,27 @@ test('the undo and diff channels take a chat id, a change id and a file path, an
   assert.equal(ok('chats.turnDiff', { id, changeId: id, path: 'a\u0000b' }), false);
   assert.equal(ok('chats.turnDiff', { id, changeId: id }), false);
 });
+
+test('snapshots keep bytes exactly, keep working beside a nested repository, and undo never writes through a planted scratch name', async () => {
+  const { folder, snapshots, done } = scratch();
+  try {
+    write(folder, '.gitattributes', '* text=auto eol=lf\n');
+    fs.writeFileSync(path.join(folder, 'crlf.txt'), 'one\r\ntwo\r\n');
+    fs.writeFileSync(path.join(folder, 'a.txt.hydra-undo'), 'a real user file\n');
+    const nested = path.join(folder, 'inner');
+    fs.mkdirSync(nested);
+    spawnSync('git', ['init', '-q'], { cwd: nested, windowsHide: true });
+    write(nested, 'x.txt', 'x\n');
+    const before = (await snapshots.snapshot(CHAT, folder))!;
+    assert.ok(before);
+    write(folder, 'crlf.txt', 'one\r\nTWO\r\n');
+    write(folder, 'a.txt', 'new\n');
+    const after = (await snapshots.snapshot(CHAT, folder))!;
+    assert.notEqual(after, before, 'a nested repository does not freeze the snapshots');
+    const result = await snapshots.undo(CHAT, folder, before, after, ['crlf.txt', 'a.txt']);
+    assert.deepEqual(result.skipped, []);
+    assert.equal(fs.readFileSync(path.join(folder, 'crlf.txt'), 'utf8'), 'one\r\ntwo\r\n');
+    assert.equal(fs.readFileSync(path.join(folder, 'a.txt.hydra-undo'), 'utf8'), 'a real user file\n');
+    assert.deepEqual(fs.readdirSync(folder).filter(name => name.endsWith('.hydra-undo')), ['a.txt.hydra-undo'], 'no scratch file is left');
+  } finally { done(); }
+});
