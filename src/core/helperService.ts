@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
-import { commonGitDir, git, gitMetaChanges, gitMetaFingerprint, readOnlyGitTimeoutMs, readOnlyStatus, worktreeGitPointerProblem, type GitMetaFingerprint } from './git';
+import { commonGitDir, git, gitMetaChanges, gitMetaFingerprint, pinnedWorktreeGit, readOnlyGitTimeoutMs, readOnlyStatus, worktreeGitDir, type GitMetaFingerprint } from './git';
 import { cmdUnsafe, isWindowsShim } from './process';
 import { headEnvironment, headSettings, storageReadDeny, type HeadShell } from './confine';
 import { otherWorktrees, storageListing, userClaudePlugins } from './confineFiles';
@@ -664,16 +664,19 @@ export class HelperService {
       try { const result = await run(); steps.push({ name, ms: this.now() - started }); return result; }
       catch (error) { steps.push({ name: `${name}!`, ms: this.now() - started }); throw error; }
     };
-    let commit: string, gates: Awaited<ReturnType<GatesLoader>>, note: string | undefined, changedFiles: string[], outside: string[];
+    let commit: string, gates: Awaited<ReturnType<GatesLoader>>, note: string | undefined, changedFiles: string[], outside: string[], pinned: NodeJS.ProcessEnv;
     try {
       // HSEC-09: before any of Hydra's own git calls in the worktree, its .git must still point into the main
       // checkout's metadata. A head that repointed it could have git run a command of its choosing (a filter,
       // say) as Hydra, outside any sandbox. Refused before git runs there, and no attempt is spent.
-      const pointer = await timeStep('gitdir', async () => worktreeGitPointerProblem(worktree, await commonGitDir(this.options.leadFolder)));
-      if (pointer) {
-        this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: worktree .git changed', detail: pointer, jobId });
-        return { accepted: false, message: `Hydra won't run git in your worktree: ${pointer}. Never edit .git. Put it back exactly as it was, then call hydra_done again; if you can't, call hydra_stuck with this message.` };
+      // Every git call below is then pinned to that checked metadata (GIT_DIR/GIT_WORK_TREE), so rewriting .git
+      // after this check, from a command left running in the background, changes nothing Hydra runs.
+      const gitDir = await timeStep('gitdir', async () => worktreeGitDir(worktree, await commonGitDir(this.options.leadFolder)));
+      if ('problem' in gitDir) {
+        this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: worktree .git changed', detail: gitDir.problem, jobId });
+        return { accepted: false, message: `Hydra won't run git in your worktree: ${gitDir.problem}. Never edit .git. Put it back exactly as it was, then call hydra_done again; if you can't, call hydra_stuck with this message.` };
       }
+      pinned = pinnedWorktreeGit(worktree, gitDir.dir);
       // 1.4: the git metadata a head shares with the main checkout (config, hooks, …) must not move. Checked
       // before Hydra runs git in the worktree, so a changed setting never runs. A check that can't run refuses
       // too (HSEC-30): it can't say nothing changed. It spends no attempt: the change may not be the head's (you,
@@ -693,12 +696,12 @@ export class HelperService {
       await mkdir(this.tempRoot, { recursive: true });
       const hooksOff = await mkdtemp(path.join(this.tempRoot, 'nh-'));
       try {
-        const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), ...readOnlyStatus, '--porcelain=v1', '--untracked-files=all'], undefined, readOnlyGitTimeoutMs));
+        const dirty = await timeStep('status', () => git(worktree, [...noHooks(hooksOff), ...readOnlyStatus, '--porcelain=v1', '--untracked-files=all'], pinned, readOnlyGitTimeoutMs));
         // No timeout on the commit itself: killing it mid-write could leave index.lock behind in
         // the worktree's gitdir, which a sandboxed head can't remove, failing every later hydra_done.
-        if (dirty.trim()) await timeStep('commit', () => commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff));
+        if (dirty.trim()) await timeStep('commit', () => commitAll(worktree, `${job.title} (Hydra head ${job.id})`, hooksOff, pinned));
       } finally { await rm(hooksOff, { recursive: true, force: true }).catch(() => undefined); }
-      commit = (await timeStep('rev-parse', () => git(worktree, ['rev-parse', 'HEAD'], undefined, readOnlyGitTimeoutMs))).trim();
+      commit = (await timeStep('rev-parse', () => git(worktree, ['rev-parse', 'HEAD'], pinned, readOnlyGitTimeoutMs))).trim();
       if (commit === base) {
         // A role with changes "optional" (a reviewer, a fact-checker) may finish without changing
         // anything: its summary is the result, and with nothing to check no gate runs.
@@ -714,14 +717,14 @@ export class HelperService {
       catch (error) { return { accepted: false, message: `Hydra can't check your work: ${error instanceof Error ? error.message : String(error)} That isn't your fault. Call hydra_stuck and ask the lead to fix it, then call hydra_done again.` }; }
       // 1.6's tamper note, and Step 2's reason a Claude head had no shell (design 7: said in the head's result).
       note = [await timeStep('tamper', () => this.tamperNote(job)), this.active.get(jobId)?.shellNote].filter(Boolean).join(' ') || undefined;
-      changedFiles = (await timeStep('diff', () => git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'], undefined, readOnlyGitTimeoutMs))).split('\0').filter(Boolean);
+      changedFiles = (await timeStep('diff', () => git(worktree, ['diff', '--name-only', '-z', '--no-renames', base, commit, '--'], pinned, readOnlyGitTimeoutMs))).split('\0').filter(Boolean);
       outside = changedFiles.filter(file => !inScope(file, job.writeScope));
       await this.options.store.transition(jobId, 'checking');
       this.changed();
     } finally { this.options.log?.(formatDoneTiming(jobId, this.now() - doneStart, steps)); }
     const maxAttempts = gates.maxAttempts ?? defaultMaxAttempts;
     const attempts = job.attempts + 1;
-    if (outside.length) return this.checkFailed(jobId, attempts, maxAttempts, `These files are outside your write scope (${job.writeScope.join(', ') || '(whole repository)'}):\n${outside.join('\n')}\nUndo those changes in a new commit, then call hydra_done again.`, [], note);
+    if (outside.length) return this.checkFailed(jobId, attempts, maxAttempts, `These files are outside your write scope (${job.writeScope.join(', ') || '(whole repository)'}):\n${outside.join('\n')}\nUndo those changes in a new commit, then call hydra_done again.`, commit, [], note);
     // 1.1: the gate floor — the snapshot's own definition for every gate id it already had, plus
     // any gate added to today's config since (see gateFloor's own comment for the full rule).
     // O6: rigor is re-applied here, the same way headStartSnapshot applied it at start; the
@@ -729,7 +732,7 @@ export class HelperService {
     const floor = gateFloor(job.gatesAtStart, { ...gates, gates: applyRigor(gates.gates, job.rigor) });
     // The scope and git-metadata checks first, then the gates in order (docs/internal/Gates_Plan.md, "Heads").
     // A listed pack that can't run reports its gates as not run (docs/internal/Packs_Plan.md); those never block.
-    const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, await this.gateContext(job, attempts, signal)) : [], ...floor.notRun];
+    const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, { ...await this.gateContext(job, attempts, signal), gitEnvironment: pinned }) : [], ...floor.notRun];
     if (this.options.store.get(jobId)?.state !== 'checking') return { accepted: false, message: 'This head was stopped. Stop now.' };
     if (signal?.aborted) {
       // The head's call ended mid-check: not its failure, so no attempt is spent.
@@ -737,7 +740,7 @@ export class HelperService {
       this.changed();
       return { accepted: false, message: 'The gates were interrupted. Call hydra_done again.' };
     }
-    if (checks.some(gateBlocks)) return this.checkFailed(jobId, attempts, maxAttempts, gateFailureMessage(checks), checks, note);
+    if (checks.some(gateBlocks)) return this.checkFailed(jobId, attempts, maxAttempts, gateFailureMessage(checks), commit, checks, note);
     await this.options.store.update(jobId, { attempts, maxAttempts });
     // Step A: a head has no override, so this is passed/partial/none/none-chosen or, for
     // an empty checks list that isn't from "no gates configured" (there shouldn't be one here — floor.gates.length was checked), undefined.
@@ -747,13 +750,13 @@ export class HelperService {
     return { accepted: true, message: `Accepted. Your work is recorded for the lead.${note ? ` ${note}` : ''} Stop now.` };
   }
 
-  private async checkFailed(jobId: string, attempts: number, maxAttempts: number, message: string, checks: JobCheckResult[] = [], note?: string) {
+  /** `commit`: the one hydra_done checked, so a failure never runs git in the worktree again (HSEC-09). */
+  private async checkFailed(jobId: string, attempts: number, maxAttempts: number, message: string, commit: string, checks: JobCheckResult[] = [], note?: string) {
     // What failed, in the job's history (and so in its timeline): the failing gates' ids, or the write scope.
     const why = checks.some(gateBlocks) ? `: ${checks.filter(gateBlocks).map(check => check.id).join(', ')}` : checks.length ? '' : ': outside its write scope';
-    const job = this.options.store.get(jobId)!;
     await this.options.store.update(jobId, { attempts, maxAttempts });
     if (attempts >= maxAttempts) {
-      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}${why}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
+      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}${why}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit, changedFiles: [], checks, ...(note ? { note } : {}) } });
       this.changed();
       void this.stopRun(jobId);
       return { accepted: false, message: `${message}\n\nThat was the last attempt (${attempts} of ${maxAttempts}). Stop now; the lead will see the failure.` };
@@ -1580,12 +1583,12 @@ export const noHooks = (emptyFolder: string): string[] => ['-c', `core.hooksPath
  * Hydra's, and with hooks off (`hooksOff`: an empty folder only Hydra writes). `git add` runs with
  * them off too: it can run a post-index-change hook.
  */
-export async function commitAll(worktree: string, message: string, hooksOff: string): Promise<void> {
-  await git(worktree, [...noHooks(hooksOff), 'add', '-A']);
-  try { await git(worktree, [...noHooks(hooksOff), 'commit', '-q', '-m', message]); }
+export async function commitAll(worktree: string, message: string, hooksOff: string, environment?: NodeJS.ProcessEnv): Promise<void> {
+  await git(worktree, [...noHooks(hooksOff), 'add', '-A'], environment);
+  try { await git(worktree, [...noHooks(hooksOff), 'commit', '-q', '-m', message], environment); }
   catch (error) {
     if (!/tell me who you are|user\.email|user\.name|empty ident/i.test(String(error))) throw error;
-    await git(worktree, [...noHooks(hooksOff), '-c', 'user.name=Hydra head', '-c', 'user.email=helper@hydra.invalid', 'commit', '-q', '-m', message]);
+    await git(worktree, [...noHooks(hooksOff), '-c', 'user.name=Hydra head', '-c', 'user.email=helper@hydra.invalid', 'commit', '-q', '-m', message], environment);
   }
 }
 

@@ -17,6 +17,11 @@ import { redactText } from '../redact';
 export interface GateContext {
   /** Whose work it is. A review by "other" uses the other agent. */
   author: Provider;
+  /**
+   * For a head's gates (HSEC-09): the environment that pins Hydra's own git calls in the worktree to its checked
+   * metadata (pinnedWorktreeGit), so a .git the head rewrites while gates run is never read.
+   */
+  gitEnvironment?: NodeJS.ProcessEnv;
   /** O6: providers this job ran under before `author` (a usage-limit handoff). When set, "other" has no clean choice — both wrote the diff — and the pick says so. */
   priorAuthors?: Provider[];
   /** Where this run's logs, the reviewer's reply and the screenshots go. Created if missing. */

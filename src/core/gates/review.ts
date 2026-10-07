@@ -256,11 +256,12 @@ export function reviewerLimit(provider: Provider, stdout: string): HeadLimit | u
   return undefined;
 }
 
-async function reviewDiff(worktree: string, baseCommit: string): Promise<{ text: string; cut: boolean }> {
-  try { return capDiff((await gitBytes(worktree, ['diff', '--no-color', '--no-ext-diff', `${baseCommit}..HEAD`, '--'])).toString('utf8')); }
+/** The head's diff, with git pinned to its checked metadata and no external diff or textconv command ever run (HSEC-09). */
+async function reviewDiff(worktree: string, baseCommit: string, environment?: NodeJS.ProcessEnv): Promise<{ text: string; cut: boolean }> {
+  try { return capDiff((await gitBytes(worktree, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', `${baseCommit}..HEAD`, '--'], environment)).toString('utf8')); }
   catch {
     // Too large even to collect: the file list still tells the reviewer where to look.
-    const stat = await gitBytes(worktree, ['diff', '--stat', `${baseCommit}..HEAD`, '--']).then(bytes => bytes.toString('utf8'), () => '');
+    const stat = await gitBytes(worktree, ['diff', '--stat', '--no-ext-diff', '--no-textconv', `${baseCommit}..HEAD`, '--'], environment).then(bytes => bytes.toString('utf8'), () => '');
     return { text: capDiff(stat).text, cut: true };
   }
 }
@@ -275,7 +276,7 @@ export async function runReviewGate(gate: ReviewGate, run: GateRun): Promise<Job
   const screenshots = run.earlier.filter(result => gateKind(result) === 'screenshots').flatMap(result => (result.evidence ?? []).filter(file => /\.png$/i.test(file)));
   const prompt = reviewPrompt({
     provider: pick.provider, title: run.title, brief: run.brief, writeScope: run.writeScope, baseCommit: run.baseCommit,
-    diff: await reviewDiff(run.worktree, run.baseCommit), earlier: run.earlier, screenshots, focus: gate.focus,
+    diff: await reviewDiff(run.worktree, run.baseCommit, run.gitEnvironment), earlier: run.earlier, screenshots, focus: gate.focus,
     ...(gate.reviewerRole ? { role: gate.reviewerRole } : {}),
   });
   const promptFile = path.join(run.logDirectory, `${gate.id}-prompt.md`), replyFile = path.join(run.logDirectory, `${gate.id}-reply.txt`);
