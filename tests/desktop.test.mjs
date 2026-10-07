@@ -144,6 +144,9 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
     'OutputBaseFilename=VSCodeSetup',
     'Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked',
     'Name: "{autodesktop}\\Hydra"; Tasks: desktopicon',
+    '[Icons]',
+    'Name: "{group}\\{#NameLong}"; Filename: "{app}\\{#ExeBasename}.exe"; Check: ShouldUpdateShortcut(ExpandConstant(\'{group}\\{#NameLong}.lnk\'))',
+    'Name: "{autodesktop}\\{#NameLong}"; Filename: "{app}\\{#ExeBasename}.exe"; Tasks: desktopicon; Check: ShouldUpdateShortcut(ExpandConstant(\'{autodesktop}\\{#NameLong}.lnk\'))',
     '[Code]', 'function IsBackgroundUpdate(): Boolean;',
     'function InitializeSetup(): Boolean;', 'begin', '  Result := True;', '', '  #if "user" == InstallTarget',
     'function WizardNotSilent(): Boolean;', 'begin', '  Result := not WizardSilent();',
@@ -163,6 +166,14 @@ test('installer branding preserves optional unchecked desktop shortcut and rejec
   assert.match(result, /Tasks: desktopicon/);
   assert.match(result, /Name: "\{autodesktop\}\\\{#NameLong\}\.lnk"; Tasks: not desktopicon; Check: ShouldUpdateShortcut/);
   assert.match(result, /CloseApplications=no\nRestartApplications=no/);
+  // A Hydra update recreates the IDE's shortcuts (the task choice still decides which),
+  // so the fresh uninstall log lists them; only a background update keeps existing ones.
+  const icons = result.slice(result.indexOf('[Icons]'), result.indexOf('[Code]'));
+  assert.equal((icons.match(/Check: ShouldCreateShortcut\(/g) ?? []).length, 2);
+  assert.doesNotMatch(icons, /ShouldUpdateShortcut/);
+  assert.match(result, /function ShouldCreateShortcut\(Path: String\): Boolean;\nbegin\n  Result := not \(IsBackgroundUpdate\(\) and FileExists\(Path\)\);/);
+  assert.match(result, /Tasks: not desktopicon; Check: ShouldUpdateShortcut/, 'InstallDelete still leaves an existing shortcut alone in a Hydra update');
+  assert.throws(() => brandedInstaller(original.replace('[Icons]', '[Shortcuts]')), /Pinned installer changed: \[Icons\]/);
   assert.match(result, /#include "hydra-update-mode\.iss"/);
   assert.match(result, /Result := HydraCheckInstall\(\);/);
   assert.match(result, /if IsHydraUpdate\(\) then\n    Result := False/);

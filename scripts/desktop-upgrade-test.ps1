@@ -42,6 +42,11 @@ $startShortcut = Join-Path $startFolder 'Hydra IDE.lnk'
 $oldDesktopShortcut = Join-Path $desktop 'Hydra.lnk'
 $oldStartFolder = Join-Path $programs 'Hydra'
 $oldStartShortcut = Join-Path $oldStartFolder 'Hydra.lnk'
+# 0.28.0 renamed the IDE's shortcuts. A prior before that made "Hydra" ones, which
+# the upgrade must migrate; a prior from 0.28.0 on already has the "Hydra IDE" ones.
+$priorRenamed = [version]$baseline.version -ge [version]'0.28.0'
+$priorDesktopShortcut = if ($priorRenamed) { $desktopShortcut } else { $oldDesktopShortcut }
+$priorStartShortcut = if ($priorRenamed) { $startShortcut } else { $oldStartShortcut }
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{4C372D32-54B2-43D8-8C63-ECC31D3744A8}_is1'
 if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startFolder) -or (Test-Path -LiteralPath $oldDesktopShortcut) -or (Test-Path -LiteralPath $oldStartFolder) -or (Test-Path -LiteralPath $uninstallKey)) { throw 'Runner already contains Hydra installation or shortcut; refusing to replace it.' }
 New-Item -ItemType Directory -Path $testRoot | Out-Null
@@ -131,11 +136,13 @@ try {
     $priorTasks = if ($enabled) { @('/TASKS="desktopicon"') } else { @('/TASKS=""') }
     Invoke-UpgradeInstaller $prior ($label + '-prior') $priorTasks
     Assert-Identity $baseline.version $false
-    if ((Test-Path -LiteralPath $oldDesktopShortcut) -ne $enabled) { throw 'Prior installer shortcut choice was not established.' }
-    if (-not (Test-Path -LiteralPath $oldStartShortcut)) { throw 'The prior release made no "Hydra" Start Menu shortcut.' }
-    # Without the IDE's desktop shortcut there, the app's Hydra.lnk may already
-    # be on the desktop when the upgrade runs: the upgrade must leave it alone.
-    $upgradeAppShortcut = if ($enabled) { $null } else { New-AppShortcut $oldDesktopShortcut }
+    if ((Test-Path -LiteralPath $priorDesktopShortcut) -ne $enabled) { throw 'Prior installer shortcut choice was not established.' }
+    if (-not (Test-Path -LiteralPath $priorStartShortcut)) { throw "The prior release made no Start Menu shortcut at $priorStartShortcut." }
+    # Without the IDE's own Hydra.lnk there, the app's Hydra.lnk may already be on
+    # the desktop when the upgrade runs: the upgrade must leave it alone. A prior
+    # that already has the "Hydra IDE" names leaves the app's Start Menu one free too.
+    $upgradeAppShortcut = if ($enabled -and -not $priorRenamed) { $null } else { New-AppShortcut $oldDesktopShortcut }
+    $upgradeAppStartShortcut = if ($priorRenamed) { New-AppShortcut $oldStartShortcut } else { $null }
     Assert-InstallerRefused $current ($label + '-task-override') @('/HYDRAUPDATE=1', '/TASKS="desktopicon"')
     Assert-InstallerRefused $current ($label + '-force-close') @('/HYDRAUPDATE=1', '/CLOSEAPPLICATIONS')
     Assert-InstallerRefused $current ($label + '-upstream-update') @('/UPDATE=unsafe')
@@ -144,9 +151,14 @@ try {
     if ((Test-Path -LiteralPath $desktopShortcut) -ne $enabled) { throw 'Distinct-version upgrade changed remembered shortcut preference.' }
     # The handover: "Hydra IDE" shortcuts to the same executable, the old ones gone.
     if (-not (Test-Path -LiteralPath $startShortcut) -or (Get-ShortcutTarget $startShortcut) -ne (Join-Path $installRoot 'Hydra.exe')) { throw 'The upgrade made no "Hydra IDE" Start Menu shortcut to Hydra.exe.' }
-    if ((Test-Path -LiteralPath $oldStartShortcut) -or (Test-Path -LiteralPath $oldStartFolder)) { throw 'The upgrade left the old "Hydra" Start Menu shortcut or folder.' }
-    if ($enabled -and (Test-Path -LiteralPath $oldDesktopShortcut)) { throw 'The upgrade left the old Hydra.lnk desktop shortcut.' }
-    if (-not $enabled) { Assert-AppShortcut $oldDesktopShortcut $upgradeAppShortcut 'The upgrade' }
+    if ($priorRenamed) {
+      Assert-AppShortcut $oldDesktopShortcut $upgradeAppShortcut 'The upgrade'
+      Assert-AppShortcut $oldStartShortcut $upgradeAppStartShortcut 'The upgrade'
+    } else {
+      if ((Test-Path -LiteralPath $oldStartShortcut) -or (Test-Path -LiteralPath $oldStartFolder)) { throw 'The upgrade left the old "Hydra" Start Menu shortcut or folder.' }
+      if ($enabled -and (Test-Path -LiteralPath $oldDesktopShortcut)) { throw 'The upgrade left the old Hydra.lnk desktop shortcut.' }
+      if (-not $enabled) { Assert-AppShortcut $oldDesktopShortcut $upgradeAppShortcut 'The upgrade' }
+    }
     Assert-InstallerRefused $current ($label + '-equal') @('/HYDRAUPDATE=1')
     # Historical installers cannot acquire a guard retroactively. A synthetic
     # newer registration proves this installer's downgrade refusal only.
@@ -157,8 +169,8 @@ try {
     # The prior release's uninstall log listed both old Hydra.lnk paths. With the
     # app's shortcuts now at those paths, uninstalling the IDE must keep them.
     $planted = @{}
-    if ($enabled) { $planted[$oldDesktopShortcut] = New-AppShortcut $oldDesktopShortcut } else { $planted[$oldDesktopShortcut] = $upgradeAppShortcut }
-    $planted[$oldStartShortcut] = New-AppShortcut $oldStartShortcut
+    if ($upgradeAppShortcut) { $planted[$oldDesktopShortcut] = $upgradeAppShortcut } else { $planted[$oldDesktopShortcut] = New-AppShortcut $oldDesktopShortcut }
+    if ($upgradeAppStartShortcut) { $planted[$oldStartShortcut] = $upgradeAppStartShortcut } else { $planted[$oldStartShortcut] = New-AppShortcut $oldStartShortcut }
     Remove-TestInstallation $label
     foreach ($path in $planted.Keys) { Assert-AppShortcut $path $planted[$path] 'Uninstalling the IDE' }
     Remove-Item -LiteralPath $oldDesktopShortcut -Force
@@ -172,4 +184,4 @@ try {
     [ordered]@{ prior = $baseline; currentVersion = $manifest.version; currentInstallerSha256 = $currentHash; runtimeCompared = @('Hydra.exe', 'product.json', 'built-in module', 'extension.cjs', 'webview.js') } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $logs 'provenance.json') -Encoding utf8
   }
 }
-Write-Output "PASS: pinned Hydra $($baseline.version) upgrades to Hydra IDE $($manifest.version): its Hydra.lnk shortcuts become ""Hydra IDE"" ones with selected/unselected desktop preference kept, the app's Hydra.lnk survives the upgrade and a later uninstall, user/profile/extension/task/project data is preserved, the runtime matches exactly, and uninstall leaves nothing behind."
+Write-Output "PASS: pinned Hydra $($baseline.version) upgrades to Hydra IDE $($manifest.version): its shortcuts are ""Hydra IDE"" ones (a pre-0.28.0 prior's Hydra.lnk ones migrate) with selected/unselected desktop preference kept, the app's Hydra.lnk survives the upgrade and a later uninstall, user/profile/extension/task/project data is preserved, the runtime matches exactly, and uninstall leaves nothing behind."
