@@ -28,20 +28,51 @@ export const limitHookMarker = 'hydra-limit-hook';
 export const limitHookMinimumClaude = { major: 2, minor: 1, patch: 139 };
 export interface ClaudeCommandHook { type: 'command'; command: string; args: string[]; timeout: number }
 export interface LimitHookGroup { matcher: string; hooks: ClaudeCommandHook[] }
+/** The Claude Code events Hydra's one script listens to. StopFailure is the usage limit; Stop and Notification say a lane is waiting (attentionEvents.ts). */
+export type HydraHookEvent = 'StopFailure' | 'Stop' | 'Notification';
+/** Removal runs in the reverse of the order groups are inserted, so each removal is the byte-exact inverse of its insertion. */
+const insertOrder: readonly HydraHookEvent[] = ['StopFailure', 'Stop', 'Notification'];
+const removeOrder: readonly HydraHookEvent[] = ['Notification', 'Stop', 'StopFailure'];
+export interface AttentionHookGroups { Stop: LimitHookGroup; Notification: LimitHookGroup }
+/** Notification types that mean "the agent is waiting on you"; the script checks again, whatever the matcher let through. */
+export const attentionNotificationMatcher = 'permission_prompt|elicitation_dialog|elicitation_url_dialog';
 
 /** A PowerShell single-quoted string. PowerShell also treats the typographic single quotes as quotes; doubling escapes each. */
 function powershellLiteral(value: string): string {
   if (/[\r\n\0]/.test(value)) throw new Error('A Hydra path contains a line break.');
   return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`;
 }
-export function limitHookGroup(options: { executable: string; script: string; eventsDir: string; platform?: NodeJS.Platform; systemRoot?: string }): LimitHookGroup {
+/** The worktree root as an argument: a trailing separator is dropped, since PowerShell 5.1 turns `"C:\a b\\"` into a stray quote. */
+const rootArgument = (root?: string): string => root ? root.replace(/[\\/]+$/, '') || root : '';
+export interface HookGroupOptions { executable: string; script: string; eventsDir: string; platform?: NodeJS.Platform; systemRoot?: string }
+function hookGroup(options: HookGroupOptions, extra: string[], matcher: string, timeout: number): LimitHookGroup {
   const { executable, script, eventsDir } = options;
   if ((options.platform ?? process.platform) === 'win32') {
     const root = options.systemRoot || process.env.SystemRoot || 'C:\\Windows';
-    const run = `$env:ELECTRON_RUN_AS_NODE='1'; & ${powershellLiteral(executable)} ${powershellLiteral(script)} ${powershellLiteral(eventsDir)}; exit 0`;
-    return { matcher: 'rate_limit', hooks: [{ type: 'command', command: path.win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', run], timeout: 30 }] };
+    const run = `$env:ELECTRON_RUN_AS_NODE='1'; & ${[executable, script, eventsDir, ...extra].map(powershellLiteral).join(' ')}; exit 0`;
+    return { matcher, hooks: [{ type: 'command', command: path.win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', run], timeout }] };
   }
-  return { matcher: 'rate_limit', hooks: [{ type: 'command', command: '/bin/sh', args: ['-c', 'ELECTRON_RUN_AS_NODE=1 exec "$0" "$@"', executable, script, eventsDir], timeout: 30 }] };
+  return { matcher, hooks: [{ type: 'command', command: '/bin/sh', args: ['-c', 'ELECTRON_RUN_AS_NODE=1 exec "$0" "$@"', executable, script, eventsDir, ...extra], timeout }] };
+}
+export function limitHookGroup(options: HookGroupOptions): LimitHookGroup { return hookGroup(options, [], 'rate_limit', 30); }
+/**
+ * Codex's `notify` program (the same script, `--codex`): Codex appends its JSON payload as a last argument. A PowerShell
+ * `-Command` string takes that argument as more command text, so the string ends in a comment (`#`) that swallows it.
+ */
+export function codexNotifyCommand(options: HookGroupOptions & { worktreeRoot?: string }): string[] {
+  const hook = hookGroup(options, [rootArgument(options.worktreeRoot), '--codex'], '', 10).hooks[0]!;
+  const args = [...hook.args];
+  if ((options.platform ?? process.platform) === 'win32') args[args.length - 1] += ' #';
+  return [hook.command, ...args];
+}
+/**
+ * The Stop and Notification groups (docs/internal/Needs_You_Plan.md, Phase 4): the same script and exec form, with the
+ * worktree root as a fourth argument ('' when it's the default sibling `<repository>.worktrees`). Stop runs at the end of
+ * every turn of every Claude Code session on the machine, so the script leaves at once unless the session's cwd is a Hydra lane.
+ */
+export function attentionHookGroups(options: HookGroupOptions & { worktreeRoot?: string }): AttentionHookGroups {
+  const extra = [rootArgument(options.worktreeRoot)];
+  return { Stop: hookGroup(options, extra, '', 10), Notification: hookGroup(options, extra, attentionNotificationMatcher, 10) };
 }
 /** Whether `claude --version` output is new enough for exec-form hooks. */
 export function claudeSupportsLimitHook(versionOutput: string): boolean {
@@ -177,22 +208,22 @@ function append(text: string, container: JsonNode, key: string | undefined, valu
 }
 
 /** Add the group with no idempotence or upgrade handling. The single definition of "how Hydra inserts", which removal inverts. */
-function insert(text: string, group: unknown): string {
+function insert(text: string, group: unknown, event: HydraHookEvent = 'StopFailure'): string {
   const root = scanJson(text);
   if (root.kind !== 'object') throw new Error('Claude settings.json is not a JSON object.');
   const hooks = member(root, 'hooks');
-  if (!hooks) return append(text, root, 'hooks', { StopFailure: [group] });
+  if (!hooks) return append(text, root, 'hooks', { [event]: [group] });
   if (hooks.value.kind !== 'object') throw new Error('"hooks" in Claude settings.json is not an object. Fix it by hand, then connect again.');
-  const stop = member(hooks.value, 'StopFailure');
-  if (!stop) return append(text, hooks.value, 'StopFailure', [group]);
-  if (stop.value.kind !== 'array') throw new Error('"hooks.StopFailure" in Claude settings.json is not a list. Fix it by hand, then connect again.');
-  return append(text, stop.value, undefined, group);
+  const list = member(hooks.value, event);
+  if (!list) return append(text, hooks.value, event, [group]);
+  if (list.value.kind !== 'array') throw new Error(`"hooks.${event}" in Claude settings.json is not a list. Fix it by hand, then connect again.`);
+  return append(text, list.value, undefined, group);
 }
 
 interface Found { root: JsonNode; hooks: NonNullable<ReturnType<typeof member>>; stop: NonNullable<ReturnType<typeof member>>; index: number }
-function findHydraGroup(text: string, which: (group: unknown) => boolean = () => true): Found | undefined {
+function findHydraGroup(text: string, event: HydraHookEvent, which: (group: unknown) => boolean = () => true): Found | undefined {
   const root = scanJson(text);
-  const hooks = member(root, 'hooks'), stop = hooks && member(hooks.value, 'StopFailure');
+  const hooks = member(root, 'hooks'), stop = hooks && member(hooks.value, event);
   if (!hooks || !stop || stop.value.kind !== 'array') return undefined;
   const index = stop.value.elements!.findIndex(node => { try { const group = JSON.parse(text.slice(node.start, node.end)) as unknown; return isHydraLimitGroup(group) && which(group); } catch { return false; } });
   return index < 0 ? undefined : { root, hooks, stop, index };
@@ -200,7 +231,7 @@ function findHydraGroup(text: string, which: (group: unknown) => boolean = () =>
 const splice = (text: string, from: number, to: number, replacement = '') => text.slice(0, from) + replacement + text.slice(to);
 
 /** Remove one Hydra group: the text that, with the group inserted, gives `text` back; else a plain structural removal. */
-function removeOne(text: string, found: Found): string {
+function removeOne(text: string, found: Found, event: HydraHookEvent): string {
   const { root, hooks, stop, index } = found;
   const elements = stop.value.elements!, element = elements[index]!;
   const group = JSON.parse(text.slice(element.start, element.end)) as unknown;
@@ -216,7 +247,7 @@ function removeOne(text: string, found: Found): string {
     } else if (stopIndex > 0) candidates.push(splice(text, hookMembers[stopIndex - 1]!.value.end, stop.value.end));
   }
   candidates.push(withoutElement);
-  for (const candidate of candidates) { try { if (insert(candidate, group) === text) return candidate; } catch { /* not a valid original */ } }
+  for (const candidate of candidates) { try { if (insert(candidate, group, event) === text) return candidate; } catch { /* not a valid original */ } }
   return withoutElement;
 }
 
@@ -228,21 +259,28 @@ function removeOne(text: string, found: Found): string {
 export function removeClaudeLimitHook(text: string | undefined, which?: (group: unknown) => boolean): { text: string | undefined; had: boolean } {
   if (text === undefined || !text.trim()) return { text, had: false };
   let current = text, had = false;
-  for (let found = findHydraGroup(current, which); found; found = findHydraGroup(current, which)) { current = removeOne(current, found); had = true; }
+  for (const event of removeOrder) {
+    for (let found = findHydraGroup(current, event, which); found; found = findHydraGroup(current, event, which)) { current = removeOne(current, found, event); had = true; }
+  }
   return { text: current, had };
 }
 /** Insert the group, replacing an older Hydra group (a moved Hydra install). Unchanged when it's already there. */
-export function addClaudeLimitHook(text: string | undefined, group: LimitHookGroup): string {
-  if (!text?.trim()) return JSON.stringify({ hooks: { StopFailure: [group] } }, null, 2) + '\n';
-  if (limitHookState(text, group) === 'current') return text;
-  return insert(removeClaudeLimitHook(text).text!, group);
+export function addClaudeLimitHook(text: string | undefined, group: LimitHookGroup, attention?: AttentionHookGroups): string {
+  const wanted = hookGroupsWanted(group, attention);
+  if (!text?.trim()) return JSON.stringify({ hooks: Object.fromEntries(wanted.map(([event, one]) => [event, [one]])) }, null, 2) + '\n';
+  if (limitHookState(text, group, attention) === 'current') return text;
+  let updated = removeClaudeLimitHook(text).text!;
+  for (const [event, one] of wanted) updated = insert(updated, one, event);
+  return updated;
 }
-/** The Hydra groups in the file now. */
-export function readClaudeLimitHooks(text: string | undefined): unknown[] {
+const hookGroupsWanted = (group: LimitHookGroup, attention?: AttentionHookGroups): [HydraHookEvent, LimitHookGroup][] =>
+  insertOrder.flatMap((event): [HydraHookEvent, LimitHookGroup][] => event === 'StopFailure' ? [[event, group]] : attention ? [[event, attention[event]]] : []);
+/** The Hydra groups for one event (StopFailure by default) in the file now. */
+export function readClaudeLimitHooks(text: string | undefined, event: HydraHookEvent = 'StopFailure'): unknown[] {
   if (!text?.trim()) return [];
   try {
-    const stop = (JSON.parse(text.replace(/^\uFEFF/, '')) as { hooks?: { StopFailure?: unknown } }).hooks?.StopFailure;
-    return Array.isArray(stop) ? stop.filter(isHydraLimitGroup) : [];
+    const list = (JSON.parse(text.replace(/^\uFEFF/, '')) as { hooks?: Record<string, unknown> }).hooks?.[event];
+    return Array.isArray(list) ? list.filter(isHydraLimitGroup) : [];
   } catch { return []; }
 }
 /**
@@ -274,8 +312,10 @@ function limitHookEventsDir(group: unknown): string | undefined {
   const events = script && run[script.end] === ' ' ? readPowershellLiteral(run, script.end + 1) : undefined;
   return events?.value;
 }
-export function limitHookState(text: string | undefined, group: LimitHookGroup): 'missing' | 'current' | 'stale' {
-  const found = readClaudeLimitHooks(text);
-  if (!found.length) return 'missing';
-  return found.length === 1 && JSON.stringify(found[0]) === JSON.stringify(group) ? 'current' : 'stale';
+/** With `attention`, the Stop and Notification groups must be there too: a Hydra from before them is 'stale', so they get added. */
+export function limitHookState(text: string | undefined, group: LimitHookGroup, attention?: AttentionHookGroups): 'missing' | 'current' | 'stale' {
+  const found = new Map(insertOrder.map(event => [event, readClaudeLimitHooks(text, event)]));
+  if ([...found.values()].every(list => !list.length)) return 'missing';
+  const current = hookGroupsWanted(group, attention).every(([event, one]) => { const list = found.get(event)!; return list.length === 1 && JSON.stringify(list[0]) === JSON.stringify(one); });
+  return current ? 'current' : 'stale';
 }

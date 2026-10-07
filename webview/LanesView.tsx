@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientMessage, LaneAction, LaneLimitOfferView, LaneOfferButtonId, LanePlanJobView, LaneView, Provider, SnapshotRole } from '../src/core/model';
+import { laneAttentionLabel, waitingFirst } from '../src/core/model';
 import type { JobCheckResult } from '../src/core/jobs';
 import { otherProvider } from '../src/core/limitEvents';
 import { evidenceLabel, gateChip } from '../src/core/agentsCanvas';
@@ -241,6 +242,7 @@ function LaneTile({ lane, laneName, focused, limitOffer, switchCountdown, gates,
       {lane.resumeNote && <span className="lane-role-note" role="note">{lane.resumeNote}</span>}
       {lane.previewNote && <span className="lane-role-note" role="note">{lane.previewNote}</span>}
       <div className="lane-chips">
+        {lane.attention && <Chip tone={lane.attention === 'waiting' ? 'warning' : 'info'} title={lane.attention === 'waiting' ? 'Its agent asked a question or needs a permission. Type in the terminal to answer.' : 'Its agent ended its turn and is waiting for your next message.'}>{laneAttentionLabel[lane.attention]}</Chip>}
         {lane.planJob && <PlanChip planJob={lane.planJob} />}
         {conflict && <Chip tone="warning" title={sync!.conflicts.flatMap(item => item.files).join(', ')}>Conflicts with {laneName(conflict.laneId) || 'another lane'}{conflict.files[0] ? ` · ${conflict.files[0]}` : ''}</Chip>}
         {!!sync?.targetConflicts.length && lane.state !== 'merged' && <Chip tone="warning" title={sync.targetConflicts.join(', ')}>Conflicts with {lane.target} · {sync.targetConflicts[0]}</Chip>}
@@ -352,8 +354,8 @@ export function LanesView({ lanes, terminals, defaultProvider, laneError, focus,
     while (taken.has(`lane ${index}`)) index++;
     return `Lane ${index}`;
   }, [lanes]);
-  // Running lanes first, exited lanes after, as compact rows unless expanded to "Show terminal".
-  const running = lanes.filter(lane => lane.state !== 'exited');
+  // Running lanes first (the ones waiting for you before the rest), exited lanes after, as compact rows unless expanded to "Show terminal".
+  const running = waitingFirst(lanes.filter(lane => lane.state !== 'exited'));
   const exited = lanes.filter(lane => lane.state === 'exited');
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const toggle = (id: string) => setExpanded(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });

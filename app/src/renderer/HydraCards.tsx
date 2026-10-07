@@ -30,6 +30,7 @@ export function HeadCard({ head }: { head: HeadCardView }) {
         <span className={`hydra-state ${stateTone(head.state)}`}>{head.merged ? 'merged' : head.state}</span>
       </div>
       <div className="hydra-card-meta">{[head.provider === 'codex' ? 'Codex' : 'Claude Code', head.branch, head.changedFiles ? `${head.changedFiles} file${head.changedFiles === 1 ? '' : 's'} changed` : '', required.length ? `checks ${passed}/${required.length}` : ''].filter(Boolean).join(' · ')}</div>
+      {head.headline && <div className="hydra-card-headline">{head.headline}</div>}
       {head.question && <div className="hydra-card-line warning">Asks: {head.question}</div>}
       {!head.question && head.progress && <div className="hydra-card-line">{head.progress}</div>}
       {head.summary && <details className="hydra-card-summary"><summary>Summary</summary><div>{head.summary}</div></details>}

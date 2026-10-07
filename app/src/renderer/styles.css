@@ -288,6 +288,7 @@ button.link { color: var(--link); text-decoration: underline; padding: 0; }
 .hydra-card-kind { font-size: 12px; font-weight: 500; color: var(--muted); }
 .hydra-card-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hydra-card-meta, .hydra-job-reason { font-size: 12px; color: var(--muted); }
+.hydra-card-headline { font-size: 13px; font-weight: 600; }
 .hydra-card-line { font-size: 13px; }
 .hydra-card-line.warning { color: var(--warning); }
 .hydra-card-line.error { color: var(--error); }

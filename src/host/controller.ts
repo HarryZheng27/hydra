@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { mkdir, stat as fsStat, writeFile } from 'node:fs/promises';
 import { findProvider } from '../core/providers';
 import { OwnershipLock } from '../core/ownership';
@@ -15,8 +16,8 @@ import type { HeadSandbox } from '../core/headSandbox';
 import { createLeadVerifier, createUserVerifier } from '../core/leadVerification';
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from '../core/claudeMem';
 import { installWithFallback } from '../core/openVsx';
-import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, shouldRepairConnection, isStandardHelpersDir, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
-import { claudeSupportsLimitHook, limitHookGroup, limitHookState, limitHookReachesThisHydra, type LimitHookGroup } from '../core/claudeLimitHook';
+import { addCodexNotify, codexNotifyBlock, codexNotifyPaths, writeAtomic, claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, shouldRepairConnection, isStandardHelpersDir, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
+import { attentionHookGroups, claudeSupportsLimitHook, codexNotifyCommand, limitHookGroup, limitHookState, limitHookReachesThisHydra, type AttentionHookGroups, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
 import { headShellOffNotice, headShellSentence } from '../core/confine';
@@ -24,6 +25,8 @@ import { claudeForRegistration as claudeFor } from './claudeExecutable';
 import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
 import type { HeadFact, LimitOfferFact, NeedsYouFacts, PlanFact } from '../core/needsYou';
 import { codexLaneFanout } from '../core/limitEvents';
+import { AttentionWatcher } from '../core/attentionWatcher';
+import { attentionDirectory, type AttentionEvent } from '../core/attentionEvents';
 import { ClaudeChatLimits, CodexChatLimits, type QuotaSource } from './chatLimits';
 import { registerLimitOffer } from './limitOffer';
 import { loadGates } from '../core/gates';
@@ -68,6 +71,8 @@ export interface ControllerLanes {
   openWorktrees(): string[];
   activeRolesChanged(): Promise<void>;
   onLimitEvent(event: LimitEvent): Promise<void>;
+  laneForAttention(event: AttentionEvent): string | undefined;
+  onAttention(laneId: string, event: AttentionEvent): void;
   laneEvidence(id: string): { title: string; worktree: string; results: JobCheckResult[]; status?: EvidenceStatus; commit?: string; stale?: boolean; notes?: string[] } | undefined;
   laneGatesLogRoot(): string | undefined;
   laneWorktreeEntries(): { id: string; worktree: string }[];
@@ -227,6 +232,8 @@ export class HydraController {
       id: job.id, title: job.title, state: job.state, provider: job.provider, createdAt: job.createdAt, finishedAt: job.finishedAt,
       progress: job.progress, question: job.state === 'blocked' ? job.question : undefined, reason: job.state === 'running' ? undefined : job.reason,
       branch: job.branch, commit: job.result?.commit, summary: job.result?.summary, changedFiles: job.result?.changedFiles.length ?? 0,
+      ...(job.result?.headline ? { headline: job.result.headline } : {}),
+      ...(job.state === 'blocked' && job.options?.length ? { options: job.options.map((option, index) => ({ option: index + 1, text: option.text, ...(option.recommended ? { recommended: true } : {}) })) } : {}),
       checks: job.result?.checks.map(toHeadCheckView) ?? [],
       repository: service.leadFolder, worktree: job.worktree, dependsOn: job.dependsOn,
       lead: job.lead, merged: service.isMerged(job.id), startedAt: job.startedAt, writeScope: job.writeScope,
@@ -609,6 +616,7 @@ export class HydraController {
         ...(head?.attempts !== undefined ? { attempts: head.attempts } : {}),
         ...(head?.startedAt ? { startedAt: head.startedAt } : {}),
         ...(head?.finishedAt ? { finishedAt: head.finishedAt } : {}),
+        ...(head?.result?.headline ? { headline: head.result.headline } : {}),
         ...(head?.result?.summary ? { summary: head.result.summary } : {}),
         ...(head?.result?.changedFiles?.length ? { changedFiles: head.result.changedFiles } : {}),
         ...(head?.result?.checks?.length ? { checks: head.result.checks.map(check => ({ id: check.id, required: check.required, passed: check.passed, ...(check.state ? { state: check.state } : {}), ...(check.summary ? { summary: check.summary } : {}) })) } : {}),
@@ -618,7 +626,7 @@ export class HydraController {
         ...(head?.usage?.inputTokens !== undefined ? { inputTokens: head.usage.inputTokens } : {}),
         ...(head?.usage?.outputTokens !== undefined ? { outputTokens: head.usage.outputTokens } : {}),
         ...(head?.providerWaitMs ? { providerWaitMs: head.providerWaitMs } : {}),
-        ...(head?.replies.some(reply => reply.auto) ? { autoAnswered: head.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto!, ...(reply.question ? { question: reply.question } : {}) })) } : {}),
+        ...(head?.replies.some(reply => reply.auto) ? { autoAnswered: head.replies.filter(reply => reply.auto).map(reply => ({ at: reply.at, why: reply.auto!, ...(reply.question ? { question: reply.question } : {}), ...(reply.option ? { option: reply.option, choice: reply.choice } : {}) })) } : {}),
       };
     });
     return buildPlanReport(plan, details, defaultHeadBudgetUsd);
@@ -946,6 +954,11 @@ export class HydraController {
     const claude = new ClaudeChatLimits(this.host, this.limitEventsDirectory, providerPaths().claudeProjects, fire, () => this.lanes.laneWorktreeEntries());
     this.host.keep(claude);
     void claude.start().catch(error => this.host.log(`[limits] Claude chat limits not watched: ${describe(error)}`));
+    // Lanes say when they're waiting (Needs_You_Plan.md, Phase 4): the same hook script, its own folder.
+    const attention = new AttentionWatcher({ directory: attentionDirectory(this.limitEventsDirectory), laneOf: event => this.lanes.laneForAttention(event) });
+    attention.onAttention((laneId, event) => this.lanes.onAttention(laneId, event));
+    this.host.keep(attention);
+    void attention.start().catch(error => this.host.log(`[lanes] lane attention not watched: ${describe(error)}`));
     const fireCodex = (event: LimitEvent) => {
       fire(event);
       for (const laneEvent of codexLaneFanout(event, this.lanes.runningLanes('codex'))) fire(laneEvent);
@@ -994,6 +1007,15 @@ export class HydraController {
   /** Claude's StopFailure hook: this editor's executable as Node, running dist/hydra-limit-hook.cjs into the shared events folder. */
   limitHook(): LimitHookGroup {
     return limitHookGroup({ executable: process.execPath, script: path.join(this.host.paths.dist, 'hydra-limit-hook.cjs'), eventsDir: this.limitEventsDirectory });
+  }
+  /** The Stop and Notification hooks that tell a lane's tile it is waiting or finished its turn (docs/internal/Needs_You_Plan.md, Phase 4). */
+  attentionHooks(): AttentionHookGroups {
+    return attentionHookGroups({ ...this.hookProgram(), worktreeRoot: this.host.settings.machine<string>('worktreeRoot') || undefined });
+  }
+  private hookProgram() { return { executable: process.execPath, script: path.join(this.host.paths.dist, 'hydra-limit-hook.cjs'), eventsDir: this.limitEventsDirectory }; }
+  /** Codex's notify program: the same script; a user's own `notify` is never replaced (addCodexNotify). */
+  codexNotify(): string[] {
+    return codexNotifyCommand({ ...this.hookProgram(), worktreeRoot: this.host.settings.machine<string>('worktreeRoot') || undefined });
   }
   /** The hook, if this Claude runs exec-form hooks (2.1.139+); older ones would run it through a shell. */
   async limitHookFor(claude: string): Promise<LimitHookGroup | undefined> {
@@ -1336,11 +1358,12 @@ export class HydraController {
   async connectHelpers(provider: ConnectableProvider): Promise<string | undefined> {
     await this.installProviderExtension(provider);
     const paths = providerPaths(), spec = this.helperServerSpec(provider);
-    if (provider === 'codex') await connectCodex(paths.codexConfig, spec);
+    if (provider === 'codex') await connectCodex(paths.codexConfig, spec, this.codexNotify());
     else if (provider === 'claude') {
       const claude = await this.claudeForRegistration();
       if (!claude) throw new Error('Install the Claude Code extension or CLI first; Hydra connects through it.');
-      await connectClaude(claude, paths, spec, await this.limitHookFor(claude));
+      const limitHook = await this.limitHookFor(claude);
+      await connectClaude(claude, paths, spec, limitHook, limitHook ? this.attentionHooks() : undefined);
       this.host.log('[heads] connected claude to Hydra');
       if (!shouldSetUpClaudeMem((this.host.settings.machine<boolean>('claudeMem.enabled') ?? false))) return undefined;
       try {
@@ -1377,21 +1400,36 @@ export class HydraController {
       if (connection.provider === 'claude' && connection.connected && !connection.error && (connection.current || isStandardHelpersDir(this.helperServerSpec('claude').env.HYDRA_HELPERS_DIR))) {
         await this.refreshLimitHook().catch(error => this.host.log(`[limits] could not refresh the Claude hook: ${describe(error)}`));
       }
+      if (connection.provider === 'codex' && connection.connected && !connection.error && (connection.current || isStandardHelpersDir(this.helperServerSpec('codex').env.HYDRA_HELPERS_DIR))) {
+        await this.refreshCodexNotify().catch(error => this.host.log(`[lanes] could not refresh the Codex notifier: ${describe(error)}`));
+      }
     }
+  }
+  /** A connected Codex gets the lane notifier when it has none of Hydra's, and loses it when the user has since set a `notify` of their own (two would break the file). */
+  private async refreshCodexNotify(): Promise<void> {
+    const paths = providerPaths(), text = await read(paths.codexConfig);
+    if (text === undefined) return;
+    // Another Hydra's notifier that still works is left alone, as the Claude hook is (two Hydras would otherwise take turns rewriting this file).
+    const command = this.codexNotify(), theirs = codexNotifyPaths(text), ours = codexNotifyPaths(codexNotifyBlock(command));
+    if (theirs.executable && theirs.script && (theirs.executable !== ours.executable || theirs.script !== ours.script) && existsSync(theirs.executable) && existsSync(theirs.script)) return;
+    const updated = addCodexNotify(text, command);
+    if (updated === text) return;
+    await writeAtomic(paths.codexConfig, updated);
+    this.host.log('[lanes] updated the Codex lane notifier');
   }
   /**
    * A connected Claude gets the usage-limit hook: rewritten when Hydra's path moved,
    * added when a Connect from before the hook existed didn't write it.
    */
   private async refreshLimitHook(): Promise<void> {
-    const paths = providerPaths(), group = this.limitHook();
+    const paths = providerPaths(), group = this.limitHook(), attention = this.attentionHooks();
     const text = await read(paths.claudeSettings);
-    const state = limitHookState(text, group);
+    const state = limitHookState(text, group, attention);
     if (state === 'current') return;
     // Another Hydra's hook, still installed and writing where this one reads, tells every Hydra window too: leave it (G5).
     if (state === 'stale' && limitHookReachesThisHydra(text, group, undefined, isStandardHelpersDir(this.helperServerSpec('claude').env.HYDRA_HELPERS_DIR))) return;
     if (state === 'missing') { const claude = await this.claudeForRegistration(); if (!claude || !await this.limitHookFor(claude)) return; }
-    await setClaudeLimitHook(paths, group);
+    await setClaudeLimitHook(paths, group, attention);
     this.host.log(`[limits] ${state === 'stale' ? 'updated' : 'added'} the Claude usage-limit hook`);
   }
   /**
@@ -1626,6 +1664,17 @@ export class HydraController {
     if (action === 'helperAnswer') {
       // The head is waiting on the lead; you can answer in its place from the Agents view.
       if (job.state !== 'blocked') throw new Error('That head is not waiting for an answer.');
+      // A head that offered options: they come first, numbered 1 to 4 (the app's picker answers on those keys), with a way to write your own.
+      const options = job.options ?? [];
+      if (options.length) {
+        const items = [
+          ...options.map((option, index) => ({ label: `${index + 1}  ${option.text}`, description: option.recommended ? 'recommended' : '', option: index + 1 })),
+          { label: 'Write your own answer…', description: '', option: 0 },
+        ];
+        const chosen = await this.host.pick(items, { title: `Answer "${job.title}"`, placeHolder: job.question || 'The head is waiting for an answer.', ignoreFocusOut: true });
+        if (!chosen) return;
+        if (chosen.option) { await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, option: chosen.option }, new AbortController().signal); return; }
+      }
       const message = await this.host.input({ title: `Answer "${job.title}"`, prompt: job.question || 'The head is waiting for an answer.', placeHolder: 'Your answer', ignoreFocusOut: true, validateInput: value => value.trim() && value.length <= 8000 ? undefined : 'Write an answer (up to 8000 characters).' });
       if (message === undefined) return;
       await helpers.service.handle({ role: 'lead', leadKey: job.leadKey }, 'hydra_reply_to_head', { job_id: jobId, message }, new AbortController().signal);

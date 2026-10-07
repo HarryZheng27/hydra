@@ -10,6 +10,7 @@ import { createWorktree, defaultWorktreeRoot } from './worktrees';
 import { LaneTerminal, minCols, maxCols, minRows, maxRows, terminalText, terminalsUnavailable, type PtyModule } from './lanePty';
 import { LaneSync, laneDiffBase, syncIntervalMs } from './laneSync';
 import { checkMerge, closeLaneWorktree, commitLane, laneDirty, laneFullyMerged, mergeLane, pushLane, updateLane, type CloseMode, type MergeCheck } from './laneFinish';
+import type { LaneAttention } from './attentionEvents';
 import { isLaneId, isSafeBranchName, laneBranch, laneContinuePrompt, laneFolder, laneJobFolder, lanePreamble, laneRolePrompt, laneRoleRef, newLaneId, parseLaneInput, type Lane, type LaneGatesRecord, type LanePlanLink, type LanePreambleOther, type LanePromptRole, type LaneStore, type LaneSwitchReason } from './lanes';
 import { otherProvider } from './limitEvents';
 import { buildHandoff, defaultHandoffDeps, type HandoffDeps } from './limitHandoff';
@@ -263,6 +264,10 @@ export async function writeLaneJobBrief(worktree: string, text: string): Promise
 
 export const maxOpenLanes = 24;
 export const defaultTerminalSize = { cols: 100, rows: 30 };
+/** Output within this long of an attention signal is the agent's own last redraw, not it going back to work. */
+export const attentionOutputGraceMs = 2500;
+/** Keys a person typed, not the terminal's own replies (focus changes and mouse reports that xterm sends as input). */
+export const isTypedInput = (data: string): boolean => data.length > 0 && !/^\u001b(?:\[(?:[IO]|<[0-9;]*[Mm]|M[\s\S]{3}|[?>]?[0-9;]*[Rc])|\][\s\S]*(?:\u0007|\u001b\\)|P[\s\S]*\u001b\\)$/.test(data);
 
 export class LaneService {
   private readonly terminals = new Map<string, LaneTerminal>();
@@ -283,6 +288,9 @@ export class LaneService {
   /** Step E: why a lane's preview server stopped on its own. Cleared at its next successful start. */
   private readonly previewNotes = new Map<string, string>();
   private readonly previews: LanePreviews;
+  /** Needs_You_Plan.md, Phase 4: a lane whose agent said it is waiting on you or ended its turn. A hint for the tile, never saved. */
+  private readonly started = new Map<string, number>();
+  private readonly attention = new Map<string, { kind: LaneAttention; at: number }>();
   constructor(private readonly options: LaneServiceOptions) {
     this.syncer = new LaneSync(options.now);
     this.previews = new LanePreviews({
@@ -314,6 +322,7 @@ export class LaneService {
         ...lane, ...(sync ? { sync: structuredClone(sync) } : {}), running: !!this.terminals.get(lane.id)?.running,
         ...(roleNote ? { roleNote } : {}), ...(resumeNote ? { resumeNote } : {}), ...(gatesStale ? { gatesStale } : {}),
         ...(preview ? { preview: { port: preview.port, url: preview.url } } : {}), ...(previewNote ? { previewNote } : {}),
+        ...(this.attention.has(lane.id) ? { attention: this.attention.get(lane.id)!.kind } : {}),
       };
     });
   }
@@ -442,12 +451,32 @@ export class LaneService {
     });
   }
 
-  /** Keys typed in the lane's tile. Ignored when its terminal isn't running. */
+  /** Keys typed in the lane's tile. Ignored when its terminal isn't running. Typing answers a waiting agent, so it clears the lane's attention. */
   input(id: unknown, data: string): boolean {
     const terminal = isLaneId(id) ? this.terminals.get(id) : undefined;
     if (!terminal?.running) return false;
     terminal.write(data);
+    if (isTypedInput(data)) this.clearAttention(id as string);
     return true;
+  }
+  /**
+   * The lane's agent said it is waiting on you (`waiting`) or ended its turn (`turn-ended`). Ignored unless its terminal is
+   * running. A `turn-ended` never replaces a `waiting` that is still showing: the question hasn't been answered.
+   */
+  setAttention(id: string, kind: LaneAttention, signalledAt?: number): boolean {
+    // An event from before this terminal started is the last session's (a file left on disk across a restart).
+    if (signalledAt !== undefined && signalledAt < (this.started.get(id) ?? 0)) return false;
+    if (!isLaneId(id) || !this.terminals.get(id)?.running || !this.exists(id)) return false;
+    if (kind === 'turn-ended' && this.attention.get(id)?.kind === 'waiting') return false;
+    this.attention.set(id, { kind, at: this.now().getTime() });
+    this.changed();
+    return true;
+  }
+  clearAttention(id: string): void { if (this.attention.delete(id)) this.changed(); }
+  /** The agent's output resumed: it has gone back to work. A redraw right after the signal doesn't count (attentionOutputGraceMs). */
+  private noteOutput(id: string): void {
+    const seen = this.attention.get(id);
+    if (seen && this.now().getTime() - seen.at > attentionOutputGraceMs) this.clearAttention(id);
   }
 
   /**
@@ -791,12 +820,14 @@ export class LaneService {
     const previous = this.terminals.get(lane.id);
     const handle = pty.spawn(launched.executable, launched.args, { name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd: lane.worktree, env: spec.env });
     const terminal: LaneTerminal = new LaneTerminal(handle, {
-      onData: data => this.options.onData?.(lane.id, data),
+      onData: data => { this.noteOutput(lane.id); this.options.onData?.(lane.id, data); },
       onExit: code => { void this.exited(lane.id, terminal, code); },
       killTree: this.options.killTree,
       initialReplay: previous?.replay(),
     });
     this.terminals.set(lane.id, terminal);
+    this.attention.delete(lane.id);
+    this.started.set(lane.id, this.now().getTime());
     this.options.log?.(`[lanes] ${lane.id} started ${testCommand ? 'the test command' : lane.provider}${resume ? ' (resumed)' : ''} in ${lane.worktree}`);
   }
 
@@ -837,6 +868,7 @@ export class LaneService {
 
   private async exited(id: string, terminal: LaneTerminal, code: number): Promise<void> {
     if (this.disposed || this.terminals.get(id) !== terminal) return;
+    this.attention.delete(id);
     const lane = this.options.store.get(id);
     if (!lane || lane.state === 'closed') return;
     try { await this.options.store.update(id, lane.state === 'running' ? { state: 'exited', exitCode: code, exitedAt: this.now().toISOString() } : { exitCode: code }); }

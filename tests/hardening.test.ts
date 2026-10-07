@@ -79,7 +79,7 @@ test('1.1 gate floor: a gate dropped from gates.json mid-run still runs', async 
     await helper.commit('src/x.ts', 'x\n');
     // Mid-run: the head "edits" the lead's gates.json to drop gate "b".
     await writeFile(path.join(f_repo(f), '.hydra', 'gates.json'), JSON.stringify({ gates: [passGate('a')] }));
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true);
     helper.endTurn();
   } });
@@ -97,7 +97,7 @@ test('1.1 gate floor: a gate whose command is weakened mid-run still runs its st
     await helper.commit('src/x.ts', 'x\n');
     // Mid-run: the head points "unit" at a command that would fail.
     await writeFile(path.join(f_repo(f), '.hydra', 'gates.json'), JSON.stringify({ gates: [failGate('unit')] }));
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true, 'the snapshot\'s passing command ran, not the weakened one');
     helper.endTurn();
   } });
@@ -113,7 +113,7 @@ test('1.1 gate floor: a gate added to gates.json mid-run also runs', async () =>
   const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
     await helper.commit('src/x.ts', 'x\n');
     await writeFile(path.join(f_repo(f), '.hydra', 'gates.json'), JSON.stringify({ gates: [passGate('unit'), passGate('added')] }));
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true);
     helper.endTurn();
   } });
@@ -132,7 +132,7 @@ test('1.1 gate floor: with no snapshot, today\'s gates alone decide', async () =
   const flaky: GatesLoader = async folder => { calls++; if (calls === 1) throw new Error('temporarily unreadable'); return real(folder); };
   const f = await fixture({ gates: { gates: [passGate('unit')] }, gatesLoader: flaky, script: async helper => {
     await helper.commit('src/x.ts', 'x\n');
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true);
     helper.endTurn();
   } });
@@ -149,7 +149,7 @@ test('1.6 tamper note: a head\'s result says gates.json changed while it ran', a
   const f = await fixture({ gates: { gates: [passGate('unit')] }, script: async helper => {
     await helper.commit('src/x.ts', 'x\n');
     await writeFile(path.join(f_repo(f), '.hydra', 'gates.json'), JSON.stringify({ gates: [passGate('unit'), passGate('extra')] }));
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true);
     assert.match(done.result.message, /gates changed while this head ran/);
     helper.endTurn();
@@ -168,7 +168,7 @@ test('Edited tests are evidence: a head\'s result lists existing tests it change
     await helper.commit('src/new.test.ts', 'new\n');
     await helper.commit('src/c.ts', 'changed\n');
     await rm(path.join(helper.spec.worktree, 'src', 'b.test.ts'));
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true, 'a flag, not a gate');
     assert.match(done.result.message, /Changed existing tests: src\/a\.test\.ts, src\/b\.test\.ts\./);
     helper.endTurn();
@@ -185,7 +185,7 @@ test('Edited tests are evidence: tests in gates.json replace the default pattern
   const f = await fixture({ gates: { tests: ['spec-folder/**'], gates: [passGate('unit')] }, files: { 'src/a.test.ts': 'a\n', 'spec-folder/x.ts': 'x\n' }, script: async helper => {
     await helper.commit('src/a.test.ts', 'edited\n');
     await helper.commit('spec-folder/x.ts', 'edited\n');
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true);
     helper.endTurn();
   } });
@@ -204,13 +204,13 @@ test('1.4 git hardening: hydra_done refuses acceptance when .git/hooks changed m
     const hooksDir = path.isAbsolute(common) ? path.join(common, 'hooks') : path.join(helper.spec.worktree, common, 'hooks');
     await mkdir(hooksDir, { recursive: true });
     await writeFile(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\necho hi\n');
-    const first = await helper.call('hydra_done', { summary: 'planted a hook' });
+    const first = await helper.call('hydra_done', { headline: 'Done.', summary: 'planted a hook' });
     assert.equal(first.result.accepted, false);
     assert.match(first.result.message, /git settings or hooks changed/);
     assert.match(first.result.message, /hooks\/pre-commit/);
     assert.match(first.result.message, /If you didn't, don't try to fix them: call hydra_stuck/, 'a head that didn\'t cause it asks instead of guessing');
     await rm(path.join(hooksDir, 'pre-commit'));
-    const second = await helper.call('hydra_done', { summary: 'undid it' });
+    const second = await helper.call('hydra_done', { headline: 'Done.', summary: 'undid it' });
     assert.equal(second.result.accepted, true);
     helper.endTurn();
   } });
@@ -241,14 +241,14 @@ test('HSEC-09: hydra_done refuses a worktree whose .git was repointed, before Hy
     await writeFile(path.join(wt, '.gitattributes'), '* filter=p\n');
     await writeFile(path.join(wt, 'src', 'y.ts'), 'y\n');
     await overwrite(path.join(wt, '.git'), `gitdir: ${path.join(fake, '.git')}\n`);
-    const first = await helper.call('hydra_done', { summary: 'repointed .git' });
+    const first = await helper.call('hydra_done', { headline: 'Done.', summary: 'repointed .git' });
     assert.equal(first.result.accepted, false);
     assert.match(first.result.message, /won't run git in your worktree: its \.git file points outside/);
     await assert.rejects(readFile(marker), 'the filter never ran');
     // Put back, the work is accepted.
     await overwrite(path.join(wt, '.git'), original);
     await rm(fake, { recursive: true, force: true }); await rm(path.join(wt, '.gitattributes'));
-    const second = await helper.call('hydra_done', { summary: 'put it back' });
+    const second = await helper.call('hydra_done', { headline: 'Done.', summary: 'put it back' });
     assert.equal(second.result.accepted, true);
     helper.endTurn();
   } });
@@ -319,7 +319,7 @@ test('HSEC-09: hydra_done never runs git inside a nested repository a head commi
     await new Promise(resolve => setTimeout(resolve, 1100));
     await writeFile(path.join(nested, 'a.txt'), 'b\n');
     await writeFile(path.join(wt, 'src', 'y.ts'), 'y\n');
-    const done = await helper.call('hydra_done', { summary: 'nested repo' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'nested repo' });
     assert.equal(done.result.accepted, true, done.result.message);
     await assert.rejects(readFile(marker), 'the nested repository\'s filter never ran');
     // The head's ordinary file was still committed for it.
@@ -340,11 +340,11 @@ test('HSEC-30: hydra_done refuses when the git settings check can\'t run, rather
     const hooksDir = path.isAbsolute(common) ? path.join(common, 'hooks') : path.join(helper.spec.worktree, common, 'hooks');
     // A folder among the hooks can't be read as a file: the fingerprint throws.
     await mkdir(path.join(hooksDir, 'zz'), { recursive: true });
-    const first = await helper.call('hydra_done', { summary: 'unreadable hooks' });
+    const first = await helper.call('hydra_done', { headline: 'Done.', summary: 'unreadable hooks' });
     assert.equal(first.result.accepted, false);
     assert.match(first.result.message, /git settings or hooks changed.*couldn't be read/s);
     await rm(path.join(hooksDir, 'zz'), { recursive: true });
-    assert.equal((await helper.call('hydra_done', { summary: 'readable again' })).result.accepted, true);
+    assert.equal((await helper.call('hydra_done', { headline: 'Done.', summary: 'readable again' })).result.accepted, true);
     helper.endTurn();
   } });
   try {

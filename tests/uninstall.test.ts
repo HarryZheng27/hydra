@@ -4,15 +4,20 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { limitHookGroup, limitHookPaths } from '../src/core/claudeLimitHook';
-import { addClaudeAllowRule, addCodexBlock, addGuidanceBlock, providerPaths, type HelperServerSpec } from '../src/core/helperRegistration';
+import { attentionHookGroups, codexNotifyCommand, limitHookGroup, limitHookPaths } from '../src/core/claudeLimitHook';
+import { addClaudeAllowRule, addCodexBlock, addCodexNotify, addGuidanceBlock, providerPaths, type HelperServerSpec } from '../src/core/helperRegistration';
 import { addClaudeLimitHook } from '../src/core/claudeLimitHook';
 import { cleanupInstall, codexBlockCommand, insideInstall, removeClaudeServer, type CleanupOptions } from '../src/core/uninstallCleanup';
 
 const app = 'C:\\Users\\n\\AppData\\Local\\Programs\\Hydra';
 const other = 'C:\\Dev\\hydra-build\\Hydra';
 const specFor = (root: string): HelperServerSpec => ({ command: `${root}\\Hydra.exe`, args: [`${root}\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-mcp.cjs`], env: { ELECTRON_RUN_AS_NODE: '1', HYDRA_HELPERS_DIR: 'C:\\Users\\n\\AppData\\Roaming\\Hydra\\helpers' } });
-const hookFor = (root: string) => limitHookGroup({ executable: `${root}\\Hydra.exe`, script: `${root}\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-limit-hook.cjs`, eventsDir: 'C:\\Users\\n\\AppData\\Roaming\\Hydra\\User\\globalStorage\\limit-events', platform: 'win32', systemRoot: 'C:\\Windows' });
+const hookProgram = (root: string) => ({ executable: `${root}\\Hydra.exe`, script: `${root}\\resources\\app\\extensions\\hydra-agent-manager\\dist\\hydra-limit-hook.cjs`, eventsDir: 'C:\\Users\\n\\AppData\\Roaming\\Hydra\\User\\globalStorage\\limit-events', platform: 'win32' as const, systemRoot: 'C:\\Windows' });
+const hookFor = (root: string) => limitHookGroup(hookProgram(root));
+
+// Needs_You_Plan.md, Phase 4: the Stop and Notification hooks and Codex's notifier go with the rest, byte for byte.
+const attentionFor = (root: string) => attentionHookGroups(hookProgram(root));
+const notifyFor = (root: string) => codexNotifyCommand(hookProgram(root));
 
 test('ownership: only paths inside this installation, compared the way Windows does', () => {
   assert.equal(insideInstall(`${app}\\Hydra.exe`, app, 'win32'), true);
@@ -79,8 +84,8 @@ async function home(owner: string, options: { hydraAgents?: boolean } = {}): Pro
   const claudeJson = JSON.parse(originals.claudeJson) as { mcpServers: Record<string, unknown> };
   claudeJson.mcpServers.hydra = { type: 'stdio', command: spec.command, args: spec.args, env: spec.env, timeout: 3_600_000 };
   await writeFile(paths.claudeJson, JSON.stringify(claudeJson, null, 2));
-  await writeFile(paths.claudeSettings, addClaudeLimitHook(addClaudeAllowRule(originals.settings), hookFor(owner)));
-  await writeFile(paths.codexConfig, addCodexBlock(originals.codex, spec));
+  await writeFile(paths.claudeSettings, addClaudeLimitHook(addClaudeAllowRule(originals.settings), hookFor(owner), attentionFor(owner)));
+  await writeFile(paths.codexConfig, addCodexNotify(addCodexBlock(originals.codex, spec), notifyFor(owner)));
   await writeFile(path.join(root, '.codex', 'AGENTS.md'), addGuidanceBlock(originals.agents));
   return { root, paths, originals };
 }
