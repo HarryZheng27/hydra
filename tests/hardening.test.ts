@@ -236,6 +236,18 @@ test('HSEC-09: once checked, Hydra\'s git calls are pinned to the worktree\'s re
     const checked = await worktreeGitDir(wt, common);
     assert.ok('dir' in checked, 'a fresh worktree passes the check');
     assert.equal(path.dirname(checked.dir), path.join(common, 'worktrees'), 'the pinned folder is built under the main checkout\'s .git');
+    // Pointing at another worktree's metadata (another head's) is refused: that folder names the other worktree.
+    const other = path.join(root, 'other');
+    await git(repo, ['worktree', 'add', '-q', '-b', 'other', other]);
+    const own = await readFile(path.join(wt, '.git'), 'utf8');
+    await overwrite(path.join(wt, '.git'), (await readFile(path.join(other, '.git'), 'utf8')));
+    const borrowed = await worktreeGitDir(wt, common);
+    assert.ok('problem' in borrowed && /belongs to another worktree/.test(borrowed.problem));
+    await overwrite(path.join(wt, '.git'), own);
+    assert.ok('dir' in await worktreeGitDir(wt, common));
+    // Stray git settings in Hydra's own environment are cleared from a pinned call.
+    assert.equal(pinnedWorktreeGit(wt, checked.dir).GIT_INDEX_FILE, undefined);
+    assert.ok('GIT_CONFIG_PARAMETERS' in pinnedWorktreeGit(wt, checked.dir));
     // After the check, a command the head left running repoints .git at a repository of its making with a clean filter.
     const marker = path.join(root, 'pwned');
     const fake = path.join(root, 'fake');

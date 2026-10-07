@@ -190,7 +190,12 @@ export async function worktreeGitDir(worktree: string, commonDir: string, platfo
   const key = (value: string) => { const resolved = path.resolve(value); return platform === 'win32' ? resolved.toLowerCase() : resolved; };
   const parent = path.dirname(target);
   if (key(parent) !== key(path.join(commonDir, 'worktrees')) || !path.basename(target)) return { problem: 'its .git file points outside the repository\'s own worktree metadata' };
-  return { dir: path.join(commonDir, 'worktrees', path.basename(target)) };
+  // The folder must be this worktree's own: git's `gitdir` file in it names the worktree's .git. Pointing at another
+  // head's folder would otherwise pass, and commit this worktree's files onto that head's branch.
+  const dir = path.join(commonDir, 'worktrees', path.basename(target));
+  const back = (await readFile(path.join(dir, 'gitdir'), 'utf8').catch(() => '')).trim();
+  if (!back || key(path.resolve(dir, back)) !== key(file)) return { problem: 'its .git file points at metadata that belongs to another worktree' };
+  return { dir };
 }
 
 /**
@@ -198,4 +203,9 @@ export async function worktreeGitDir(worktree: string, commonDir: string, platfo
  * git never reads the worktree's `.git` file, so a head that rewrites it after the check (a background command, say)
  * can't send Hydra's later git calls to a repository of its making.
  */
-export const pinnedWorktreeGit = (worktree: string, gitDir: string): NodeJS.ProcessEnv => ({ GIT_DIR: gitDir, GIT_WORK_TREE: worktree });
+export const pinnedWorktreeGit = (worktree: string, gitDir: string): NodeJS.ProcessEnv => ({
+  GIT_DIR: gitDir, GIT_WORK_TREE: worktree,
+  // Anything in Hydra's own environment that would move git elsewhere or add config is cleared (undefined drops it).
+  GIT_COMMON_DIR: undefined, GIT_INDEX_FILE: undefined, GIT_OBJECT_DIRECTORY: undefined, GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_NAMESPACE: undefined, GIT_CONFIG: undefined, GIT_CONFIG_COUNT: undefined, GIT_CONFIG_PARAMETERS: undefined,
+});

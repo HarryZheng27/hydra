@@ -664,7 +664,7 @@ export class HelperService {
       try { const result = await run(); steps.push({ name, ms: this.now() - started }); return result; }
       catch (error) { steps.push({ name: `${name}!`, ms: this.now() - started }); throw error; }
     };
-    let commit: string, gates: Awaited<ReturnType<GatesLoader>>, note: string | undefined, changedFiles: string[], outside: string[];
+    let commit: string, gates: Awaited<ReturnType<GatesLoader>>, note: string | undefined, changedFiles: string[], outside: string[], pinned: NodeJS.ProcessEnv;
     try {
       // HSEC-09: before any of Hydra's own git calls in the worktree, its .git must still point into the main
       // checkout's metadata. A head that repointed it could have git run a command of its choosing (a filter,
@@ -676,7 +676,7 @@ export class HelperService {
         this.options.audit?.({ kind: 'denial', what: 'hydra_done refused: worktree .git changed', detail: gitDir.problem, jobId });
         return { accepted: false, message: `Hydra won't run git in your worktree: ${gitDir.problem}. Never edit .git. Put it back exactly as it was, then call hydra_done again; if you can't, call hydra_stuck with this message.` };
       }
-      const pinned = pinnedWorktreeGit(worktree, gitDir.dir);
+      pinned = pinnedWorktreeGit(worktree, gitDir.dir);
       // 1.4: the git metadata a head shares with the main checkout (config, hooks, …) must not move. Checked
       // before Hydra runs git in the worktree, so a changed setting never runs. A check that can't run refuses
       // too (HSEC-30): it can't say nothing changed. It spends no attempt: the change may not be the head's (you,
@@ -732,7 +732,7 @@ export class HelperService {
     const floor = gateFloor(job.gatesAtStart, { ...gates, gates: applyRigor(gates.gates, job.rigor) });
     // The scope and git-metadata checks first, then the gates in order (docs/internal/Gates_Plan.md, "Heads").
     // A listed pack that can't run reports its gates as not run (docs/internal/Packs_Plan.md); those never block.
-    const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, await this.gateContext(job, attempts, signal)) : [], ...floor.notRun];
+    const checks = [...floor.gates.length ? await runGateList(floor.gates, worktree, base, { ...await this.gateContext(job, attempts, signal), gitEnvironment: pinned }) : [], ...floor.notRun];
     if (this.options.store.get(jobId)?.state !== 'checking') return { accepted: false, message: 'This head was stopped. Stop now.' };
     if (signal?.aborted) {
       // The head's call ended mid-check: not its failure, so no attempt is spent.
