@@ -88,11 +88,13 @@ export const connectorsPage: SettingsPage = {
       { label: 'claude mcp server (~/.claude.json)', text: entries.claude.server },
       { label: 'Allow rule (~/.claude/settings.json)', text: entries.claude.allowRule },
       { label: 'Usage-limit hook, StopFailure (~/.claude/settings.json)', text: entries.claude.limitHook },
+      { label: 'Lane hooks, Stop and Notification (~/.claude/settings.json)', text: entries.claude.attentionHooks },
     ]);
     const codexBox = document.querySelector('[data-written="codex"]');
     if (codexBox) writtenList(codexBox, [
       { label: 'config.toml block (~/.codex/config.toml)', text: entries.codex.config },
       { label: 'AGENTS.md block (~/.codex/AGENTS.md)', text: entries.codex.agents },
+      { label: 'Lane notifier, notify (top of ~/.codex/config.toml)', text: entries.codex.notify },
     ]);
   }
   document.querySelectorAll('[data-connect]').forEach(b=>b.addEventListener('click',()=>send({type:'connectHelpers',provider:b.dataset.connect})));

@@ -7,7 +7,7 @@ import { replaceAtomic } from './atomicFile';
 import { leadGuidanceMarkdown } from './helperTools';
 import { processLaunch } from './process';
 import { helpersRootCandidates } from './hydraCli';
-import { addClaudeLimitHook, readClaudeLimitHooks, removeClaudeLimitHook, type LimitHookGroup } from './claudeLimitHook';
+import { addClaudeLimitHook, limitHookPaths, readClaudeLimitHooks, removeClaudeLimitHook, type AttentionHookGroups, type LimitHookGroup } from './claudeLimitHook';
 
 /**
  * Connecting Claude Code and Codex to Hydra (docs/internal/Official_Extensions_Plan.md,
@@ -160,6 +160,54 @@ export function addCodexBlock(text: string, spec: HelperServerSpec): string {
   return without + codexBlock(spec, eolOf(without || '\n'));
 }
 /**
+ * Codex's turn-complete notifier (docs/internal/Needs_You_Plan.md, Phase 4). `notify` is a top-level key, so it can't sit in
+ * the appended block (that block ends in tables): it is its own marked block at the very top of the file, removed
+ * byte-exactly. A `notify` the user already set is never replaced: Hydra writes nothing then, and lanes get no signal.
+ */
+export const notifyStart = '# >>> Hydra lane notifier (managed by Hydra: connect or disconnect in Hydra Settings)';
+export const notifyEnd = '# <<< Hydra lane notifier';
+const basicString = (value: string) => JSON.stringify(value);
+export function codexNotifyBlock(command: string[], eol = '\n'): string {
+  return [notifyStart, `notify = [${command.map(basicString).join(', ')}]`, notifyEnd, ''].join(eol);
+}
+/** The text without Hydra's notifier block, and whether it had one. Byte-exact inverse of addCodexNotify. */
+export function removeCodexNotify(text: string): { text: string; had: boolean } {
+  for (const eol of ['\r\n', '\n']) {
+    if (!text.startsWith(`${notifyStart}${eol}`)) continue;
+    const endMarker = `${eol}${notifyEnd}${eol}`, to = text.indexOf(endMarker);
+    if (to < 0) throw new Error('Hydra\'s notifier block in the Codex config is damaged. Remove the lines between the Hydra markers by hand.');
+    return { text: text.slice(to + endMarker.length), had: true };
+  }
+  return { text, had: false };
+}
+/** Whether the file sets a top-level `notify` of its own (outside Hydra's block): before the first table header, as TOML requires. */
+export function codexHasOwnNotify(text: string): boolean {
+  for (const line of removeCodexNotify(text).text.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) return false;
+    if (/^\s*notify\s*=/.test(line) || /^\s*"notify"\s*=/.test(line) || /^\s*'notify'\s*=/.test(line)) return true;
+  }
+  return false;
+}
+/** Put the notifier at the top, or leave the file alone (the user's own `notify`). `command` undefined removes Hydra's block. */
+export function addCodexNotify(text: string, command: string[] | undefined): string {
+  const without = removeCodexNotify(text).text;
+  if (!command || codexHasOwnNotify(without)) return without;
+  return codexNotifyBlock(command, eolOf(without || '\n')) + without;
+}
+/** What the notifier block runs, read back: the same executable and script limitHookPaths finds in a hook. */
+export function codexNotifyPaths(text: string): { executable?: string; script?: string } {
+  if (!text.startsWith(notifyStart)) return {};
+  const line = /^notify\s*=\s*(\[.*\])\s*$/m.exec(text.slice(0, text.indexOf(notifyEnd) + 1));
+  try {
+    const parts = JSON.parse(line?.[1] ?? '') as unknown;
+    if (!Array.isArray(parts) || parts.some(part => typeof part !== 'string')) return {};
+    return limitHookPaths({ matcher: '', hooks: [{ type: 'command', command: parts[0], args: parts.slice(1), timeout: 10 }] });
+  } catch { return {}; }
+}
+/** Codex's notifier block, exactly as written. */
+export const readCodexNotify = (text: string): string | undefined => text.startsWith(notifyStart) ? text.slice(0, text.indexOf(notifyEnd) + notifyEnd.length) : undefined;
+
+/**
  * Codex may not read an MCP server's instructions, so the lead guidance (when to
  * start heads without being asked) also goes into Codex's global AGENTS.md, next
  * to config.toml, as a marked block removed byte-exactly on disconnect.
@@ -198,8 +246,9 @@ export function codexRegisteredBridge(text: string): RegisteredBridge {
     runAsNode: value(/^\s*ELECTRON_RUN_AS_NODE\s*=\s*(['"])([^'"\r\n]*)\1/m),
   };
 }
-export async function connectCodex(file: string, spec: HelperServerSpec): Promise<void> {
-  const config = addCodexBlock(await read(file) ?? '', spec);
+/** `notify`: the lane notifier for the top of config.toml (codexNotifyCommand). Undefined, or a user's own `notify`, writes none. */
+export async function connectCodex(file: string, spec: HelperServerSpec, notify?: string[]): Promise<void> {
+  const config = addCodexNotify(addCodexBlock(await read(file) ?? '', spec), notify);
   const agentsFile = codexAgentsFile(file);
   await writeAtomic(agentsFile, addGuidanceBlock(await read(agentsFile) ?? ''));
   await writeAtomic(file, config);
@@ -207,8 +256,8 @@ export async function connectCodex(file: string, spec: HelperServerSpec): Promis
 export async function disconnectCodex(file: string): Promise<void> {
   const text = await read(file);
   if (text !== undefined) {
-    const removed = removeCodexBlock(text);
-    if (removed.had) await writeAtomic(file, removed.text);
+    const block = removeCodexBlock(text), notify = removeCodexNotify(block.text);
+    if (block.had || notify.had) await writeAtomic(file, notify.text);
   }
   const agentsFile = codexAgentsFile(file), agents = await read(agentsFile);
   if (agents === undefined) return;
@@ -270,13 +319,13 @@ export function runClaude(executable: string, args: string[]): Promise<{ code: n
   });
 }
 /** Add, upgrade (`group`) or remove (undefined) Hydra's StopFailure hook, touching only its bytes. */
-export async function setClaudeLimitHook(paths: ProviderPaths, group: LimitHookGroup | undefined): Promise<void> {
+export async function setClaudeLimitHook(paths: ProviderPaths, group: LimitHookGroup | undefined, attention?: AttentionHookGroups): Promise<void> {
   const settings = await read(paths.claudeSettings);
-  const updated = group ? addClaudeLimitHook(settings, group) : removeClaudeLimitHook(settings).text;
+  const updated = group ? addClaudeLimitHook(settings, group, attention) : removeClaudeLimitHook(settings).text;
   if (updated !== undefined && updated !== settings) await writeAtomic(paths.claudeSettings, updated);
 }
 /** `limitHook`: the StopFailure hook to install, when this Claude supports it (claudeSupportsLimitHook). */
-export async function connectClaude(executable: string, paths: ProviderPaths, spec: HelperServerSpec, limitHook?: LimitHookGroup): Promise<void> {
+export async function connectClaude(executable: string, paths: ProviderPaths, spec: HelperServerSpec, limitHook?: LimitHookGroup, attention?: AttentionHookGroups): Promise<void> {
   const add = () => runClaude(executable, ['mcp', 'add-json', '-s', 'user', serverName, JSON.stringify({ type: 'stdio', command: spec.command, args: spec.args, env: spec.env, timeout: 3_600_000 })]);
   await runClaude(executable, ['mcp', 'remove', '-s', 'user', serverName]);
   let added = await add();
@@ -285,7 +334,7 @@ export async function connectClaude(executable: string, paths: ProviderPaths, sp
   if (added.code !== 0) throw new Error(`Claude Code could not add Hydra: ${added.output.trim().slice(0, 300)}`);
   const settings = await read(paths.claudeSettings);
   const allowed = addClaudeAllowRule(settings);
-  const updated = limitHook ? addClaudeLimitHook(allowed, limitHook) : allowed;
+  const updated = limitHook ? addClaudeLimitHook(allowed, limitHook, attention) : allowed;
   if (updated !== settings) await writeAtomic(paths.claudeSettings, updated);
 }
 export async function disconnectClaude(executable: string | undefined, paths: ProviderPaths): Promise<void> {
@@ -334,6 +383,17 @@ export async function claudeWrittenLimitHook(paths: ProviderPaths): Promise<stri
   const groups = readClaudeLimitHooks(await read(paths.claudeSettings).catch(() => undefined));
   return groups.length ? groups.map(group => JSON.stringify(group, null, 2)).join('\n') : undefined;
 }
+/** The Stop and Notification hook groups Hydra inserted (the lane attention hooks). Undefined when there are none. */
+export async function claudeWrittenAttentionHooks(paths: ProviderPaths): Promise<string | undefined> {
+  const text = await read(paths.claudeSettings).catch(() => undefined);
+  const groups = (['Stop', 'Notification'] as const).flatMap(event => readClaudeLimitHooks(text, event).map(group => JSON.stringify({ [event]: group }, null, 2)));
+  return groups.length ? groups.join('\n') : undefined;
+}
+/** The exact notifier block at the top of ~/.codex/config.toml. Undefined when it isn't there. */
+export async function codexWrittenNotify(file: string): Promise<string | undefined> {
+  const text = await read(file).catch(() => undefined);
+  return text ? readCodexNotify(text) : undefined;
+}
 /** The exact `[mcp_servers.hydra]` block in ~/.codex/config.toml now, env values masked. Undefined when it isn't there. */
 export async function codexWrittenBlock(file: string, mask: (key: string, value: string) => string): Promise<string | undefined> {
   const text = await read(file);
@@ -345,12 +405,12 @@ export async function codexWrittenGuidance(file: string): Promise<string | undef
   const agents = await read(codexAgentsFile(file));
   return agents ? readMarkedBlock(agents, guidanceStart, guidanceEnd) : undefined;
 }
-export interface WrittenEntries { claude: { server?: string; allowRule?: string; limitHook?: string }; codex: { config?: string; agents?: string } }
+export interface WrittenEntries { claude: { server?: string; allowRule?: string; limitHook?: string; attentionHooks?: string }; codex: { config?: string; agents?: string; notify?: string } }
 /** Everything Hydra has written for both providers, read straight off disk. */
 export async function helperWrittenEntries(paths: ProviderPaths, mask: (key: string | undefined, value: string) => string): Promise<WrittenEntries> {
-  const [server, allowRule, limitHook, config, agents] = await Promise.all([
-    claudeWrittenServer(paths, mask), claudeWrittenAllowRule(paths), claudeWrittenLimitHook(paths),
-    codexWrittenBlock(paths.codexConfig, mask), codexWrittenGuidance(paths.codexConfig),
+  const [server, allowRule, limitHook, attentionHooks, config, agents, notify] = await Promise.all([
+    claudeWrittenServer(paths, mask), claudeWrittenAllowRule(paths), claudeWrittenLimitHook(paths), claudeWrittenAttentionHooks(paths),
+    codexWrittenBlock(paths.codexConfig, mask), codexWrittenGuidance(paths.codexConfig), codexWrittenNotify(paths.codexConfig),
   ]);
-  return { claude: { server, allowRule, ...(limitHook ? { limitHook } : {}) }, codex: { config, agents } };
+  return { claude: { server, allowRule, ...(limitHook ? { limitHook } : {}), ...(attentionHooks ? { attentionHooks } : {}) }, codex: { config, agents, ...(notify ? { notify } : {}) } };
 }
