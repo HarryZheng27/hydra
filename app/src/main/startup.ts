@@ -19,6 +19,7 @@ import { pullRequests } from './pullRequests';
 import { claudeTitle, codexTitle } from './chatTitles';
 import { ChatManager } from './chats';
 import { cloudChats } from './cloud';
+import { TurnSnapshots } from './turnSnapshots';
 import { consoleLaunch, consoleScript, openConsole } from './console';
 import { branchSummary, changedPaths, openInEditor, workingTreeDiff } from './review';
 import { createHandlers } from './handlers';
@@ -130,6 +131,8 @@ export function start(): void {
   void agentTerminal.start().catch((error: unknown) => { if (process.env.HYDRA_APP_LOG === '1') console.log(`terminal tools off: ${error instanceof Error ? error.message : String(error)}`); });
   const chats: ChatManager = new ChatManager({
     store: chatStore,
+    // The change summary card: a private snapshot repository per chat, never in the user's folder.
+    snapshots: new TurnSnapshots(path.join(userData, 'turn-snapshots')),
     launch: nodeLaunch(),
     warm: true,
     agentTerminal,

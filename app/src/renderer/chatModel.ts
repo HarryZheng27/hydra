@@ -1,4 +1,4 @@
-import type { ChatEvent, ChatEventsMessage } from '../shared/ipc';
+import type { ChatEvent, ChatEventsMessage, TurnFile } from '../shared/ipc';
 
 /** What the chat pane draws, folded from the chat's events in order. */
 export type ChatItem =
@@ -9,6 +9,8 @@ export type ChatItem =
   | { kind: 'request'; key: string; turn?: number; event: Extract<ChatEvent, { type: 'approval' | 'question' | 'plan' }>; resolved?: Extract<ChatEvent, { type: 'resolved' }> }
   | { kind: 'error'; key: string; message: string; code?: Extract<ChatEvent, { type: 'error' }>['code'] }
   | { kind: 'turn-end'; key: string; status: 'success' | 'interrupted' | 'error'; detail?: string; usage?: Extract<ChatEvent, { type: 'usage' }> }
+  /** The files a turn changed, with Undo; `undone` once the user undid it. */
+  | { kind: 'changes'; key: string; changeId: string; files: TurnFile[]; undone?: { files: string[]; skipped: Array<{ path: string; reason: string }> } }
   /** A cloud chat's session (G7): it runs on claude.ai. */
   | { kind: 'cloud'; key: string; title: string; url: string; sessionId: string };
 
@@ -34,6 +36,8 @@ export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): Cha
   const blocks = new Map<string, ChatItem & { kind: 'text' | 'thinking' }>();
   const tools = new Map<string, ChatItem & { kind: 'tool' }>();
   const requests = new Map<string, ChatItem & { kind: 'request' }>();
+  const changes = new Map<string, ChatItem & { kind: 'changes' }>();
+  const ends = new Map<number, ChatItem>();
   let usage: Extract<ChatEvent, { type: 'usage' }> | undefined;
   let running = false;
   let n = 0;
@@ -55,7 +59,17 @@ export function foldEvents(events: readonly ChatEvent[], settledBefore = 0): Cha
       case 'usage': usage = event; break;
       case 'cloud': items.push({ kind: 'cloud', key: `c${n++}`, title: event.title, url: event.url, sessionId: event.sessionId }); break;
       case 'error': items.push({ kind: 'error', key: `e${n++}`, message: event.message, ...(event.code ? { code: event.code } : {}) }); break;
-      case 'done': items.push({ kind: 'turn-end', key: `d${n++}`, status: event.status, ...(event.detail ? { detail: event.detail } : {}), ...(usage ? { usage } : {}) }); running = false; usage = undefined; break;
+      case 'done': { const end: ChatItem = { kind: 'turn-end', key: `d${n++}`, status: event.status, ...(event.detail ? { detail: event.detail } : {}), ...(usage ? { usage } : {}) }; items.push(end); ends.set(turns, end); running = false; usage = undefined; break; }
+      case 'turn-changes': {
+        // Written after the turn ended, so a queued message's turn may already have begun: the card goes right after its own turn's end.
+        const card = { kind: 'changes' as const, key: `x${n++}`, changeId: event.changeId, files: event.files };
+        changes.set(event.changeId, card);
+        const end = ends.get(event.turn);
+        const at = end ? items.indexOf(end) : -1;
+        if (at >= 0) items.splice(at + 1, 0, card); else items.push(card);
+        break;
+      }
+      case 'turn-undone': { const card = changes.get(event.changeId); if (card) card.undone = { files: event.files, skipped: event.skipped }; break; }
       default: break;
     }
   }

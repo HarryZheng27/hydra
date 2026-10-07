@@ -53,7 +53,31 @@ function DiffView({ file }: { file: ReviewFile }) {
   return <div ref={host} className="diff-host" data-file={file.path} />;
 }
 
-export function ReviewPane({ chatId }: { chatId: string }) {
+/** One file of a turn's change card: that turn's before and after, read from the app's own snapshots. */
+function TurnDiff({ chatId, turn }: { chatId: string; turn: { changeId: string; path: string } }) {
+  const [file, setFile] = useState<ReviewFile>();
+  const [problem, setProblem] = useState<string>();
+  useEffect(() => {
+    setFile(undefined);
+    setProblem(undefined);
+    window.hydra.turnDiff(chatId, turn.changeId, turn.path).then(setFile, (e: unknown) => setProblem(e instanceof Error ? e.message : String(e)));
+  }, [chatId, turn.changeId, turn.path]);
+  return (
+    <section className="review" aria-label="Changes from this turn">
+      <div className="review-bar"><strong>Changes from this turn</strong><span className="review-count">{turn.path}</span></div>
+      {problem && <div className="banner error" role="alert">{problem}</div>}
+      {!file && !problem && <p className="hint review-empty">Loading…</p>}
+      {file && (file.skipped ? <p className="hint">Not shown: {file.skipped}.</p> : <div className="review-diff"><DiffView key={`${turn.changeId}:${file.path}`} file={file} /></div>)}
+    </section>
+  );
+}
+
+export function ReviewPane({ chatId, turn }: { chatId: string; turn?: { changeId: string; path: string } }) {
+  if (turn) return <TurnDiff chatId={chatId} turn={turn} />;
+  return <WorkingTreeReview chatId={chatId} />;
+}
+
+function WorkingTreeReview({ chatId }: { chatId: string }) {
   const [result, setResult] = useState<ReviewResult>();
   const [selected, setSelected] = useState<string>();
   const [problem, setProblem] = useState<string>();
