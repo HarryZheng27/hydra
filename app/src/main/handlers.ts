@@ -55,7 +55,7 @@ export interface HandlerDeps {
   claudeCommands?(cwd: string): Promise<Array<{ name: string; description?: string; argumentHint?: string; builtin?: boolean }>>;
   /** The browser panel beside a chat. */
   browser?: Pick<BrowserPanel, 'open' | 'navigate' | 'setBounds' | 'back' | 'forward' | 'reload' | 'close'>;
-  chats: Pick<ChatManager, 'list' | 'create' | 'prepare' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'shellFolder' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive'>;
+  chats: Pick<ChatManager, 'list' | 'create' | 'prepare' | 'open' | 'send' | 'answer' | 'stop' | 'configure' | 'remove' | 'closeFolder' | 'openTerminal' | 'shellFolder' | 'terminalClosed' | 'reviewFolder' | 'setWhere' | 'continueCloud' | 'rename' | 'archive' | 'undoTurn' | 'turnDiff'>;
   review?: { diff(cwd: string): Promise<import('../shared/ipc').ReviewResult>; branch(cwd: string): Promise<import('../shared/ipc').BranchSummary | undefined>; changed(cwd: string): Promise<string[]>; open(cwd: string, path: string): Promise<'editor' | 'folder'> };
   /** In-app updates (app/src/main/updates.ts). A manual check shows main's own dialogs. */
   updates?: { status(): Promise<UpdateStatusView>; check(manual: boolean): Promise<void>; setAutomatic(on: boolean): Promise<UpdateStatusView> };
@@ -179,6 +179,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return opened;
     },
     'chats.send': async ({ id, text, images }) => { await deps.chats.send(id, text, images); return null; },
+    'chats.undoTurn': ({ id, changeId }) => deps.chats.undoTurn(id, changeId),
+    'chats.turnDiff': ({ id, changeId, path }) => deps.chats.turnDiff(id, changeId, path),
     'chats.openTerminal': ({ id }) => deps.chats.openTerminal(id),
     'chats.setWhere': ({ id, where }) => deps.chats.setWhere(id, where),
     'chats.continueCloud': ({ id }) => deps.chats.continueCloud(id),

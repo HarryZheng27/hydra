@@ -3,11 +3,11 @@
  * a typed function per channel and nothing else; main checks the sender, the channel and the payload of every call
  * before it runs (app/src/main/ipc.ts). This file is shared by main, preload and renderer, so it imports only types.
  */
-import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../../../src/core/chat/events';
+import type { ChatAnswer, ChatEvent, ChatImage, ChatModel, TurnFile, ChatProvider, ClaudePermissionMode, CodexApprovals, CodexSandbox } from '../../../src/core/chat/events';
 import type { ChatRecord, LogEntry } from '../../../src/core/chat/store';
 import type { ThemeSetting } from './theme';
 
-export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, ChatProvider, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox, LogEntry };
+export type { ChatAnswer, ChatEvent, ChatImage, ChatModel, TurnFile, ChatProvider, ChatRecord, ClaudePermissionMode, CodexApprovals, CodexSandbox, LogEntry };
 
 export const IPC_TRANSPORT = 'hydra:call';
 /** The one channel main pushes on: a chat's new events. The preload exposes a listener for it and nothing else. */
@@ -80,6 +80,8 @@ export interface OpenChat { record: ChatRecord; log: LogEntry[]; running: boolea
 export interface NewChatRequest { projectId: string; provider: ChatProvider; model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals; where?: 'cloud' }
 export interface ReviewFile { path: string; status: 'added' | 'modified' | 'deleted' | 'untracked' | 'changed'; original: string; modified: string; skipped?: string }
 export interface ReviewResult { files: ReviewFile[]; truncated: boolean; error?: string }
+/** What undoing a turn's changes did: the files put back, and the ones left alone with why. */
+export interface UndoTurnResult { restored: string[]; skipped: Array<{ path: string; reason: string }> }
 /** The branch bar above the prompt (Claude desktop's): the chat folder's branch and its changes against the default branch. */
 export interface BranchSummary { repo: string; branch: string; base?: string; additions: number; deletions: number; files: number; canCreatePr: boolean }
 export interface ChatSettingsChange { model?: string; effort?: string; permissionMode?: ClaudePermissionMode; sandbox?: CodexSandbox; approvals?: CodexApprovals }
@@ -178,6 +180,10 @@ export interface Channels {
   'browser.forward': { payload: null; result: null };
   'browser.reload': { payload: null; result: null };
   'browser.close': { payload: null; result: null };
+  /** Undoes a turn's changes (the change card's Undo): only files still as the turn left them; the chat must be idle. */
+  'chats.undoTurn': { payload: { id: string; changeId: string }; result: UndoTurnResult };
+  /** One file of a turn's change card as a before and after pair, for the review pane. */
+  'chats.turnDiff': { payload: { id: string; changeId: string; path: string }; result: ReviewFile };
   /** The chat folder's working tree against HEAD, read-only. */
   'review.diff': { payload: { id: string }; result: ReviewResult };
   /** The branch bar above the prompt: the chat folder's branch and its changes against the default branch; null outside git. */
@@ -302,6 +308,8 @@ export const validators: { [C in Channel]: Validator<Payload<C>> } = {
   'browser.forward': isNull,
   'browser.reload': isNull,
   'browser.close': isNull,
+  'chats.undoTurn': exactly<{ id: string; changeId: string }>({ id: isId, changeId: isId }),
+  'chats.turnDiff': exactly<{ id: string; changeId: string; path: string }>({ id: isId, changeId: isId, path: value => typeof value === 'string' && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f]/.test(value) }),
   'review.diff': exactly<{ id: string }>({ id: isId }),
   'review.branch': exactly<{ id: string }>({ id: isId }),
   // A path relative to the chat's folder, checked again in main against the files the diff lists.
@@ -387,6 +395,8 @@ export interface HydraApi {
   browserReload(): Promise<null>;
   browserClose(): Promise<null>;
   onBrowser(listener: (state: BrowserState) => void): () => void;
+  undoTurn(id: string, changeId: string): Promise<UndoTurnResult>;
+  turnDiff(id: string, changeId: string, path: string): Promise<ReviewFile>;
   reviewDiff(id: string): Promise<ReviewResult>;
   branchSummary(id: string): Promise<BranchSummary | null>;
   openReviewFile(id: string, path: string): Promise<{ opened: 'editor' | 'folder' }>;

@@ -10,6 +10,8 @@ import { ChatSession, type Launch, type SessionTimings } from '../../../src/core
 import { ChatStore, titleFrom, type ChatRecord, type LogEntry, pullRequestUrlPattern } from '../../../src/core/chat/store';
 import { claudeCloudSessionIdPattern, type ClaudeCloudSession } from '../../../src/core/chat/cloud';
 import type { AgentTerminalGrant } from './agentTerminal';
+import type { TurnSnapshots } from './turnSnapshots';
+import type { ReviewFile, UndoTurnResult } from '../shared/ipc';
 
 /**
  * The app's chats (G4): one ChatSession per open chat, its events written to the ChatStore and pushed to the window.
@@ -38,6 +40,8 @@ export interface ChatManagerDeps {
   /** A terminal inside the window (G7's Continue here): its id, for the window to show. */
   startTerminal?(executable: string, args: string[], cwd: string): string;
   timings?: SessionTimings;
+  /** The change summary card's private snapshots (turnSnapshots.ts). Unset in tests: no card, no undo. */
+  snapshots?: Pick<TurnSnapshots, 'snapshot' | 'changes' | 'undo' | 'diffFile' | 'remove'>;
   /**
    * Terminal tools for Claude chats (agentTerminal.ts): each Claude chat process is started with its own --mcp-config for
    * them, deleted when it ends. Unset in tests and live checks, and when the endpoint couldn't start: no chat gets them then.
@@ -157,6 +161,26 @@ export function opensPullRequest(input: unknown): boolean {
   return /(^|[\s;&|(])gh(\.exe)?\s+pr\s+create\b/.test(text);
 }
 
+/** What the next message tells the agent after the user undid a turn's changes (the CLI sees it, the bubble doesn't). */
+export function undoNote(files: readonly string[]): string {
+  const names = files.slice(0, 20).map(file => file.replace(/[\u0000-\u001f\u007f]/g, '?')).join(', ');
+  return `[The user undid your changes to ${files.length === 1 ? 'this file' : 'these files'} from your earlier turn, so ${files.length === 1 ? 'it is' : 'they are'} back as before that turn: ${names}${files.length > 20 ? `, and ${files.length - 20} more` : ''}.]\n\n`;
+}
+
+/** The files of undone turns that no message has told the agent about yet: those after the log's last user message. */
+export function pendingUndone(log: ReadonlyArray<{ event: ChatEvent }>): string[] {
+  const files: string[] = [];
+  for (let i = log.length - 1; i >= 0; i--) {
+    const event = log[i]!.event;
+    if (event.type === 'user') break;
+    if (event.type === 'turn-undone') files.unshift(...event.files);
+  }
+  return files;
+}
+
+/** One turn as it runs: its number, the snapshot it started from, and the files its `file-change` events named. */
+interface TurnState { n: number; before?: Promise<string | undefined>; files: Set<string> }
+
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
   /** Sessions being set up, so two quick messages share one. */
@@ -179,6 +203,14 @@ export class ChatManager {
   private readonly sending = new Map<string, number>();
   /** Chats whose place (Local or Cloud) is being changed: a message waits for it. */
   private readonly placing = new Set<string>();
+  /** The change summary card's bookkeeping per chat: the running turn, the count of messages, and what the next turn starts from. */
+  private readonly turns = new Map<string, TurnState>();
+  private readonly turnCount = new Map<string, number>();
+  private readonly nextBefore = new Map<string, Promise<string | undefined>>();
+  /** Files the user undid that the agent hasn't been told about, and the note added to the message on its way (taken off the bubble). */
+  private readonly undoneFiles = new Map<string, string[]>();
+  private readonly notesSent = new Map<string, string>();
+  private readonly undoing = new Set<string>();
 
   /**
    * The home screen's spare: the agent the user has picked, started before there is a chat, so the first message
@@ -307,6 +339,8 @@ export class ChatManager {
     const config = await this.deps.cliConfig?.(record.provider).catch(() => undefined);
     const defaults = record.provider === 'claude' ? claudeDefaults(config) : codexDefaults(config);
     const opened = { record, log: await this.deps.store.read(id), running: this.isRunning(id), inTerminal: this.inTerminal.has(id), defaults };
+    // An undo the agent hasn't been told about yet survives a restart.
+    if (!this.undoneFiles.has(id)) { const pending = pendingUndone(opened.log); if (pending.length) this.undoneFiles.set(id, pending); }
     if (warm) this.warm(id, record);
     return opened;
   }
@@ -354,6 +388,7 @@ export class ChatManager {
     const executable = await this.deps.executable(record.provider);
     if (!executable) throw new Error(`${record.provider === 'claude' ? 'Claude Code' : 'Codex'} isn't installed. Check Your agents in Settings.`);
     const log = await this.deps.store.read(id);
+    if (!this.turnCount.has(id)) this.turnCount.set(id, log.filter(entry => entry.event.type === 'user').length);
     const started = log.some(entry => entry.event.type === 'session');
     const options: ChatOptions = {
       provider: record.provider, cwd: record.cwd, executable,
@@ -376,6 +411,7 @@ export class ChatManager {
 
   /** Writes a chat's events to its log, keeps its index entry current, and pushes them to the window. */
   private async persist(id: string, given: ChatEvent[]): Promise<void> {
+    given = this.track(id, given);
     // The / menu's command list comes on every start: the window gets it, the log doesn't (it would repeat each time).
     const live = given.filter(event => event.type === 'commands' || event.type === 'limits');
     if (live.length) { if (live.some(event => event.type === 'commands')) this.deps.log?.(`[chat] ${id}: ${live.reduce((sum, event) => sum + (event.type === 'commands' ? event.commands.length : 0), 0)} slash commands`); this.deps.push(id, live, -1); }
@@ -441,6 +477,99 @@ export class ChatManager {
     }
   }
 
+  /**
+   * The change summary card's per-turn work, run synchronously on each batch before anything is awaited: a turn starts at
+   * its `user` event (taking the snapshot made before the message), collects its `file-change` paths, and at `done`
+   * snapshots again in the background. The agent's note about an undo is taken off the bubble's text here.
+   */
+  private track(id: string, events: ChatEvent[]): ChatEvent[] {
+    if (!this.deps.snapshots) return events;
+    return events.map(event => {
+      if (event.type === 'user') {
+        const n = (this.turnCount.get(id) ?? 0) + 1;
+        this.turnCount.set(id, n);
+        this.turns.set(id, { n, ...(this.nextBefore.has(id) ? { before: this.nextBefore.get(id)! } : {}), files: new Set() });
+        this.nextBefore.delete(id);
+        const note = this.notesSent.get(id);
+        if (note && event.text.startsWith(note)) { this.notesSent.delete(id); return { ...event, text: event.text.slice(note.length) }; }
+      } else if (event.type === 'file-change') this.turns.get(id)?.files.add(event.path);
+      else if (event.type === 'done') {
+        const turn = this.turns.get(id);
+        this.turns.delete(id);
+        if (turn) {
+          const finished = this.finishTurn(id, turn);
+          // A message queued behind this turn starts from what this one left.
+          if (this.sessions.get(id)?.queued) this.nextBefore.set(id, finished);
+        }
+      }
+      return event;
+    });
+  }
+
+  /** After a turn: a second snapshot, and the card if the files its events named really changed. Never throws. */
+  private async finishTurn(id: string, turn: TurnState): Promise<string | undefined> {
+    const snapshots = this.deps.snapshots;
+    try {
+      const before = await turn.before;
+      if (!snapshots || !before) return undefined;
+      if (!turn.files.size) return before;
+      const record = await this.deps.store.get(id);
+      if (!record || this.removed.has(id) || !(await this.deps.trusted(record.cwd))) return undefined;
+      const after = await snapshots.snapshot(id, record.cwd);
+      if (!after) return undefined;
+      if (this.removed.has(id)) { await snapshots.remove(id); return undefined; }
+      const files = await snapshots.changes(id, record.cwd, before, after, turn.files);
+      if (files.length && !this.removed.has(id)) {
+        const card: ChatEvent[] = [{ type: 'turn-changes', changeId: randomUUID(), turn: turn.n, before, after, files }];
+        const start = await this.deps.store.append(id, card);
+        this.deps.push(id, card, start);
+      }
+      return after;
+    } catch { return undefined; }
+  }
+
+  /** The log's `turn-changes` event for this id, and whether it was undone already. */
+  private async change(id: string, changeId: string): Promise<{ record: ChatRecord; change: Extract<ChatEvent, { type: 'turn-changes' }>; undone: boolean }> {
+    const record = await this.record(id);
+    if (!(await this.deps.trusted(record.cwd))) throw new Error('This folder isn\'t trusted in Hydra.');
+    const events = (await this.deps.store.read(id)).map(entry => entry.event);
+    const change = events.find((event): event is Extract<ChatEvent, { type: 'turn-changes' }> => event.type === 'turn-changes' && event.changeId === changeId);
+    if (!change) throw new Error('That change isn\'t in this chat.');
+    return { record, change, undone: events.some(event => event.type === 'turn-undone' && event.changeId === changeId) };
+  }
+
+  /**
+   * The card's Undo: puts the turn's files back as they were before it. Only while the chat is idle, and only files still
+   * as the turn left them; the next message tells the agent.
+   */
+  async undoTurn(id: string, changeId: string): Promise<UndoTurnResult> {
+    const snapshots = this.deps.snapshots;
+    if (!snapshots) throw new Error('Undo isn\'t available here.');
+    if (this.isRunning(id) || this.sending.has(id) || this.placing.has(id)) throw new Error('Wait for the chat to finish its turn, then undo.');
+    if (this.undoing.has(id)) throw new Error('An undo is already running.');
+    this.undoing.add(id);
+    try {
+      const { record, change, undone } = await this.change(id, changeId);
+      if (undone) throw new Error('This change was undone already.');
+      const result = await snapshots.undo(id, record.cwd, change.before, change.after, change.files.map(file => file.path));
+      if (!result.restored.length) throw new Error(`Nothing was undone: ${result.skipped.map(skip => `${skip.path} (${skip.reason})`).join('; ') || 'no files'}.`);
+      const event: ChatEvent[] = [{ type: 'turn-undone', changeId, files: result.restored, skipped: result.skipped }];
+      const start = await this.deps.store.append(id, event);
+      this.deps.push(id, event, start);
+      this.undoneFiles.set(id, [...(this.undoneFiles.get(id) ?? []), ...result.restored]);
+      return result;
+    } finally { this.undoing.delete(id); }
+  }
+
+  /** One file of a card as a before and after pair, for the review pane. */
+  async turnDiff(id: string, changeId: string, file: string): Promise<ReviewFile> {
+    if (!this.deps.snapshots) throw new Error('Diffs of a turn aren\'t available here.');
+    const { record, change } = await this.change(id, changeId);
+    const listed = change.files.find(candidate => candidate.path === file);
+    if (!listed) throw new Error('That file isn\'t in this change.');
+    return this.deps.snapshots.diffFile(id, record.cwd, change.before, change.after, listed.path, listed.kind);
+  }
+
   /** Every message checks trust first: a running chat's process can be replaced (idle, a new mode, a crash). */
   async send(id: string, text: string, images?: ChatImage[]): Promise<void> {
     if (!text.trim() && !images?.length) throw new Error('Type a message first.');
@@ -463,7 +592,25 @@ export class ChatManager {
     }
     if (this.inTerminal.has(id)) throw new Error('This chat is open in a terminal. Close that window, then choose "I closed the terminal".');
     if (record.where === 'cloud') { await this.sendCloud(id, record, text, checked); return; }
-    (await this.session(id)).send(text, checked);
+    const session = await this.session(id);
+    let message = text;
+    if (this.deps.snapshots) {
+      // The turn's starting point is taken before the message reaches the CLI (a message queued behind a turn starts from
+      // what that turn leaves, set when it ends). It is time-boxed and never fails the send.
+      if (!session.busy) {
+        const before = this.deps.snapshots.snapshot(id, record.cwd);
+        this.nextBefore.set(id, before);
+        await before;
+      }
+      const undone = this.undoneFiles.get(id);
+      if (undone?.length) {
+        this.undoneFiles.delete(id);
+        const note = undoNote(undone);
+        this.notesSent.set(id, note);
+        message = note + text;
+      }
+    }
+    session.send(message, checked);
   }
 
   /**
@@ -672,6 +819,8 @@ export class ChatManager {
     this.sessions.get(id)?.close();
     this.sessions.delete(id);
     await this.deps.store.remove(id);
+    for (const map of [this.turns, this.turnCount, this.nextBefore, this.undoneFiles, this.notesSent] as Array<Map<string, unknown>>) map.delete(id);
+    await this.deps.snapshots?.remove(id).catch(() => undefined);
   }
 
   /** Ends every chat's process, for quit. */
