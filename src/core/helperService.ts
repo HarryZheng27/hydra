@@ -34,7 +34,7 @@ import type { PlanJobStatus } from './planRunner';
 
 // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
 
-export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string; run?: 'attended' | 'unattended'; budget?: PlanBudgetInput }
+export interface PlanLeadCreateInput { title: string; brief?: string; jobs: PlanLeadJobInput[]; idempotencyKey: string; run?: 'attended' | 'unattended'; budget?: PlanBudgetInput; leadProvider?: Provider }
 export type PlanLeadEdit = PlanAmendEdit;
 export type PlanLeadSkip = PlanAmendSkip;
 /** O5: retry a job that failed or was skipped, optionally with changes (docs/Heads.md, "Plans that adapt"). */
@@ -186,6 +186,10 @@ export interface HelperServiceOptions {
    * Claude head has no shell and gate commands run as before.
    */
   sandbox?: { shell(): Promise<HeadShell> } & CommandSandbox;
+  /** hydra.defaultProvider: a head's agent when neither it, its role nor its lead names one. Defaults to Claude. */
+  defaultProvider?: () => Provider;
+  /** A Claude head is starting with its shell off, and why: the window tells the user (once), not just the head's result. */
+  shellOff?: (reason: string) => void;
   /** Hydra's global storage: a Claude head writes none of it and reads none of it but its role's pack copy. Defaults to the log directory, which holds its settings file. */
   hydraStorage?: string;
   /** HSEC-71: what a Codex head runs with (Hydra's own CODEX_HOME and flags). A test seam; defaults to agentIsolation. */
@@ -319,10 +323,10 @@ export class HelperService {
           if (!this.options.lanes) throw new Error('Lanes are not available in this Hydra window.');
           return this.options.lanes.describe(caller.lane);
         // ---- O1: plans from the chat (docs/Heads.md, "Plans from the chat") ----
-        case 'hydra_plan_create': return this.planCreate(args, this.requireLeadSession(caller));
+        case 'hydra_plan_create': return this.planCreate(args, this.requireLeadSession(caller), caller.provider);
         case 'hydra_plan_get': return this.planView(this.requirePlan(args.plan_id, this.requireLeadSession(caller)));
         case 'hydra_plan_wait': return this.planWait(args, this.requireLeadSession(caller), signal);
-        case 'hydra_plan_amend': return this.planAmend(args, this.requireLeadSession(caller));
+        case 'hydra_plan_amend': return this.planAmend(args, this.requireLeadSession(caller), caller.provider);
         case 'hydra_plan_cancel': return this.planCancel(args, this.requireLeadSession(caller));
         case 'hydra_plan_message': return this.planMessage(args, this.requireLeadSession(caller));
         // ---- O3: the integration gate and Merge plan (docs/Heads.md, "Landing a plan together") ----
@@ -458,7 +462,8 @@ export class HelperService {
 
   /**
    * Start a head. Its provider is the one asked for, else its role's (docs/internal/Packs_Plan.md, "Heads"),
-   * else `defaultProvider` (a plan's hydra.defaultProvider), else Claude. A role must be active now;
+   * else `defaultProvider` (a plan's hydra.defaultProvider), else its lead's own, else hydra.defaultProvider,
+   * else Claude: a Codex-only lead never starts a Claude head it can't run. A role must be active now;
    * it is resolved again from its pack's checked copy when the head starts.
    */
   private async startHelper(args: Record<string, unknown>, caller?: HelperCaller, inputs: readonly DependencyResult[] = [], defaultProvider?: Provider, start?: PlanHeadStart) {
@@ -468,7 +473,7 @@ export class HelperService {
     if (open >= 16) throw new Error('This window already has 16 unfinished heads. Wait for some to finish or cancel them.');
     const repeat = this.list().find(existing => existing.idempotencyKey === parsed.idempotencyKey);
     const role = parsed.role && !repeat ? await this.pickRole(parsed.role) : undefined;
-    const input = { ...parsed, provider: parsed.provider ?? role?.provider ?? defaultProvider ?? 'claude', ...(role ? { jobRole: { ref: role.ref, title: role.title, packTitle: role.packTitle } } : {}) };
+    const input = { ...parsed, provider: parsed.provider ?? role?.provider ?? defaultProvider ?? caller?.provider ?? this.options.defaultProvider?.() ?? 'claude', ...(role ? { jobRole: { ref: role.ref, title: role.title, packTitle: role.packTitle } } : {}) };
     // A head started from a lane is grouped under it, labelled with the lane's name, and
     // branches from the lane's HEAD rather than the main checkout's (docs/internal/Gates_Plan.md, section 3).
     const laneName = caller?.lane ? this.options.lanes?.name(caller.lane) : undefined;
@@ -743,15 +748,17 @@ export class HelperService {
   }
 
   private async checkFailed(jobId: string, attempts: number, maxAttempts: number, message: string, checks: JobCheckResult[] = [], note?: string) {
+    // What failed, in the job's history (and so in its timeline): the failing gates' ids, or the write scope.
+    const why = checks.some(gateBlocks) ? `: ${checks.filter(gateBlocks).map(check => check.id).join(', ')}` : checks.length ? '' : ': outside its write scope';
     const job = this.options.store.get(jobId)!;
     await this.options.store.update(jobId, { attempts, maxAttempts });
     if (attempts >= maxAttempts) {
-      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
+      await this.options.store.transition(jobId, 'failed', `Gates failed ${attempts} ${attempts === 1 ? 'time' : 'times'}${why}.`, { result: { summary: 'Not accepted: its gates kept failing.', commit: (await git(job.worktree!, ['rev-parse', 'HEAD'])).trim(), changedFiles: [], checks, ...(note ? { note } : {}) } });
       this.changed();
       void this.stopRun(jobId);
       return { accepted: false, message: `${message}\n\nThat was the last attempt (${attempts} of ${maxAttempts}). Stop now; the lead will see the failure.` };
     }
-    await this.options.store.transition(jobId, 'running', `Gates failed (attempt ${attempts} of ${maxAttempts}).`);
+    await this.options.store.transition(jobId, 'running', `Gates failed (attempt ${attempts} of ${maxAttempts})${why}.`);
     this.changed();
     return { accepted: false, attempt: attempts, attempts_left: maxAttempts - attempts, message };
   }
@@ -934,6 +941,7 @@ export class HelperService {
       settingsFile = confined.settingsFile;
       const shellNote = shell?.kind === 'off' ? `This head had no shell: ${shell.reason}.` : undefined;
       if (shellNote) this.options.log?.(`[heads] ${job.id}: ${shellNote}`);
+      if (shell?.kind === 'off') this.options.shellOff?.(shell.reason);
       token = this.options.endpoint.issue({ role: 'helper', leadKey: this.options.leadKey, jobId: job.id });
       // The time limit counts from here, before the job is visible as running.
       const startedAt = this.now();
@@ -1212,7 +1220,8 @@ export class HelperService {
       ...(budget.max_jobs !== undefined ? { max_jobs: budget.max_jobs as number } : {}),
     };
   }
-  private parsePlanLeadJob(value: unknown): PlanLeadJobInput {
+  /** `leadProvider`: a job that names neither an agent nor a role runs on its lead's own (the plan then falls back to hydra.defaultProvider). */
+  private parsePlanLeadJob(value: unknown, leadProvider?: Provider): PlanLeadJobInput {
     const job = value as { key?: unknown; title?: unknown; brief?: unknown; write_scope?: unknown; depends_on?: unknown; provider?: unknown; model?: unknown; role?: unknown; rigor?: unknown } | undefined;
     if (!job || typeof job !== 'object') throw new Error('Each job must be an object.');
     if (typeof job.key !== 'string') throw new Error('Each job needs a key.');
@@ -1227,14 +1236,14 @@ export class HelperService {
     return {
       key: job.key, title: job.title, brief: job.brief, write_scope: job.write_scope as string[],
       ...(job.depends_on ? { depends_on: job.depends_on as string[] } : {}),
-      ...(job.provider ? { provider: job.provider as Provider } : {}), ...(job.model ? { model: job.model as string } : {}), ...(job.role ? { role: job.role as string } : {}),
+      ...(job.provider ? { provider: job.provider as Provider } : !job.role && leadProvider ? { provider: leadProvider } : {}), ...(job.model ? { model: job.model as string } : {}), ...(job.role ? { role: job.role as string } : {}),
       ...(rigor ? { rigor } : {}),
     };
   }
-  private parsePlanLeadJobs(value: unknown, max: number): PlanLeadJobInput[] {
+  private parsePlanLeadJobs(value: unknown, max: number, leadProvider?: Provider): PlanLeadJobInput[] {
     if (!Array.isArray(value)) throw new Error('jobs must be a list.');
     if (value.length > max) throw new Error(`At most ${max} jobs at once.`);
-    return value.map(job => this.parsePlanLeadJob(job));
+    return value.map(job => this.parsePlanLeadJob(job, leadProvider));
   }
   /**
    * A project with no `.hydra/gates.json` checks nothing, and hydra_plan_merge refuses its plans: say so to the lead
@@ -1255,15 +1264,16 @@ export class HelperService {
   }
 
   /** hydra_plan_create: a plan of head jobs, run under this same lead. Repeats return the existing plan. */
-  private async planCreate(args: Record<string, unknown>, leadSessionId: string) {
+  private async planCreate(args: Record<string, unknown>, leadSessionId: string, leadProvider?: Provider) {
     if (typeof args.title !== 'string') throw new Error('title must be text.');
     if (typeof args.idempotency_key !== 'string' || !args.idempotency_key.trim()) throw new Error('idempotency_key must be text.');
     if (!Array.isArray(args.jobs) || args.jobs.length < 1) throw new Error('A plan needs at least one job.');
-    const jobs = this.parsePlanLeadJobs(args.jobs, 12);
+    const jobs = this.parsePlanLeadJobs(args.jobs, 12, leadProvider);
     if (args.run !== undefined && args.run !== 'attended' && args.run !== 'unattended') throw new Error('run must be "attended" or "unattended".');
     const budget = args.run === 'unattended' ? this.parseBudget(args.budget) : undefined;
     const input: PlanLeadCreateInput = {
       title: args.title, ...(typeof args.brief === 'string' ? { brief: args.brief } : {}), jobs, idempotencyKey: args.idempotency_key,
+      ...(leadProvider ? { leadProvider } : {}),
       ...(args.run === 'unattended' ? { run: 'unattended' as const, budget } : {}),
     };
     const { plan, created } = await this.requirePlanBridge().create(input, leadSessionId);
@@ -1283,9 +1293,9 @@ export class HelperService {
     return { ...this.planView(plan), ...(gatesNote ? { gates_note: gatesNote } : {}) };
   }
   /** hydra_plan_amend: add, edit or skip jobs that haven't started. */
-  private async planAmend(args: Record<string, unknown>, leadSessionId: string) {
+  private async planAmend(args: Record<string, unknown>, leadSessionId: string, leadProvider?: Provider) {
     const id = this.planId(args.plan_id);
-    const add = args.add !== undefined ? this.parsePlanLeadJobs(args.add, 12) : undefined;
+    const add = args.add !== undefined ? this.parsePlanLeadJobs(args.add, 12, leadProvider) : undefined;
     const edit = args.edit !== undefined ? this.parsePlanEdits(args.edit) : undefined;
     const skip = args.skip !== undefined ? this.parsePlanSkips(args.skip) : undefined;
     const retry = args.retry !== undefined ? this.parsePlanRetries(args.retry) : undefined;
@@ -1457,6 +1467,8 @@ export class HelperService {
       ...(job.reason && job.state !== 'running' ? { reason: job.reason } : {}),
       ...(job.result ? { summary: job.result.summary, commit: job.result.commit, ...(job.result.note ? { note: job.result.note } : {}), ...(detail ? { changed_files: job.result.changedFiles, checks: job.result.checks.map(describeGate) } : {}) } : {}),
       ...(detail ? { write_scope: job.writeScope, attempts: job.attempts, max_attempts: job.maxAttempts } : {}),
+      // O9: when it moved between states, and why (the benchmark times each job's phases and gate failures from it).
+      ...(detail ? { timeline: job.history.map(event => ({ at: event.at, to: event.to, ...(event.reason ? { reason: event.reason } : {}) })) } : {}),
       // Waiting on the provider (docs/Heads.md): an open wait while it runs, and the total its runs waited.
       ...(job.providerWait && job.state === 'running' ? { provider_wait: describeProviderWait(job.provider, job.providerWait, this.now()) } : {}),
       ...(job.providerWaitMs ? { provider_wait_ms: job.providerWaitMs } : {}),
@@ -1604,6 +1616,8 @@ function describeGate(check: JobCheckResult) {
   const state = gateState(check);
   return {
     id: check.id, kind: gateKind(check), state, passed: check.passed, required: check.required,
+    // The author's own agent reviewed (the other couldn't run): the gate counts, but it isn't independent.
+    ...(check.sameAgentReview ? { same_agent_review: true } : {}),
     ...(check.summary ? { summary: check.summary } : {}),
     ...(check.findings?.length ? { findings: check.findings } : {}),
     ...(check.evidence?.length ? { evidence: check.evidence } : {}),

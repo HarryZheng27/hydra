@@ -19,14 +19,14 @@ import { claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaud
 import { claudeSupportsLimitHook, limitHookGroup, limitHookState, limitHookReachesThisHydra, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
-import { headShellSentence } from '../core/confine';
+import { headShellOffNotice, headShellSentence } from '../core/confine';
 import { claudeForRegistration as claudeFor } from './claudeExecutable';
 import { otherStillLimited, type LimitOfferTracker } from '../core/limitOffer';
 import { codexLaneFanout } from '../core/limitEvents';
 import { ClaudeChatLimits, CodexChatLimits, type QuotaSource } from './chatLimits';
 import { registerLimitOffer } from './limitOffer';
 import { loadGates } from '../core/gates';
-import { detectTestScript, noGatesFile, starterTestGatesFile } from '../core/starterGates';
+import { detectTestScript, noGatesFile, starterGateActions, starterGateChoices, starterTestGatesFile } from '../core/starterGates';
 import { describeActivity, scheduleClose, windowActivity, type WindowActivity } from '../core/windowClose';
 import type { PackService } from '../core/packs/service';
 import { Emitter } from './emitter';
@@ -160,6 +160,8 @@ export class HydraController {
   roles: SnapshotRole[] = [];
   /** hydra.newPlan on a panel that is still loading: shown once its webview says it is ready. */
   private pendingNewPlan = false;
+  /** Step 2: a head started with its shell off, and the window said so (once per window). */
+  private shellOffShown = false;
   private snapshotGeneration = 0;
   private publishTimer: ReturnType<typeof setTimeout> | undefined;
   private dismissedTrayIds = new Set<string>();
@@ -514,10 +516,11 @@ export class HydraController {
         lanesAvailable: () => this.lanes.available,
       },
       // A plan's heads group under its lead `plan-<id>`; a retried head gets a new idempotency key.
-      // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then hydra.defaultProvider.
+      // Provider (docs/internal/Packs_Plan.md, "Plans"): the job's own, then its role's, then the plan's lead's own (a
+      // Codex-only user's lead never gets a Claude head for a role that names no agent), then hydra.defaultProvider.
       startHead: async (plan, job, dependsOn, inputs, start) => {
         const headDefaults = resolveHeadDefaults({ minutes: settings.get<number | undefined>('heads.defaultMinutes', undefined), maxTurns: settings.get<number | undefined>('heads.defaultMaxTurns', undefined), budgetUsd: settings.get<number | undefined>('heads.defaultBudgetUsd', undefined) });
-        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, defaultProvider(), start) as { job_id: string };
+        const result = await service.startForPlan(planHeadInput(plan, job, dependsOn, headDefaults), `plan-${plan.id}`, inputs, plan.leadOrigin?.provider ?? defaultProvider(), start) as { job_id: string };
         return { jobId: result.job_id };
       },
       startLane: (plan, job, start) => this.lanes.startPlanLane(plan, job, start, defaultProvider()),
@@ -538,6 +541,7 @@ export class HydraController {
       onSettled: plan => { if (plan.unattended && integrationSettled(plan)) void this.writePlanReport(plan); },
       // Small plans run as one head (docs/Heads.md): on unless hydra.plans.singleHeadForSmallPlans is off.
       singleHead: () => settings.get<boolean>('plans.singleHeadForSmallPlans', true),
+      maxConcurrent: () => Math.max(1, Math.min(8, this.host.settings.get<number>('maxConcurrentHelpers', 3))),
       onGateDone: plan => { if (plan.unattended && plan.state === 'done' && integrationSettled(plan)) void this.writePlanReport(plan); },
       log: line => this.host.log(line),
       // ---- Stop all (5.3) ----
@@ -744,7 +748,7 @@ export class HydraController {
     const repeat = findPlanByIdempotencyKey(plans.store.list(), leadSessionId, input.idempotencyKey);
     if (repeat) return { plan: this.planLeadSummary(repeat), created: false };
     const defaultHeadBudgetUsd = this.host.settings.get<number>('heads.defaultBudgetUsd', 5);
-    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey }, defaultHeadBudgetUsd);
+    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey, ...(input.leadProvider ? { provider: input.leadProvider } : {}) }, defaultHeadBudgetUsd);
     await plans.store.save(plan);
     this.plansChanged();
     const needsApproval = this.host.settings.get<boolean>('plans.leadPlansNeedApproval', false);
@@ -1035,6 +1039,13 @@ export class HydraController {
       gates: this.packs.gates, roles: this.packs,
       // ---- Step 2: confining heads ----
       sandbox: this.headSandbox, hydraStorage: this.host.paths.storage,
+      defaultProvider: () => this.host.settings.get<string>('defaultProvider', 'claude') === 'codex' ? 'codex' : 'claude',
+      // A head without a shell can't run tests or builds: said once per window, not only in its result.
+      shellOff: reason => {
+        if (this.shellOffShown) return;
+        this.shellOffShown = true;
+        void this.host.notify('warning', headShellOffNotice(reason), 'Open Settings').then(pick => { if (pick) this.ide.showSettings('heads'); }, () => undefined);
+      },
       // Heads' own TEMP folders: short, since Windows refuses paths past 260 characters.
       tempDirectory: path.join(this.host.paths.storage, 't'),
       // ---- Stop all (5.3) ----
@@ -1175,14 +1186,16 @@ export class HydraController {
       if (asked.has(folder)) return;
       await this.host.state.update(key, [...asked, folder]);
       const hasTest = await detectTestScript(folder);
-      const pick = await this.host.notify('info', 
-        'This project has no gates yet: nothing independently checks a head\'s work before it\'s accepted, or a lane before it merges.',
-        hasTest ? 'Add a test gate (npm test)' : 'Add a test gate', 'No gates for this project', 'Not now',
+      // Without a test script, an npm test gate would fail every head: the offer opens Settings → Gates instead.
+      const pick = await this.host.notify('info',
+        `This project has no gates yet: nothing independently checks a head's work before it's accepted, or a lane before it merges.${hasTest ? '' : ' Its package.json has no "test" script, so set up a gate in Settings.'}`,
+        ...starterGateActions(hasTest),
       );
-      if (!pick || pick === 'Not now') return;
+      if (!pick || pick === starterGateChoices.later) return;
+      if (pick === starterGateChoices.settings) { this.ide.showSettings('gates'); return; }
       const file = path.join(folder, '.hydra', 'gates.json');
       await mkdir(path.dirname(file), { recursive: true });
-      await writeFile(file, pick.startsWith('Add a test gate') ? starterTestGatesFile() : noGatesFile(), 'utf8');
+      await writeFile(file, pick === starterGateChoices.test ? starterTestGatesFile() : noGatesFile(), 'utf8');
       await this.ide.refreshSettingsPages(['gates']).catch(() => undefined);
     } catch { /* gates aren't available in this window; say nothing, and never block acceptance or the merge */ }
   }

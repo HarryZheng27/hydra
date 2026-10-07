@@ -67,7 +67,7 @@
           },
           "provider": {
             "type": "string",
-            "description": "Which agent runs this job. Defaults to the plan's, else yours.",
+            "description": "Which agent runs this job. Defaults to its role's agent, else yours, else Hydra's default provider.",
             "enum": [
               "claude",
               "codex"

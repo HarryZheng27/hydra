@@ -9,12 +9,16 @@ import path from 'node:path';
  * remembering "asked" per project, and the Settings row) is extension-side.
  */
 
-/** Whether package.json in `root` has a non-empty `scripts.test`, for "Add a test gate"'s label. */
+/**
+ * Whether package.json in `root` has a real `scripts.test`, for "Add a test gate"'s label: non-empty, and not npm init's
+ * placeholder (`echo "Error: no test specified" && exit 1`), which fails every run and so every head.
+ */
 export async function detectTestScript(root: string): Promise<boolean> {
   try {
     const raw = await readFile(path.join(root, 'package.json'), 'utf8');
     const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
-    return typeof parsed.scripts?.test === 'string' && parsed.scripts.test.trim().length > 0;
+    const test = parsed.scripts?.test;
+    return typeof test === 'string' && test.trim().length > 0 && !/no test specified/i.test(test);
   } catch { return false; }
 }
 
@@ -25,6 +29,14 @@ export async function detectTestScript(root: string): Promise<boolean> {
  */
 export function starterTestGatesFile(): string {
   return `${JSON.stringify({ gates: [{ id: 'test', type: 'command', required: true, command: ['npm', 'test'], timeoutSeconds: 600 }] }, null, 2)}\n`;
+}
+/**
+ * The starter-gates offer's buttons. "Add a test gate (npm test)" only when package.json has a test
+ * script: without one an `npm test` gate would fail every head, so the offer opens Settings → Gates instead.
+ */
+export const starterGateChoices = { test: 'Add a test gate (npm test)', settings: 'Set up gates in Settings', none: 'No gates for this project', later: 'Not now' } as const;
+export function starterGateActions(hasTestScript: boolean): string[] {
+  return [hasTestScript ? starterGateChoices.test : starterGateChoices.settings, starterGateChoices.none, starterGateChoices.later];
 }
 /** `.hydra/gates.json` for "No gates for this project": a deliberate empty list (Step A's `none-chosen`, not `none`). */
 export function noGatesFile(): string {

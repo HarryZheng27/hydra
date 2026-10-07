@@ -23,7 +23,7 @@ import type { AuditEvent } from '../src/core/audit';
 type Script = (helper: { spec: HelperRunSpec; activity: (value: HeadActivity | (() => HeadActivity) | undefined) => void; onNudge: (handler: () => void) => void; call: (tool: string, args?: Record<string, unknown>, signal?: AbortSignal) => Promise<{ ok: boolean; result?: any; error?: string }>; endTurn: () => void; nextMessage: () => Promise<string>; exit: (code: number) => void; limit: (hit: HeadLimit | undefined) => void; providerWait: (wait: ProviderWait | undefined, waitedMs?: number) => void; commit: (file: string, text: string) => Promise<void> }) => Promise<void>;
 
 const noIsolation = async (): Promise<AgentIsolation> => ({ env: {}, codexArgs: [], claudePlugins: [] });
-async function fixture(options: { script: Script; questionWaitMs?: number; silence?: HelperServiceOptions['silence']; audit?: HelperServiceOptions['audit']; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard'] }) {
+async function fixture(options: { script: Script; questionWaitMs?: number; silence?: HelperServiceOptions['silence']; audit?: HelperServiceOptions['audit']; checks?: unknown; gates?: unknown; gatesLoader?: HelperServiceOptions['gates']; gateRuntime?: HelperServiceOptions['gateRuntime']; lanes?: (root: string, repo: string) => HelperServiceOptions['lanes']; now?: () => number; maxConcurrent?: number; plans?: HelperServiceOptions['plans']; planBoard?: HelperServiceOptions['planBoard']; defaultProvider?: HelperServiceOptions['defaultProvider'] }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hydra-helpers-'));
   const repo = path.join(root, 'repo');
   await mkdir(path.join(repo, 'src'), { recursive: true });
@@ -50,7 +50,7 @@ async function fixture(options: { script: Script; questionWaitMs?: number; silen
     gateRuntime: { isolation: noIsolation, ...options.gateRuntime }, agentIsolation: noIsolation,
     lanes: options.lanes?.(root, repo), plans: options.plans, planBoard: options.planBoard,
     gates: options.gatesLoader, questionWaitMs: options.questionWaitMs, silence: options.silence, audit: options.audit,
-    log: line => logs.push(line),
+    log: line => logs.push(line), defaultProvider: options.defaultProvider,
     startRun: spec => {
       runs.push(spec);
       const listeners: (() => void)[] = [], inbox: string[] = [], readers: ((message: string) => void)[] = [];
@@ -420,6 +420,8 @@ test('a head records the chat that started it, and is seen as merged once its br
     assert.deepEqual(f.store.get(started.job_id)!.lead, { sessionId: 'abcdef012345', provider: 'codex', label: 'Checkout refactor' });
     const plain = await f.start('no-session');
     assert.equal(f.store.get(plain.job_id)!.lead, undefined, 'a caller without a session records no lead');
+    assert.equal(f.store.get(started.job_id)!.provider, 'codex', 'no provider given: the lead\'s own');
+    assert.equal(f.store.get(plain.job_id)!.provider, 'claude', 'no lead provider and no default set: Claude');
     await until(() => f.store.get(started.job_id)?.state === 'done', 'head done');
     await f.service.refreshMerged();
     assert.equal(f.service.isMerged(started.job_id), false, 'done but not merged yet');
@@ -505,7 +507,7 @@ test('maxAttempts comes from gates.json; a review that can\'t run never fails th
   try {
     const once = await f.start('once');
     const failed = (await f.wait([once.job_id])).heads[0];
-    assert.equal(failed.state, 'failed'); assert.equal(failed.reason, 'Gates failed 1 time.'); assert.equal(failed.max_attempts, 1);
+    assert.equal(failed.state, 'failed'); assert.equal(failed.reason, 'Gates failed 1 time: unit.'); assert.equal(failed.max_attempts, 1);
     assert.deepEqual(failed.checks.map((check: { id: string; state: string }) => [check.id, check.state]), [['unit', 'failed'], ['review', 'notRun']]);
     const notRun = await f.start('not-run');
     const accepted = (await f.wait([notRun.job_id])).heads[0];
@@ -918,6 +920,27 @@ test('hydra_plan_create parses jobs, delegates to the bridge with the calling se
     assert.equal(input.jobs[1].depends_on[0], 'schema');
     assert.equal(input.jobs[1].provider, 'codex');
     assert.deepEqual(result.result, { plan_id: 'aaaaaaaa0001', title: 'Checkout refactor', state: 'running', jobs: [{ key: 'schema', title: 'Schema', status: 'active' }, { key: 'api', title: 'API', status: 'active' }], created: true });
+  } finally { await f.close(); }
+});
+
+test('a head without a provider runs on hydra.defaultProvider when its lead\'s isn\'t known, and a plan job on its lead\'s own', async () => {
+  const { bridge, calls } = fakePlanBridge();
+  const f = await fixture({ script: async () => {}, plans: bridge, gates: { gates: [] }, defaultProvider: () => 'codex' });
+  try {
+    const plain = await f.start('plain');
+    assert.equal(f.store.get(plain.job_id)!.provider, 'codex', 'the configured default, not Claude');
+    const asked = await f.start('asked', { provider: 'claude' });
+    assert.equal(f.store.get(asked.job_id)!.provider, 'claude', 'one asked for still wins');
+    const chat = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012345', provider: 'claude' });
+    const fromClaude = (await callHelperEndpoint(f.endpoint.port, chat, 'hydra_start_head', { title: 'Mine', brief: 'Do it.', write_scope: ['src/'], idempotency_key: 'mine' })).result as { job_id: string };
+    assert.equal(f.store.get(fromClaude.job_id)!.provider, 'claude', 'the lead\'s own before the configured default');
+    const codexLead = f.endpoint.issue({ role: 'lead', leadKey: 'window', leadSessionId: 'abcdef012346', provider: 'codex' });
+    await callHelperEndpoint(f.endpoint.port, codexLead, 'hydra_plan_create', { title: 'P', idempotency_key: 'p', jobs: [
+      { key: 'a', title: 'A', brief: 'Do a.', write_scope: ['src/a/'] }, { key: 'b', title: 'B', brief: 'Do b.', write_scope: ['src/b/'], provider: 'claude' },
+      { key: 'c', title: 'C', brief: 'Do c.', write_scope: ['src/c/'], role: 'coding/builder' },
+    ] });
+    const jobs = (calls[0]!.args[0] as any).jobs;
+    assert.deepEqual(jobs.map((job: any) => job.provider), ['codex', 'claude', undefined], 'the lead\'s own; one asked for; a role\'s job keeps its role\'s agent');
   } finally { await f.close(); }
 });
 

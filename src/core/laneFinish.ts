@@ -131,7 +131,7 @@ export function checksSection(record: LaneGatesRecord | undefined): string | und
   const icon = (result: LaneGatesRecord['results'][number]) => { const state = gateState(result); return state === 'passed' ? '✓' : state === 'notRun' ? '–' : '✗'; };
   const gateLines = record.results.map(result => `- ${icon(result)} ${result.id} (${gateKind(result)})`);
   const build = (count: number) => [
-    '### Checks', '', evidenceLabel(record.status!), '',
+    '### Checks', '', evidenceLabel(record.status!, record.results), '',
     ...gateLines.slice(0, count),
     ...(count < gateLines.length ? [`- … ${gateLines.length - count} more`] : []),
     '', `Commit ${record.commit!.slice(0, 7)}`,
@@ -141,7 +141,7 @@ export function checksSection(record: LaneGatesRecord | undefined): string | und
     const body = build(count);
     if (encodeURIComponent(body).length <= maxCompareUrlChars - 300) return body;
   }
-  return `### Checks\n\n${evidenceLabel(record.status)}\n\nCommit ${record.commit.slice(0, 7)}`;
+  return `### Checks\n\n${evidenceLabel(record.status, record.results)}\n\nCommit ${record.commit.slice(0, 7)}`;
 }
 
 /** `git push -u origin <branch>` from the lane. Never prompts: a push that needs credentials git can't find fails with git's message. */

@@ -307,7 +307,7 @@ test('review: the other agent reviews; the same one stands in when the other is 
   assert.deepEqual(await chooseReviewer('other', 'claude', both), { provider: 'codex', executable: 'x' });
   assert.deepEqual(await chooseReviewer('other', 'codex', both), { provider: 'claude', executable: 'x' });
   assert.deepEqual(await chooseReviewer('same', 'codex', both), { provider: 'codex', executable: 'x' });
-  assert.deepEqual(await chooseReviewer('other', 'claude', only('claude')), { provider: 'claude', executable: 'claude.exe', note: 'Codex isn\'t available (not installed), so a fresh read-only Claude Code session reviewed this instead' });
+  assert.deepEqual(await chooseReviewer('other', 'claude', only('claude')), { provider: 'claude', executable: 'claude.exe', note: 'Same-agent review: Codex isn\'t available (not installed), so a fresh read-only Claude Code session reviewed this instead', sameAgent: true });
   assert.deepEqual(await chooseReviewer('codex', 'claude', only('claude')), { notRun: 'Codex isn\'t available (not installed), so nobody reviewed this.' });
   assert.deepEqual(await chooseReviewer('other', 'claude', async wanted => ({ ok: false, reason: `${wanted} missing` })), { notRun: 'codex missing, and claude missing, so nobody reviewed this.' });
 
@@ -316,6 +316,7 @@ test('review: the other agent reviews; the same one stands in when the other is 
   const handoffPick = await chooseReviewer('other', 'codex', both, ['claude']);
   assert.equal('provider' in handoffPick && handoffPick.provider, 'codex', 'the current author, not a fake "other"');
   assert.match('note' in handoffPick ? handoffPick.note! : '', /both worked on this change.*codex reviewed anyway/i);
+  assert.equal('sameAgent' in handoffPick && handoffPick.sameAgent, true, 'marked as not independent');
   // The other direction: codex ran first, then claude took over.
   const handoffPick2 = await chooseReviewer('other', 'claude', both, ['codex']);
   assert.equal('provider' in handoffPick2 && handoffPick2.provider, 'claude');
@@ -340,10 +341,11 @@ test('review: the other agent reviews; the same one stands in when the other is 
     assert.deepEqual(reviewer.specs[0]!.env, { CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' });
     assert.equal(reviewer.specs[0]!.executable, 'fake-claude'); assert.equal(reviewer.specs[0]!.timeoutMs, 5 * 60_000);
     assert.equal(result!.state, 'failed'); assert.equal(result!.reviewer, 'claude');
-    assert.equal(result!.summary, 'Codex is at its usage limit, so a fresh read-only Claude Code session reviewed this instead. It never sets the flag.');
+    assert.equal(result!.summary, 'Same-agent review: Codex is at its usage limit, so a fresh read-only Claude Code session reviewed this instead. It never sets the flag.');
+    assert.equal(result!.sameAgentReview, true, 'the result says the review wasn\'t independent');
     assert.deepEqual(result!.findings, [{ file: 'src/feature.ts', line: 1, severity: 'blocker', note: 'The flag is always true.' }]);
     assert.ok(await exists(result!.evidence![0]!), 'the reply is kept');
-    assert.match(gateFailureMessage([result!]), /- review \(review by Claude Code\): Codex is at its usage limit[\s\S]*\n  - blocker src\/feature\.ts:1: The flag is always true\./);
+    assert.match(gateFailureMessage([result!]), /- review \(review by Claude Code\): Same-agent review: Codex is at its usage limit[\s\S]*\n  - blocker src\/feature\.ts:1: The flag is always true\./);
   } finally { await f.close(); }
 });
 

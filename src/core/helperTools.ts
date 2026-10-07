@@ -25,7 +25,7 @@ const planJobSchema = {
     brief: string('Everything the job needs: goal, constraints, files, and how to know it is done. It has no other context beyond this and what its dependencies handed on.'),
     write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32, description: 'Repository-relative paths this job may change. Changes outside are refused.' },
     depends_on: { type: 'array', items: jobKey, maxItems: 11, description: 'Keys of jobs in this same plan that must finish first. This job then starts from their results and is told what they did.' },
-    provider: string('Which agent runs this job. Defaults to the plan\'s, else yours.', { enum: ['claude', 'codex'] }),
+    provider: string('Which agent runs this job. Defaults to its role\'s agent, else yours, else Hydra\'s default provider.', { enum: ['claude', 'codex'] }),
     model: string('Optional model for this job\'s head, as its CLI names it: for Claude "haiku", "sonnet" or "opus"; for Codex its own model names. Use a cheaper one for simple jobs. Defaults to the CLI\'s own default.'),
     role: string('A role from an active pack, as "pack/role", if one fits this job.'),
     rigor: string('How much checking this job gets, on top of the project\'s own gates (never fewer than those). "quick": nothing extra. "standard" (the default): the job runs the project\'s own gates, and the plan gets one review of all its jobs\' work together, by the other agent, before it merges. "strict": also a review of this job on its own, plus screenshots when the project has them.', { enum: ['quick', 'standard', 'strict'] }),
@@ -43,7 +43,7 @@ export const leadTools: readonly HelperToolDefinition[] = [
         title: string('A short name for the work, under 200 characters.'),
         brief: string('Everything the head needs: goal, constraints, files, and how to know it is done. The head has no other context.'),
         write_scope: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 32, description: 'Repository-relative paths the head may change, e.g. ["src/parser/", "tests/parser.test.ts"]. Changes outside are refused.' },
-        provider: string('Which agent runs the head. Defaults to claude.', { enum: ['claude', 'codex'] }),
+        provider: string('Which agent runs the head. Defaults to yours, else Hydra\'s default provider (claude unless set).', { enum: ['claude', 'codex'] }),
         model: string('Optional model for the head.'),
         depends_on: { type: 'array', items: jobId, description: 'Job ids that must finish first. The head then starts from their result commits (merged, if several) and is told what they did.' },
         idempotency_key: string('A unique key for this request. Repeating a call with the same key returns the same job instead of starting another.'),
@@ -249,7 +249,7 @@ export function leadToolsWithRoles(roles: readonly LeadRole[]): HelperToolDefini
         ...tool.inputSchema,
         properties: {
           ...schema.properties,
-          provider: string('Which agent runs the head. Defaults to its role\'s agent, else claude.', { enum: ['claude', 'codex'] }),
+          provider: string('Which agent runs the head. Defaults to its role\'s agent, else yours, else Hydra\'s default provider (claude unless set).', { enum: ['claude', 'codex'] }),
           role: string(`Optional: a role from this project's packs. The head works as it says. ${roles.map(roleLine).join(' ')}`, { enum: roles.map(role => role.name) }),
         },
       },
@@ -261,9 +261,9 @@ export const toolAllowed = (role: HelperRole, name: string): boolean => toolsFor
 /** Guidance sent to the lead's agent when it connects (MCP `instructions`). */
 export const leadInstructions = [
   'You are running inside Hydra, which gives you Hydra heads: parallel agents you command, each working in its own git worktree and branch. Delegating to heads is your call, made silently: the user expects it without being asked, and Hydra shows the heads on its map.',
-  'Before starting any task that changes code, decide whether it splits into pieces that touch separate files and don\'t need each other\'s results, for example a feature and its tests, frontend and backend, several unrelated fixes, or the same change across separate modules. If it has two or more such pieces worth more than a few minutes each, start one head per piece with hydra_start_head: a complete brief (the head has no other context) and a narrow write_scope. Commit first if heads must see uncommitted changes. Do the remaining coupled part yourself while they run, then call hydra_wait_for_heads, review each branch, and merge it with git. Do this behind the scenes: do not ask the user whether to use heads, and do not mention heads or narrate the delegation unless the user asks; report only the combined result, as if you had done the work yourself.',
+  'Before starting any task that changes code, decide whether it splits into pieces that touch separate files and don\'t need each other\'s results, for example a feature and its tests, frontend and backend, several unrelated fixes, or the same change across separate modules. Each head costs minutes of its own before any work happens (a worktree, a fresh agent that rereads the code, gates, then a merge), so splitting only pays when the pieces are big. Split only when it has two or more such pieces that are each a substantial change on their own (a new module with its tests, a whole screen, a change across several files), and doing them all yourself would take well over 15 minutes. Then start one head per piece with hydra_start_head: a complete brief (the head has no other context) and a narrow write_scope. Commit first if heads must see uncommitted changes. Do the remaining coupled part yourself while they run, then call hydra_wait_for_heads, review each branch, and merge it with git. Do this behind the scenes: do not ask the user whether to use heads, and do not mention heads or narrate the delegation unless the user asks; report only the combined result, as if you had done the work yourself.',
   'When the pieces are three or more, or any piece needs another\'s result first, use hydra_plan_create instead of separate hydra_start_head calls: give it every job at once, with dependencies named by key. It runs the jobs itself in the right order; call hydra_plan_wait for the result, hydra_plan_amend to add or change jobs that haven\'t started, and hydra_plan_cancel to stop it. If a job fails, the rest of the plan keeps going; hydra_plan_wait\'s needs_attention names it, and hydra_plan_amend can retry it (with a wider write_scope, a clearer brief or a different provider) or skip it and route around it, rather than leaving the plan incomplete. Each job that passes its gates lands on the plan\'s integration branch, and jobs that depend on it start from there; once every job has landed, Hydra runs the integration gate on the combined work. Don\'t merge a plan\'s job branches yourself: when that gate has passed, call hydra_plan_merge. Keep hydra_start_head for one-off independent work.',
-  'Work alone when the task is small, is one tightly coupled change, or is only a question or investigation.',
+  'Work alone when the task is small, when each piece is only a function, a file or a quick edit, when it is one tightly coupled change, or when it is only a question or investigation. When unsure, work alone: one agent is faster and cheaper on work it can finish in under 15 minutes.',
 ].join('\n\n');
 const laneAdvice = 'Call hydra_lanes before you start and before large changes; avoid editing files other lanes are changing, and tell the user if you must.';
 /**

@@ -55,12 +55,12 @@ export function buildHydraTree(lanes: readonly LaneView[], heads: readonly Helpe
     // Packs (docs/internal/Packs_Plan.md, "How roles show"): "Codex · Reviewer · lane/x".
     const roleTitle = lane.role ? roles.find(role => role.pack === lane.role!.pack && role.id === lane.role!.role)?.title : undefined;
     // Step A: the same evidence label everywhere, "Checks are for an older commit" when the lane's HEAD has moved past it.
-    const gatesLabel = lane.lastGates?.status ? `${evidenceLabel(lane.lastGates.status)}${lane.gatesStale ? ' (older commit)' : ''}` : undefined;
+    const gatesLabel = lane.lastGates?.status ? `${evidenceLabel(lane.lastGates.status, lane.lastGates.results)}${lane.gatesStale ? ' (older commit)' : ''}` : undefined;
     const description = [providerName(lane.provider), roleTitle, lane.branch, lane.planJob ? `Plan: ${lane.planJob.planTitle}` : undefined, conflicts ? 'conflicts' : undefined, gatesLabel].filter(Boolean).join(' · ');
     return { id: lane.id, label: lane.name, description, state: lane.state, conflicts, dirty: !!lane.sync?.dirty };
   });
   const headItems: TreeHeadItem[] = heads.filter(isActive).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(head => ({
-    id: head.id, label: head.title, description: `${head.providerWait && head.state === 'running' ? providerWaitLabel(head.provider, head.providerWait) : headStatus[head.state] || head.state}${head.lead?.label ? ` · ${head.lead.label}` : ''}${head.status ? ` · ${evidenceLabel(head.status)}` : ''}`, state: head.state,
+    id: head.id, label: head.title, description: `${head.providerWait && head.state === 'running' ? providerWaitLabel(head.provider, head.providerWait) : headStatus[head.state] || head.state}${head.lead?.label ? ` · ${head.lead.label}` : ''}${head.status ? ` · ${evidenceLabel(head.status, head.checks)}` : ''}`, state: head.state,
   }));
   const planItems: TreePlanItem[] = livePlans(plans).map(plan => ({ id: plan.id, label: plan.title, description: planProgressLine(plan, planJobs[plan.id]), state: plan.state }));
   return { lanes: laneItems, heads: headItems, plans: planItems, empty: !laneItems.length && !headItems.length && !planItems.length };

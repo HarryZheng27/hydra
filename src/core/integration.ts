@@ -254,7 +254,7 @@ export function integrationGateLabel(gate: IntegrationGateRecord | undefined, ti
   if (gate.tip !== tip) return 'Integration gate out of date (more work landed since)';
   if (gate.error) return `Integration gate couldn't run: ${gate.error}`;
   if (gate.failed) return 'Integration gate failed';
-  return gate.status ? evidenceLabel(gate.status) : 'Integration gate not run';
+  return gate.status ? evidenceLabel(gate.status, gate.checks) : 'Integration gate not run';
 }
 
 /** The record a finished gate run leaves (pure): Step A's evidence status, or failed. */

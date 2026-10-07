@@ -5,6 +5,12 @@ What changed in each Hydra release. Installers and checksums are on the [release
 ## Unreleased
 
 - **Security: a head can no longer get Hydra to run git in a repository of its own making.** A head can't edit its worktree's `.git` file, and Hydra checks that it still points into your repository before running any git there, so a planted filter or diff driver never runs outside the sandbox. The git settings check now also refuses work when it can't read the settings, instead of letting it through.
+- **Heads split less often, and only when it pays.** The lead now splits a task only when each piece is a substantial change and the whole would take one agent well over 15 minutes. A plan whose jobs would mostly queue behind the heads-at-once limit (`hydra.maxConcurrentHelpers`) now runs as one head, like a small chained plan already did.
+- **Benchmark results show where each head's time went:** waiting, working and gates, and why each failed gate attempt failed.
+- **A warning when heads have no shell.** On Windows a Claude Code head's shell needs Codex installed for its sandbox. The first head that starts without one now brings up a warning, once per window, with **Open Settings**, instead of only a note in the head's result. The README says so under Requirements.
+- **The starter test gate needs a test script.** "Add a test gate (npm test)" is only offered when `package.json` has a real `test` script (not the placeholder `npm init` writes); otherwise the offer opens **Settings → Gates** instead of writing a gate that would fail every head.
+- **Heads run on your agent by default.** A head or plan job that names no provider runs on its lead's own agent, else **hydra.defaultProvider**, else Claude Code, so a Codex-only setup no longer starts Claude heads.
+- **Same-agent reviews say so.** When the other agent can't review (it isn't installed, or is at its usage limit), the author's own agent still reviews, and the gate and status now read "Same-agent review…" and **Passed required gates (same-agent review)** rather than looking independent. Pass and fail are unchanged.
 
 ## 0.28.0 (2026-10-07)
 

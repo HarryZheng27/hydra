@@ -79,6 +79,8 @@ export interface JobCheckResult {
   summary?: string;
   /** Who reviewed, for a review gate. */
   reviewer?: Provider;
+  /** A review gate the author's own agent did, because the other couldn't run (or both wrote the change): it isn't independent. */
+  sameAgentReview?: true;
   /** A review gate whose first try didn't run (the reviewer crashed or replied unreadably) and was run once more: why the first try didn't run. */
   retriedAfter?: string;
   /** The pack the gate comes from (docs/internal/Packs_Plan.md), for "From the Coding pack". */
@@ -98,11 +100,12 @@ export const gateBlocks = (check: JobCheckResult): boolean => check.required && 
  * re-exports this type; it lives here so toHeadCheckView (below) and its unit
  * test never need model.ts.
  */
-export interface HeadCheckView { id: string; passed: boolean; kind: GateKind; state: GateState; required: boolean; summary?: string; findings?: GateFinding[]; evidence?: string[]; pack?: string; packTitle?: string }
+export interface HeadCheckView { id: string; passed: boolean; kind: GateKind; state: GateState; required: boolean; sameAgentReview?: true; summary?: string; findings?: GateFinding[]; evidence?: string[]; pack?: string; packTitle?: string }
 /** A stored JobCheckResult, as extension.ts's headViews sends it to the dashboard. Pure, so the mapping is unit tested directly. */
 export function toHeadCheckView(check: JobCheckResult): HeadCheckView {
   return {
     id: check.id, passed: check.passed, kind: gateKind(check), state: gateState(check), required: check.required,
+    ...(check.sameAgentReview ? { sameAgentReview: true as const } : {}),
     ...(check.summary ? { summary: check.summary } : {}),
     ...(check.findings?.length ? { findings: check.findings } : {}),
     ...(check.evidence?.length ? { evidence: check.evidence } : {}),
@@ -179,7 +182,15 @@ const evidenceLabels: Readonly<Record<EvidenceStatus, string>> = {
   'none-chosen': 'No gates (project choice)',
   override: 'Human override',
 };
-export const evidenceLabel = (status: EvidenceStatus): string => evidenceLabels[status];
+/**
+ * The label, and with the checks it describes, whether a passed review was the author's own agent's (the other
+ * couldn't run): the same pass/fail, but "Passed required gates (same-agent review)" never reads as independent.
+ */
+export const evidenceLabel = (status: EvidenceStatus, checks?: readonly SameAgentCheck[]): string =>
+  `${evidenceLabels[status]}${(status === 'passed' || status === 'partial') && sameAgentReviewed(checks) ? sameAgentSuffix : ''}`;
+export type SameAgentCheck = Pick<JobCheckResult, 'passed' | 'sameAgentReview'>;
+export const sameAgentSuffix = ' (same-agent review)';
+export const sameAgentReviewed = (checks: readonly SameAgentCheck[] | undefined): boolean => !!checks?.some(check => check.sameAgentReview && check.passed);
 /**
  * Whether a project's gates counted as configured (Step A): 'none' when there is no gates or
  * checks file at all; 'empty-file' when the effective gate list is empty even though a file
