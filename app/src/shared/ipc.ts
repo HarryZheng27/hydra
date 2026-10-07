@@ -48,6 +48,8 @@ export type HydraHostMessage =
 /** A head as a chat card shows it: no paths, no logs, nothing a page could act on beyond its id. */
 export interface HeadCardView {
   id: string; title: string; state: string; provider: string; progress?: string; question?: string; summary?: string;
+  /** The head's one-sentence headline, once it has reported. */
+  headline?: string;
   branch?: string; changedFiles: number; merged?: boolean; checks: { id: string; passed: boolean; state: string; required: boolean }[];
   /** The chat session that started it (Claude's session id or Codex's thread id). */
   leadSessionId?: string;

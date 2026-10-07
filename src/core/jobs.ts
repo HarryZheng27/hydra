@@ -130,6 +130,8 @@ export function gateChip(check: Pick<JobCheckResult, 'id' | 'kind' | 'state' | '
   return { id: check.id, icon, label: `${icon} ${check.id}`, tone, title };
 }
 export interface JobResult {
+  /** One plain sentence (up to maxHeadlineLength characters) on what happened and what, if anything, is left to decide. Missing on results from before it was required. */
+  headline?: string;
   summary: string; commit: string; changedFiles: string[]; checks: JobCheckResult[];
   /** 1.6: set when .hydra/gates.json, checks.json or packs.json changed while this head ran. The gate floor (1.1) still ran the head's start-of-run gates regardless. */
   note?: string;
@@ -248,6 +250,8 @@ export interface Job {
   baseCommit?: string;
   branch?: string;
   question?: string;
+  /** The choices a blocked head offered with its question (one marked recommended); kept only while it is blocked. */
+  options?: StuckOption[];
   replies: JobReply[];
   progress?: string;
   reason?: string;
@@ -290,7 +294,12 @@ export interface Job {
  * `unattended` for a head in an unattended plan, answered at once; `no-answer` when the wait ended with no answer
  * (its time ran out, or the head's call ended). `question` is what it had asked, kept since the job's own clears.
  */
-export interface JobReply { at: string; message: string; auto?: 'unattended' | 'no-answer'; question?: string }
+export interface JobReply { at: string; message: string; auto?: 'unattended' | 'no-answer'; question?: string; /** The option (1-based) the answer picked, and its text: set when a reply or an automatic answer chose one. */ option?: number; choice?: string }
+/** One choice a head offers with hydra_stuck. */
+export interface StuckOption { text: string; recommended?: true }
+/** The most characters of a hydra_done headline, and of each hydra_stuck option. */
+export const maxHeadlineLength = 110;
+export const maxStuckOptions = 4;
 /** A head's role: "coding/builder", with the titles it had when the head was started, for the views. */
 export interface JobRole { ref: string; title: string; packTitle: string }
 
@@ -568,7 +577,7 @@ export class JobStore {
       }
     });
   }
-  async update(id: string, patch: Partial<Pick<Job, 'progress' | 'replies' | 'worktree' | 'baseCommit' | 'branch' | 'question' | 'nudged' | 'attempts' | 'maxAttempts'>>): Promise<Job> {
+  async update(id: string, patch: Partial<Pick<Job, 'progress' | 'replies' | 'worktree' | 'baseCommit' | 'branch' | 'question' | 'options' | 'nudged' | 'attempts' | 'maxAttempts'>>): Promise<Job> {
     return this.serialize(async () => {
       this.assertLoaded();
       const job = this.jobs.get(id);

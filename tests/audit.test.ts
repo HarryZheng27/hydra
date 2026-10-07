@@ -227,10 +227,10 @@ test('hydra_done refused for changed git settings/hooks adds exactly one denial 
     const hooksDir = path.isAbsolute(common) ? path.join(common, 'hooks') : path.join(helper.spec.worktree, common, 'hooks');
     await mkdir(hooksDir, { recursive: true });
     await writeFile(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\necho hi\n');
-    const refused = await helper.call('hydra_done', { summary: 'planted a hook' });
+    const refused = await helper.call('hydra_done', { headline: 'Done.', summary: 'planted a hook' });
     assert.equal(refused.result.accepted, false);
     await rm(path.join(hooksDir, 'pre-commit'));
-    const accepted = await helper.call('hydra_done', { summary: 'undid it' });
+    const accepted = await helper.call('hydra_done', { headline: 'Done.', summary: 'undid it' });
     assert.equal(accepted.result.accepted, true);
     helper.endTurn();
   } });

@@ -106,7 +106,7 @@ export function headCard(head: HelperJobView): HeadCardView {
   return {
     id: head.id, title: head.title, state: head.state, provider: head.provider, changedFiles: head.changedFiles,
     ...(head.progress ? { progress: head.progress } : {}), ...(head.question ? { question: head.question } : {}),
-    ...(head.summary ? { summary: head.summary.slice(0, 2000) } : {}), ...(head.branch ? { branch: head.branch } : {}),
+    ...(head.headline ? { headline: head.headline } : {}), ...(head.summary ? { summary: head.summary.slice(0, 2000) } : {}), ...(head.branch ? { branch: head.branch } : {}),
     ...(head.merged ? { merged: true } : {}), ...(head.lead?.sessionId ? { leadSessionId: head.lead.sessionId } : {}),
     checks: head.checks.map(check => ({ id: check.id, passed: check.passed, state: check.state, required: check.required })),
   };

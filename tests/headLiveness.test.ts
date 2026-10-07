@@ -237,3 +237,16 @@ test('the plan report says which questions were answered automatically, and list
   assert.match(needs, /- Late answer: its question was answered automatically/);
   assert.doesNotMatch(needs, /Plain/);
 });
+
+test('the plan report shows each job\'s headline and names the option an automatic answer chose', () => {
+  const plan = { id: 'p'.repeat(12), title: 'Nightly', state: 'done', unattended: { maxJobs: 2 }, startedAt: '2026-01-01T00:00:00.000Z', jobs: [], amendments: [] } as unknown as Plan;
+  const details: PlanReportJobDetail[] = [
+    { key: 'finish', title: 'Finish up', status: 'done', provider: 'claude', headline: 'Parser added; the leftover in src/other/ is yours to delete.', summary: 'Long detail.', autoAnswered: [{ at: '2026-01-01T00:05:28.000Z', why: 'unattended', question: 'May I delete it?', option: 2, choice: 'Leave it and say so' }] },
+    { key: 'plain', title: 'Plain', status: 'done', provider: 'claude' },
+  ];
+  const report = buildPlanReport(plan, details, 5);
+  assert.match(report, /## Finish up\n\nStatus: done\.\nHeadline: Parser added; the leftover in src\/other\/ is yours to delete\./);
+  assert.match(report, /so it went with its recommended option 2: Leave it and say so\./);
+  assert.match(report.split('## Needs you')[1]!, /- Finish up: its question was answered automatically, going with its recommended option 2: Leave it and say so; check its summary/);
+  assert.doesNotMatch(report.split('## Plain')[1]!.split('## Integration gate')[0]!, /Headline/);
+});
