@@ -149,3 +149,11 @@ test('notifications.whenAway is on by default, and turned off, shows nothing', a
   await t.advance(bannerGraceMs * 3);
   assert.deepEqual(t.shown, []);
 });
+
+test('startup feeds every chat event and tree change to the banners', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const source = readFileSync(join(__dirname, '..', 'src', 'main', 'startup.ts'), 'utf8');
+  assert.match(source, /whenAway\.chatEvents\(chatId, events, start\)/);
+  assert.match(source, /HYDRA_TREE, message\); whenAway\.changed\(\)/);
+});

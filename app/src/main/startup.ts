@@ -153,7 +153,7 @@ export function start(): void {
     log: line => { if (process.env.HYDRA_APP_LOG === '1') console.log(line); },
     cliConfig: provider => readFile(provider === 'claude' ? providerPaths().claudeSettings : providerPaths().codexConfig, 'utf8').catch(() => undefined),
     trusted: async cwd => (await state.load()).projects.some(project => !!project.trustedAt && samePath(project.path, cwd)),
-    push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); },
+    push: (chatId, events, start) => { const win = getMainWindow(); if (win && !win.webContents.isDestroyed()) win.webContents.send(CHAT_EVENTS, { chatId, events, start }); whenAway.chatEvents(chatId, events, start); },
   });
   // Hydra (G5): one controller per trusted project, over the IDE's own storage. A development or test run never
   // repairs the user's Claude and Codex connections on its own; an installed app repairs one only when what it runs
@@ -191,7 +191,7 @@ export function start(): void {
   const banners = new Set<Notification>();
   const whenAway = new WhenAwayBanners({
     now: () => Date.now(),
-    presence: () => { const win = getMainWindow(); return { focused: !!win && win.isFocused() && win.isVisible() && !win.isMinimized(), idleSeconds: powerMonitor.getSystemIdleTime() }; },
+    presence: () => { const win = getMainWindow(); return { focused: (!!win && win.isFocused() && win.isVisible() && !win.isMinimized()) || !!settingsWindow.focused(), idleSeconds: powerMonitor.getSystemIdleTime() }; },
     enabled: async () => whenAwayOn(await settings.load()),
     projects: () => hydra.needsYouFacts(),
     chat: async chatId => { const record = await chatStore.get(chatId); return record ? { title: record.title, cwd: record.cwd } : undefined; },

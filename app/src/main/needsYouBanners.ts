@@ -31,8 +31,8 @@ export interface BannerDeps {
   log?: (line: string) => void;
 }
 
-/** How long an item waits before a banner: a lead that is about to answer a head, or a chat that resumes, never gets one. */
-export const bannerGraceMs = 20_000;
+/** How long an item waits before a banner: a lead that has just woken to a head's question and is working out its answer, or a chat that resumes, never gets one. */
+export const bannerGraceMs = 60_000;
 /** How often presence is looked at: idle time only becomes "away" by the clock, not by an event. */
 export const bannerPollMs = 15_000;
 
