@@ -4,11 +4,11 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { git, gitRun } from '../src/core/git';
-import { createPlan, PlanStore, applyPlanAmendment, planJobBriefMax, type Plan, type PlanJob } from '../src/core/plans';
+import { createPlan, PlanStore, applyPlanAmendment, planJobBriefMax, planJobTitleMax, type Plan, type PlanJob } from '../src/core/plans';
 import { PlanRunner, planHeadInput, type PlanHeadLook, type PlanLook, type PlanRunnerOptions } from '../src/core/planRunner';
 import {
   applyLanding, conflictSection, ensureIntegrationBranch, integrationBranch, integrationGates, integrationLeadView, integrationSettled, landCommit, mergeRefusal, newIntegration, reconcile,
-  integrationFixJob, laneMergeRefusal, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
+  findingFiles, seamVerdict, integrationFixJob, integrationFixJobs, laneMergeRefusal, warmFixSections, reconcileFacts, releaseConflict, withGateWorktree, type IntegrationGateRecord, type PlanIntegration,
 } from '../src/core/integration';
 import { parseGatesConfig, runGateList } from '../src/core/gates';
 import { JobStore, gatesConfigured, type JobCheckResult } from '../src/core/jobs';
@@ -73,7 +73,7 @@ interface Started { key: string; id: string; dependsOn: string[]; inputs: Depend
 const headJob = (key: string, extra: Partial<PlanJob> = {}): PlanJob => ({ key, title: `Job ${key}`, brief: `Do ${key}.`, dependsOn: [], runAs: 'head', ...extra });
 
 /** A plan runner over a real repository, with fake heads that a test finishes with real commits. */
-async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; attempts?: number; fixRounds?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
+async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: NonNullable<PlanRunnerOptions['integration']>['runGate']; landingCheck?: NonNullable<PlanRunnerOptions['integration']>['landingCheck']; seamFixRounds?: number; attempts?: number; fixRounds?: number; directory?: string; now?: () => Date; hooks?: Pick<PlanRunnerOptions, 'onSettled' | 'onGateDone'> } = {}) {
   const directory = options.directory ?? path.join(repo.root, `plans-${++counter}`);
   const heads = new Map<string, PlanHeadLook>();
   const started: Started[] = [];
@@ -94,7 +94,7 @@ async function planFixture(repo: Repo, jobs: PlanJob[], options: { runGate?: Non
     terminalsAvailable: () => true, debounceMs: 1,
     ...(options.now ? { now: options.now } : {}), ...options.hooks,
     // Automatic fixes are off unless a test asks for them, so each test sees one gate run of its own.
-    integration: { runGate: options.runGate ?? passingGate, fixRounds: () => options.fixRounds ?? 0, ...(options.attempts ? { attempts: options.attempts } : {}) },
+    integration: { runGate: options.runGate ?? passingGate, fixRounds: () => options.fixRounds ?? 0, ...(options.attempts ? { attempts: options.attempts } : {}), ...(options.landingCheck ? { landingCheck: options.landingCheck } : {}), ...(options.seamFixRounds !== undefined ? { seamFixRounds: () => options.seamFixRounds! } : {}) },
   });
   let store = new PlanStore(directory);
   await store.load();
@@ -694,5 +694,333 @@ test('O3: automatic fixes run round after round alongside scoped jobs, then stop
     assert.equal(integrationSettled(p.get()), true);
     assert.equal(gated.length, 1);
     assert.match(mergeRefusal(p.get())!, /Integration gate failed/);
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 1): a dependent head is given the diff of what each dependency landed, not only summaries', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const p = await planFixture(f, [headJob('a'), headJob('b'), headJob('d', { dependsOn: ['a', 'b'] })]);
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('b', await f.commitFrom(f.base, { 'src/b.ts': 'export const b = 2;\n' }, 'b'));
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a.ts': 'export const a = 1;\n' }, 'a'));
+    const [input] = [p.startedFor('d')[0]!.inputs];
+    const diffs = Object.fromEntries(input!.map(item => [item.title, item.diff ?? '']));
+    assert.match(diffs['Job a']!, /\+export const a = 1;/);
+    assert.ok(!diffs['Job a']!.includes('export const b'), 'a merged landing shows only that job\'s own work, not what landed before it');
+    assert.match(diffs['Job b']!, /\+export const b = 2;/);
+    assert.ok(!diffs['Job b']!.includes('src/a.ts'));
+  } finally { p.dispose(); await f.close(); }
+});
+
+// ---- Seam checks (step 2) ----
+
+/** A landing check whose verdict a test flips by hand, and which records where it ran. */
+function seamCheck(state: { broken: boolean; throws?: boolean }) {
+  const ran: { tip: string; key: string }[] = [];
+  const check: NonNullable<PlanRunnerOptions['integration']>['landingCheck'] = async (_plan, tip, key) => {
+    ran.push({ tip, key });
+    if (state.throws) throw new Error('no worktree');
+    return [state.broken ? failedCheck('types') : passed('types')];
+  };
+  return { ran, check };
+}
+
+test('seams (step 2): a failing check at a landing blocks its dependents and queues a fix for that job\'s scope; they start once the fix lands and the check passes', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const state = { broken: true };
+  const seam = seamCheck(state);
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('c', { writeScope: ['src/c'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    const integration = p.get().integration!;
+    assert.equal(seam.ran.length, 1); assert.equal(seam.ran[0]!.key, 'a'); assert.equal(seam.ran[0]!.tip, integration.tip, 'checked on the integrated tip');
+    assert.deepEqual(integration.seams?.map(item => [item.key, item.fix, item.round]), [['a', 'seam-fix-1', 1]]);
+    const fixJob = p.get().jobs.find(job => job.key === 'seam-fix-1')!;
+    assert.deepEqual(fixJob.writeScope, ['src/a'], 'the landed job\'s own scope');
+    assert.deepEqual(fixJob.dependsOn, ['a']);
+    assert.equal(p.get().amendments?.at(-1)?.key, 'seam-fix-1');
+    const fix = p.startedFor('seam-fix-1');
+    assert.equal(fix.length, 1, 'the fix starts at once');
+    assert.equal(fix[0]!.start?.baseCommit, integration.tip, 'from the broken tip, where the problem is');
+    assert.match(fix[0]!.brief, /Job "Job a" has landed/); assert.match(fix[0]!.brief, /### types failed/); assert.match(fix[0]!.brief, /boom/);
+    assert.equal(p.startedFor('d').length, 0, 'd never starts from the broken state');
+    assert.match(p.status('d').reason!, /Waiting for Fix the seam after Job a to land/);
+
+    // Another job landing meanwhile fails the same check, but isn't blamed: the open seam covers it.
+    await p.finish('c', await f.commitFrom(p.get().integration!.tip, { 'src/c/y.ts': 'c\n' }, 'c'));
+    assert.equal(p.get().jobs.filter(job => job.key.startsWith('seam-fix-')).length, 1, 'no second fix for the same break');
+    assert.equal(p.startedFor('d').length, 0);
+
+    state.broken = false;
+    await p.finish('seam-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'a fixed\n' }, 'fix the seam'));
+    assert.equal(p.get().integration!.seams, undefined, 'a passing check closes the seam');
+    assert.equal(p.startedFor('d').length, 1, 'd starts, from the repaired tip');
+    assert.equal(p.startedFor('d')[0]!.start?.baseCommit, p.get().integration!.tip);
+    assert.equal(await f.show(p.startedFor('d')[0]!.start!.baseCommit, 'src/a/x.ts'), 'a fixed\n');
+    await p.finish('d', await f.commitFrom(p.get().integration!.tip, { 'src/d/z.ts': 'd\n' }, 'd'));
+    assert.equal(p.get().state, 'done');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 2): a fix that still fails the check gets another round, then its dependents go on and the integration gate is left to catch it', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const state = { broken: true };
+  const seam = seamCheck(state);
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check, seamFixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.finish('seam-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'try\n' }, 'first try'));
+    assert.deepEqual(p.get().integration!.seams?.map(item => [item.key, item.fix, item.round]), [['a', 'seam-fix-2', 2]], 'round 2, still for job a');
+    assert.equal(p.startedFor('d').length, 0);
+    assert.match(p.startedFor('seam-fix-2')[0]!.brief, /round 2 of 2/);
+    await p.finish('seam-fix-2', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'try again\n' }, 'second try'));
+    assert.equal(p.get().integration!.seams, undefined, 'out of rounds: nothing is held up any more');
+    assert.equal(p.get().jobs.filter(job => job.key.startsWith('seam-fix-')).length, 2, 'two rounds, no third');
+    assert.equal(p.startedFor('d').length, 1, 'd goes on');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 2): a seam fix that fails skips the jobs waiting on it instead of leaving them waiting for ever', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seamCheck({ broken: true }).check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    p.heads.get(p.get().jobs.find(job => job.key === 'seam-fix-1')!.jobId!)!.state = 'failed';
+    await p.runner.advance(p.plan.id);
+    assert.equal(p.status('seam-fix-1').status, 'failed');
+    assert.equal(p.status('d').status, 'skipped');
+    assert.match(p.status('d').reason!, /Fix the seam after Job a did not finish/);
+    assert.equal(p.get().state, 'incomplete', 'the plan ends for the lead to look at, not stuck running');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (step 2): a passing check, a check that can\'t run, or no check at all changes nothing', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  for (const options of [{ landingCheck: seamCheck({ broken: false }).check }, { landingCheck: seamCheck({ broken: true, throws: true }).check }, {}]) {
+    const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], options);
+    try {
+      await p.runner.run(p.plan.id);
+      await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+      assert.equal(p.get().jobs.length, 2, 'no fix job');
+      assert.equal(p.get().integration!.seams, undefined);
+      assert.equal(p.startedFor('d').length, 1, 'd starts as it always did');
+    } finally { p.dispose(); }
+  }
+  await f.close();
+});
+
+test('seams (step 2): a restart while a seam is open keeps its dependents waiting and doesn\'t start the fix twice', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const seam = seamCheck({ broken: true });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    const runner = await p.restart();
+    await runner.advanceAll({ startup: true });
+    assert.equal(p.startedFor('d').length, 0, 'after a restart d still waits for the seam fix');
+    assert.equal(p.get().integration!.seams?.[0]?.fix, 'seam-fix-1');
+    assert.equal(p.startedFor('seam-fix-1').length, 1, 'and the fix isn\'t started twice');
+  } finally { p.dispose(); await f.close(); }
+});
+
+// ---- Warmer fix rounds (step 3) ----
+
+const reviewFailed = (findings: { file?: string; line?: number; severity: 'blocker' | 'major' | 'minor'; note: string }[], extra: Partial<JobCheckResult> = {}): JobCheckResult => ({ id: 'rigor-review', kind: 'review', state: 'failed', required: true, passed: false, exitCode: null, durationMs: 1, outputTail: '', summary: 'The pieces don\'t fit.', findings, ...extra });
+const gateWith = (checks: JobCheckResult[]): IntegrationGateRecord => ({ tip: sha('c'), at: '2026-10-07T00:00:00.000Z', checks, failed: true });
+const areaJobs = [{ key: 'a', title: 'Cart', writeScope: ['src/cart'] }, { key: 'b', title: 'Tax', writeScope: ['src/tax'] }, { key: 'c', title: 'Orders', writeScope: ['src/orders', 'src/cart/orders'] }];
+
+test('integrationFixJobs (step 3): findings in files of disjoint write scopes split into one fix per area, each limited to its area', () => {
+  const record = gateWith([reviewFailed([{ file: 'src/cart/total.ts', line: 3, severity: 'major', note: 'Total ignores tax.' }, { file: 'src/tax/rate.ts', severity: 'blocker', note: 'Rate is a string.' }, { file: 'src/tax/rate.ts', severity: 'minor', note: 'Naming.' }])]);
+  const fixes = integrationFixJobs({ title: 'Shop', jobs: areaJobs.slice(0, 2) }, record);
+  assert.deepEqual(fixes.map(fix => fix.key), ['integration-fix-1', 'integration-fix-2']);
+  assert.deepEqual(fixes.map(fix => fix.write_scope), [['src/cart'], ['src/tax']], 'each limited to the scope its findings are in');
+  assert.match(fixes[0]!.title, /in Cart \(round 1 of 2\)/); assert.match(fixes[1]!.title, /in Tax \(round 1 of 2\)/);
+  assert.match(fixes[0]!.brief, /Total ignores tax/); assert.ok(!fixes[0]!.brief.includes('Rate is a string'), 'only its own area\'s findings');
+  assert.match(fixes[1]!.brief, /Rate is a string/); assert.match(fixes[1]!.brief, /Naming/, 'a minor one in its area stays, as before');
+  assert.match(fixes[1]!.brief, /2 separate areas.*Yours is Tax \(src\/tax\)/);
+  // The next round counts the two as one: round 2 is integration-fix-3, and a third round is refused.
+  const next = integrationFixJobs({ title: 'Shop', jobs: [...areaJobs.slice(0, 2), ...fixes.map(fix => ({ key: fix.key, title: fix.title, writeScope: fix.write_scope }))] }, record);
+  assert.deepEqual(next.map(fix => fix.key), ['integration-fix-3', 'integration-fix-4']);
+  assert.match(next[0]!.title, /round 2 of 2/);
+  const all = [...areaJobs.slice(0, 2), ...fixes, ...next].map(fix => ({ key: fix.key, title: 'title' in fix ? fix.title : undefined, writeScope: 'write_scope' in fix ? fix.write_scope : (fix as { writeScope?: string[] }).writeScope }));
+  assert.deepEqual(integrationFixJobs({ title: 'Shop', jobs: all }, record), [], 'two rounds, however many fixes each had');
+});
+
+test('integrationFixJobs (step 3): one whole fix, as before, whenever the areas aren\'t clear or can\'t run apart', () => {
+  const one = (findings: Parameters<typeof reviewFailed>[0], jobs = areaJobs, checks: JobCheckResult[] = []) => integrationFixJobs({ title: 'Shop', jobs }, gateWith([...checks, reviewFailed(findings)]));
+  const whole = (fixes: ReturnType<typeof one>) => { assert.equal(fixes.length, 1); assert.deepEqual(fixes[0]!.write_scope, ['.']); };
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/cart/b.ts', severity: 'major', note: 'y' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { severity: 'major', note: 'no file named' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'docs/readme.md', severity: 'major', note: 'in no job\'s scope' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/tax/b.ts', severity: 'major', note: 'y' }], areaJobs.slice(0, 2), [failedCheck()]));
+  // Two jobs whose scopes overlap (Orders reaches into src/cart/orders) share an area, so they never fix in parallel.
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/orders/o.ts', severity: 'major', note: 'y' }]));
+  whole(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/tax/b.ts', severity: 'major', note: 'y' }], [{ key: 'a', title: 'Cart', writeScope: ['.'] }, areaJobs[1]!]));
+  assert.equal(one([{ file: 'src/cart/a.ts', severity: 'major', note: 'x' }, { file: 'src/tax/b.ts', severity: 'major', note: 'y' }], areaJobs.slice(0, 2)).length, 2, 'while the same two do split');
+});
+
+test('warmFixSections (step 3): the full reply, the stat, the diff and the authors, each capped and redacted, in that order', () => {
+  const key = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const text = warmFixSections({
+    replies: [{ id: 'rigor-review', text: `Reasoning ${key} ${'long '.repeat(6000)}END` }],
+    stat: ' src/a.ts | 4 ++--\n 1 file changed',
+    diff: 'diff --git a/src/a.ts b/src/a.ts\n+const x = 1;',
+    authors: [{ key: 'cart', title: 'Cart', brief: 'Build the cart.', summary: 'Built it.', files: ['src/cart/a.ts'] }],
+  });
+  assert.ok(text.indexOf('## What the reviewer said') < text.indexOf('## What the plan changed in all') && text.indexOf('## What the plan changed in all') < text.indexOf('## The code the findings name') && text.indexOf('## The code the findings name') < text.indexOf('## Who wrote it'));
+  assert.ok(!text.includes(key), 'secrets are redacted');
+  assert.ok(!text.includes('END'), 'a long reply is cut at 16 KB');
+  assert.ok(text.length < 24 * 1024, `${text.length}`);
+  assert.match(text, /- Cart \(cart\): Build the cart\.\n  It reported: Built it\.\n  Files: src\/cart\/a\.ts/);
+  assert.equal(warmFixSections({ replies: [], authors: [] }), '', 'nothing to add');
+});
+
+test('findingFiles (step 3): the files blockers and majors name, as plain relative paths inside the fix\'s own scope', () => {
+  const check = reviewFailed([{ file: './src/a.ts', severity: 'major', note: 'x' }, { file: 'src\\b.ts', severity: 'blocker', note: 'x' }, { file: 'src/minor.ts', severity: 'minor', note: 'x' }, { file: '../outside.ts', severity: 'major', note: 'x' }, { file: '/etc/passwd', severity: 'major', note: 'x' }, { file: ':(top)x', severity: 'major', note: 'x' }, { file: 'src/*.ts', severity: 'major', note: 'x' }, { file: 'lib/c.ts', severity: 'major', note: 'x' }]);
+  assert.deepEqual(findingFiles([check]), ['src/a.ts', 'src/b.ts', 'lib/c.ts']);
+  assert.deepEqual(findingFiles([check], ['src']), ['src/a.ts', 'src/b.ts']);
+});
+
+test('warm fixes (step 3): a failed review hands its fix head the full reply, the diff of the files it names and the jobs that wrote them', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const replyFile = path.join(f.root, 'rigor-review-reply.txt');
+  await writeFile(replyFile, 'The cart never applies tax because tax.ts returns a string. Full reasoning here, with a secret ghp_abcdefghijklmnopqrstuvwxyz0123456789.\n{"verdict":"fail"}');
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [reviewFailed([{ file: 'src/cart/total.ts', line: 1, severity: 'major', note: 'No tax.' }], { evidence: [replyFile, path.join(f.root, 'rigor-review-prompt.md')] })], configured: 'file' });
+  const p = await planFixture(f, [headJob('cart', { writeScope: ['src/cart'], brief: 'Build the cart totals.' }), headJob('tax', { writeScope: ['src/tax'] })], { runGate: failing, fixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('cart', await f.commitFrom(f.base, { 'src/cart/total.ts': 'export const total = (n) => n;\n' }, 'cart'));
+    await p.finish('tax', await f.commitFrom(f.base, { 'src/tax/rate.ts': 'export const rate = "8";\n' }, 'tax'));
+    await p.runner.integrate(p.plan.id);
+    const fix = p.startedFor('integration-fix-1');
+    assert.equal(fix.length, 1);
+    const brief = fix[0]!.brief;
+    assert.match(brief, /### rigor-review \(review\) failed/, 'the findings, as before');
+    assert.match(brief, /## What the reviewer said[\s\S]*The cart never applies tax because tax\.ts returns a string/, 'and the reviewer\'s whole reply');
+    assert.ok(!brief.includes('ghp_abcdefghijklmnopqrstuvwxyz0123456789'), 'redacted');
+    assert.match(brief, /## What the plan changed in all[\s\S]*src\/cart\/total\.ts/);
+    assert.match(brief, /## The code the findings name[\s\S]*\+export const total = \(n\) => n;/, 'the diff of the file the finding names');
+    assert.ok(!brief.includes('export const rate'), 'not the files it doesn\'t');
+    assert.match(brief, /## Who wrote it[\s\S]*- Job cart \(cart\): Build the cart totals\./);
+    assert.ok(!/- Job tax \(tax\)/.test(brief), 'only the jobs that wrote those files');
+    assert.equal(p.get().jobs.find(job => job.key === 'integration-fix-1')!.brief.includes('What the reviewer said'), false, 'the plan\'s own copy of the brief is untouched');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('warm fixes (step 3): a fix whose context can\'t be read is as cold as before, never failing to start', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'Broken.' }], { evidence: [path.join(f.root, 'gone-reply.txt')] })], configured: 'file' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] })], { runGate: failing, fixRounds: 1 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.runner.integrate(p.plan.id);
+    const fix = p.startedFor('integration-fix-1');
+    assert.equal(fix.length, 1);
+    assert.match(fix[0]!.brief, /Broken\./);
+    assert.ok(!fix[0]!.brief.includes('What the reviewer said'), 'no reply file, no reply section');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('warm fixes (step 3): findings in two areas start two fix heads at once, each with its own area, and the gate runs again once both have landed', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  let runs = 0;
+  const gate: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => {
+    runs++;
+    return { checks: runs === 1 ? [reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'A is broken.' }, { file: 'src/b/y.ts', severity: 'blocker', note: 'B is broken.' }])] : [passed('rigor-review')], configured: 'file' };
+  };
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('b', { writeScope: ['src/b'] })], { runGate: gate, fixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.finish('b', await f.commitFrom(f.base, { 'src/b/y.ts': 'b\n' }, 'b'));
+    const first = await p.runner.integrate(p.plan.id);
+    assert.equal(first.failed, true);
+    assert.equal(p.get().state, 'running');
+    const [one, two] = [p.startedFor('integration-fix-1'), p.startedFor('integration-fix-2')];
+    assert.equal(one.length, 1); assert.equal(two.length, 1, 'both fix heads are running together');
+    assert.equal(p.get().jobs.find(job => job.key === 'integration-fix-1')!.writeScope!.join(), 'src/a');
+    assert.equal(p.get().jobs.find(job => job.key === 'integration-fix-2')!.writeScope!.join(), 'src/b');
+    assert.equal(p.get().amendments?.filter(item => item.kind === 'add').length, 2);
+    const tip = p.get().integration!.tip;
+    // Done one at a time, as heads finish; the gate waits for the plan to be done, so for both.
+    await p.finish('integration-fix-2', await f.commitFrom(tip, { 'src/b/y.ts': 'b fixed\n' }, 'fix b'));
+    assert.equal(p.get().state, 'running', 'one fix landed; the other is still going');
+    await p.finish('integration-fix-1', await f.commitFrom(p.get().integration!.tip, { 'src/a/x.ts': 'a fixed\n' }, 'fix a'));
+    assert.equal(p.get().state, 'done');
+    const second = await p.runner.integrate(p.plan.id);
+    assert.equal(second.status, 'passed', 'the gate ran again on both fixes together');
+    assert.equal(p.get().jobs.filter(job => job.key.startsWith('integration-fix-')).length, 2, 'no third fix');
+  } finally { p.dispose(); await f.close(); }
+});
+
+// ---- Review fixes ----
+
+test('seams (review): fix titles fit a plan job\'s 80 characters whatever the job titles, and keep the round suffix', () => {
+  const long = 'Implement the shopping cart totals with tax and discount rules for all';
+  const seam = seamVerdict({ title: 'Shop', jobs: [{ key: 'a', title: long, writeScope: ['src/a'] }], integration: {} }, 'a', sha('c'), [failedCheck()]);
+  assert.equal(seam.kind, 'fix');
+  assert.ok(seam.kind === 'fix' && seam.job.title.length <= planJobTitleMax);
+  const jobs = [{ key: 'a', title: long, writeScope: ['src/a'] }, { key: 'b', title: `${long.slice(0, 60)} again`, writeScope: ['src/b'] }];
+  const fixes = integrationFixJobs({ title: 'Shop', jobs }, gateWith([reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'x' }, { file: 'src/b/y.ts', severity: 'major', note: 'y' }])]));
+  assert.equal(fixes.length, 2);
+  for (const fix of fixes) { assert.ok(fix.title.length <= planJobTitleMax, fix.title); assert.match(fix.title, /\(round 1 of 2\)$/); }
+  assert.doesNotThrow(() => applyPlanAmendment({ jobs: jobs.map(job => ({ ...job, brief: 'x', dependsOn: [] })) }, { add: fixes.map(fix => ({ ...fix })) }));
+  // A job title that mentions a round can't make every round read as round 1.
+  const tricky = [{ key: 'a', title: 'Cart (round 1 of 5) x', writeScope: ['src/a'] }, { key: 'integration-fix-1', title: 'Fix (round 2 of 2)' }];
+  assert.equal(integrationFixJobs({ title: 'Shop', jobs: tricky }, gateWith([failedCheck()])).length, 0);
+});
+
+test('seams (review): a seam fix that changes nothing (lands as contained) is still judged, so the seam never stays open on a broken tip', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seamCheck({ broken: true }).check, seamFixRounds: 2 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.finish('seam-fix-1', p.get().integration!.tip);
+    assert.equal(p.get().integration!.seams?.[0]?.fix, 'seam-fix-2', 'round 2 starts');
+    assert.equal(p.get().integration!.seamPending, undefined);
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('seams (review): a restart in the middle of a seam check runs it again before anything starts from the tip', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const state = { broken: true };
+  const seam = seamCheck(state);
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] }), headJob('d', { dependsOn: ['a'], writeScope: ['src/d'] })], { landingCheck: seam.check });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    const tip = p.get().integration!.tip;
+    // Hydra stopped after recording the landing but before the check finished: no seam recorded, the check still pending.
+    await p.store.update(p.plan.id, current => { const { seams: _seams, ...rest } = current.integration!; return { ...current, jobs: current.jobs.filter(job => job.key !== 'seam-fix-1'), integration: { ...rest, seamPending: { key: 'a', tip } } }; });
+    const before = seam.ran.length;
+    const runner = await p.restart();
+    await runner.advanceAll({ startup: true });
+    assert.equal(seam.ran.length, before + 1, 'the check ran again, on the recorded tip');
+    assert.equal(p.get().integration!.seamPending, undefined);
+    assert.equal(p.get().integration!.seams?.[0]?.key, 'a', 'and its failure holds a\'s dependents');
+  } finally { p.dispose(); await f.close(); }
+});
+
+test('warm fixes (review): the reviewer\'s reply is its message, not the CLI\'s envelope or stderr', async () => {
+  const f = await repoFixture({ 'README.md': 'hi\n' });
+  const replyFile = path.join(f.root, 'rigor-review-reply.txt');
+  await writeFile(replyFile, `${JSON.stringify({ type: 'result', usage: { input_tokens: 99 }, result: 'The cart skips tax entirely.' })}\n--- stderr ---\nnoise`);
+  const failing: NonNullable<PlanRunnerOptions['integration']>['runGate'] = async () => ({ checks: [reviewFailed([{ file: 'src/a/x.ts', severity: 'major', note: 'x' }], { reviewer: 'claude', evidence: [replyFile] })], configured: 'file' });
+  const p = await planFixture(f, [headJob('a', { writeScope: ['src/a'] })], { runGate: failing, fixRounds: 1 });
+  try {
+    await p.runner.run(p.plan.id);
+    await p.finish('a', await f.commitFrom(f.base, { 'src/a/x.ts': 'a\n' }, 'a'));
+    await p.runner.integrate(p.plan.id);
+    const brief = p.startedFor('integration-fix-1')[0]!.brief;
+    assert.match(brief, /The cart skips tax entirely\./);
+    assert.ok(!brief.includes('input_tokens') && !brief.includes('noise'));
   } finally { p.dispose(); await f.close(); }
 });

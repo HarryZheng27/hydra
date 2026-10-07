@@ -555,6 +555,8 @@ export class HydraController {
           providers: plan.jobs.flatMap(job => { const head = job.jobId ? jobs.get(job.jobId) : undefined; return head ? [...(head.priorProviders ?? []), head.provider] : []; }),
         }),
         fixRounds: () => settings.get<number>('plans.integrationFixRounds', defaultIntegrationFixRounds),
+        // The seam check (docs/Heads.md, "Seam checks"): the project's onLanding command gates, on the branch after each landing.
+        landingCheck: async (plan, tip) => (await service.runIntegrationGate({ planId: plan.id, title: plan.title, base: plan.integration!.base, tip, review: false, providers: [], landing: true })).checks,
         headBudgetUsd: () => settings.get<number>('heads.defaultBudgetUsd', 5),
       },
     });
@@ -748,7 +750,7 @@ export class HydraController {
     const repeat = findPlanByIdempotencyKey(plans.store.list(), leadSessionId, input.idempotencyKey);
     if (repeat) return { plan: this.planLeadSummary(repeat), created: false };
     const defaultHeadBudgetUsd = this.host.settings.get<number>('heads.defaultBudgetUsd', 5);
-    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey, ...(input.leadProvider ? { provider: input.leadProvider } : {}) }, defaultHeadBudgetUsd);
+    const plan = planFromLeadInput(input, { leadSessionId, idempotencyKey: input.idempotencyKey, ...(input.leadProvider ? { provider: input.leadProvider } : {}) }, defaultHeadBudgetUsd, Math.max(1, Math.min(8, this.host.settings.get<number>('maxConcurrentHelpers', 3))));
     await plans.store.save(plan);
     this.plansChanged();
     const needsApproval = this.host.settings.get<boolean>('plans.leadPlansNeedApproval', false);
@@ -810,7 +812,7 @@ export class HydraController {
       const statuses = new Map((runner.statuses(id) ?? []).map(view => [view.key, view.status as string]));
       const defaultHeadBudgetUsd = this.host.settings.get<number>('heads.defaultBudgetUsd', 5);
       const updated = await plans.store.update(id, plan => {
-        const result = applyPlanAmendment(plan, input, key => statuses.get(key), () => new Date(), defaultHeadBudgetUsd);
+        const result = applyPlanAmendment(plan, input, key => statuses.get(key), () => new Date(), defaultHeadBudgetUsd, Math.max(1, Math.min(8, this.host.settings.get<number>('maxConcurrentHelpers', 3))));
         // A retry (or a new job) can make an incomplete plan worth running again; pass() settles
         // it back to incomplete on its own if nothing it just changed can actually start.
         return { ...plan, jobs: result.jobs, amendments: result.amendments, ...(plan.state === 'incomplete' ? { state: 'running' as const } : {}) };
