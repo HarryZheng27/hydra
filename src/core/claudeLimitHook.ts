@@ -42,6 +42,8 @@ function powershellLiteral(value: string): string {
   if (/[\r\n\0]/.test(value)) throw new Error('A Hydra path contains a line break.');
   return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, '$&$&')}'`;
 }
+/** The worktree root as an argument: a trailing separator is dropped, since PowerShell 5.1 turns `"C:\a b\\"` into a stray quote. */
+const rootArgument = (root?: string): string => root ? root.replace(/[\\/]+$/, '') || root : '';
 export interface HookGroupOptions { executable: string; script: string; eventsDir: string; platform?: NodeJS.Platform; systemRoot?: string }
 function hookGroup(options: HookGroupOptions, extra: string[], matcher: string, timeout: number): LimitHookGroup {
   const { executable, script, eventsDir } = options;
@@ -58,7 +60,7 @@ export function limitHookGroup(options: HookGroupOptions): LimitHookGroup { retu
  * `-Command` string takes that argument as more command text, so the string ends in a comment (`#`) that swallows it.
  */
 export function codexNotifyCommand(options: HookGroupOptions & { worktreeRoot?: string }): string[] {
-  const hook = hookGroup(options, [options.worktreeRoot ?? '', '--codex'], '', 10).hooks[0]!;
+  const hook = hookGroup(options, [rootArgument(options.worktreeRoot), '--codex'], '', 10).hooks[0]!;
   const args = [...hook.args];
   if ((options.platform ?? process.platform) === 'win32') args[args.length - 1] += ' #';
   return [hook.command, ...args];
@@ -69,7 +71,7 @@ export function codexNotifyCommand(options: HookGroupOptions & { worktreeRoot?: 
  * every turn of every Claude Code session on the machine, so the script leaves at once unless the session's cwd is a Hydra lane.
  */
 export function attentionHookGroups(options: HookGroupOptions & { worktreeRoot?: string }): AttentionHookGroups {
-  const extra = [options.worktreeRoot ?? ''];
+  const extra = [rootArgument(options.worktreeRoot)];
   return { Stop: hookGroup(options, extra, '', 10), Notification: hookGroup(options, extra, attentionNotificationMatcher, 10) };
 }
 /** Whether `claude --version` output is new enough for exec-form hooks. */

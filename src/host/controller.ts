@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { mkdir, stat as fsStat, writeFile } from 'node:fs/promises';
 import { findProvider } from '../core/providers';
 import { OwnershipLock } from '../core/ownership';
@@ -15,7 +16,7 @@ import type { HeadSandbox } from '../core/headSandbox';
 import { createLeadVerifier, createUserVerifier } from '../core/leadVerification';
 import { claudeMemRowText, claudeMemStatus, setupClaudeMem, shouldSetUpClaudeMem } from '../core/claudeMem';
 import { installWithFallback } from '../core/openVsx';
-import { addCodexNotify, writeAtomic, claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, shouldRepairConnection, isStandardHelpersDir, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
+import { addCodexNotify, codexNotifyBlock, codexNotifyPaths, writeAtomic, claudeStatus, codexStatus, connectClaude, connectCodex, disconnectClaude, disconnectCodex, helperWrittenEntries, providerPaths, read, runClaude, setClaudeLimitHook, shouldRepairConnection, isStandardHelpersDir, type ConnectableProvider, type HelperServerSpec, type WrittenEntries } from '../core/helperRegistration';
 import { attentionHookGroups, claudeSupportsLimitHook, codexNotifyCommand, limitHookGroup, limitHookState, limitHookReachesThisHydra, type AttentionHookGroups, type LimitHookGroup } from '../core/claudeLimitHook';
 import type { LimitEvent } from '../core/limitEvents';
 import { addMcpServer, configuredSpec, defaultMcpContext, enableMcpServerFor, listMcpServers, maskSecret, removeMcpServer, testMcpServer, validateServerSpec, type McpAgent } from '../core/mcpServers';
@@ -1370,7 +1371,10 @@ export class HydraController {
   private async refreshCodexNotify(): Promise<void> {
     const paths = providerPaths(), text = await read(paths.codexConfig);
     if (text === undefined) return;
-    const updated = addCodexNotify(text, this.codexNotify());
+    // Another Hydra's notifier that still works is left alone, as the Claude hook is (two Hydras would otherwise take turns rewriting this file).
+    const command = this.codexNotify(), theirs = codexNotifyPaths(text), ours = codexNotifyPaths(codexNotifyBlock(command));
+    if (theirs.executable && theirs.script && (theirs.executable !== ours.executable || theirs.script !== ours.script) && existsSync(theirs.executable) && existsSync(theirs.script)) return;
+    const updated = addCodexNotify(text, command);
     if (updated === text) return;
     await writeAtomic(paths.codexConfig, updated);
     this.host.log('[lanes] updated the Codex lane notifier');

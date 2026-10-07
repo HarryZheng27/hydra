@@ -170,42 +170,87 @@ const basicString = (value: string) => JSON.stringify(value);
 export function codexNotifyBlock(command: string[], eol = '\n'): string {
   return [notifyStart, `notify = [${command.map(basicString).join(', ')}]`, notifyEnd, ''].join(eol);
 }
+/**
+ * Where Hydra's three lines are: the start marker, its own `notify` line right after it, and the end marker. Found
+ * anywhere in the file (a comment or a BOM above it doesn't hide it). Codex edits config.toml itself and can write a
+ * key between the markers, so only these three lines are ever removed, never the range.
+ */
+function findNotify(text: string): { from: number; to: number }[] | undefined {
+  // A BOM belongs to the file, not to its first line.
+  const lines = [...text.matchAll(/[^\n]*\n|[^\n]+$/g)].map(match => { const bom = match.index === 0 && match[0].startsWith('﻿') ? 1 : 0; return { from: match.index! + bom, to: match.index! + match[0].length, content: match[0].slice(bom).replace(/\r?\n$/, '') }; });
+  const start = lines.findIndex(line => line.content === notifyStart);
+  if (start < 0) return undefined;
+  const own = lines[start + 1], end = lines.findIndex((line, index) => index > start + 1 && line.content === notifyEnd);
+  if (!own || !/^notify\s*=\s*\[/.test(own.content) || end < 0) throw new Error('Hydra\'s notifier block in the Codex config is damaged. Remove the lines between the Hydra markers by hand.');
+  return [lines[start]!, own, lines[end]!];
+}
 /** The text without Hydra's notifier block, and whether it had one. Byte-exact inverse of addCodexNotify. */
 export function removeCodexNotify(text: string): { text: string; had: boolean } {
-  for (const eol of ['\r\n', '\n']) {
-    if (!text.startsWith(`${notifyStart}${eol}`)) continue;
-    const endMarker = `${eol}${notifyEnd}${eol}`, to = text.indexOf(endMarker);
-    if (to < 0) throw new Error('Hydra\'s notifier block in the Codex config is damaged. Remove the lines between the Hydra markers by hand.');
-    return { text: text.slice(to + endMarker.length), had: true };
-  }
-  return { text, had: false };
+  const found = findNotify(text);
+  if (!found) return { text, had: false };
+  let result = text;
+  for (const line of [...found].reverse()) result = result.slice(0, line.from) + result.slice(line.to);
+  return { text: result, had: true };
 }
-/** Whether the file sets a top-level `notify` of its own (outside Hydra's block): before the first table header, as TOML requires. */
-export function codexHasOwnNotify(text: string): boolean {
-  for (const line of removeCodexNotify(text).text.split(/\r?\n/)) {
-    if (/^\s*\[/.test(line)) return false;
-    if (/^\s*notify\s*=/.test(line) || /^\s*"notify"\s*=/.test(line) || /^\s*'notify'\s*=/.test(line)) return true;
+/**
+ * Whether the file sets a top-level `notify` of its own (outside Hydra's block): before the first table header, as TOML
+ * requires. Read as TOML is, so a `[` inside a multi-line string or a nested array isn't a table header.
+ */
+export function codexHasOwnNotify(source: string): boolean {
+  const text = removeCodexNotify(source).text;
+  let depth = 0, atStart = true;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]!;
+    if (atStart && depth === 0) {
+      const rest = text.slice(i, i + 40);
+      if (/^[ \t]/.test(rest)) continue;
+      if (rest.startsWith('[')) return false;
+      if (/^(?:notify|"notify"|'notify')[ \t]*=/.test(rest)) return true;
+    }
+    atStart = false;
+    if (char === '\n') { atStart = true; continue; }
+    if (char === '#') { while (i < text.length && text[i] !== '\n') i++; i--; continue; }
+    if (char === '"' || char === "'") {
+      const triple = text.startsWith(char.repeat(3), i), close = triple ? char.repeat(3) : char;
+      i += triple ? 3 : 1;
+      while (i < text.length) {
+        if (char === '"' && text[i] === '\\') { i += 2; continue; }
+        if (text.startsWith(close, i)) break;
+        if (!triple && text[i] === '\n') break;
+        i++;
+      }
+      i += close.length - 1;
+      continue;
+    }
+    if (char === '[') depth++;
+    else if (char === ']' && depth > 0) depth--;
   }
   return false;
 }
-/** Put the notifier at the top, or leave the file alone (the user's own `notify`). `command` undefined removes Hydra's block. */
+/** Put the notifier at the top (below a BOM), or leave the file alone (the user's own `notify`). `command` undefined removes Hydra's block. */
 export function addCodexNotify(text: string, command: string[] | undefined): string {
+  // Already written exactly so (and nothing of the user's `notify` besides): leave the file as it is, whatever Codex added around it.
+  const current = command && findNotify(text);
+  if (current && text.slice(current[1]!.from, current[1]!.to).replace(/\r?\n$/, '') === `notify = [${command.map(basicString).join(', ')}]` && !codexHasOwnNotify(text)) return text;
   const without = removeCodexNotify(text).text;
   if (!command || codexHasOwnNotify(without)) return without;
-  return codexNotifyBlock(command, eolOf(without || '\n')) + without;
+  const bom = without.startsWith('\uFEFF') ? '\uFEFF' : '', rest = without.slice(bom.length);
+  return bom + codexNotifyBlock(command, eolOf(rest || '\n')) + rest;
 }
 /** What the notifier block runs, read back: the same executable and script limitHookPaths finds in a hook. */
 export function codexNotifyPaths(text: string): { executable?: string; script?: string } {
-  if (!text.startsWith(notifyStart)) return {};
-  const line = /^notify\s*=\s*(\[.*\])\s*$/m.exec(text.slice(0, text.indexOf(notifyEnd) + 1));
   try {
+    const found = findNotify(text);
+    const line = found && /^notify\s*=\s*(\[.*\])\s*$/.exec(text.slice(found[1]!.from, found[1]!.to).replace(/\r?\n$/, ''));
     const parts = JSON.parse(line?.[1] ?? '') as unknown;
     if (!Array.isArray(parts) || parts.some(part => typeof part !== 'string')) return {};
     return limitHookPaths({ matcher: '', hooks: [{ type: 'command', command: parts[0], args: parts.slice(1), timeout: 10 }] });
   } catch { return {}; }
 }
-/** Codex's notifier block, exactly as written. */
-export const readCodexNotify = (text: string): string | undefined => text.startsWith(notifyStart) ? text.slice(0, text.indexOf(notifyEnd) + notifyEnd.length) : undefined;
+/** Codex's notifier lines, exactly as written. */
+export function readCodexNotify(text: string): string | undefined {
+  try { const found = findNotify(text); return found && found.map(line => text.slice(line.from, line.to).replace(/\r?\n$/, '')).join('\n'); } catch { return undefined; }
+}
 
 /**
  * Codex may not read an MCP server's instructions, so the lead guidance (when to

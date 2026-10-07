@@ -214,6 +214,36 @@ test('Codex\'s notifier is Hydra\'s own marked block at the top, and a user\'s o
   assert.throws(() => removeCodexNotify('# >>> Hydra lane notifier (managed by Hydra: connect or disconnect in Hydra Settings)\nnotify = []\n'), /damaged/);
 });
 
+test('Codex\'s notifier survives Codex\'s own edits, a BOM, a comment above it, and tricky TOML of the user\'s', () => {
+  const command = codexNotifyCommand({ ...options });
+  const block = addCodexNotify('', command);
+  // Codex writes a key between Hydra's own line and its end marker: only Hydra's three lines go.
+  const [start, own, end] = block.trimEnd().split('\n');
+  const edited = `${start}\n${own}\nmodel = "gpt-5"\n${end}\n`;
+  assert.equal(removeCodexNotify(edited).text, 'model = "gpt-5"\n');
+  assert.equal(addCodexNotify(edited, undefined), 'model = "gpt-5"\n');
+  assert.equal(addCodexNotify(edited, command), edited, 'a refresh keeps what Codex added');
+  // A BOM stays first; the block goes after it and comes out again.
+  const bom = '\uFEFFmodel = "x"\n';
+  const withBom = addCodexNotify(bom, command);
+  assert.ok(withBom.startsWith('\uFEFF# >>> Hydra lane notifier'));
+  assert.equal(removeCodexNotify(withBom).text, bom);
+  assert.ok(codexNotifyPaths(withBom).script);
+  // A comment above the block doesn't hide it from removal or reading.
+  const commented = `#:schema x\n${block}model = "x"\n`;
+  assert.equal(removeCodexNotify(commented).text, '#:schema x\nmodel = "x"\n');
+  assert.equal(codexNotifyPaths(commented).script, options.script);
+  // The user's own notify after a multi-line string or a nested array that has a line starting with `[`.
+  for (const theirs of ['developer_instructions = """\n[Important] run tests\n"""\nnotify = ["mine"]\n', 'foo = [\n  [1, 2],\n]\nnotify = ["mine"]\n', 'a = \'\'\'\n[x]\n\'\'\'\n# [not a table]\nnotify = ["mine"]\n']) {
+    assert.equal(codexHasOwnNotify(theirs), true, theirs);
+    assert.equal(addCodexNotify(theirs, command), theirs);
+  }
+  assert.equal(codexHasOwnNotify('s = "[notify = 1]"\n[t]\nnotify = 1\n'), false);
+  // A trailing separator on the worktree root would reach PowerShell 5.1 as a stray quote.
+  assert.equal(attentionHookGroups({ ...options, worktreeRoot: 'D:\\Hydra Lanes\\' }).Stop.hooks[0]!.args[4]!.includes("'D:\\Hydra Lanes';"), true);
+  assert.equal(codexNotifyCommand({ ...options, worktreeRoot: 'D:\\Hydra Lanes\\' })[5]!.includes("'D:\\Hydra Lanes' '--codex'"), true);
+});
+
 test('the watcher hands an event only to the window that owns its lane, once', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'hydra-watch-'));
   try {

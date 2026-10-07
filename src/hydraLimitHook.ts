@@ -1,6 +1,7 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { isLaneId } from './core/lanes';
 import { applyLaneId, normaliseStopFailure } from './core/limitDetection';
 import { attentionDirectory, inWorktreeRoot, normaliseClaudeAttention, normaliseCodexNotify, withLaneId } from './core/attentionEvents';
 
@@ -28,6 +29,8 @@ const directory = process.argv[2];
 if (!directory || !path.isAbsolute(directory)) quit();
 const worktreeRoot = process.argv[3] && process.argv[3] !== '--codex' ? process.argv[3] : undefined;
 const codexAt = process.argv.indexOf('--codex');
+/** Only a lane's own process has a valid HYDRA_LANE_ID (laneService.ts sets it): a lane under a root reached through a link or a short name still counts. */
+const inLane = isLaneId(process.env.HYDRA_LANE_ID);
 
 /** Write one event file aside, then rename it into place: a window never reads half a file. */
 function drop(folder: string, event: unknown): void {
@@ -44,7 +47,7 @@ if (codexAt >= 0) {
     let payload: unknown;
     for (const part of process.argv.slice(codexAt + 1)) { try { payload = JSON.parse(part); break; } catch { /* not the payload */ } }
     const event = normaliseCodexNotify(payload, process.cwd());
-    if (event?.cwd && inWorktreeRoot(event.cwd, worktreeRoot)) drop(attentionDirectory(directory!), withLaneId(event, process.env));
+    if (event?.cwd && (inWorktreeRoot(event.cwd, worktreeRoot) || inLane)) drop(attentionDirectory(directory!), withLaneId(event, process.env));
   } catch { /* never fail Codex */ }
   quit();
 } else {
@@ -63,7 +66,7 @@ if (codexAt >= 0) {
       if (raw) drop(directory!, applyLaneId(raw, process.env));
       else {
         const event = normaliseClaudeAttention(payload);
-        if (event?.cwd && inWorktreeRoot(event.cwd, worktreeRoot)) drop(attentionDirectory(directory!), withLaneId(event, process.env));
+        if (event?.cwd && (inWorktreeRoot(event.cwd, worktreeRoot) || inLane)) drop(attentionDirectory(directory!), withLaneId(event, process.env));
       }
     } catch { /* never fail Claude */ }
     quit();
