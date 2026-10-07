@@ -168,7 +168,7 @@ test('Edited tests are evidence: a head\'s result lists existing tests it change
     await helper.commit('src/new.test.ts', 'new\n');
     await helper.commit('src/c.ts', 'changed\n');
     await rm(path.join(helper.spec.worktree, 'src', 'b.test.ts'));
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true, 'a flag, not a gate');
     assert.match(done.result.message, /Changed existing tests: src\/a\.test\.ts, src\/b\.test\.ts\./);
     helper.endTurn();
@@ -185,7 +185,7 @@ test('Edited tests are evidence: tests in gates.json replace the default pattern
   const f = await fixture({ gates: { tests: ['spec-folder/**'], gates: [passGate('unit')] }, files: { 'src/a.test.ts': 'a\n', 'spec-folder/x.ts': 'x\n' }, script: async helper => {
     await helper.commit('src/a.test.ts', 'edited\n');
     await helper.commit('spec-folder/x.ts', 'edited\n');
-    const done = await helper.call('hydra_done', { summary: 'done' });
+    const done = await helper.call('hydra_done', { headline: 'Done.', summary: 'done' });
     assert.equal(done.result.accepted, true);
     helper.endTurn();
   } });
