@@ -113,6 +113,8 @@ Hydra's promise is that no agent grades its own work. But a head can change the 
 
 One list, derived from existing state, of everything waiting on you.
 
+**Built** (2026-10-07, `feat/needs-you-list`). `src/core/needsYou.ts` derives every kind in the table and `src/core/needsYouList.ts` holds the keys, put-offs and the message each action sends (all existing canvas messages, plus `headOption`, `helperReply`, `limitContinue`, `planReport` and the lane action `sendGates`). The controller keeps put-offs in its own state (by kind and source) and pushes the list to the view; the app adds its chats and keeps chat put-offs in local storage. Merge plan asks in the list first, on top of any confirmation the canvas path has. A finished head is listed once it has left the canvas (2 minutes) and until the tray's Clear or 12 hours. Finished-turn lanes and finished heads never raise an OS banner.
+
 | Item | Comes from | Shows | Primary action (E) |
 | --- | --- | --- | --- |
 | A head's question, with no lead waiting | job `blocked`, `HelperService.waiters` empty for its lead | Question, options, time left before Hydra answers | Pick 1–4, or R to reply |
