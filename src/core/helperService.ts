@@ -10,7 +10,7 @@ import type { CommandSandbox } from './headSandbox';
 import { roleLaunch, type RoleLaunch, type RoleSource } from './packs/launch';
 import { createWorktree, defaultWorktreeRoot } from './worktrees';
 import { defaultMaxAttempts, evidenceStatus, finalJobStates, type JobReply, gateBlocks, gateFloor, gateKind, gatesConfigured, gateState, maxBriefLength, parseJobInput, type GatesConfigured, type Job, type JobCheckResult, type JobGatesSnapshot, type JobStore, type TamperSnapshot } from './jobs';
-import { carryOver, integrationAuthors, integrationGates, withGateWorktree, type IntegrationLeadView } from './integration';
+import { carryOver, integrationAuthors, integrationGates, landingGates, withGateWorktree, type IntegrationLeadView } from './integration';
 import { detectTestScript } from './starterGates';
 import { applyRigor, freshDirectory, gateCommandsBrief, gateFailureMessage, hasCommandGate, loadGates, runGateList, type GateContext, type GateRuntime, type GatesConfig, type GatesLoader, type PlanRigor } from './gates';
 import { dependencyBase, dependencyBrief, dependencyNoun, type DependencyResult } from './headStart';
@@ -1524,9 +1524,10 @@ export class HelperService {
    * at the integration branch's tip, read from the lead folder exactly as a head's are. The review sees
    * base..tip, every job's work together.
    */
-  async runIntegrationGate(input: { planId: string; title: string; brief?: string; base: string; tip: string; review: boolean; providers: Provider[]; signal?: AbortSignal }): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }> {
+  async runIntegrationGate(input: { planId: string; title: string; brief?: string; base: string; tip: string; review: boolean; providers: Provider[]; signal?: AbortSignal; landing?: boolean }): Promise<{ checks: JobCheckResult[]; configured: GatesConfigured }> {
     const config = await (this.options.gates ?? loadGates)(this.options.leadFolder);
-    const { gates, notRun } = integrationGates(config, input.review);
+    // `landing`: the seam check after one job lands (docs/Heads.md, "Seam checks"): only the command gates marked onLanding, nothing else.
+    const { gates, notRun } = input.landing ? { gates: landingGates(config), notRun: [] } : integrationGates(config, input.review);
     const configured = gatesConfigured(config.source, gates.length + notRun.length);
     if (!gates.length) return { checks: notRun, configured };
     const root = this.options.worktreeRoot?.() ?? defaultWorktreeRoot(this.options.leadFolder);
@@ -1536,7 +1537,7 @@ export class HelperService {
       title: `Plan "${input.title}": every job's work together`,
       brief: input.brief || `The combined work of every job in plan "${input.title}", merged on its integration branch.`,
       writeScope: [],
-      logDirectory: await freshDirectory(this.options.logDirectory, `plan-${input.planId}-integration`),
+      logDirectory: await freshDirectory(this.options.logDirectory, `plan-${input.planId}-${input.landing ? 'landing' : 'integration'}`),
       executable: provider => this.options.executable(provider),
       ...(this.options.providerLimited ? { limited: this.options.providerLimited } : {}),
       ...(this.options.sandbox ? { sandbox: this.options.sandbox, tempRoot: this.tempRoot } : {}),

@@ -6,6 +6,10 @@ What changed in each Hydra release. Installers and checksums are on the [release
 
 - **Faster heads: queued heads start together and free their slot at acceptance.** Heads waiting for a free slot now launch side by side instead of one after another, and a head's slot goes to the next queued head as soon as its work is accepted, not when its process exits.
 - **An unattended plan's `max_jobs` counts the heads that will run.** A plan Hydra runs as one head counts as one job against `max_jobs`. Dollars are unchanged: that one head's own cap is every job's default added up, so the estimate stays jobs × the per-head default.
+- **Plan jobs that depend on others see the code they landed.** A dependent's brief now carries the diff of what each dependency landed (up to 24 KB, interface files first, redacted), so it doesn't spend its first turns re-reading it.
+- **Warmer fix rounds.** The fix job for a failed integration gate now also gets the reviewer's full reply, the diff of the files its findings name, the plan's diff stat and the briefs and summaries of the jobs that wrote them. When the findings fall in areas owned by different jobs, the fixes split by area and run in parallel.
+- **Optional seam check at each landing.** A command gate marked `"onLanding": true` in `.hydra/gates.json` runs on the plan's integration branch right after each job lands. When it fails, the jobs that depend on that job wait while a fix job repairs it, instead of building on a broken branch.
+
 - **Security: Hydra's git calls in a head's worktree are pinned to its real metadata.** Once `hydra_done` has checked the worktree's `.git`, Hydra tells git exactly where the metadata is, so a `.git` rewritten after the check (by a command left running) can't redirect them.
 - **Security: Hydra never runs git inside a nested repository in a head's worktree.** A repository an earlier attempt committed could otherwise have its own settings (a clean filter) run when Hydra checked and committed the head's work.
 
