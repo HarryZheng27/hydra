@@ -2,16 +2,6 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
-## Unreleased
-
-- **Security: a head can no longer get Hydra to run git in a repository of its own making.** A head can't edit its worktree's `.git` file, and Hydra checks that it still points into your repository before running any git there, so a planted filter or diff driver never runs outside the sandbox. The git settings check now also refuses work when it can't read the settings, instead of letting it through.
-- **Heads split less often, and only when it pays.** The lead now splits a task only when each piece is a substantial change and the whole would take one agent well over 15 minutes. A plan whose jobs would mostly queue behind the heads-at-once limit (`hydra.maxConcurrentHelpers`) now runs as one head, like a small chained plan already did.
-- **Benchmark results show where each head's time went:** waiting, working and gates, and why each failed gate attempt failed.
-- **A warning when heads have no shell.** On Windows a Claude Code head's shell needs Codex installed for its sandbox. The first head that starts without one now brings up a warning, once per window, with **Open Settings**, instead of only a note in the head's result. The README says so under Requirements.
-- **The starter test gate needs a test script.** "Add a test gate (npm test)" is only offered when `package.json` has a real `test` script (not the placeholder `npm init` writes); otherwise the offer opens **Settings → Gates** instead of writing a gate that would fail every head.
-- **Heads run on your agent by default.** A head or plan job that names no provider runs on its lead's own agent, else **hydra.defaultProvider**, else Claude Code, so a Codex-only setup no longer starts Claude heads.
-- **Same-agent reviews say so.** When the other agent can't review (it isn't installed, or is at its usage limit), the author's own agent still reviews, and the gate and status now read "Same-agent review…" and **Passed required gates (same-agent review)** rather than looking independent. Pass and fail are unchanged.
-
 ## 0.28.0 (2026-10-07)
 
 **The Hydra app.** This release carries a second installer, `HydraAppSetup.exe`, beside `HydraSetup.exe`: Hydra, a desktop app built around the chat, in the style of Claude desktop. It's a new product, so it's worth reading the [app guide](docs/App.md) first.
@@ -20,11 +10,21 @@ What changed in each Hydra release. Installers and checksums are on the [release
 - **A branch bar above the prompt:** the folder's repository and branch, the lines it changed against the default branch, and **Create PR**, which has the chat's agent commit, push and open the pull request. Pull requests the chat opens get their own bar with CI.
 - **Short chat names from the agent itself:** Claude names a Claude chat, and Codex names a Codex chat on your own Codex login; a message never goes to the other provider.
 - **A note when Claude Code runs another permission mode** than the one chosen, such as Manual where Auto isn't offered on Haiku.
+- **Run commands from a reply:** a shell code block gets a **Run** button that types it into the chat's terminal panel, where you watch it run; nothing runs until you click.
+- **Attach as context:** select text in the terminal or the chat and attach it to your next message.
+- **Claude's own terminal tabs:** a Claude chat can open a tab in its panel for a dev server or a sign-in flow, read what it prints and stop it. It never types into or closes your tabs, and can't reach another chat's panel.
 - **Hydra in the app:** heads, plans, gates and lanes work as in the IDE, on an **Agents** view with the same canvas and a Lanes tab, in light and dark. Hydra Settings opens in its own window.
 - **Beside Hydra IDE:** the two install separately and share Hydra's storage; a repository is driven by whichever opens it first.
 
 **Hydra:**
+- **Security: a head can no longer get Hydra to run git in a repository of its own making.** A head can't edit its worktree's `.git` file, and Hydra checks that it still points into your repository before running any git there, so a planted filter or diff driver never runs outside the sandbox. The git settings check now also refuses work when it can't read the settings, instead of letting it through.
 - **A plan job can choose its head's model.**
+- **Heads split less often, and only when it pays.** The lead now splits a task only when each piece is a substantial change and the whole would take one agent well over 15 minutes. A plan whose jobs would mostly queue behind the heads-at-once limit (`hydra.maxConcurrentHelpers`) now runs as one head, like a small chained plan already did.
+- **Benchmark results show where each head's time went:** waiting, working and gates, and why each failed gate attempt failed.
+- **A warning when heads have no shell.** On Windows a Claude Code head's shell needs Codex installed for its sandbox. The first head that starts without one now brings up a warning, once per window, with **Open Settings**, instead of only a note in the head's result. The README says so under Requirements.
+- **The starter test gate needs a test script.** "Add a test gate (npm test)" is only offered when `package.json` has a real `test` script (not the placeholder `npm init` writes); otherwise the offer opens **Settings → Gates** instead of writing a gate that would fail every head.
+- **Heads run on your agent by default.** A head or plan job that names no provider runs on its lead's own agent, else **hydra.defaultProvider**, else Claude Code, so a Codex-only setup no longer starts Claude heads.
+- **Same-agent reviews say so.** When the other agent can't review (it isn't installed, or is at its usage limit), the author's own agent still reviews, and the gate and status now read "Same-agent review…" and **Passed required gates (same-agent review)** rather than looking independent. Pass and fail are unchanged.
 - **Clearer diagnostics:** the lead is told when a project has no gates, and Codex's broken sandbox state file is named.
 
 **Hydra IDE and releases:**
