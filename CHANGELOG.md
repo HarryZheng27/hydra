@@ -4,6 +4,7 @@ What changed in each Hydra release. Installers and checksums are on the [release
 
 ## Unreleased
 
+- **The app shows what a turn changed.** After a turn that edited files, the chat has a card like Claude desktop's: **Edited N files** with the lines added and removed, a row per file that opens that file's diff for the turn, and **Undo**, which puts the files back as they were before the turn, leaving alone any you've edited since. The agent is told about an undo with your next message. Hydra keeps its snapshots in a private repository under its own data, never in your folder, and deletes them with the chat.
 - **Security: Hydra's git calls in a head's worktree are pinned to its real metadata.** Once `hydra_done` has checked the worktree's `.git`, Hydra tells git exactly where the metadata is, so a `.git` rewritten after the check (by a command left running) can't redirect them.
 - **Security: Hydra never runs git inside a nested repository in a head's worktree.** A repository an earlier attempt committed could otherwise have its own settings (a clean filter) run when Hydra checked and committed the head's work.
 

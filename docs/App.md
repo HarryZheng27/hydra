@@ -31,6 +31,14 @@ It installs for your user only, with no admin prompt, into `%LOCALAPPDATA%\Progr
 - **Attach as context:** select text in the terminal or in the chat, and **Attach as context** adds it to your next message as a chip; the message carries it as a quote.
 - **Claude's own terminal tabs:** a Claude chat can open a tab in its own panel for something that keeps running (a dev server, a sign-in flow), read what it prints, and stop it. Its tabs are marked **Claude**; it can read your tabs but never types into them or closes them, and it can't reach another chat's panel. Each chat gets its own private connection for this, with a key only that chat holds.
 
+## What a turn changed
+
+After a turn that edited files, the chat shows a card, as Claude desktop does: **Edited N files**, the lines added and removed, **Undo**, and a row per file. A row opens that file's diff for that turn in the review pane; the header's arrow folds the rows.
+
+- **How it knows:** the card lists the files the agent's own edit tools reported (`file-change` events), and only those that really changed. Hydra takes a snapshot of the folder before your message reaches the agent and another when the turn ends, in a private git repository under `%APPDATA%\Hydra App\turn-snapshots`, never in your folder. The folder's `.gitignore` applies; a nested repository is stored as a pointer and never looked inside. A snapshot that fails or takes about 20 seconds is skipped: no card for that turn, and the chat never waits on it. Edits made by a shell command aren't listed.
+- **Undo:** puts each listed file back as it was before the turn, and deletes one the turn created. A file that has changed since (you edited it, or a later turn did), or isn't a plain file, is left alone and named on the card. Undo is off while the chat is working. The next message tells the agent which files you undid, in a note you don't see in your message.
+- **Deleting the chat** deletes its snapshots.
+
 ## Hydra in the app
 
 Once a project has a chat, Hydra runs for it, as it does in an IDE window:
