@@ -6,6 +6,7 @@ import type { Provider } from './model';
 import { gateState, type EvidenceStatus } from './jobs';
 import type { PlanRigor } from './gates/config';
 import { waitDuration } from './providerWait';
+import { singleHeadDecision } from './planShape';
 import { integrationGateLabel, integrationPassed, isIntegrationFixKey, releaseConflict, validateIntegration, validateJobConflict, type PlanIntegration, type PlanJobConflict } from './integration';
 
 /**
@@ -180,11 +181,22 @@ function validateBudget(budget: unknown): PlanBudget {
  * no budget of its own yet (every job uses the window's own per-head default). Both are static caps
  * checked up front, not a running total of what was actually spent, which Hydra has no way to see.
  */
-export function refuseOverBudget(budget: PlanBudget, jobCount: number, defaultHeadBudgetUsd: number): void {
+/**
+ * How many heads this plan will really run: one when PlanRunner will collapse it into a single head on its first run
+ * (singleHeadDecision, with the same heads-at-once cap), else every job. A budget is checked against this, so a plan
+ * that would run as one head isn't refused for jobs it never starts. Dollars are the exception: the one head's own
+ * cap is every job's default added together (singleHeadLimits), so its worst case is still jobs × the default.
+ */
+export function jobsToRun(plan: Pick<Plan, 'jobs'> & Partial<Pick<Plan, 'title' | 'brief' | 'dispatch' | 'leadOrigin' | 'singleHead'>>, maxConcurrent?: number): number {
+  if (plan.singleHead || !plan.leadOrigin) return plan.jobs.length;
+  return singleHeadDecision({ title: plan.title ?? '', brief: plan.brief, jobs: plan.jobs, dispatch: plan.dispatch, leadOrigin: plan.leadOrigin }, maxConcurrent).single ? 1 : plan.jobs.length;
+}
+
+export function refuseOverBudget(budget: PlanBudget, jobCount: number, defaultHeadBudgetUsd: number, usdJobCount = jobCount): void {
   if (budget.maxJobs !== undefined && jobCount > budget.maxJobs) throw new Error(`This plan's budget allows at most ${budget.maxJobs} jobs; it would have ${jobCount}.`);
   if (budget.usd !== undefined) {
-    const estimate = jobCount * defaultHeadBudgetUsd;
-    if (estimate > budget.usd) throw new Error(`This plan's budget is $${budget.usd}; ${jobCount} jobs at up to $${defaultHeadBudgetUsd} each could reach $${estimate}. Lower the job count, or raise the budget.`);
+    const estimate = usdJobCount * defaultHeadBudgetUsd;
+    if (estimate > budget.usd) throw new Error(`This plan's budget is $${budget.usd}; ${usdJobCount} jobs at up to $${defaultHeadBudgetUsd} each could reach $${estimate}. Lower the job count, or raise the budget.`);
   }
 }
 
@@ -384,7 +396,7 @@ const statusFromOutcome = (jobs: readonly PlanJob[]): PlanJobStatusOf => key => 
  * retry can make an incomplete plan worth running again). Throws the first
  * problem found, and appends nothing if it throws.
  */
-export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendments?: readonly PlanAmendment[]; unattended?: PlanBudget }, input: PlanAmendInput, statusOf: PlanJobStatusOf = statusFromOutcome(current.jobs), now: () => Date = () => new Date(), defaultHeadBudgetUsd = 5): { jobs: PlanJob[]; amendments: PlanAmendment[] } {
+export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendments?: readonly PlanAmendment[]; unattended?: PlanBudget } & Partial<Pick<Plan, 'title' | 'brief' | 'dispatch' | 'leadOrigin' | 'singleHead'>>, input: PlanAmendInput, statusOf: PlanJobStatusOf = statusFromOutcome(current.jobs), now: () => Date = () => new Date(), defaultHeadBudgetUsd = 5, maxConcurrent?: number): { jobs: PlanJob[]; amendments: PlanAmendment[] } {
   let jobs = [...current.jobs];
   let amendments = current.amendments as PlanAmendment[] | undefined;
   const record = (kind: PlanAmendment['kind'], key: string, detail: string) => { amendments = appendAmendment(amendments, { kind, key, detail }, now); };
@@ -449,7 +461,7 @@ export function applyPlanAmendment(current: { jobs: readonly PlanJob[]; amendmen
   if (cycle) throw new Error(cycleMessage(jobs, cycle));
   refuseScopeOverlap(jobs);
   // O7: an unattended plan's own budget still applies to a job an amendment adds.
-  if (current.unattended) refuseOverBudget(current.unattended, jobs.length, defaultHeadBudgetUsd);
+  if (current.unattended) refuseOverBudget(current.unattended, jobsToRun({ ...current, jobs }, maxConcurrent), defaultHeadBudgetUsd, jobs.length);
   return { jobs, amendments: amendments ?? [] };
 }
 
@@ -789,7 +801,7 @@ export interface PlanCreateInput { title: string; brief?: string; jobs: PlanLead
  * (a lane job stays a user choice on the canvas). Throws the first problem found,
  * the same way validatePlan does; nothing here starts a process or touches storage.
  */
-export function planFromLeadInput(input: PlanCreateInput, leadOrigin: NonNullable<Plan['leadOrigin']>, defaultHeadBudgetUsd = 5): Plan {
+export function planFromLeadInput(input: PlanCreateInput, leadOrigin: NonNullable<Plan['leadOrigin']>, defaultHeadBudgetUsd = 5, maxConcurrent?: number): Plan {
   if (!input || typeof input !== 'object') throw new Error('hydra_plan_create needs an object.');
   if (!Array.isArray(input.jobs) || input.jobs.length < 1) throw new Error('A plan needs at least one job.');
   if (input.jobs.length > maxPlanJobs) throw new Error(`A plan may have at most ${maxPlanJobs} jobs.`);
@@ -813,7 +825,7 @@ export function planFromLeadInput(input: PlanCreateInput, leadOrigin: NonNullabl
     ...(input.budget?.wall_clock_minutes !== undefined ? { wallClockMinutes: input.budget.wall_clock_minutes } : {}),
     ...(input.budget?.max_jobs !== undefined ? { maxJobs: input.budget.max_jobs } : {}),
   }) : undefined;
-  if (unattended) refuseOverBudget(unattended, jobs.length, defaultHeadBudgetUsd);
+  if (unattended) refuseOverBudget(unattended, jobsToRun({ title: input.title, brief: input.brief, jobs, leadOrigin }, maxConcurrent), defaultHeadBudgetUsd, jobs.length);
   const plan: Plan = { ...createPlan({ title: input.title, brief: input.brief, state: 'draft' }), jobs, leadOrigin, ...(unattended ? { unattended } : {}) };
   validatePlan(plan);
   const cycle = findCycle(plan.jobs);
