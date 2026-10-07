@@ -36,3 +36,11 @@ test('a Hydra tool call in a chat shows as its live head or plan card (Claude\'s
   // Text in a reply that names a head isn't a card: only the tool call's result is read.
   assert.equal(hydraCard(call('mcp__other__start_head', '{"job_id":"a1b2c3d4e5f6"}'), view), undefined);
 });
+
+test('a done head\'s card shows its headline under the title, and nothing for a head without one', () => {
+  const withHeadline = headCard({ ...head, headline: 'Parser added; nothing left to decide.' });
+  assert.equal(withHeadline.headline, 'Parser added; nothing left to decide.');
+  const markup = renderToStaticMarkup(hydraCard({ kind: 'tool' as const, key: 't', id: 'x', name: 'mcp__hydra__hydra_start_head', input: {}, output: '{"job_id":"a1b2c3d4e5f6"}' }, { heads: [withHeadline], plans: [] })!);
+  assert.match(markup, /Add the parser.*hydra-card-headline">Parser added; nothing left to decide\./s);
+  assert.equal(headCard(head).headline, undefined);
+});
