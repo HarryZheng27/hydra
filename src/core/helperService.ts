@@ -338,7 +338,7 @@ export class HelperService {
     const asked = job.question ? ` to your question: "${clip(job.question, 1000)}"` : '';
     const note = `## Restarted\n\nHydra restarted while you were waiting for the lead's answer${asked}. No answer arrived, and your earlier work is still in this worktree (uncommitted changes included). Carry on from there; if you still need the answer, call hydra_stuck again.`;
     await this.options.store.transition(job.id, 'failed', 'Hydra restarted while this head was waiting for an answer; as a plan job it goes back in the queue.');
-    await this.options.store.transition(job.id, 'queued', 'Back in the queue after Hydra restarted.', { brief: clip(`${job.brief}\n\n${note}`, maxBriefLength), question: undefined, nudged: false });
+    await this.options.store.transition(job.id, 'queued', 'Back in the queue after Hydra restarted.', { brief: clip(`${job.brief}\n\n${note}`, maxBriefLength), question: undefined, options: undefined, nudged: false });
   }
 
   /** The endpoint handler. */
@@ -847,7 +847,7 @@ export class HelperService {
     const plan = this.options.planBoard?.jobPlan(jobId);
     if (plan && this.options.planBoard?.unattended?.(plan.planId)) {
       const answer = recommended ? unattendedChoice(recommended.text) : unattendedAnswer;
-      await this.options.store.transition(jobId, 'blocked', reason, { question, ...(options ? { options } : {}) });
+      await this.options.store.transition(jobId, 'blocked', reason, { question, options });
       await this.options.store.transition(jobId, 'running', 'Answered automatically: nobody is watching this unattended plan.', { question: undefined, options: undefined });
       await this.recordAutoAnswer(jobId, question, answer, 'unattended', recommended);
       this.changed();
@@ -867,7 +867,7 @@ export class HelperService {
       timer.unref?.();
       signal.addEventListener('abort', () => settle({ none: 'ended' }), { once: true });
     });
-    try { await this.options.store.transition(jobId, 'blocked', reason, { question, ...(options ? { options } : {}) }); }
+    try { await this.options.store.transition(jobId, 'blocked', reason, { question, options }); }
     catch (error) { active.answer?.(undefined as unknown as string); throw error; }
     active.blockedSince = this.now();
     this.changed();
