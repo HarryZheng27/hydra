@@ -113,7 +113,7 @@ export class TurnSnapshots {
         const spec = ['--', '.', ...gitlinks.map(link => `:(exclude,literal)${link}`)];
         let added = await this.run(chatId, folder, ['add', '-A', ...spec], left());
         // A nested repository with no commit can't be added as a pointer and stops `add`; it alone is left out, and nothing else may fail.
-        const benign = (stderr: string) => stderr.split(/\r?\n/).every(line => !line.trim() || /does not have a commit checked out|unable to index file '[^']*/'|adding files failed|^hint:|^warning:/.test(line));
+        const benign = (stderr: string) => stderr.split(/\r?\n/).every(line => !line.trim() || /does not have a commit checked out|unable to index file '[^']*\/'|adding files failed|^hint:|^warning:/.test(line));
         if (added.code !== 0 && benign(added.stderr)) added = await this.run(chatId, folder, ['add', '-A', '--ignore-errors', ...spec], left());
         if (added.code !== 0 && !(benign(added.stderr) && /does not have a commit checked out/.test(added.stderr))) { this.lastProblem = `add failed (${added.code}): ${added.stderr.trim()}`; return undefined; }
         const tree = await this.run(chatId, folder, ['write-tree'], left());
