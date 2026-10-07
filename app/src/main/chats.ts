@@ -179,7 +179,7 @@ export function pendingUndone(log: ReadonlyArray<{ event: ChatEvent }>): string[
 }
 
 /** One turn as it runs: its number, the snapshot it started from, and the files its `file-change` events named. */
-interface TurnState { n: number; before?: Promise<string | undefined>; files: Set<string> }
+interface TurnState { n: number; cwd?: string; before?: Promise<string | undefined>; files: Set<string> }
 
 export class ChatManager {
   private readonly sessions = new Map<string, ChatSession>();
@@ -211,6 +211,7 @@ export class ChatManager {
   private readonly undoneFiles = new Map<string, string[]>();
   private readonly notesSent = new Map<string, string>();
   private readonly undoing = new Set<string>();
+  private readonly cwds = new Map<string, string>();
   private readonly sendQueue = new Map<string, Promise<void>>();
 
   /**
@@ -489,7 +490,7 @@ export class ChatManager {
       if (event.type === 'user') {
         const n = (this.turnCount.get(id) ?? 0) + 1;
         this.turnCount.set(id, n);
-        this.turns.set(id, { n, ...(this.nextBefore.has(id) ? { before: this.nextBefore.get(id)! } : {}), files: new Set() });
+        this.turns.set(id, { n, ...(this.cwds.has(id) ? { cwd: this.cwds.get(id)! } : {}), ...(this.nextBefore.has(id) ? { before: this.nextBefore.get(id)! } : {}), files: new Set() });
         this.nextBefore.delete(id);
         const note = this.notesSent.get(id);
         if (note && event.text.startsWith(note)) { this.notesSent.delete(id); return { ...event, text: event.text.slice(note.length) }; }
@@ -499,7 +500,9 @@ export class ChatManager {
         this.turns.delete(id);
         if (turn) {
           const queued = !!this.sessions.get(id)?.queued;
-          const finished = this.finishTurn(id, turn, queued);
+          // The after-snapshot is queued now, ahead of any snapshot the next message asks for: it can't include that turn's edits.
+          const after = this.deps.snapshots && turn.cwd && (turn.files.size || queued) ? this.deps.snapshots.snapshot(id, turn.cwd) : undefined;
+          const finished = this.finishTurn(id, turn, queued, after);
           // A message queued behind this turn starts from what this one left.
           if (queued) this.nextBefore.set(id, finished);
         }
@@ -509,7 +512,7 @@ export class ChatManager {
   }
 
   /** After a turn: a second snapshot, and the card if the files its events named really changed. Never throws. */
-  private async finishTurn(id: string, turn: TurnState, queued: boolean): Promise<string | undefined> {
+  private async finishTurn(id: string, turn: TurnState, queued: boolean, afterTree?: Promise<string | undefined>): Promise<string | undefined> {
     const snapshots = this.deps.snapshots;
     try {
       const before = await turn.before;
@@ -518,7 +521,7 @@ export class ChatManager {
       if (!turn.files.size && !queued) return before;
       const record = await this.deps.store.get(id);
       if (!record || this.removed.has(id) || !(await this.deps.trusted(record.cwd))) return undefined;
-      const after = await snapshots.snapshot(id, record.cwd);
+      const after = await (afterTree ?? snapshots.snapshot(id, record.cwd));
       if (!after) return undefined;
       if (this.removed.has(id)) { await snapshots.remove(id); return undefined; }
       const files = turn.files.size ? await snapshots.changes(id, record.cwd, before, after, turn.files) : [];
@@ -548,7 +551,7 @@ export class ChatManager {
   async undoTurn(id: string, changeId: string): Promise<UndoTurnResult> {
     const snapshots = this.deps.snapshots;
     if (!snapshots) throw new Error('Undo isn\'t available here.');
-    if (this.isRunning(id) || this.sending.has(id) || this.placing.has(id)) throw new Error('Wait for the chat to finish its turn, then undo.');
+    if (this.isRunning(id) || this.sending.has(id) || this.placing.has(id) || this.inTerminal.has(id)) throw new Error('Wait for the chat to finish its turn, then undo.');
     if (this.undoing.has(id)) throw new Error('An undo is already running.');
     this.undoing.add(id);
     try {
@@ -605,8 +608,10 @@ export class ChatManager {
 
   private async handOver(id: string, cwd: string, text: string, checked?: ChatImage[]): Promise<void> {
     if (this.undoing.has(id)) throw new Error('An undo is running. Send again in a moment.');
+    this.cwds.set(id, cwd);
     const session = await this.session(id);
     let message = text;
+    let told: string[] = [];
     if (this.deps.snapshots) {
       // The turn's starting point is taken before the message reaches the CLI (a message queued behind a turn starts from
       // what that turn leaves, set when it ends). It is time-boxed and never fails the send.
@@ -621,12 +626,17 @@ export class ChatManager {
       const undone = this.undoneFiles.get(id);
       if (undone?.length) {
         this.undoneFiles.delete(id);
+        told = undone;
         const note = undoNote(undone);
         this.notesSent.set(id, note);
         message = note + text;
       }
     }
-    session.send(message, checked);
+    try { session.send(message, checked); } catch (error) {
+      // The message never became a turn: the agent is still to be told.
+      if (told.length) { this.notesSent.delete(id); this.undoneFiles.set(id, [...told, ...(this.undoneFiles.get(id) ?? [])]); }
+      throw error;
+    }
   }
 
   /**
