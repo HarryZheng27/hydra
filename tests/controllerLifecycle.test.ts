@@ -55,7 +55,7 @@ test('the controller runs a plan end to end on a FakeHost, with a stand-in head'
     startPlanLane: async () => ({ wait: 'no lanes' }), unlinkPlan: async () => {}, laneName: () => undefined, show: async () => {},
     planStatesChanged: () => {}, handle: async () => {}, webviewReady: () => {}, start: async () => {}, stop: async () => {},
     stopProcesses: async () => 0, exists: () => false, describe: async () => ({ lanes: [] }), jobReady: async () => ({}), openWorktrees: () => [],
-    activeRolesChanged: async () => {}, onLimitEvent: async () => {}, laneWorktreeEntries: () => [], runningLanes: () => [], laneEvidence: () => undefined, laneGatesLogRoot: () => undefined,
+    activeRolesChanged: async () => {}, onLimitEvent: async () => {}, laneForAttention: () => undefined, onAttention: () => {}, laneWorktreeEntries: () => [], runningLanes: () => [], laneEvidence: () => undefined, laneGatesLogRoot: () => undefined,
   };
   const stopValues = new Map<string, unknown>();
   const stop = new StopSwitch({ get: <T>(key: string, fallback: T) => (stopValues.has(key) ? stopValues.get(key) : fallback) as T, update: async (key, value) => { stopValues.set(key, value); } });

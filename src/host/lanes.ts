@@ -11,6 +11,8 @@ import { flattenGateFailureMessage, summarizeGateFailures, type GatesLoader, typ
 import { parsePreviewConfig, savePreviewConfig, splitPreviewCommand, type PreviewConfig } from '../core/lanePreview';
 import type { EvidenceStatus, JobCheckResult } from '../core/jobs';
 import { laneActions, type AgentsView, type LaneAction, type LaneClientMessage, type LaneLimitOfferView, type LaneOfferButtonId, type LaneServerMessage, type LaneView, type Provider } from '../core/model';
+import { workspaceOwns } from '../core/limitWatcher';
+import type { AttentionEvent } from '../core/attentionEvents';
 import { otherProvider, type LimitEvent } from '../core/limitEvents';
 import { buildHandoff } from '../core/limitHandoff';
 import { laneOfferButtons, laneOfferMessage, laneSwitchCountdownSeconds, LimitOfferTracker } from '../core/limitOffer';
@@ -218,6 +220,13 @@ export class LanesController implements Disposable {
   async activeRolesChanged(): Promise<void> { await this.service?.activeRolesChanged(); this.changed(); }
   /** For ClaudeChatLimits (src/host/chatLimits.ts): this window's open lanes, for owning a chat cwd or a lane id. */
   laneWorktreeEntries(): { id: string; worktree: string }[] { return this.service?.lanes().map(lane => ({ id: lane.id, worktree: lane.worktree })) ?? []; }
+  /** Needs_You_Plan.md, Phase 4: the open lane in this window an attention event is about: its HYDRA_LANE_ID, else the lane whose worktree holds its cwd. */
+  laneForAttention(event: AttentionEvent): string | undefined {
+    const lanes = this.laneWorktreeEntries();
+    if (event.laneId) return lanes.find(lane => lane.id === event.laneId)?.id;
+    return event.cwd ? lanes.find(lane => workspaceOwns([lane.worktree])(event.cwd!))?.id : undefined;
+  }
+  onAttention(laneId: string, event: AttentionEvent): void { this.service?.setAttention(laneId, event.attention); }
   /** For the Codex account-limit fan-out (src/extension.ts): this window's running lanes of one provider. */
   runningLanes(provider: Provider): { id: string; worktree: string }[] { return (this.service?.views() ?? []).filter(lane => lane.running && lane.provider === provider).map(lane => ({ id: lane.id, worktree: lane.worktree })); }
   /** 5.3: Hydra: Stop All Agents. Ends every open lane's process, keeping the lane and its worktree. */
