@@ -26,6 +26,10 @@ It installs for your user only, with no admin prompt, into `%LOCALAPPDATA%\Progr
 - **New chat** starts a chat with Claude Code or Codex in that project. Chats are saved and reopen where you left them. A chat gets a short name after its first message: Claude names a Claude chat, and Codex names a Codex chat on your own Codex login (one small `codex exec`), so a message goes only to the provider the chat already uses.
 - **The branch bar** above the prompt shows the folder's repository and branch and the lines the branch changed against its default branch. **Create PR** (on a branch with a remote and something to propose) asks the chat's agent to commit, push and open the pull request with `gh`; the chat's pull request bar then takes over, with its CI.
 - **The permission mode:** if Claude Code reports a different mode than the one you chose (Manual where Auto isn't offered on Haiku), a note under the prompt says so.
+- **The terminal panel** (the terminal button beside the browser's) opens PowerShell tabs in the chat's folder, beside the chat. Hiding the panel keeps them running; closing a tab ends its shell.
+- **Run:** a reply's shell code block (`bash`, `powershell` and the like) gets a **Run** button that types the command into the chat's terminal, where you watch it run. Nothing runs until you click it, and a block with hidden characters, tabs or control keys gets no button, so what runs is what you see. Claude chats are told to hand you commands this way when they shouldn't run them themselves.
+- **Attach as context:** select text in the terminal or in the chat, and **Attach as context** adds it to your next message as a chip; the message carries it as a quote.
+- **Claude's own terminal tabs:** a Claude chat can open a tab in its own panel for something that keeps running (a dev server, a sign-in flow), read what it prints, and stop it. Its tabs are marked **Claude**; it can read your tabs but never types into them or closes them, and it can't reach another chat's panel. Each chat gets its own private connection for this, with a key only that chat holds.
 
 ## Hydra in the app
 
