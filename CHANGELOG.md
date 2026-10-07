@@ -2,6 +2,10 @@
 
 What changed in each Hydra release. Installers and checksums are on the [releases page](https://github.com/ndunl075/hydra/releases); installed copies offer each new release in-app.
 
+## Unreleased
+
+- **Edited tests are flagged as evidence.** When a head calls `hydra_done`, or a lane runs its gates before Merge, Hydra lists the test files that already existed and were changed or deleted ("Changed existing tests: …"). The list is a note on the result beside the gates-changed note, shows in **View evidence**, is given to the review gate as a fact to check (does the change weaken a test so that it passes?), and reaches a plan's integration review. New test files aren't flagged, and it fails nothing on its own. Which files count as tests is `**/*.test.*`, `**/*.spec.*`, `**/test/**`, `**/tests/**` and `**/__tests__/**`, unless `.hydra/gates.json` has a `tests` list, which replaces them.
+
 ## 0.29.0 (2026-10-07)
 
 - **The app shows what a turn changed.** After a turn that edited files, the chat has a card like Claude desktop's: **Edited N files** with the lines added and removed, a row per file that opens that file's diff for the turn, and **Undo**, which puts the files back as they were before the turn, leaving alone any you've edited since. The agent is told about an undo with your next message. Hydra keeps its snapshots in a private repository under its own data, never in your folder, and deletes them with the chat.
